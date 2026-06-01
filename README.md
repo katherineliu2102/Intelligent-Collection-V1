@@ -40,32 +40,12 @@ MOCASA 催收系统升级（Phase 1）对外发布的规格套件，当前仅覆
 
 ---
 
-## 更新文档到本仓库
-
-在仓库根目录执行（从本地 `智能催收/docs/current` 同步最新 Markdown）：
-
-```bash
-./scripts/sync-docs.sh
-```
-
-然后提交并推送：
-
-```bash
-git add docs/ README.md
-git commit -m "docs: sync Phase 1 v1.0 specifications"
-git push
-```
-
----
-
 ## 目录结构
 
 ```text
 Intelligent-Collection-V1/
-├── README.md                 # 本文件
-├── scripts/
-│   └── sync-docs.sh          # 一键同步四份规格文档
-└── docs/                     # Phase 1 规格（由脚本生成/更新）
+├── README.md
+└── docs/
     ├── MOCASA催收系统升级_Phase1_产品需求文档_PRD.md
     ├── MOCASA催收系统升级_Phase1_架构设计文档.md
     ├── MOCASA催收系统升级_Phase1_核心引擎规格.md
