@@ -1,0 +1,73 @@
+# Intelligent Collection V1 — Phase 1 规格文档
+
+MOCASA 催收系统升级（Phase 1）对外发布的规格套件，当前仅覆盖**菲律宾市场**。
+
+| 项 | 说明 |
+|---|---|
+| **套件版本** | Phase 1 · v1.0 |
+| **发布日期** | 2026-06-01 |
+| **仓库** | https://github.com/katherineliu2102/Intelligent-Collection-V1 |
+
+---
+
+## 阅读顺序
+
+建议按依赖关系自上而下阅读；实现研发可并行查阅「核心引擎」与「基础设施」。
+
+```text
+1. 产品需求文档 (PRD)     → 业务目标、能力范围、合规要求
+2. 架构设计文档           → 分层、事件驱动、SPI 边界与协作分工
+3. 核心引擎规格           → 事件路由、状态机、步骤管线、SPI 契约
+4. 基础设施交互规范       → Redis / XXL-Job / Repository、配置与可观测性
+```
+
+| 顺序 | 文档 | 文件 |
+|:---:|---|---|
+| 1 | [产品需求文档 (PRD)](./docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 业务输入 |
+| 2 | [架构设计文档](./docs/MOCASA催收系统升级_Phase1_架构设计文档.md) | 系统骨架 |
+| 3 | [核心引擎规格](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md) | 引擎逻辑 |
+| 4 | [基础设施交互规范](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md) | 实施约束 |
+
+文档内 **关联文档** 字段已互链上述四份；正文中对其他规格（如渠道编排、领域模型）的引用可能指向仓库外文档，以各文档正文为准。
+
+---
+
+## v1.0 说明
+
+- **范围**：Phase 1 催收升级；市场范围见各文档头部「范围」字段（菲律宾）。
+- **版本号**：四份文档头部统一为 `Phase 1 · v1.0`，表示同一发布套件；后续修订可升为 v1.1 / v2.0。
+- **不在本仓库**：渠道编排规格、领域模型、数据接入与事件规格、运维与协作等由其他负责人维护，未纳入本仓库 v1.0 发布包。
+
+---
+
+## 更新文档到本仓库
+
+在仓库根目录执行（从本地 `智能催收/docs/current` 同步最新 Markdown）：
+
+```bash
+./scripts/sync-docs.sh
+```
+
+然后提交并推送：
+
+```bash
+git add docs/ README.md
+git commit -m "docs: sync Phase 1 v1.0 specifications"
+git push
+```
+
+---
+
+## 目录结构
+
+```text
+Intelligent-Collection-V1/
+├── README.md                 # 本文件
+├── scripts/
+│   └── sync-docs.sh          # 一键同步四份规格文档
+└── docs/                     # Phase 1 规格（由脚本生成/更新）
+    ├── MOCASA催收系统升级_Phase1_产品需求文档_PRD.md
+    ├── MOCASA催收系统升级_Phase1_架构设计文档.md
+    ├── MOCASA催收系统升级_Phase1_核心引擎规格.md
+    └── MOCASA催收系统升级_Phase1_基础设施交互规范.md
+```
