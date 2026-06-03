@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.collection</groupId>
+        <artifactId>collection-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>collection-admin</artifactId>
+    <name>collection-admin</name>
+    <description>应用层（启动入口）：REST API、Webhook 回调、调度触发（Trigger-to-Event）；装配全部模块</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.collection</groupId>
+            <artifactId>collection-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.collection</groupId>
+            <artifactId>collection-service</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.collection</groupId>
+            <artifactId>collection-engine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.collection</groupId>
+            <artifactId>collection-channel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.collection</groupId>
+            <artifactId>collection-ingestion</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>collection-admin</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.collection.admin.CollectionApplication</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
