@@ -63,13 +63,14 @@ collection-parent (pom)
 ### 1. 建表
 
 ```bash
-mysql -h34.124.218.94 -uai_collection -p -P3306 ai_collection_db < db/schema.sql
+# 连接信息（host/port/user/password）向主架构负责人获取，-p 后不跟值会交互式提示输入密码
+mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/schema.sql
 # 可选 mock 数据
-mysql -h34.124.218.94 -uai_collection -p -P3306 ai_collection_db < db/mock-data.sql
+mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/mock-data.sql
 ```
 
-> 数据库连接默认值在 `collection-admin/src/main/resources/application.properties`，
-> 可用环境变量覆盖：`DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD`。
+> 数据库连接通过环境变量提供，**不写入仓库**：`DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD`。
+> 具体值向主架构负责人获取。
 
 ### 2. 编译 & 启动
 

@@ -2,7 +2,7 @@
 -- MOCASA 智能催收升级 Phase 1 — 引擎核心表 DDL
 -- 目标库：ai_collection_db（新测试库）
 -- 来源：领域模型与数据定义 §7
--- 用法：mysql -h34.124.218.94 -uai_collection -p -P3306 ai_collection_db < db/schema.sql
+-- 用法：mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/schema.sql （连接信息向主架构负责人获取）
 -- =====================================================================
 
 -- 7.1.1 触达计划主表

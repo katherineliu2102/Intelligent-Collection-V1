@@ -15,7 +15,7 @@
 
 | 模块 | 内容 | 代码性质 |
 |---|---|---|
-| `collection-common` | 15 枚举、9 领域模型、5 DTO、**5 个 SPI 接口**、`CollectionEventBus`、`ChannelGateway`、Repository/Service 接口 | ✅ 契约（已冻结） |
+| `collection-common` | 15 枚举、9 领域模型、5 DTO、**5 个 SPI 接口**、`CollectionEventBus`、`ChannelGateway`、Repository/Service 接口 | 跨模块契约（初版，可演进，改前对齐） |
 | `collection-engine` | `EventConsumerDispatcher`（路由）、`PlanLifecycleManager`（6 态状态机）、`StepExecutionOrchestrator`（七步管线）、`PreFlightChecker`、内存事件总线、内存幂等 | ✅ 真实实现（主框架） |
 | `collection-service` | 4 张新表 MyBatis Mapper + Repository 实现 + Mock CaseService/ProfileService | 持久化真实，业务数据 Mock |
 | `collection-channel` | 5 个 SPI Mock + Mock ChannelGateway + Mock 外呼过滤 | Mock，待替换 |
@@ -48,13 +48,14 @@
 ### 环境要求
 
 - JDK 8、Maven 3.6+
-- 可访问测试库 `ai_collection_db`（34.124.218.94:3306）
-- **不需要 Redis**（Phase 1 默认内存版）
+- 可访问测试库 `ai_collection_db`（连接信息向主架构负责人获取，**不写入仓库**）
+- **暂不需要 Redis**：事件总线/幂等当前是内存版临时实现，仅用于先把链路跑通；Redis Stream 尚未接入，待基础设施开发者完成后（模块 D）即切换为依赖 Redis
 
 ### 建表（第一次拉代码后执行一次）
 
 ```bash
-mysql -h34.124.218.94 -uai_collection -p -P3306 ai_collection_db < db/schema.sql
+# 连接信息向主架构负责人获取；-p 后不跟值会交互式提示输入密码（不进 shell 历史、不暴露）
+mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/schema.sql
 ```
 
 ### 编译启动
@@ -63,11 +64,12 @@ mysql -h34.124.218.94 -uai_collection -p -P3306 ai_collection_db < db/schema.sql
 cd Intelligent-Collection-V1
 mvn clean package -DskipTests
 
-export DB_HOST=34.124.218.94
-export DB_PORT=3306
-export DB_NAME=ai_collection_db
-export DB_USER=ai_collection
-export DB_PASSWORD='<向主架构负责人获取>'
+# 以下连接信息向主架构负责人获取，勿写入仓库
+export DB_HOST=<DB_HOST>
+export DB_PORT=<DB_PORT>
+export DB_NAME=<DB_NAME>
+export DB_USER=<DB_USER>
+export DB_PASSWORD='<DB_PASSWORD>'
 
 java -jar collection-admin/target/collection-admin.jar
 ```
@@ -91,9 +93,15 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 
 ## 三、替换 Mock 的核心规则（所有开发者必读）
 
-`collection-common` 的 **SPI 接口 + DTO + 枚举** 是编译期契约，**不得擅自修改**。接口变更须与主架构负责人对齐。
+> ⚠️ 这一版只是**初步搭好的框架**。`collection-common` 的 SPI 接口、DTO、枚举、状态机不是冻死的——随着各模块深入（如编排引擎需要新增事件类型、计划/步骤状态、接口入参出参等），**这些契约是可以、也预期会演进的**。
 
-**替换方式**：实现对应接口，加 `@Component`（同名时加 `@Primary`），或直接删除同名 Mock 类。**主框架（collection-engine）零改动**。
+约定的是**改的方式**，不是禁止改：
+
+- **优先**：在不破坏现有调用方的前提下扩展（如 DTO 加可选字段、枚举加新值、新增方法重载）。
+- **涉及跨模块的契约改动**（改 SPI 方法签名、改事件 payload、加/改状态机状态等）：先在群里同步并与主架构负责人对齐，确认对 `collection-engine` 主框架的影响后再改，避免各模块各改一份导致编译/语义冲突。
+- **纯模块内部实现**（Mock 换真实、内部类、私有方法）：自行决定，无需对齐。
+
+**替换 Mock 的方式**：实现对应接口，加 `@Component`（与 Mock 同名时加 `@Primary` 覆盖），或直接删除同名 Mock 类。只要契约不变，**主框架（collection-engine）零改动**。
 
 ---
 
@@ -269,18 +277,20 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ---
 
-## 五、接口契约（改动前必须与主架构负责人对齐）
+## 五、跨模块契约（改动前请同步对齐）
 
-以下文件**不得单方面修改**，变更须经 review：
+以下是被多个模块共享的契约文件。**可以演进**（这版只是初版框架），但因为改动会影响所有依赖方，**改前请先在群里同步并与主架构负责人对齐**，由主架构评估对 `collection-engine` 的影响后统一改、统一发版：
 
 ```
 collection-common/src/main/java/com/collection/common/spi/        # 5 个 SPI 接口
 collection-common/src/main/java/com/collection/common/channel/    # ChannelGateway
-collection-common/src/main/java/com/collection/common/event/      # CollectionEventBus + CollectionEvent
-collection-common/src/main/java/com/collection/common/dto/        # 5 个 DTO
-collection-common/src/main/java/com/collection/common/model/      # 领域模型
-collection-common/src/main/java/com/collection/common/enums/      # 所有枚举
+collection-common/src/main/java/com/collection/common/event/      # CollectionEventBus + CollectionEvent（新增事件类型在此）
+collection-common/src/main/java/com/collection/common/dto/        # 5 个 DTO（入参/出参）
+collection-common/src/main/java/com/collection/common/model/      # 领域模型（计划/步骤/状态字段）
+collection-common/src/main/java/com/collection/common/enums/      # 所有枚举（PlanStatus / EventType / Stage 等）
 ```
+
+> 各模块**内部**的代码（Mock 替换、私有实现、模块自有的表与类）无需对齐，自行决定。
 
 ---
 
