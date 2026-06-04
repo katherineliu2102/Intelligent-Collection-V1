@@ -111,7 +111,15 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 
 ### 模块 A：渠道编排 → `collection-channel`
 
-**负责人接续替换以下 6 个 Mock 类，参考文档：《渠道编排规格》**
+**负责人接续替换以下 6 个 Mock 类，参考文档：**
+
+| 文档 | 路径（**唯一定稿**：`docs/`） |
+|------|--------------------------------|
+| **文档索引** | [docs/README_渠道文档索引.md](./docs/README_渠道文档索引.md) |
+| 渠道编排规格 v1.4（含 §3.5 Phase 1 范围） | [docs/MOCASA催收系统升级_Phase1_渠道编排规格.md](./docs/MOCASA催收系统升级_Phase1_渠道编排规格.md) |
+| 引擎对齐待办 | [docs/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md](./docs/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) |
+| collection-channel 总规格 | [docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md](./docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md) |
+| LTH SMS / SendGrid Email / LTH Voice / FCM Push | 见 [文档索引](./docs/README_渠道文档索引.md) |
 
 #### A1. `MockPlanFactory` → `DefaultPlanFactory`
 
