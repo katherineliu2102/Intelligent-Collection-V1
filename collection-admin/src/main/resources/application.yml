@@ -1,0 +1,39 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: intelligent-collection
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE}
+  config:
+    import:
+      - nacos:${spring.application.name}-common.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
+  main:
+    web-application-type: servlet
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_SERVER_ADDR}
+        namespace: ${NACOS_NAMESPACE}
+        group: ${NACOS_GROUP}
+        username: ${NACOS_USERNAME}
+        password: ${NACOS_PASSWORD}
+        config-retry-time: 3000
+        timeout: 10000
+        max-retry: 3
+        file-extension: yml
+        refresh-enabled: true
+        encoding: utf-8
+        enabled: true
+
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+    import:
+      - nacos:${spring.application.name}-local.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
+
+logging:
+  config: classpath:logback-spring.xml

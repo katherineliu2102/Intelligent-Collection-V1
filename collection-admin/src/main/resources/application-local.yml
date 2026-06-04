@@ -1,0 +1,11 @@
+server:
+  port: 8888
+spring:
+  application:
+    name: intelligent-collection-local
+logging:
+  level:
+    root: INFO
+    com.collection: DEBUG
+    org.mybatis: INFO
+    org.springframework.web: INFO

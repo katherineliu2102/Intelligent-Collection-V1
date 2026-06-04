@@ -1,0 +1,15 @@
+.git
+.idea
+.vscode
+
+**/target
+**/logs
+!collection-admin/target/
+!collection-admin/target/collection-admin.jar
+
+*.log
+*.tmp
+*.swp
+
+.env
+.env.*
