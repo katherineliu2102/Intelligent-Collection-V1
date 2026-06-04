@@ -113,6 +113,33 @@ curl -X POST "http://localhost:8080/webhook/channel-callback?planId=1&stepId=3&r
 
 ---
 
+## 附：Docker 启动（本机先打包）
+
+采用“方案 3”：先用本机 Maven 打包，再构建运行镜像，避免容器内重复下载依赖。
+
+### 一条命令启动
+
+- Git Bash:
+  - `./start-docker.sh`
+- Windows CMD / PowerShell:
+  - `start-docker.cmd`
+
+脚本实际执行：
+
+```bash
+mvn -pl collection-admin -am clean package -DskipTests
+docker compose up -d --build --force-recreate
+```
+
+### 常用命令
+
+```bash
+docker compose logs -f collection-admin
+docker compose down
+```
+
+---
+
 ## 五、各开发者接续指南（契约冻结后并行）
 
 `collection-common` 的 SPI 接口 + DTO + 枚举为**编译期契约**，替换 Mock 即可接续，主框架零改动。

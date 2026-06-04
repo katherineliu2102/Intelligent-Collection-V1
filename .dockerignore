@@ -1,0 +1,7 @@
+# 先忽略全部
+**
+
+# 只放行最终 JAR（需逐级取消忽略父目录）
+!collection-admin/
+!collection-admin/target/
+!collection-admin/target/collection-admin.jar
