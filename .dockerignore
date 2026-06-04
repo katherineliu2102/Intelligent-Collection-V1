@@ -1,15 +1,7 @@
-.git
-.idea
-.vscode
+# 先忽略全部
+**
 
-**/target
-**/logs
+# 只放行最终 JAR（需逐级取消忽略父目录）
+!collection-admin/
 !collection-admin/target/
 !collection-admin/target/collection-admin.jar
-
-*.log
-*.tmp
-*.swp
-
-.env
-.env.*
