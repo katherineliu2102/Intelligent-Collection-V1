@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.1.0.RELEASE</version>
+        <version>2.7.18</version>
         <relativePath/>
     </parent>
 
@@ -29,16 +29,35 @@
 
     <properties>
         <java.version>1.8</java.version>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <mybatis.starter.version>2.0.0</mybatis.starter.version>
+        <spring-cloud.version>2021.0.9</spring-cloud.version>
+        <spring-cloud-alibaba.version>2021.0.6.2</spring-cloud-alibaba.version>
+        <mybatis.starter.version>2.3.2</mybatis.starter.version>
         <fastjson.version>1.2.83</fastjson.version>
-        <lombok.version>1.18.12</lombok.version>
-        <commons-lang3.version>3.9</commons-lang3.version>
-        <mysql.version>8.0.28</mysql.version>
+        <lombok.version>1.18.42</lombok.version>
+        <commons-lang3.version>3.12.0</commons-lang3.version>
+        <mysql.version>8.0.33</mysql.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <!-- 内部模块 -->
             <dependency>
                 <groupId>com.collection</groupId>
@@ -84,7 +103,7 @@
             </dependency>
             <dependency>
                 <groupId>mysql</groupId>
-                <artifactId>mysql-connector-java</artifactId>
+                <artifactId>mysql-connector-j</artifactId>
                 <version>${mysql.version}</version>
             </dependency>
         </dependencies>
@@ -102,6 +121,24 @@
     <build>
         <pluginManagement>
             <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.11.0</version>
+                    <configuration>
+                        <source>${maven.compiler.source}</source>
+                        <target>${maven.compiler.target}</target>
+                        <encoding>${project.build.sourceEncoding}</encoding>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                    <configuration>
+                        <useModulePath>false</useModulePath>
+                    </configuration>
+                </plugin>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
