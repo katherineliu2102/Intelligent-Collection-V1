@@ -112,4 +112,4 @@ Phase 1：**无** `CHANNEL_CALLBACK` 用于 SMS 步骤完成。
 
 ---
 
-> 现网参考：[case-assign-and-LTH-lifecycle.md](../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) §2.1 `sendSms`
+> 现网参考：[case-assign-and-LTH-lifecycle.md](../../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) §2.1 `sendSms`
