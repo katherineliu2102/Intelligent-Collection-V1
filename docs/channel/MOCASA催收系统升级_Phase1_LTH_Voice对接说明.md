@@ -152,4 +152,4 @@ dispatch 成功 → plan STEP_EXECUTING + CALLBACK_TIMEOUT(默认60min)
 
 ---
 
-> 现网参考：[case-assign-and-LTH-lifecycle.md](../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) §2.1、§2.3 Phase 5
+> 现网参考：[case-assign-and-LTH-lifecycle.md](../../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) §2.1、§2.3 Phase 5
