@@ -82,6 +82,19 @@ public class PlanLifecycleManager {
     // ───────────────────────── 中断（§2.4） ─────────────────────────
 
     @Transactional
+    public List<CollectionEvent> onCaseCeased(CollectionEvent event) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
+        plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
+        for (ContactPlan p : plans) {
+            planRepository.findPlanWithLock(p.getId());
+            planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+            log.info("[caseCeased] cancelled plan {} (CEASED)", p.getId());
+        }
+        return noEvents();
+    }
+
+    @Transactional
     public List<CollectionEvent> onRepaymentReceived(CollectionEvent event) {
         Long userId = event.getLong(CollectionEvent.USER_ID);
         List<ContactPlan> plans = planRepository.findActivePlansByUser(userId);
@@ -294,7 +307,16 @@ public class PlanLifecycleManager {
             return; // 单活跃计划约束 / 幂等
         }
         CaseInfo caseInfo = caseService.getCaseInfo(caseId);
+        if (caseInfo != null && isCeased(caseInfo)) {
+            log.info("[create] caseId={} is CEASED, skip PlanFactory.create", caseId);
+            return;
+        }
         ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+        if (snapshot != null && snapshot.getCaseContext() != null
+                && "CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
+            log.info("[create] caseId={} snapshot collectionStatus=CEASED, skip", caseId);
+            return;
+        }
 
         ContactPlan plan = planFactory.create(caseInfo, stage, snapshot); // SPI：异常→NACK
         if (plan == null) {
@@ -364,6 +386,10 @@ public class PlanLifecycleManager {
         } catch (IllegalArgumentException e) {
             return ContactResult.ANSWERED;
         }
+    }
+
+    private boolean isCeased(CaseInfo caseInfo) {
+        return "CEASED".equalsIgnoreCase(caseInfo.getCaseStatus());
     }
 
     private Stage parseStage(String s) {

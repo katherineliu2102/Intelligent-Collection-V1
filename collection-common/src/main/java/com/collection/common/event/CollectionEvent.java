@@ -24,6 +24,10 @@ public class CollectionEvent {
     public static final String STAGE = "stage";
     public static final String PTP_ID = "ptpId";
     public static final String TARGET_STAGE = "targetStage";
+    public static final String MAX_DPD = "maxDpd";
+    public static final String DISPOSITION = "disposition";
+    public static final String PROVIDER_MSG_ID = "providerMsgId";
+    public static final String RESULT = "result";
 
     private String eventId;
     private EventType eventType;

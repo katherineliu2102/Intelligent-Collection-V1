@@ -1,0 +1,35 @@
+<!--
+scriptSlot: S1_EMAIL_STAGE_WARNING
+stage: S1 | dpd: 3 | trigger: 14:00 Asia/Manila
+layout: standard
+subject: Action Required: Account Escalation Starts If Unpaid
+preheader: Pay ₱{{amount_due}} today or late fees increase and your account escalates.
+-->
+<html>
+  <head><title></title></head>
+  <body>
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333333; background-color: #ffffff;">
+      <div style="text-align: center; padding-bottom: 20px;"><h2 style="color: #1A365D; margin: 0; letter-spacing: 1px;">MOCASA</h2></div>
+      <div style="background-color: #FFF7ED; padding: 30px; border-radius: 12px; border-top: 5px solid #F97316; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <p style="font-size: 16px; margin-top: 0;">Hi <strong>{{borrower_name}}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6; color: #4B5563;">
+          Your payment is <strong>{{overdue_days}} days overdue</strong> and still unpaid.
+          <strong>If we do not receive payment today, your account will escalate</strong> to the next
+          recovery stage—with <strong>additional late fees</strong> and stronger internal follow-up.
+          This is your last chance to resolve at the current stage.
+        </p>
+        <div style="background-color: #ffffff; padding: 20px; border-radius: 8px; margin: 25px 0; text-align: center; border: 1px solid #FED7AA;">
+          <p style="font-size: 14px; color: #EA580C; margin: 0 0 5px 0; font-weight: bold; text-transform: uppercase;">Outstanding Balance</p>
+          <h1 style="color: #DC2626; margin: 0; font-size: 36px;">₱ {{amount_due}}</h1>
+        </div>
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
+          <a href="{{payment_link}}" style="background-color: #F97316; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block;">Pay Now</a>
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 25px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+        <p style="margin: 0;">If you have already paid, please disregard this email.</p>
+        <p style="margin: 5px 0 0 0;">Need help? Contact our support team via the app.</p>
+      </div>
+    </div>
+  </body>
+</html>

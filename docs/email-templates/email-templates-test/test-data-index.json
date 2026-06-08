@@ -1,0 +1,22 @@
+{
+  "_comment": "SendGrid Test Data · docs/email-templates/email-templates-test/",
+  "samples": {
+    "S0_DUE_TODAY_EMAIL": "test-data.sample.json",
+    "S1_EMAIL_OVERDUE_NOTICE": "test-data-s1-d1.json",
+    "S1_EMAIL_STAGE_WARNING": "test-data-s1-d3.json",
+    "S2_EMAIL_ENTRY": "test-data-s2-d4.json",
+    "S2_EMAIL_MID": "test-data-s2-d7.json",
+    "S2_EMAIL_PRE_S3": "test-data-s2-d12.json",
+    "S3_EMAIL_ENTRY": "test-data-s3-d16.json",
+    "S3_EMAIL_MID": "test-data-s3-d23.json",
+    "S3_EMAIL_PRE_S4": "test-data-s3-d30.json",
+    "S4_EMAIL_ENTRY": "test-data-s4-d31.json",
+    "S4_EMAIL_FINAL_REMINDER": "test-data-s4-d45.json",
+    "S4_EMAIL_MID": "test-data-s4-d60.json",
+    "S4_EMAIL_PRE_CLOSE": "test-data-s4-d75.json",
+    "S1_EMAIL_CONDITIONAL": "test-data-conditional-s1.json",
+    "S2_EMAIL_CONDITIONAL": "test-data-conditional-s2.json",
+    "S3_EMAIL_CONDITIONAL": "test-data-conditional-s3.json",
+    "S4_EMAIL_CONDITIONAL": "test-data-conditional-s4.json"
+  }
+}

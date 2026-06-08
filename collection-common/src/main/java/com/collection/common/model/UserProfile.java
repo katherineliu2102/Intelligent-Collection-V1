@@ -39,6 +39,7 @@ public class UserProfile {
         private String idNumber;
         private String address;
         private String primaryPhone;
+        private String email;
         private List<String> alternatePhones;
     }
 
@@ -87,6 +88,7 @@ public class UserProfile {
         private PhoneValidity phoneValidity;
         private Boolean viberRegistered;
         private Boolean whatsappRegistered;
+        private String fcmToken;
     }
 
     @Data

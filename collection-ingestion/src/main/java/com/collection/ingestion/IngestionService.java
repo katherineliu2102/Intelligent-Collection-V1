@@ -60,6 +60,14 @@ public class IngestionService {
         log.info("[Ingestion] publish REPAYMENT_RECEIVED user={}", userId);
     }
 
+    /** D+91 完全停催 → 发布 CASE_CEASED（引擎 cancel plan，不再 create）。 */
+    public void caseCeased(Long caseId, Integer maxDpd) {
+        eventBus.publish(CollectionEvent.of(EventType.CASE_CEASED)
+                .with(CollectionEvent.CASE_ID, caseId)
+                .with(CollectionEvent.MAX_DPD, maxDpd == null ? 91 : maxDpd));
+        log.info("[Ingestion] publish CASE_CEASED case={} maxDpd={}", caseId, maxDpd);
+    }
+
     /** PTP 到期 → 发布 PTP_EXPIRED。 */
     public void ptpExpired(Long caseId, Long ptpId) {
         eventBus.publish(CollectionEvent.of(EventType.PTP_EXPIRED)
