@@ -4,7 +4,7 @@
 > **日期**: 2026-06-03  
 > **定位**: 渠道**执行子层**（哑管道）：`ChannelGateway`、供应商 Adapter、Webhook 接入；与 **策略子层** SPI（`PlanFactory` / `ExecutionGuard` / `StepResolver` 等）同属 `collection-channel` 模块。  
 > **范围**: Phase 1 机器轨 — SMS（LTH）、Email（SendGrid）、Push（FCM）、AI 外呼 / TTS（LTH）。  
-> **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../HANDOFF.md)、[选型报告](../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
+> **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5、[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../../HANDOFF.md)、[选型报告](../../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
 
 ---
 
@@ -29,12 +29,12 @@
 | 层级 | 文档 / 代码 | 职责 |
 |------|-------------|------|
 | L1 编排策略 | [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) | Stage 槽位、Guard 规则、Tone、事件语义 |
-| L2 引擎 | `collection-engine` + [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | 状态机、七步管线、事件消费 |
+| L2 引擎 | `collection-engine` + [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md) | 状态机、七步管线、事件消费 |
 | L3 渠道执行 | **本文 + 四份子渠道说明** | API 调用、Webhook、Adapter |
 
 **哑管道原则**（架构设计）：Adapter **不查业务库**；案件/画像信息仅来自 `StepCommand` 与 `ExecutionContext.contextSnapshot`（由 `StepResolver` 读取）。
 
-**替换初版 Mock**（[HANDOFF.md §四 模块 A](../HANDOFF.md)）：
+**替换初版 Mock**（[HANDOFF.md §四 模块 A](../../HANDOFF.md)）：
 
 | Mock 类 | 目标类 |
 |---------|--------|
@@ -102,7 +102,7 @@ PLAN_STEP_DUE
 
 ### 3.3 CHANNEL_CALLBACK 事件 payload
 
-初版 [WebhookController](../collection-admin/src/main/java/com/collection/admin/web/WebhookController.java) 扩展后统一信封：
+初版 [WebhookController](../../collection-admin/src/main/java/com/collection/admin/web/WebhookController.java) 扩展后统一信封：
 
 | payload key | 类型 | 必填 | 说明 |
 |-------------|------|------|------|
@@ -121,7 +121,7 @@ PLAN_STEP_DUE
 
 ## 4. collection-common 演进（Phase 1 必选）
 
-与 [HANDOFF「契约可演进」](../HANDOFF.md) 一致，下列扩展须在实现 Adapter 前合入 `collection-common` / `collection-service`：
+与 [HANDOFF「契约可演进」](../../HANDOFF.md) 一致，下列扩展须在实现 Adapter 前合入 `collection-common` / `collection-service`：
 
 | 项 | 变更 |
 |----|------|

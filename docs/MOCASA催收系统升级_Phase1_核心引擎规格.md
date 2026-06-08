@@ -245,6 +245,12 @@ def on_case_ingested(event):
 
 > **单活跃计划约束**：同一 `case_id + stage` 在同一时刻最多存在一个非终态计划。阶段变更时旧阶段计划被取消后才创建新阶段计划（§2.4），穷尽续建时旧计划先标完成再创建新计划（§2.5）。因此 `find_active_plan(case_id)` 返回单个结果；`find_active_plans(user_id)` 返回多个结果仅当用户有多笔贷款（不同 case_id）。
 
+> **快照新鲜度边界（重要，编排层 SPI 必读）**：`context_snapshot` 在**计划创建时冻结**写入 `t_contact_plan.context_snapshot`，并在**计划整个生命周期内保持不变**。它**仅在以下时机重建**：①新建计划（`CASE_INGESTED`）、②升档为新阶段建计划（`STAGE_CHANGED`，§2.4）、③穷尽续建建新计划（§2.5）。**计划存活期内不刷新**——同一计划的所有步骤决策都基于同一份快照，以保证决策视图的时点一致性。
+>
+> 由此推导出编排层 SPI（`StepResolver`/`AdvancementPolicy`/`ExhaustionPolicy`）的两条使用约束：
+> - 快照中的**案件画像 / 还款计划 / 用户资料**反映的是"建计划那一刻"的状态，**可能随计划存活而陈旧**；需要绝对实时的判断（如"是否已还款"）**不得依赖快照**，由引擎在执行前实时校验（§2.6 PTP、七步管线系统级守卫）。
+> - 快照中的 `contactHistory` 是建计划时的旧值；决策应使用引擎在执行时实时装配进 `ExecutionContext` 的 `recentTimeline`（计划自身执行过程中新产生的触达），而非快照里的历史。
+
 ### 2.3 步骤执行循环
 
 **触发事件**：`PLAN_STEP_DUE`、`CHANNEL_CALLBACK`、`STEP_COMPLETED`（事件名，非计划状态）。计划态流转见 [§2.7](#27-状态转换)；下文按**事件驱动**展开单次处理链路（非状态图重复）。
@@ -361,7 +367,7 @@ def on_channel_callback(event):
 | **一级·引擎超时哨兵** | 按配置/渠道 metadata 注册超时 Job，到期仍无回调则标 `FAILED` 并 `publish(STEP_COMPLETED)`，走正常推进链路 | 供应商无回调、Webhook 丢失 |
 | **二级·渠道对账扫描** | 一级未生效或外部已有结果但事件未到：查供应商状态、补写 timeline、补发事件 | 超时 Job 注册失败、进程崩溃、事件丢失 |
 
-一级是状态机**主路径**自愈；二级是**运维兜底**，覆盖一级覆盖不到的副作用与对账缺口（详见 [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)）。
+一级是状态机**主路径**自愈；二级是**运维兜底**，覆盖一级覆盖不到的副作用与对账缺口（详见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)）。
 
 进入 `STEP_EXECUTING`（异步渠道）时注册超时 Job（[§3.1 步骤⑦](#31-executestep-七步管线)）：
 
@@ -378,7 +384,7 @@ def on_callback_timeout(event):
     publish(STEP_COMPLETED)                        # 由 AdvancementPolicy 决定下一步
 ```
 
-**默认 60 分钟**：面向 AI_CALL / TTS（回调通常分钟级）。`HUMAN_CALL` 坐席录入可达数小时，须由 `StepResolver` 在 `StepCommand.metadata` 中传入更长超时（与 [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) 人工渠道约定对齐，不宜共用 60 分钟默认值）。全局默认见 `engine.step.callback_timeout_minutes`（[基础设施交互规范·附录](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录配置参数汇总)）。
+**默认 60 分钟**：面向 AI_CALL / TTS（回调通常分钟级）。`HUMAN_CALL` 坐席录入可达数小时，须由 `StepResolver` 在 `StepCommand.metadata` 中传入更长超时（与 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md) 人工渠道约定对齐，不宜共用 60 分钟默认值）。全局默认见 `engine.step.callback_timeout_minutes`（[基础设施交互规范·附录](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录配置参数汇总)）。
 
 ### 2.4 中断处理
 
@@ -480,7 +486,7 @@ def on_plan_exhausted(event):
 
 ### 2.6 PTP 到期处理
 
-**PTP 记录来源**：坐席在通话中录入用户的承诺还款日期（Promise to Pay），由催收员 App 后端持久化至 `t_collection_ptp_info`。Phase 1 仅此一个来源——无其他事件或自动流程会产生 PTP 记录。录入流程不归核心引擎管辖（见 [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)）。`ptpExpiredHandler`（[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)）定时扫描到期记录并发布 `PTP_EXPIRED` 事件。
+**PTP 记录来源**：坐席在通话中录入用户的承诺还款日期（Promise to Pay），由催收员 App 后端持久化至 `t_collection_ptp_info`。Phase 1 仅此一个来源——无其他事件或自动流程会产生 PTP 记录。录入流程不归核心引擎管辖（见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)）。`ptpExpiredHandler`（[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)）定时扫描到期记录并发布 `PTP_EXPIRED` 事件。
 
 `PTP_EXPIRED` 是终态后的重评估：到期时若已还款则补偿取消，若违约则按需续建，若有活跃计划则不干预。
 
@@ -682,7 +688,7 @@ def execute_step(plan, step):
 本节定义核心引擎与渠道编排层之间的**接口契约层**——5 个策略 SPI（引擎声明、渠道编排层实现）+ 1 个技术执行管道 `ChannelGateway`。
 
 - **覆盖内容**：每个接口的调用时机与决策问题（§4.1 接口总览）、引擎对实现异常的应对决策（§4.1 SPI 设计决策）、入参/出参字段定义（§4.2 共享 DTO）
-- **不覆盖**：接口的具体实现逻辑（模板匹配规则、合规阈值、渠道选择策略等），见 [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)
+- **不覆盖**：接口的具体实现逻辑（模板匹配规则、合规阈值、渠道选择策略等），见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)
 
 ### 模块边界与调用全景
 

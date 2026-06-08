@@ -24,12 +24,12 @@
 
 | 文档 | 说明 |
 |------|------|
-| [MOCASA催收系统升级_Phase1_核心引擎规格.md](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | 七步管线、CHANNEL_CALLBACK |
-| [MOCASA催收系统升级_Phase1_领域模型与数据定义.md](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | StepCommand、ContactResult |
-| [HANDOFF.md](../HANDOFF.md) | Mock 替换清单（模块 A） |
+| [MOCASA催收系统升级_Phase1_核心引擎规格.md](../MOCASA催收系统升级_Phase1_核心引擎规格.md) | 七步管线、CHANNEL_CALLBACK |
+| [MOCASA催收系统升级_Phase1_领域模型与数据定义.md](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | StepCommand、ContactResult |
+| [HANDOFF.md](../../HANDOFF.md) | Mock 替换清单（模块 A） |
 
 ## 外部参考（`AI collection/`，不随本目录迁移）
 
-- [行业调研报告](../../AI%20collection/MOCASA催收策略编排_行业调研报告_v1.md)
-- [渠道选型报告](../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
-- [LTH 现网生命周期](../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md)
+- [行业调研报告](../../../AI%20collection/MOCASA催收策略编排_行业调研报告_v1.md)
+- [渠道选型报告](../../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
+- [LTH 现网生命周期](../../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md)
