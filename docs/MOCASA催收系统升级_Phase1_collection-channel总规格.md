@@ -199,7 +199,7 @@ collection-channel/
 | 步骤幂等 | 引擎 `IdempotencyService`，key=`planId:stepOrder:retryCount` |
 | 渠道幂等 | Redis + SendGrid `custom_args.idempotency_key` |
 | 引擎重试 | `retryable=true` 时注册延迟 `PLAN_STEP_DUE`（Orchestrator ⑥） |
-| 配置表 | `t_channel_config`（HANDOFF 列，DDL 待补 schema）；`credentials_ref` 指向密钥 |
+| 配置 | **Phase 1 主路径**：Nacos `channel.*`（见 [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单渠道模块使用)）；**Phase 2**：`t_channel_config` DDL + `credentials_ref` |
 
 ---
 
@@ -208,7 +208,7 @@ collection-channel/
 | 文档 | 供应商 API |
 |------|------------|
 | [LTH SMS 对接说明](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md) | `LthFunction.sendSms` |
-| [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `POST /v3/mail/send`；API 附录见 [SendGrid催收邮件接入指南](./SendGrid催收邮件接入指南.md) |
+| [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `POST /v3/mail/send`；API 附录见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md) |
 | [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `voiceNotification` + 回调 |
 | [FCM Push 对接说明](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md) | FCM HTTP v1 |
 
@@ -250,21 +250,18 @@ PLAN_STEP_DUE → StepCommand{ channelType=AI_CALL, metadata={ callbackUrl, time
 
 ## 附录 A：scriptSlot → 供应商 template_id 映射表
 
-> Phase 1 先填 **S0–S2** 与 S1 Voice；`template_id` 由运营在 SendGrid 控制台创建后填入。SMS 使用 `sms_body` 渲染，**无** LTH template_id 列。
+> **SSOT 已迁移**至独立文档，本附录仅保留索引链接。全渠道（SMS / Push / Email / Voice）scriptSlot、渲染方式、Nacos 配置见：
 
-| scriptSlot | channel | provider | template_id / 渲染 | language | Phase 1 状态 |
-|------------|---------|----------|----------------------|----------|--------------|
-| S0_REMINDER | SMS | LTH | Resolver→sms_body | tl | 待填文案 |
-| S0_DUE_TODAY_EMAIL | EMAIL | SendGrid | d-____________ | tl/en | 待运营创建 |
-| S1_SMS_STANDARD | SMS | LTH | Resolver→sms_body | tl | 待填文案 |
-| S1_PUSH_STANDARD | PUSH | FCM | data payload 模板 | tl | 待 App 深链 |
-| S1_EMAIL_OVERDUE_NOTICE | EMAIL | SendGrid | d-____________ | tl/en | D+1 里程碑 |
-| S1_VOICE_PRIMARY | AI_CALL | LTH | voice 脚本 ID / 参数 | tl | 待 LTH 确认 |
-| S2_SMS_STANDARD | SMS | LTH | Resolver→sms_body | tl | 待填文案 |
-| S2_EMAIL_ENTRY | EMAIL | SendGrid | d-____________ | tl/en | D+4 里程碑 |
-| … | … | … | … | … | S3/S4 上线前补全 |
+**[渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)** — §2 全渠道总表 · §3 Email SendGrid · §4~§6 其他渠道
 
-**Phase 2 保留、Phase 1 不生成 step**：`S1_EMAIL_CONDITIONAL`、`S2_EMAIL_CONDITIONAL` 等。
+| 渠道 | 渲染方式 | 配置键 | 详细说明 |
+|------|----------|--------|----------|
+| EMAIL | SendGrid Dynamic Template `d-xxx` | `channel.sendgrid.templates.{scriptSlot}` | [§3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [`email-templates/`](./email-templates/README.md)（含 `email-templates-test/`） |
+| SMS | Resolver → `sms_body`（无 LTH template_id） | `channel.lth.sms.*` | [§4](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#4-smslth) |
+| PUSH | FCM data payload | `channel.fcm.*` | [§5](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#5-pushfcm) |
+| AI_CALL / TTS | LTH voice 脚本 / 参数 | `channel.lth.voice.*` | [§6](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#6-voice--ai_calllth) |
+
+**Phase 2 不生成 plan step**：`*_EMAIL_CONDITIONAL`（见模板清单 §2）。
 
 ---
 

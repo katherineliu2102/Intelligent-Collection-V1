@@ -1,0 +1,40 @@
+<!--
+scriptSlot: S0_DUE_TODAY_EMAIL
+stage: S0 | dpd: 0 | trigger: 14:00 Asia/Manila
+layout: friendly
+subject: ⚠️ Action Required: Your Payment Is Due Today
+preheader: Pay ₱{{amount_due}} today to avoid late fees and protect your credit record.
+variables: borrower_name, amount_due, overdue_days, payment_link
+sendgrid: d-39cb3cd90ee44451887c5c67bd1ac073
+-->
+<html>
+  <head><title></title></head>
+  <body>
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333333; background-color: #ffffff;">
+      <div style="text-align: center; padding-bottom: 20px;">
+        <h2 style="color: #1A365D; margin: 0; letter-spacing: 1px;">MOCASA</h2>
+      </div>
+      <div style="background-color: #F8FAFC; padding: 30px; border-radius: 12px; border-top: 5px solid #3B82F6; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <p style="font-size: 16px; margin-top: 0;">Hi <strong>{{borrower_name}}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6; color: #4B5563;">
+          Your MOCASA payment of <strong>₱ {{amount_due}}</strong> is <strong>due today</strong>.
+          Paying on time helps you avoid late fees and keeps your borrowing record in good standing.
+        </p>
+        <div style="background-color: #ffffff; padding: 20px; border-radius: 8px; margin: 25px 0; text-align: center; border: 1px solid #E2E8F0;">
+          <p style="font-size: 14px; color: #64748B; margin: 0 0 5px 0; text-transform: uppercase; letter-spacing: 0.5px;">Amount Due Today</p>
+          <h1 style="color: #EF4444; margin: 0; font-size: 36px;">₱ {{amount_due}}</h1>
+        </div>
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 10px;">
+          <a href="{{payment_link}}" style="background-color: #3B82F6; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block; box-shadow: 0 4px 6px rgba(59, 130, 246, 0.25);">Pay Now</a>
+        </div>
+        <p style="font-size: 13px; line-height: 1.5; color: #64748B; margin: 16px 0 0 0; text-align: center;">
+          MOCASA will never ask you to pay to a personal account. Pay only through the official app link above.
+        </p>
+      </div>
+      <div style="text-align: center; margin-top: 25px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+        <p style="margin: 0;">If you have already paid, please disregard this email.</p>
+        <p style="margin: 5px 0 0 0;">Need help? Contact our support team via the app.</p>
+      </div>
+    </div>
+  </body>
+</html>

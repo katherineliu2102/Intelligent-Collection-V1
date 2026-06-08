@@ -8,6 +8,8 @@ public enum CancelReason {
 
     REPAID(true),
     STAGE_UPGRADE(true),
+    /** Max DPD ≥91 完全停催（CASE_CEASED）。 */
+    CEASED(true),
     COMPLAINT(false),
     MANUAL(false),
     PTP_EXPIRED(false);

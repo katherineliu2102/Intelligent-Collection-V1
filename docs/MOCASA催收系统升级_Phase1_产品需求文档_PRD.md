@@ -186,7 +186,7 @@ MOCASA 当前菲律宾催收体系由三套独立系统支撑：
 | Push 通知 | FCM / APNs | App 内推送 | 零成本、即时触达、需用户安装 App | **Phase 1 接入** |
 | SMS 短信 | LTH + 备选供应商 | 文本短信 | 覆盖率最高、成本适中、支持多语言模板 | **Phase 1 升级** |
 | AI Robot Call | LTH TTS / 新 AI 供应商 | 自动语音播报 | 无需坐席、支持 Tagalog/English、可定制话术 | **Phase 1 升级** |
-| Email | SES / SendGrid | 邮件 | 适合正式通知（欢迎函 / 催告函 / Demand Letter） | **Phase 1 接入** |
+| Email | SendGrid（主；SES 备，Phase 1 不实现切换） | 邮件 | 适合正式通知（欢迎函 / 催告函 / Demand Letter） | **Phase 1 接入** |
 | Viber | Viber Business Messages API | 即时消息（富文本） | 菲律宾渗透率最高、富文本+按钮+图片、跨 iOS/Android | **Phase 1 接入（优先）** |
 | WhatsApp | WSCRM / WhatsApp Business API | 即时消息 | 双向对话能力、用户回复率高 | **Phase 1 升级** |
 | TTS 语音通知 | LTH | 自动语音播报 | 无需坐席、全自动播报还款提醒 | **Phase 1 升级** |
@@ -355,7 +355,7 @@ Phase 1 合规要求以系统可配置为目标，初期规则宽松，后续通
 | 供应商/渠道 | 当前状态 | 阻塞范围 | 建议行动 |
 |---|---|---|---|
 | Viber Business Messages API | ❓ 合约未签 | 阻塞 Viber 渠道上线（F2 Viber 部分） | **尽早启动签约流程**（渠道接入阶段阻塞项） |
-| Email 供应商（SES vs SendGrid） | ❓ 待选型 | 阻塞 Email 渠道上线 | 技术负责人确认 GCP 生态偏好后决策 |
+| Email 供应商（SendGrid） | ✅ 已决（2026-06-03，见 [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)） | — | Phase 1 按 SendGrid Dynamic Template 对接；SES 备通道 Phase 2 再评估 |
 | ASR 供应商（支持 Tagalog/Taglish） | ❓ 供应商接触中 | 不阻塞 Phase 1（预留接口），阻塞 Phase 2 F16 | 持续推进供应商评估；候选：Google Speech-to-Text、AssemblyAI |
 
 ### 10.3 风险清单

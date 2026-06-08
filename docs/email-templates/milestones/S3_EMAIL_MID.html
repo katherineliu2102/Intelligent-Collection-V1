@@ -1,0 +1,38 @@
+<!--
+scriptSlot: S3_EMAIL_MID
+stage: S3 | dpd: 23
+layout: formal
+subject: Second Notice: Credit Reporting Under Review
+preheader: {{overdue_days}} days overdue. Pay today to avoid bureau reporting.
+-->
+<html>
+  <head><title></title></head>
+  <body>
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333333; background-color: #ffffff;">
+      <div style="text-align: center; padding-bottom: 20px;">
+        <h2 style="color: #1A365D; margin: 0; letter-spacing: 1px;">MOCASA</h2>
+        <p style="font-size: 12px; color: #64748B; margin: 8px 0 0 0; text-transform: uppercase; letter-spacing: 1px;">Second Notice—Credit Warning</p>
+      </div>
+      <div style="background-color: #FEF2F2; padding: 30px; border-radius: 12px; border-top: 5px solid #DC2626; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <p style="font-size: 16px; margin-top: 0;">Dear <strong>{{borrower_name}}</strong>,</p>
+        <p style="font-size: 16px; line-height: 1.6; color: #4B5563;">
+          Despite prior notices, <strong>₱ {{amount_due}}</strong> remains unpaid after
+          <strong>{{overdue_days}} days</strong>. This is your <strong>second formal notice</strong>
+          under legal review. Without payment today, we will proceed with
+          <strong>reporting to national credit bureaus</strong>, which may
+          <strong>impact your ability to get loans or secure employment</strong>.
+        </p>
+        <div style="background-color: #ffffff; padding: 20px; border-radius: 8px; margin: 25px 0; text-align: center; border: 1px solid #FECACA;">
+          <p style="font-size: 14px; color: #B91C1C; margin: 0 0 5px 0; font-weight: bold; text-transform: uppercase;">Outstanding Balance</p>
+          <h1 style="color: #DC2626; margin: 0; font-size: 36px;">₱ {{amount_due}}</h1>
+        </div>
+        <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
+          <a href="{{payment_link}}" style="background-color: #DC2626; color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-size: 16px; font-weight: bold; display: inline-block;">Pay Now</a>
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #94A3B8; line-height: 1.6;">
+        <p style="margin: 0;">If you have already paid, please disregard this notice.</p>
+      </div>
+    </div>
+  </body>
+</html>

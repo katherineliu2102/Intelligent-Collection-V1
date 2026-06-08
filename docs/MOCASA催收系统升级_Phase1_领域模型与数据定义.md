@@ -546,7 +546,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 | SMS | 短信 | LTH | AUTOMATED | 升级 |
 | AI_CALL | AI 机器人外呼 | LTH | AUTOMATED | 升级 |
 | TTS | TTS 语音通知 | LTH | AUTOMATED | 升级 |
-| EMAIL | 邮件 | SES / SendGrid（待定） | AUTOMATED | 接入 |
+| EMAIL | 邮件 | SendGrid（主；SES 备） | AUTOMATED | 接入 |
 | VIBER | Viber 消息 | Viber Business API（待签约） | AUTOMATED | 接入 |
 | WHATSAPP | WhatsApp 消息 | WSCRM | AUTOMATED | 升级 |
 | HUMAN_CALL | 人工外呼 | LTH 预测式外呼 | AGENT_ASSISTED | 升级 |

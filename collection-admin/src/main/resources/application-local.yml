@@ -3,6 +3,51 @@ server:
 spring:
   application:
     name: intelligent-collection-local
+  cloud:
+    nacos:
+      config:
+        username: ${NACOS_USERNAME}
+        password: ${NACOS_PASSWORD}
+  # Nacos ConfigData 早期加载失败时的本地回退（MyBatis 驼峰映射必需，否则 plan_id→planId 失败）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+    jdbc-type-for-null: "NULL"
+collection:
+  scan:
+    interval-ms: 5000
+  idempotency: memory
+  eventbus: memory
+channel:
+  callback:
+    base-url: http://localhost:8888/webhook
+  debug:
+    legacy-three-step: false
+    # D0 邮件单步冒烟：取消下行注释并填写 SendGrid 密钥（勿提交 Git）
+    single-step: EMAIL
+  sendgrid:
+    api-key: ${SENDGRID_API_KEY:}
+    from-email: ${SENDGRID_FROM_EMAIL:collections@mocasa.test}
+    from-name: MOCASA Collections
+    # scriptSlot → d-xxx（见 docs/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md §3）
+    templates:
+      S0_DUE_TODAY_EMAIL: ${SENDGRID_D0_TEMPLATE_ID:d-39cb3cd90ee44451887c5c67bd1ac073}
+      S1_EMAIL_OVERDUE_NOTICE: d-8f802444870c4623a750f1502afa45bc
+      S1_EMAIL_STAGE_WARNING: d-72c68f1e83074ea2b183a0e7f3f6c17b
+      S2_EMAIL_ENTRY: d-9353d39a741d4e51bc3458b4d3f8cea9
+      S2_EMAIL_MID: d-7c4ee2dceaa34d81b0c3cc518f112064
+      S2_EMAIL_PRE_S3: d-fae607f9b20d49d886fd226232973f3f
+      S3_EMAIL_ENTRY: d-f82a59b63b83485291cb642231cf1b1a
+      S3_EMAIL_MID: d-d9f66c376bc04408ad80446506120bcf
+      S3_EMAIL_PRE_S4: d-5104ed17e6984b738c98d3e66d67cd37
+      S4_EMAIL_ENTRY: d-c2ef2c34bc9b41409fd62423a74688c2
+      S4_EMAIL_FINAL_REMINDER: d-0db13155d990471287029a120e3dee00
+      S4_EMAIL_MID: d-428fd5db13ff4a8c8a2fb8eb0bef4b56
+      S4_EMAIL_PRE_CLOSE: d-e28ba12db2344c8e9c0a4d9a4e26a107
+    unsubscribe-group-id: 0
 logging:
   level:
     root: INFO

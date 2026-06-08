@@ -1,0 +1,32 @@
+<!-- Layout: legal-letter · Stage S4 early (D+31–D+60) · 纯黑白律师函 · 无彩色 UI -->
+<div style="font-family: Georgia, 'Times New Roman', Times, serif; max-width: 600px; margin: 0 auto; padding: 32px 28px; color: #111111; background-color: #ffffff; border: 1px solid #111111;">
+
+  <div style="border-bottom: 2px solid #111111; padding-bottom: 14px; margin-bottom: 24px;">
+    <p style="margin: 0; font-size: 13px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;">MOCASA</p>
+    <p style="margin: 10px 0 0 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;">Formal Collection Notice</p>
+  </div>
+
+  <p style="font-size: 15px; margin-top: 0;">Dear <strong>{{borrower_name}}</strong>,</p>
+
+  <!-- BODY: 各 milestone 替换此段 -->
+  <p style="font-size: 15px; line-height: 1.75; color: #111111;">
+    This is a formal collection notice. Your account is <strong>{{overdue_days}} days past due</strong>.
+    <strong>Your only option is to pay the full balance immediately.</strong>
+  </p>
+
+  <p style="font-size: 13px; margin: 20px 0 4px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Total Amount Due</p>
+  <p style="font-size: 32px; font-weight: bold; margin: 0 0 24px 0;">₱ {{amount_due}}</p>
+
+  <a href="{{payment_link}}" style="display: inline-block; background-color: #111111; color: #ffffff; padding: 14px 28px; text-decoration: none; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase;">Pay Full Balance Now</a>
+
+  <p style="font-size: 14px; line-height: 1.75; margin-top: 28px; padding-top: 18px; border-top: 1px solid #cccccc; color: #111111;">
+    <strong>No alternative arrangements will be offered at this stage.</strong>
+    Continued non-payment under formal collection may result in further escalation and credit bureau reporting.
+  </p>
+
+  <div style="margin-top: 28px; font-size: 11px; color: #666666; line-height: 1.6;">
+    <p style="margin: 0;">This communication relates to your MOCASA loan account.</p>
+    <p style="margin: 6px 0 0 0;">If you have already paid, please disregard this notice.</p>
+  </div>
+
+</div>
