@@ -117,7 +117,7 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 |------|--------------------------------|
 | **文档索引** | [docs/README_渠道文档索引.md](./docs/README_渠道文档索引.md) |
 | 渠道编排规格 v1.4（含 §3.5 Phase 1 范围） | [docs/MOCASA催收系统升级_Phase1_渠道编排规格.md](./docs/MOCASA催收系统升级_Phase1_渠道编排规格.md) |
-| 引擎对齐待办 | [docs/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md](./docs/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) |
+| 核心引擎规格 | [docs/MOCASA催收系统升级_Phase1_核心引擎规格.md](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md) |
 | collection-channel 总规格 | [docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md](./docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md) |
 | LTH SMS / SendGrid Email / LTH Voice / FCM Push | 见 [文档索引](./docs/README_渠道文档索引.md) |
 
