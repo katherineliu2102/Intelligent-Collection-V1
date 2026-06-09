@@ -72,8 +72,7 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 
 | Nacos 路径 | 用途 | 测试 TC |
 |------------|------|---------|
-| `channel.lth.sms.*` | LTH 短信 | TC-SMS-01 |
-| `channel.fcm.*` | FCM Push | TC-PUSH-01 |
+| `channel.notification.*` | 通知中心 SMS + Push | TC-SMS-01、TC-PUSH-01/02 |
 | `channel.sendgrid.*` + `templates` 映射 | SendGrid Email | TC-EMAIL-01、TC-EMAIL-D0-01 |
 | `channel.lth.voice.url` | LTH 外呼 | TC-VOICE-01 |
 | `channel.callback.base-url` | Voice 回调 | TC-VOICE-03 |
@@ -91,7 +90,7 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 | **EMAIL** | `docs/email-templates/milestones/` + SendGrid 控制台 | 每 milestone 一个 `d-xxx` |
 | **EMAIL Test Data** | `docs/email-templates/email-templates-test/` | — |
 | **SMS** | Resolver → `sms_body` | 无 LTH template_id |
-| **PUSH** | FCM data payload | 无独立 template_id |
+| **PUSH** | 通知中心 `title`/`body`/`data`（JPush） | 无独立 template_id |
 | **Voice** | LTH 脚本参数 | 待 LTH 确认 |
 
 **Phase 1 Email 状态摘要**
@@ -121,8 +120,8 @@ collection:
 
 | 渠道 | single-step | 推荐 userId | 备注 |
 |------|-------------|-------------|------|
-| SMS | `SMS` | 90001 | `channel.lth.sms.*` |
-| PUSH | `PUSH` | 90002 | 有 fcmToken |
+| SMS | `SMS` | 90001 | `channel.notification.*` |
+| PUSH | `PUSH` | 90002 | 有 jpushToken |
 | EMAIL | `EMAIL` | 90004 | SendGrid |
 | **D0 Email** | `EMAIL` | **92002** | D0 模板 + **`wzynju@126.com`**（优先 126，勿默认 Gmail） |
 

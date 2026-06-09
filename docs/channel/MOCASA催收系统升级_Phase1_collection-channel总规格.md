@@ -3,7 +3,7 @@
 > **版本**: v1.0  
 > **日期**: 2026-06-03  
 > **定位**: 渠道**执行子层**（哑管道）：`ChannelGateway`、供应商 Adapter、Webhook 接入；与 **策略子层** SPI（`PlanFactory` / `ExecutionGuard` / `StepResolver` 等）同属 `collection-channel` 模块。  
-> **范围**: Phase 1 机器轨 — SMS（LTH）、Email（SendGrid）、Push（FCM）、AI 外呼 / TTS（LTH）。  
+> **范围**: Phase 1 机器轨 — SMS / App Push（**通知中心**）、Email（SendGrid）、AI 外呼 / TTS（LTH）。  
 > **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5、[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../../HANDOFF.md)、[选型报告](../../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
 
 ---
@@ -72,7 +72,7 @@ PLAN_STEP_DUE
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | channelType | ChannelType | SMS / PUSH / EMAIL / AI_CALL / TTS |
-| targetAddress | String | 手机 / 邮箱 / FCM token（由 Resolver 按渠道填入） |
+| targetAddress | String | 手机 / 邮箱 / JPush Registration ID（由 Resolver 按渠道填入） |
 | templateId | String | scriptSlot 或 SendGrid `d-xxx` / 内部模板键 |
 | idempotencyKey | String | 建议 `{planId}:{stepOrder}:{retryCount}` |
 | metadata | Map | 见下表 |
@@ -86,7 +86,7 @@ PLAN_STEP_DUE
 | callbackUrl | String | AI_CALL / TTS | 供应商回调基址（Adapter 拼 LTH 回调） |
 | timeoutMinutes | Integer | AI_CALL / TTS | 默认 60，覆盖引擎 `callback_timeout_minutes` |
 | scriptSlot | String | 建议 | 编排话术槽名，如 `S1_SMS_STANDARD` |
-| sms_body | String | SMS | **StepResolver 渲染后的正文**（LTH 只发送） |
+| sms_body | String | SMS | **StepResolver 渲染后的正文**（通知中心 `contentType=collection` 发送） |
 | dynamicTemplateData | Map | EMAIL | SendGrid Handlebars 变量 |
 | fallback_sms | Boolean | PUSH 输出 | PushAdapter fallback 后=true |
 | case_id | Long | 建议 | 透传 SendGrid custom_args / 日志 |
@@ -98,7 +98,7 @@ PLAN_STEP_DUE
 | success | `contactResult` 非 FAILED 类 → true |
 | contactResult | 见领域模型 §6.2；消息类 dispatch 成功常用 **DELIVERED**（已提交供应商） |
 | retryable | 网络超时/5xx=true；号码/token 无效=false |
-| providerMsgId | LTH/SendGrid/FCM 返回 ID，回调与对账关联 |
+| providerMsgId | 通知中心 `requestId`（SMS）/ SendGrid message ID；Push 异步入队可无 ID |
 
 ### 3.3 CHANNEL_CALLBACK 事件 payload
 
@@ -125,7 +125,7 @@ PLAN_STEP_DUE
 
 | 项 | 变更 |
 |----|------|
-| UserProfile | `BasicInfo.email`；`DeviceInfo.fcmToken` |
+| UserProfile | `BasicInfo.email`；`DeviceInfo.jpushToken`（JPush Registration ID） |
 | CaseContext | `repaymentUrl`（ingestion 从 App/信贷写入，供模板变量） |
 | CollectionEvent | 常量 `DISPOSITION`、`PROVIDER_MSG_ID` |
 | EventType | `CASE_CEASED`（ingestion 发、引擎 Consumer 处理，**非本模块实现**） |
@@ -140,9 +140,10 @@ PLAN_STEP_DUE
 ```
 collection-channel/
   gateway/ChannelGatewayImpl.java
-  adapter/LthSmsAdapter.java
+  adapter/NotificationClient.java
+  adapter/NotificationSmsAdapter.java
+  adapter/NotificationPushAdapter.java
   adapter/SendGridEmailAdapter.java
-  adapter/FcmPushAdapter.java
   adapter/LthVoiceAdapter.java
   strategy/DefaultPlanFactory.java
   strategy/ComplianceExecutionGuard.java
@@ -155,9 +156,9 @@ collection-channel/
 
 | channelType | Adapter | 子文档 |
 |-------------|---------|--------|
-| SMS | LthSmsAdapter | [LTH SMS](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md) |
+| SMS | NotificationSmsAdapter | [Notification 对接说明 §1](./MOCASA催收系统升级_Phase1_Notification对接说明.md#1-sms同步) |
 | EMAIL | SendGridEmailAdapter | [SendGrid Email](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) |
-| PUSH | FcmPushAdapter | [FCM Push](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md) |
+| PUSH | NotificationPushAdapter | [Notification 对接说明 §2](./MOCASA催收系统升级_Phase1_Notification对接说明.md#2-app-push异步入队) |
 | AI_CALL / TTS | LthVoiceAdapter | [LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
 | HUMAN_CALL | — | **禁止** dispatch（StepResolver 不得输出） |
 
@@ -207,10 +208,9 @@ collection-channel/
 
 | 文档 | 供应商 API |
 |------|------------|
-| [LTH SMS 对接说明](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md) | `LthFunction.sendSms` |
+| [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | SMS `/v1/sms/send` + Push `/v1/app_notification/send`；API 见 [notification-send-api.md](../../../AI%20collection/相关资料/notification-send-api.md) |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `POST /v3/mail/send`；API 附录见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md) |
 | [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `voiceNotification` + 回调 |
-| [FCM Push 对接说明](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md) | FCM HTTP v1 |
 
 ---
 
@@ -228,8 +228,8 @@ PLAN_STEP_DUE(planId=1, stepId=10)
        idempotencyKey="1:1:0",
        metadata={ scriptSlot, sms_body, stage=S1, language=tl, case_id=1001 }
      }
-  → LthSmsAdapter → LTH sendSms
-  → StepResult{ success=true, contactResult=DELIVERED, providerMsgId="lth-xxx" }
+  → NotificationSmsAdapter → POST /v1/sms/send (contentType=collection)
+  → StepResult{ success=true, contactResult=DELIVERED, providerMsgId="requestId", metadata.notification_channel=QHSms }
   → timeline WRITE
   → STEP_COMPLETED → AdvancementPolicy
 ```
@@ -257,8 +257,8 @@ PLAN_STEP_DUE → StepCommand{ channelType=AI_CALL, metadata={ callbackUrl, time
 | 渠道 | 渲染方式 | 配置键 | 详细说明 |
 |------|----------|--------|----------|
 | EMAIL | SendGrid Dynamic Template `d-xxx` | `channel.sendgrid.templates.{scriptSlot}` | [§3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [`email-templates/`](./email-templates/README.md)（含 `email-templates-test/`） |
-| SMS | Resolver → `sms_body`（无 LTH template_id） | `channel.lth.sms.*` | [§4](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#4-smslth) |
-| PUSH | FCM data payload | `channel.fcm.*` | [§5](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#5-pushfcm) |
+| SMS | Resolver → `sms_body` | `channel.notification.*` | [§4](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#4-sms通知中心) |
+| PUSH | title/body + `data` JSON 字符串 | `channel.notification.*` | [§5](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#5-app-push通知中心) |
 | AI_CALL / TTS | LTH voice 脚本 / 参数 | `channel.lth.voice.*` | [§6](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#6-voice--ai_calllth) |
 
 **Phase 2 不生成 plan step**：`*_EMAIL_CONDITIONAL`（见模板清单 §2）。
