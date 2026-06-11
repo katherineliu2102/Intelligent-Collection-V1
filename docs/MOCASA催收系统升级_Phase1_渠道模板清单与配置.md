@@ -39,7 +39,7 @@
 | **本文件** | 全渠道 scriptSlot 总表、Nacos 约定、各渠道渲染方式 | 渠道 + 策略 |
 | [`email-templates/`](./email-templates/README.md) | Email HTML、版式、**催收叙事原则**、`subjects.md` | 策略 + 运营 |
 | [`email-templates/email-templates-test/`](./email-templates/email-templates-test/README.md) | SendGrid Test Data JSON | 运营/QA |
-| 各 Adapter 对接说明 | LTH SMS / SendGrid / FCM / LTH Voice | 开发 |
+| 各 Adapter 对接说明 | Notification（SMS+Push）/ SendGrid / LTH Voice | 开发 |
 
 ```
 docs/
@@ -187,24 +187,26 @@ channel:
 
 ---
 
-## 4. SMS（LTH）
+## 4. SMS（通知中心）
 
 | 项 | 说明 |
 |----|------|
-| **渲染** | `DefaultStepResolver` 按 `scriptSlot` → `sms_body`（**无** LTH template_id） |
-| **配置** | `channel.lth.sms.*`（见 [LTH SMS 对接说明](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md)） |
+| **渲染** | `DefaultStepResolver` 按 `scriptSlot` → `sms_body` |
+| **发送** | `POST /v1/sms/send`（同步），`contentType=collection`；运营商路由在通知中心后台 |
+| **配置** | `channel.notification.base-url`、`app-code`、`app-key`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §1） |
 | **文案存放** | Phase 1：Nacos `channel.scripts.sms`（待 Resolver）；长期：策略后台 |
 | **变量** | `borrower_name`、`amount_due`、`payment_link`、`overdue_days` |
 
 ---
 
-## 5. Push（FCM）
+## 5. App Push（通知中心 / JPush）
 
 | 项 | 说明 |
 |----|------|
-| **渲染** | FCM **data**：`title`、`body`、`deep_link` |
-| **配置** | `channel.fcm.*`（见 [FCM 对接说明](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md)） |
-| **fallback** | 无 token / 投递失败 → 同槽 SMS |
+| **渲染** | `title`、`body`；`data` 为 JSON object 字符串（`deep_link`、`case_id` 等，value 均为 string） |
+| **token** | `userProfile.device.jpushToken`（JPush Registration ID） |
+| **配置** | `channel.notification.*`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §2） |
+| **fallback** | 无 token / 入队前参数错误 → 同槽 SMS（§3）；JPush 投递失败 Phase 1 不自动 fallback |
 
 ---
 
@@ -244,7 +246,7 @@ channel:
 | `DefaultPlanFactory` | Stage/DPD/时刻 → step + `scriptSlot` |
 | `DefaultStepResolver` | `scriptSlot` → 渠道 payload + `dynamicTemplateData` |
 | `SendGridEmailAdapter` | Email：`scriptSlot` → `channel.sendgrid.templates` |
-| `LthSmsAdapter` / `FcmPushAdapter` / `LthVoiceAdapter` | 各渠道发送 |
+| `NotificationSmsAdapter` / `NotificationPushAdapter` / `LthVoiceAdapter` | 各渠道发送 |
 
 ---
 
