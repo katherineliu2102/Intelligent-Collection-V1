@@ -12,7 +12,8 @@ import java.util.Map;
  * 步骤命令。StepResolver.resolve() 的输出，同时作为 ChannelGateway.dispatch() 的输入。
  * 对应领域模型 §4.3。
  *
- * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes。
+ * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes /
+ * scriptSlot / sms_body / dynamicTemplateData / case_id / fallback_sms。
  */
 @Getter
 @Builder
@@ -23,6 +24,11 @@ public class StepCommand {
     public static final String META_LANGUAGE = "language";
     public static final String META_CALLBACK_URL = "callbackUrl";
     public static final String META_TIMEOUT_MINUTES = "timeoutMinutes";
+    public static final String META_SCRIPT_SLOT = "scriptSlot";
+    public static final String META_SMS_BODY = "sms_body";
+    public static final String META_DYNAMIC_TEMPLATE_DATA = "dynamicTemplateData";
+    public static final String META_CASE_ID = "case_id";
+    public static final String META_FALLBACK_SMS = "fallback_sms";
 
     private final ChannelType channelType;
     private final String targetAddress;

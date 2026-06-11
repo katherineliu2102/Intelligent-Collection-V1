@@ -31,12 +31,17 @@ public class CaseContext {
     private boolean isFirstLoan;
     private int payCount;
     private Long activePlanId;
-    /** App 还款深链；SMS/Push/Email 模板变量 payment_link / deep_link。来源 ingestion / 信贷结账链路。 */
-    private String repaymentUrl;
-    /** 编排强度 STANDARD / FIRM；接入层按难催条件预计算，SPI 只读不重算。 */
+    /** 编排强度：STANDARD / FIRM（读 snapshot，PlanFactory 匹配模板）。 */
     private String strategyTone;
-    /** 争议冻结；true 时 ExecutionGuard BLOCK 机器轨。 */
+    /** 投诉/争议冻结标记（ExecutionGuard BLOCK 全渠道）。 */
     private boolean complaintFrozen;
-    /** 催收生命周期；CEASED = D+91 停催。 */
+    /** 案件催收生命周期：CEASED = D+91 完全停催。 */
     private String collectionStatus;
+    /** App 还款深链（ingestion 写入；Push/Email/SMS 变量渲染）。 */
+    private String repaymentUrl;
+    /**
+     * Phase 1 Mock：显式指定 Email 里程碑 scriptSlot（E2E 联调）。
+     * 为空时由 {@code EmailMilestoneScriptSlots.resolveByDpd(dpd)} 推断。
+     */
+    private String emailScriptSlot;
 }

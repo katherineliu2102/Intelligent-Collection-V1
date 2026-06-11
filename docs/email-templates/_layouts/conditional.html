@@ -1,0 +1,30 @@
+<!-- Layout: conditional · Phase 2 · 16:00 无互动跟进 · 短文案 -->
+<div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333333; background-color: #ffffff;">
+
+  <div style="text-align: center; padding-bottom: 16px;">
+    <h2 style="color: #1A365D; margin: 0; letter-spacing: 1px;">MOCASA</h2>
+  </div>
+
+  <div style="background-color: #F8FAFC; padding: 24px; border-radius: 12px; border-left: 4px solid #64748B;">
+
+    <p style="font-size: 16px; margin-top: 0;">Hi <strong>{{borrower_name}}</strong>,</p>
+
+    <!-- BODY: 各 conditional 替换此段 -->
+    <p style="font-size: 15px; line-height: 1.6; color: #4B5563;">
+      We have not yet received your payment of <strong>₱ {{amount_due}}</strong>.
+      Please use the link below to pay now, or contact us through the app if you need assistance.
+    </p>
+
+    <div style="text-align: center; margin: 24px 0 16px 0;">
+      <a href="{{payment_link}}" style="background-color: #3B82F6; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-size: 15px; font-weight: bold; display: inline-block;">
+        Pay Now
+      </a>
+    </div>
+
+  </div>
+
+  <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+    <p style="margin: 0;">If you have already paid, please disregard this email.</p>
+  </div>
+
+</div>

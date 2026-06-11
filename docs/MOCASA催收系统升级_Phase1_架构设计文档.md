@@ -375,7 +375,7 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 1. **Viber Business Messages API 供应商签约与技术对接**（渠道接入阻塞项）
 2. **信贷主系统团队协调**：到期前通知职责交接、PubSub D-3 触发点、历史数据迁移范围
 3. **ASR 供应商选型** ❓ 待确认（需支持 Tagalog/Taglish）
-4. **Email 供应商选型** ❓ 待确认（SES vs SendGrid）
+4. **Email 供应商** ✅ 已决：SendGrid（Phase 1 主通道；SES 备不实现切换，见 [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)）
 5. **话术模板数字化录入**（Tagalog + English 双语，5 阶段 × 多渠道）
 6. **催收触达与还款路径边界确认** ❓ 待讨论（见 [PRD §10.4 Q3](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)）
 

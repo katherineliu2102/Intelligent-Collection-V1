@@ -58,6 +58,20 @@ public class MockTriggerController {
         return ok("PTP_EXPIRED published, caseId=" + caseId);
     }
 
+    /**
+     * 模拟 D+91 完全停催：标记 mock 案件 CEASED + 发布 CASE_CEASED（取消活跃计划）。
+     * 用于 TC-CEASED-01；生产由 ingestion 日切 Job 发布。
+     */
+    @PostMapping("/case-ceased")
+    public Map<String, Object> caseCeased(@RequestParam Long caseId,
+                                          @RequestParam(required = false, defaultValue = "91") Integer maxDpd) {
+        if (caseService instanceof MockCaseService) {
+            ((MockCaseService) caseService).markCeased(caseId);
+        }
+        ingestionService.caseCeased(caseId, maxDpd);
+        return ok("CASE_CEASED published, caseId=" + caseId + " maxDpd=" + maxDpd);
+    }
+
     private Map<String, Object> ok(String msg) {
         Map<String, Object> m = new HashMap<>();
         m.put("ok", true);
