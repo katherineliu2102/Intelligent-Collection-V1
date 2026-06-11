@@ -31,4 +31,12 @@ public class CaseContext {
     private boolean isFirstLoan;
     private int payCount;
     private Long activePlanId;
+    /** App 还款深链；SMS/Push/Email 模板变量 payment_link / deep_link。来源 ingestion / 信贷结账链路。 */
+    private String repaymentUrl;
+    /** 编排强度 STANDARD / FIRM；接入层按难催条件预计算，SPI 只读不重算。 */
+    private String strategyTone;
+    /** 争议冻结；true 时 ExecutionGuard BLOCK 机器轨。 */
+    private boolean complaintFrozen;
+    /** 催收生命周期；CEASED = D+91 停催。 */
+    private String collectionStatus;
 }

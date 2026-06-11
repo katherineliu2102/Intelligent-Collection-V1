@@ -40,6 +40,10 @@ public class UserProfile {
         private String address;
         private String primaryPhone;
         private List<String> alternatePhones;
+        /** 邮箱地址，EMAIL 渠道 targetAddress 来源。来源 t_user_basis / 信贷用户表。 */
+        private String email;
+        /** 用户语言偏好 ISO 639-1（tl/en）；StepResolver → metadata.language；默认 en。 */
+        private String language;
     }
 
     @Data
@@ -87,6 +91,11 @@ public class UserProfile {
         private PhoneValidity phoneValidity;
         private Boolean viberRegistered;
         private Boolean whatsappRegistered;
+        /**
+         * JPush Registration ID，PUSH 渠道 targetAddress 来源（经通知中心 → JPush）。
+         * 来源：App 登录/启动上报 → 信贷/App 后端 → t_user_equipment → ProfileService。
+         */
+        private String jpushToken;
     }
 
     @Data
