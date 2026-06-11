@@ -5,6 +5,7 @@ import com.collection.common.dto.StepCommand;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
+import com.collection.common.model.UserProfile;
 import com.collection.common.spi.StepResolver;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +16,8 @@ import java.util.Map;
  * Phase 1 Mock 实现 —— DefaultStepResolver 的占位。对应 SPI {@link StepResolver}。
  *
  * <p>真实实现：渠道编排负责人基于 context_snapshot 做渠道选择 + 模板匹配 + 命令组装（零 DB I/O）。
- * 本 Mock 直接按步骤声明的 channelType / templateId 组装命令，目标地址取快照主手机号。
+ * 本 Mock 直接按步骤声明的 channelType / templateId 组装命令，目标地址<b>按渠道分支</b>取快照字段
+ * （SMS=basic.primaryPhone / PUSH=device.jpushToken / EMAIL=basic.email，对齐 _re.md §12）。
  * <p>约束遵循：永不输出 HUMAN_CALL（对齐待办 E4）。
  */
 @Component
@@ -49,11 +51,19 @@ public class MockStepResolver implements StepResolver {
 
     private String resolveAddress(ExecutionContext context) {
         ContextSnapshot snapshot = context.getContextSnapshot();
-        if (snapshot != null && snapshot.getUserProfile() != null
-                && snapshot.getUserProfile().getBasic() != null
-                && snapshot.getUserProfile().getBasic().getPrimaryPhone() != null) {
-            return snapshot.getUserProfile().getBasic().getPrimaryPhone();
+        if (snapshot == null || snapshot.getUserProfile() == null) {
+            return "mock-address";
         }
-        return "mock-address";
+        UserProfile profile = snapshot.getUserProfile();
+        UserProfile.BasicInfo basic = profile.getBasic();
+        switch (context.getCurrentStep().getChannelType()) {
+            case PUSH:
+                return profile.getDevice() != null ? profile.getDevice().getJpushToken() : null;
+            case EMAIL:
+                return basic != null ? basic.getEmail() : null;
+            default:
+                return basic != null && basic.getPrimaryPhone() != null
+                        ? basic.getPrimaryPhone() : "mock-address";
+        }
     }
 }

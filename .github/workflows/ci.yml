@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, ca_branch ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build & Unit Test (JDK 8)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+          cache: maven
+
+      # Phase 1 纯逻辑单测不连库（mock SPI/Repository/EventBus），无需 MySQL/Redis。
+      - name: Build & run unit tests
+        run: mvn -B -ntp clean test

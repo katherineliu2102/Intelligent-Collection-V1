@@ -19,7 +19,8 @@ import java.util.List;
  * Phase 1 Mock 实现 —— DefaultPlanFactory 的占位。对应 SPI {@link PlanFactory}。
  *
  * <p>真实实现：渠道编排负责人按 t_contact_plan_template（stage × product）匹配模板并实例化。
- * 本 Mock 固定生成 3 步消息类计划（SMS → PUSH → SMS），使全链路无需外部回调即可跑通完成。
+ * 本 Mock 固定生成 3 步消息类计划（SMS → PUSH → EMAIL），使全链路无需外部回调即可跑通完成，
+ * 并覆盖三种消息渠道的解析分流。
  *
  * <p>约束遵循：禁止副作用（只构造对象）；Phase 1 不输出 HUMAN_CALL（对齐待办 E4）。
  */
@@ -43,7 +44,7 @@ public class MockPlanFactory implements PlanFactory {
         List<ContactPlanStep> steps = new ArrayList<>();
         steps.add(buildStep(1, ChannelType.SMS, 0, 0, 101L));
         steps.add(buildStep(2, ChannelType.PUSH, 1, 0, 102L));
-        steps.add(buildStep(3, ChannelType.SMS, 1, 0, 103L));
+        steps.add(buildStep(3, ChannelType.EMAIL, 1, 0, 103L));
         plan.setSteps(steps);
         return plan;
     }
