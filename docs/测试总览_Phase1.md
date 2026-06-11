@@ -36,17 +36,20 @@
 
 冻结项依据 [`ic-v1-channel-contract.mdc`](../../.cursor/rules/ic-v1-channel-contract.mdc) 与 [ContextSnapshot 对齐](./contracts/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md)。
 
+> 骨架已落：`collection-engine/.../integration/ChannelContractL2Test`（编码定稿契约语义的可配置替身 + mock 发送，7 例全绿）。编排同事真实化 Mock 后对接即绿。
+
 | # | 场景 | 期望 | 状态 |
 |---|---|---|---|
-| C1 | SMS 真实 dispatch 成功 | StepResult.success=true，timeline 落 providerMsgId | ⬜ |
-| C2 | PUSH jpushToken 为空 → fallback SMS | 同槽 fallback，一次 dispatch | ⬜ |
-| C3 | EMAIL email 为空 → Guard SKIP | 步骤 SKIPPED + 推进 | ⬜ |
-| C4 | dispatch 网络超时 retryable=true | 退避重试 | ⬜ |
-| C5 | dispatch 地址无效 retryable=false | FAILED + 推进 | ⬜ |
-| C6 | 消息渠道观察期 → STEP_WAITING → 到期结转 | 状态正确流转 | ⬜ |
-| C7 | idempotencyKey(plan+step+channel) 防重发 | 重复触发不二次发送 | ⬜ |
+| C1 | dispatch 成功（以 EMAIL 为例） | StepResult.success=true，timeline 落 providerMsgId | 🟡 骨架绿 |
+| C2 | PUSH jpushToken 为空 → fallback SMS | 同槽 fallback，一次 dispatch | 🟡 骨架绿 |
+| C3 | EMAIL email 为空 → Guard SKIP | 步骤 SKIPPED + 推进 | 🟡 骨架绿 |
+| C4 | dispatch 网络超时 retryable=true | 退避重试（步骤重排 PENDING + 未来触发） | 🟡 骨架绿 |
+| C5 | dispatch 地址无效 retryable=false | FAILED + 推进 | 🟡 骨架绿 |
+| C6 | SMS 观察期 → STEP_WAITING → 到期结转 | 状态正确流转 | 🟡 骨架绿 |
+| C7 | idempotencyKey(plan+step+retryCount) 防重发 | 重复触发不二次发送 | 🟡 骨架绿 |
 
-> 联调前置：StepResult 回填口径、targetAddress 映射、观察期/幂等三项须与编排同事书面对齐。
+> 契约已定稿（2026-06-11，见 [`引擎渠道执行契约对齐_待编排确认`](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)）：StepResult 3 情形、SMS 观察期 10min、空地址方案 A、token=jpushToken。
+> 待编排同事真实化 `ChannelGateway`/`StepResolver`/`ExecutionGuard` 后，把替身换成真实实现即转 ✅。
 
 ## L3 数据落库集成（⬜ 待环境）
 
