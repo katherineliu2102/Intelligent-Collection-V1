@@ -1,0 +1,21 @@
+<!--
+scriptSlot: S4_EMAIL_CONDITIONAL | Phase 2 | 16:00
+subject: Formal Collection—Pay Full Balance Today
+-->
+<html>
+  <head><title></title></head>
+  <body>
+    <div style="font-family: Georgia, 'Times New Roman', Times, serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #111111; background-color: #ffffff; border: 1px solid #111111;">
+      <p style="margin: 0 0 16px 0; font-size: 12px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">MOCASA</p>
+      <p style="font-size: 16px; margin-top: 0;">Dear <strong>{{borrower_name}}</strong>,</p>
+      <p style="font-size: 15px; line-height: 1.7; color: #111111;">
+        We have not received payment on your account under formal collection today.
+        <strong>Your only option is to pay ₱ {{amount_due}} in full immediately.</strong>
+      </p>
+      <div style="text-align: center; margin: 24px 0 16px 0;">
+        <a href="{{payment_link}}" style="background-color: #111111; color: #ffffff; padding: 14px 28px; text-decoration: none; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; display: inline-block;">Pay Full Balance Now</a>
+      </div>
+      <div style="margin-top: 20px; font-size: 11px; color: #666666;"><p style="margin: 0;">If you have already paid, please disregard this email.</p></div>
+    </div>
+  </body>
+</html>

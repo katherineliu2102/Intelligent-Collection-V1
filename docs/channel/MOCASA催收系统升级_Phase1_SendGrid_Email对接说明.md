@@ -1,8 +1,9 @@
 # MOCASA Phase 1 — SendGrid Email 对接说明
 
-> **版本**: v1.0 · **日期**: 2026-06-03  
+> **版本**: v1.1 · **日期**: 2026-06-05  
 > **供应商**: Twilio SendGrid（主）；SES 备（Phase 1 不实现切换）  
-> **上级文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[SendGrid催收邮件接入指南](./SendGrid催收邮件接入指南.md)（API 附录）、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5  
+> **上级文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md)（API 附录）、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5  
+> **模板 SSOT**: [渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · HTML [`email-templates/`](./email-templates/README.md) · Test Data [`email-templates/email-templates-test/`](./email-templates/email-templates-test/README.md)  
 > **代码目标**: `com.collection.channel.adapter.SendGridEmailAdapter`
 
 ---
@@ -14,7 +15,7 @@
 | Phase 1 Email | **仅里程碑**（§7.9）；不生成条件 Email step |
 | snapshot | `userProfile.basic.email`；空则 **不调用** SendGrid |
 | 无邮箱 | `ComplianceExecutionGuard` **BLOCK**，`blockedRuleType=NO_EMAIL`，步骤 SKIPPED |
-| 模板 | SendGrid 控制台 Dynamic Template；`template_id` 见总规格 **附录 A** |
+| 模板 | SendGrid Dynamic Template `d-xxx`；映射见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
 
 ---
 
@@ -37,7 +38,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 | StepCommand | SendGrid |
 |-------------|----------|
 | targetAddress | `personalizations[].to[].email` |
-| templateId | SendGrid `d-xxxxxxxx`（附录 A） |
+| templateId | SendGrid `d-xxxxxxxx`（[渠道模板清单 §2](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#2-全渠道-scriptslot-总表) / Nacos `channel.sendgrid.templates.{scriptSlot}`） |
 | metadata.dynamicTemplateData | Handlebars 变量，建议键： |
 
 **dynamicTemplateData 建议键**
@@ -48,6 +49,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 | amount_due | caseContext 已到期应还合计 |
 | overdue_days | caseContext.maxDpd |
 | payment_link | caseContext.repaymentUrl |
+| assignment_date | Resolver 计算；仅 `S4_EMAIL_PRE_CLOSE`（final review 截止日 = 内部 D+91；**非委外**） |
 | stage | metadata.stage |
 | offer_* | snapshot offer 字段（F10 已写入 snapshot） |
 
@@ -64,7 +66,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 
 > 禁止使用 `loan_id` 作为业务主键；与引擎 `case_id` 一致。
 
-**asm**：退订组 ID（NPC 合规），见 [接入指南 §4.2](./SendGrid催收邮件接入指南.md)。
+**asm**：退订组 ID（NPC 合规），见 [接入指南 §4.2](../../AI%20collection/SendGrid催收邮件接入指南.md)。
 
 **from**：催收独立子域，如 `notice.collections.{brand}.ph`（与 OTP 子域隔离）。
 
@@ -143,8 +145,8 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 - [ ] 无邮箱：Guard SKIPPED，无 SendGrid 调用
 - [ ] custom_args 含 case_id，Webhook 可回写 timeline
 - [ ] hard bounce 后同案后续 Email 步骤 SKIPPED
-- [ ] 附录 A 中 S0/S1 模板 ID 已填且双语变量渲染正确
+- [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) 中 S0 模板 ID 已填；Test Data 见 [`email-templates-test/`](./email-templates/email-templates-test/README.md)
 
 ---
 
-> API 细节（curl、SDK、重试退避）见 [SendGrid催收邮件接入指南](./SendGrid催收邮件接入指南.md)
+> API 细节（curl、SDK、重试退避）见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md)

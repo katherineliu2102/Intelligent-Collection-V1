@@ -16,5 +16,7 @@ public enum EventType {
     PTP_EXPIRED,
     STEP_COMPLETED,
     PLAN_EXHAUSTED,
-    CALLBACK_TIMEOUT
+    CALLBACK_TIMEOUT,
+    /** D+91 完全停催；ingestion 日切或 mock 发布，引擎 cancel plan 且不再 create（对齐待办 E1）。 */
+    CASE_CEASED
 }

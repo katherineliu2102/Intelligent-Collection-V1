@@ -39,9 +39,9 @@ public class UserProfile {
         private String idNumber;
         private String address;
         private String primaryPhone;
-        private List<String> alternatePhones;
         /** 邮箱地址，EMAIL 渠道 targetAddress 来源。来源 t_user_basis / 信贷用户表。 */
         private String email;
+        private List<String> alternatePhones;
         /** 用户语言偏好 ISO 639-1（tl/en）；StepResolver → metadata.language；默认 en。 */
         private String language;
     }
@@ -94,8 +94,14 @@ public class UserProfile {
         /**
          * JPush Registration ID，PUSH 渠道 targetAddress 来源（经通知中心 → JPush）。
          * 来源：App 登录/启动上报 → 信贷/App 后端 → t_user_equipment → ProfileService。
+         * 注：契约已拍板（2026-06-09）以 jpushToken 为准。
          */
         private String jpushToken;
+        /**
+         * TODO 契约对齐：编排同事 main 现有 FcmPushAdapter 仍依赖 fcmToken，暂保留以免编译断裂；
+         * 与编排同事统一到 jpushToken 后移除。
+         */
+        private String fcmToken;
     }
 
     @Data

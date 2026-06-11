@@ -35,6 +35,7 @@ public class EventConsumerDispatcher {
         eventBus.subscribe(EventType.CASE_INGESTED, e -> publishAll(manager.onCaseIngested(e)));
         eventBus.subscribe(EventType.STAGE_CHANGED, e -> publishAll(manager.onStageChanged(e)));
         eventBus.subscribe(EventType.REPAYMENT_RECEIVED, e -> publishAll(manager.onRepaymentReceived(e)));
+        eventBus.subscribe(EventType.CASE_CEASED, e -> publishAll(manager.onCaseCeased(e)));
         eventBus.subscribe(EventType.STEP_COMPLETED, e -> publishAll(manager.onStepCompleted(e)));
         eventBus.subscribe(EventType.CHANNEL_CALLBACK, e -> publishAll(manager.onChannelCallback(e)));
         eventBus.subscribe(EventType.CALLBACK_TIMEOUT, e -> publishAll(manager.onCallbackTimeout(e)));
