@@ -252,7 +252,7 @@ Voice **终态**由 `CHANNEL_CALLBACK` + `AdvancementPolicy` 处理；Adapter di
 
 | 约束 | 编排依据 |
 |------|----------|
-| `match(stage, tone)` | 8 套骨架：S0–S4 **STANDARD** + S2–S4 **FIRM**（§7.1）；tone 读 snapshot `strategy_tone` |
+| `match(stage, tone)` | 8 套骨架：S0–S4 **STANDARD** + S2–S4 **FIRM**（§7.1）；tone 读 snapshot `strategy_tone`；**FIRM 判定口径**见 [渠道编排 §6.3.1](./MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) |
 | 一 Stage 一 plan | 进入 Stage 时 **单次 `create`** 展开全部未过期 `DayBlock`（S4 约 60 日块一次铺完，§7.1） |
 | 晚进案（跨日） | 跳过已过期 `dpd_day` 日块，**不追溯补发**（§7.0） |
 | **晚进案（同日）** | 见下表 |

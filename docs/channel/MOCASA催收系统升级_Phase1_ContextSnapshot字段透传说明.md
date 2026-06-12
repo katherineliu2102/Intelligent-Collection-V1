@@ -38,7 +38,7 @@
 | caseContext | `caseId`, `userId`, `dpd`, `stage`, `product`, `dueDate` | 选槽、模板变量、Guard |
 | caseContext | `totalOutstanding` | 文案 `amount_due`（金额 SSOT） |
 | caseContext | `repaymentUrl` | SMS 链接、Push `deep_link`、Email `payment_link` |
-| caseContext | `strategyTone`, `complaintFrozen`, `collectionStatus` | PlanFactory / Guard |
+| caseContext | `strategyTone`, `complaintFrozen`, `collectionStatus` | PlanFactory / Guard；`strategyTone` 计算见 [渠道编排 §6.3.1](./MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) |
 | basic | `name`, `primaryPhone`, `email`, `language` | 文案、`targetAddress` |
 | device | `jpushToken`, `phoneValidity` | Push `targetAddress`；Guard |
 | contactHistory | `todayTouchCount`, `channelTouchCounts`, … | Guard 频控 |

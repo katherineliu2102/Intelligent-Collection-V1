@@ -371,12 +371,187 @@ else → STANDARD（S0/S1 始终 STANDARD tone）
 | ------------------------- | -------------------------------------------- | ------------------------------- |
 | S0/S1 全员同一 plan           | 不做按评分/分层的差异化触达节奏（已废止 gold_window、INTENSIVE 等方案）   | 避免无 **现状基线** 的过度设计；首次逾期段（D+1~3）需统一强触达 |
 | FIRM 仅 S2+                | S0/S1 话术禁止 Collections 升级态                   | 监管与体验；早期以提醒为主                   |
-| `ever_reached_s2_overdue` | **历史** S2+（旧 loan 或本笔复发）；**不含**本笔首次 D+4 进 S2 | 避免首次逾期即 FIRM，误伤                 |
+| `ever_reached_s2_overdue` | **历史** S2+（旧 loan 或本笔复发）；**不含**本笔首次逾期波次 | 避免首次逾期即 FIRM，误伤；**计算口径 §6.3.1** |
 | FIRM 在 S2 的含义             | 话术加强 + offer 略宽 + AI 队列略优先                   | **不**默认转人工                      |
 | EASY / 自愈                 | 不进生产                                         | 改强度 A/B 测 FIRM 增量               |
 
 
 难催各阈值（连续无互动天数、PTP 履约比例等）建议 **管理后台可配**，上线前与业务对齐灵敏度。
+
+### 6.3.1 难催子条件计算口径（ingestion 层）
+
+> **责任方**：数据接入层（ingestion）在入案 / 日切 / 还款重算 / 运行时事件时计算；结果写入 `caseContext.strategyTone`（`STANDARD` \| `FIRM`）。  
+> **中间变量不入快照**（`ever_reached_s2_overdue`、并发逾期期数、PTP 履约率等算完即丢，见 [ContextSnapshot 契约 §Phase 1 精简字段集](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md)）。
+
+#### 共用前提：Max DPD 与 Stage
+
+与 §4.1、§5.2 一致，**整笔 loan** 取各 bill 逾期天数的 **最大值** 作为 `max_dpd`，再映射 Stage：
+
+| Max DPD | Stage | 说明 |
+|---------|-------|------|
+| D-3 ~ D0 | S0 | 到期前 |
+| D+1 ~ D+3 | S1 | |
+| D+4 ~ D+15 | S2 | **S2+ 下限** |
+| D+16 ~ D+30 | S3 | |
+| D+31 ~ D+90 | S4 | |
+
+**S2+** = `max_dpd >= 4`（曾达到或当前处于 S2 / S3 / S4）。
+
+单 bill 的逾期天数（观察日 `as_of_date`，通常 PHT 自然日）：
+
+```text
+bill_dpd = DATE_DIFF(as_of_date, due_date, DAY)
+  其中 bill 须满足：due_date <= as_of_date
+        且 (clear_date IS NULL OR DATE(clear_date) > due_date)
+```
+
+`max_dpd` = 当前 loan 下所有 bill 的 `bill_dpd` 最大值（无逾期 bill 时为 0 或负，按未逾期处理）。
+
+#### `ever_reached_s2_overdue`（历史曾 S2+）
+
+**语义**：用户或本笔 loan **历史上**曾进入 S2+（`max_dpd >= 4`）；**排除**本笔 loan **第一次**到达 D+4 的首次进 S2 场景，避免首次逾期客户一进 S2 即 FIRM。
+
+```text
+ever_reached_s2_overdue = TRUE  当满足以下任一：
+
+  A. 用户维度历史
+     该用户在「当前这笔 loan 之前」的任一历史 loan 上，
+     曾出现过 max_dpd >= 4（即曾进入 S2+）
+
+  B. 本笔 loan 复发（跨逾期波次）
+     当前 loan 曾进入过 S2+，之后因还款 max_dpd 曾回落（例：D+32 还一期后 max_dpd→2），
+     随后再次逾期且 max_dpd 重新 >= 4——即 **非本笔首次逾期波次** 的 S2+
+
+ever_reached_s2_overdue = FALSE  当：
+
+  C. 本笔 loan 处于 **首次逾期波次**（从未因还款使 max_dpd 从 >=4 回落过），
+     且用户无任何历史 loan 曾 S2+
+     —— 即使当前已滚至 S3/S4（如 D+30），仍 **不** 因本条件硬化
+```
+
+**实现要点**：
+
+| 项 | 方案 |
+|----|------|
+| 用户历史 | 维护 **`user_ever_reached_s2`**，或扫历史 `t_loan_repayment_plan`（见下 SQL） |
+| 本笔复发 | 维护 **`loan_had_s2_plus_cure`**：曾 `max_dpd>=4` 且后续因结清/还款使 `max_dpd` 降至 <4，再逾时置 TRUE；或等价地用 **`loan_peak_max_dpd>=4` 且 `prior_episode_cured=true`** |
+| 排除首次波次 | 本笔 **第一次** 连续逾期、从未「S2+→回落」者，**整段** 不触发 A/B 中的 B；**仅 D+4 当日** 的窄口径见 §12 #2 待确认 |
+| 生命周期 | 整笔 loan **结清**后开新 loan → B 重置；A 随用户历史保留 |
+
+> **与早期设计决策的差异**：曾用 `history_overdue_count >= 2`（逾期**次数**）；V1.4 收敛为 **「既往曾到达 S2+（DPD≥4）」**，且 **不含本笔首次逾期波次**，误伤小于「计数≥2」。
+
+**参考 SQL（BigQuery · 用户历史曾 S2+，数据源 `detail.t_loan_repayment_plan`）**：
+
+```sql
+-- user_id 下，排除当前 loan_id；历史 loan 任一 bill 曾 bill_dpd >= 4
+SELECT LOGICAL_OR(hist_ever_s2) AS user_ever_reached_s2
+FROM (
+  SELECT
+    l.loan_id,
+    MAX(GREATEST(
+      0,
+      DATE_DIFF(
+        LEAST(COALESCE(DATE(p.clear_time), @as_of_date), @as_of_date),
+        p.due_date,
+        DAY
+      )
+    )) >= 4 AS hist_ever_s2
+  FROM detail.t_loan l
+  JOIN detail.t_loan_repayment_plan p ON p.loan_id = l.loan_id
+  WHERE l.user_id = @user_id
+    AND l.loan_id <> @current_loan_id
+    AND p.due_date <= @as_of_date
+  GROUP BY l.loan_id
+);
+```
+
+```text
+ever_reached_s2_overdue = user_ever_reached_s2 OR loan_had_s2_plus_cure
+-- loan_had_s2_plus_cure：本笔非首次逾期波次且曾 S2+ 后 cured 再逾（ingestion 状态位，不宜单靠单日 snapshot 推断）
+```
+
+#### `concurrent_overdue_bills >= 2`（三期并发逾期）
+
+**语义**：**三期产品**（一笔 loan 3 个 bill）在观察日，**同时**处于逾期状态的 **已到期 bill 期数 ≥ 2**。与 `max_dpd` 无关——例：period1 D+32、period2 D+2 → `max_dpd=32`（S4），`concurrent_overdue_bills=2`，仍触发难催。
+
+```text
+concurrent_overdue_bills =
+  COUNT( bill WHERE due_date <= as_of_date
+              AND (clear_date IS NULL OR clear_date > due_date) )
+
+难催子条件：product = 三期 AND concurrent_overdue_bills >= 2
+```
+
+| 项 | 方案 |
+|----|------|
+| 产品范围 | **仅三期**；一期仅 1 个 bill，并发逾期最多 1，**不会触发** |
+| 已到期 | `due_date <= as_of_date`；**未到期 bill 不计** |
+| 未结清 | `clear_date IS NULL` 或 `DATE(clear_date) > due_date` |
+| 与 Stage | 独立维度；可在任意 Stage 触发硬化，但 **FIRM 话术仅 S2+ 生效**（§6.3） |
+
+**参考 SQL（BigQuery · 本笔 max_dpd 与并发逾期期数，数据源 `detail.t_loan_repayment_plan`）**：
+
+```sql
+-- 观察日 as_of_date；loan_id = 当前在贷
+WITH bill AS (
+  SELECT
+    loan_id,
+    plan_id,
+    due_date,
+    DATE(clear_time) AS clear_date,
+    DATE_DIFF(@as_of_date, due_date, DAY) AS bill_dpd
+  FROM detail.t_loan_repayment_plan
+  WHERE loan_id = @loan_id
+    AND due_date <= @as_of_date
+    AND (clear_time IS NULL OR DATE(clear_time) > due_date)
+)
+SELECT
+  MAX(bill_dpd) AS max_dpd,
+  COUNT(DISTINCT plan_id) AS concurrent_overdue_bills
+FROM bill;
+-- 难催：product_id IN (3, 4) AND concurrent_overdue_bills >= 2
+```
+
+#### 难催合并判定与 FIRM 生效条件
+
+```text
+hard_to_collect =
+     ever_reached_s2_overdue
+  OR (ptp_made_count > 0 AND ptp_kept_rate < 0.5)
+  OR (product = 三期 AND concurrent_overdue_bills >= 2)
+  OR consecutive_no_engagement_days >= N    -- Phase 1 未接入
+  OR ptp_expired_unpaid                     -- 运行时事件
+
+strategyTone =
+  if complaint_or_dispute → FREEZE（Guard，非 tone）
+  else if hard_to_collect AND stage IN (S2, S3, S4) → FIRM
+  else → STANDARD
+```
+
+| 约束 | 说明 |
+|------|------|
+| FIRM 仅 S2+ 模板 | 即使 `hard_to_collect=TRUE`，当前 Stage 为 S0/S1 时 **`strategyTone` 仍为 STANDARD**（S0/S1 禁止 Collections 升级态） |
+| 只硬化不回退 | 一旦写入 FIRM，Max DPD 下降、Stage 回退 **不** 恢复 STANDARD；**整笔 loan 结清** 后新 loan 重置 |
+| 计算时机 | 入案、日切、还款重算、PTP 到期 / 无互动（Phase 2）等 → 重算 snapshot → 必要时 cancel plan + 重建（§6.4） |
+
+**场景速查**：
+
+| 场景 | ever_reached_s2 | concurrent≥2 | 当前 Stage | strategyTone |
+|------|-----------------|--------------|------------|--------------|
+| 首次逾期波次，D+4 进 S2 | FALSE | 0 | S2 | STANDARD |
+| 首次逾期波次，滚至 D+30 | FALSE | 0 | S3 | STANDARD（不因 ever_reached_s2 硬化） |
+| 老户上一笔曾 D+10，新 loan 首次 D+4 | TRUE | 0 | S2 | FIRM |
+| 本笔曾 D+20 后还到 D+2，再逾至 D+5 | TRUE（复发） | 0 | S2 | FIRM |
+| 三期两期同时未还 | 视历史 | 2 | S4 等 | 进 S2+ 后 FIRM |
+
+#### 待业务确认（§12 #2）
+
+| # | 事项 | 默认倾向 |
+|---|------|----------|
+| 1 | 历史 loan「曾 S2+」是否只计 **已结清** loan | 计所有已结束 loan；在贷仅当前笔 |
+| 2 | 历史 loan 仅 S1 逾期（从未 D+4）是否计入 ever_reached_s2 | **不计**（须 max_dpd≥4） |
+| 3 | 「不含本笔首次进 S2」是否指 **整段首次逾期波次**（含滚至 S3/S4） | **是**（默认）；窄口径「仅 D+4 当日」见 §12 #2 |
+| 4 | 阈值是否后台可配 | 是（并发≥2、PTP<50%、无互动 N 天） |
 
 ### 6.4 与 `context_snapshot` 不可变契约对齐
 
