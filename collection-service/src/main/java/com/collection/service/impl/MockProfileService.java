@@ -53,8 +53,12 @@ public class MockProfileService implements ProfileService {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
 
+        // 90002：联调真实 jpushToken（与 MockPushTestCases 94200 同源，供 ingest 全链路）
+        if (userId == 90002L) {
+            device.setJpushToken(MockPushTestCases.PUSH_TEST_JPUSH_TOKEN);
+        }
         // 90003：故意无 jpushToken，供 TC-PUSH-02
-        if (userId == 90002L || userId == 91000L || userId == 91001L) {
+        if (userId == 91000L || userId == 91001L) {
             device.setJpushToken("mock-jpush-rid-" + userId);
         }
 
