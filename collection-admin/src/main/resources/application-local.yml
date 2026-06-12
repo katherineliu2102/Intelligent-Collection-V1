@@ -24,7 +24,7 @@ channel:
   callback:
     base-url: http://localhost:8888/webhook
   notification:
-    base-url: https://service-test.mocasa.com/notification
+    base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
     app-code: mocasa
     app-key: ${NOTIFICATION_APP_KEY:}
     sms-content-type: collection
