@@ -40,6 +40,8 @@ public class UserProfile {
         private String address;
         private String primaryPhone;
         private String email;
+        /** 用户语言偏好 ISO 639-1（`tl` / `en`）；默认 `en`。 */
+        private String language;
         private List<String> alternatePhones;
     }
 
@@ -88,7 +90,8 @@ public class UserProfile {
         private PhoneValidity phoneValidity;
         private Boolean viberRegistered;
         private Boolean whatsappRegistered;
-        private String fcmToken;
+        /** JPush Registration ID（非 FCM token）。 */
+        private String jpushToken;
     }
 
     @Data

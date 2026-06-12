@@ -23,7 +23,8 @@ public class ChannelProperties {
     private Callback callback = new Callback();
     private Lth lth = new Lth();
     private SendGrid sendgrid = new SendGrid();
-    private Fcm fcm = new Fcm();
+    private Notification notification = new Notification();
+    private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
 
     /** 渠道 dispatch 幂等 TTL（小时），默认 24h。 */
@@ -45,19 +46,58 @@ public class ChannelProperties {
 
     @Data
     public static class Lth {
-        private Sms sms = new Sms();
         private Voice voice = new Voice();
-
-        @Data
-        public static class Sms {
-            private String url = "";
-            private String senderId = "";
-        }
 
         @Data
         public static class Voice {
             private String url = "";
         }
+    }
+
+    /**
+     * MOCASA 通知中心（common-notification）对接配置。
+     *
+     * <p>SMS：{@code POST {baseUrl}/v1/sms/send}；App Push：{@code POST {baseUrl}/v1/app_notification/send}。
+     * 鉴权 {@code sign = MD5(appCode + appKey + dateTime)}，见 Notification 对接说明 §1/§2。
+     */
+    @Data
+    public static class Notification {
+        /** 通知中心服务根地址，如 https://notification.mocasa.internal。 */
+        private String baseUrl = "";
+        /** 调用方应用编码；催收固定 mocasa。 */
+        private String appCode = "mocasa";
+        /** 通知中心签发的密钥（待运维下发）。生产 /v1/sms/send 必需；测试 /testSend 免签名可空。 */
+        private String appKey = "";
+        /** SMS 固定内容类型，对应后台路由 contentType。 */
+        private String smsContentType = "collection";
+        /** true → SMS 走免签名测试端点 /v1/sms/testSend（联调用，appKey 可空）。 */
+        private boolean smsTestMode = false;
+        /** 测试端点可选指定的通道账号名（accountName），空=默认测试路由。 */
+        private String smsTestAccountName = "";
+        /**
+         * true → App Push 走同步端点 /v1/app_notification/sync/send（联调，返回 requestSuccess/requestId，
+         * 可见极光真实受理结果）；false → 异步 /v1/app_notification/send（生产，入队 code=0 即受理）。
+         * 注意：Push 无免签名测试端点，无论同步/异步都需 appKey 签名。
+         */
+        private boolean pushSyncMode = false;
+    }
+
+    /**
+     * SMS/Push 文案库（按 scriptSlot 存放，{@code DefaultStepResolver} 注入变量）。
+     * 见 [渠道模板清单 §4.1/§5.1]。
+     */
+    @Data
+    public static class Scripts {
+        private Map<String, String> sms = new HashMap<>();
+        private Map<String, PushScript> push = new HashMap<>();
+        /** repaymentUrl 缺失时的兜底深链（到 App 还款页，待 App 确认）。 */
+        private String pushDefaultDeepLink = "";
+    }
+
+    @Data
+    public static class PushScript {
+        private String title = "";
+        private String body = "";
     }
 
     @Data
@@ -70,13 +110,6 @@ public class ChannelProperties {
         private Map<String, String> templates = new HashMap<>();
         /** 默认 https://api.sendgrid.com/v3/mail/send；单测可指向 WireMock。 */
         private String apiUrl = "https://api.sendgrid.com/v3/mail/send";
-    }
-
-    @Data
-    public static class Fcm {
-        private String projectId = "";
-        /** Firebase 服务账号 JSON 全文（Nacos 多行字符串）。 */
-        private String serviceAccountJson = "";
     }
 
     @Data
@@ -98,20 +131,25 @@ public class ChannelProperties {
         return base.endsWith("/") ? base + "lth/voice" : base + "/lth/voice";
     }
 
-    public boolean isLthSmsConfigured() {
-        Lth.Sms sms = lth.getSms();
-        return sms != null && sms.getUrl() != null && !sms.getUrl().isEmpty();
-    }
-
     public boolean isSendGridConfigured() {
         SendGrid sg = sendgrid;
         return sg != null && sg.getApiKey() != null && !sg.getApiKey().isEmpty()
                 && sg.getFromEmail() != null && !sg.getFromEmail().isEmpty();
     }
 
-    public boolean isFcmConfigured() {
-        Fcm f = fcm;
-        return f != null && f.getProjectId() != null && !f.getProjectId().isEmpty()
-                && f.getServiceAccountJson() != null && !f.getServiceAccountJson().isEmpty();
+    public boolean isNotificationConfigured() {
+        Notification n = notification;
+        return n != null
+                && n.getBaseUrl() != null && !n.getBaseUrl().isEmpty()
+                && n.getAppCode() != null && !n.getAppCode().isEmpty()
+                && n.getAppKey() != null && !n.getAppKey().isEmpty();
+    }
+
+    /** 测试端点（/v1/sms/testSend）免签名，仅需 base-url + app-code。 */
+    public boolean isNotificationTestConfigured() {
+        Notification n = notification;
+        return n != null
+                && n.getBaseUrl() != null && !n.getBaseUrl().isEmpty()
+                && n.getAppCode() != null && !n.getAppCode().isEmpty();
     }
 }

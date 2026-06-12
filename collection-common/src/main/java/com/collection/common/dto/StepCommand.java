@@ -13,7 +13,7 @@ import java.util.Map;
  * 对应领域模型 §4.3。
  *
  * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes /
- * scriptSlot / sms_body / dynamicTemplateData / case_id / fallback_sms。
+ * scriptSlot / sms_body / title / body / pushData / dynamicTemplateData / case_id / fallback_sms。
  */
 @Getter
 @Builder
@@ -26,6 +26,10 @@ public class StepCommand {
     public static final String META_TIMEOUT_MINUTES = "timeoutMinutes";
     public static final String META_SCRIPT_SLOT = "scriptSlot";
     public static final String META_SMS_BODY = "sms_body";
+    public static final String META_FALLBACK_SMS_BODY = "fallback_sms_body";
+    public static final String META_TITLE = "title";
+    public static final String META_BODY = "body";
+    public static final String META_PUSH_DATA = "pushData";
     public static final String META_DYNAMIC_TEMPLATE_DATA = "dynamicTemplateData";
     public static final String META_CASE_ID = "case_id";
     public static final String META_FALLBACK_SMS = "fallback_sms";

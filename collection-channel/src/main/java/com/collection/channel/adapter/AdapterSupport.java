@@ -60,6 +60,34 @@ final class AdapterSupport {
         return channelDown(prefix + "_ERROR", e.getMessage());
     }
 
+    /** 通知中心瞬时故障（连接超时 / 5xx / 429，重试耗尽）→ retryable，交引擎降级。 */
+    static StepResult notificationTimeout() {
+        return channelDown("NOTIFICATION_TIMEOUT", "transient HTTP failure after retry");
+    }
+
+    /**
+     * 通知中心业务码 → 建议 errorCode（对接说明 §9；待编排最终拍板，仅落 timeline）。
+     */
+    static String notificationErrorCode(Integer code) {
+        if (code == null) {
+            return "NOTIFICATION_UNKNOWN";
+        }
+        switch (code) {
+            case 81:
+                return "NOTIFICATION_PARAM_ERROR";
+            case 1000:
+                return "NOTIFICATION_INVALID_SIGN";
+            case 2001:
+                return "NOTIFICATION_NO_ACCOUNT";
+            case 2003:
+                return "NOTIFICATION_APPCODE_NOT_FOUND";
+            case 3001:
+                return "NOTIFICATION_INVALID_PROVIDER";
+            default:
+                return "NOTIFICATION_CODE_" + code;
+        }
+    }
+
     static String metadataString(StepCommand command, String key) {
         if (command.getMetadata() == null || !command.getMetadata().containsKey(key)) {
             return null;

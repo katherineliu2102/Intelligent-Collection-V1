@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -117,6 +118,18 @@ public class MockCaseService implements CaseService {
         if (caseId == 90100L) {
             return new MockCaseProfile(-3, Stage.S0, "ACTIVE", false, "STANDARD",
                     new BigDecimal("5000.00"), LocalDate.now().plusDays(3), null);
+        }
+        Optional<MockCaseProfile> smsProfile = MockSmsTestCases.find(caseId)
+                .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
+                        tc.totalOutstanding, tc.dueDate, null));
+        if (smsProfile.isPresent()) {
+            return smsProfile.get();
+        }
+        Optional<MockCaseProfile> pushProfile = MockPushTestCases.find(caseId)
+                .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
+                        tc.totalOutstanding, tc.dueDate, null));
+        if (pushProfile.isPresent()) {
+            return pushProfile.get();
         }
         return MockEmailTestCases.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
