@@ -86,10 +86,14 @@ PLAN_STEP_DUE
 | callbackUrl | String | AI_CALL / TTS | 供应商回调基址（Adapter 拼 LTH 回调） |
 | timeoutMinutes | Integer | AI_CALL / TTS | 默认 60，覆盖引擎 `callback_timeout_minutes` |
 | scriptSlot | String | 建议 | 编排话术槽名，如 `S1_SMS_STANDARD` |
-| sms_body | String | SMS | **StepResolver 渲染后的正文**（通知中心 `contentType=collection` 发送） |
+| sms_body | String | SMS / PUSH fallback | **StepResolver 渲染后的正文**（通知中心 `content`） |
+| fallback_sms_body | String | PUSH fallback | 可选；优先于 `sms_body` 作 fallback 正文 |
+| title | String | PUSH | 通知中心 Push `title`（Resolver 渲染，不进快照） |
+| body | String | PUSH | 通知中心 Push `body` |
+| pushData | String | PUSH | 通知中心 `data`：JSON object 字符串（见 [字段透传说明 §4.2](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md#42-app-push通知中心异步入队--jpush)） |
 | dynamicTemplateData | Map | EMAIL | SendGrid Handlebars 变量 |
 | fallback_sms | Boolean | PUSH 输出 | PushAdapter fallback 后=true |
-| case_id | Long | 建议 | 透传 SendGrid custom_args / 日志 |
+| case_id | Long | 建议 | 日志；Push `data.case_id`；SendGrid custom_args |
 
 ### 3.2 StepResult
 
@@ -208,7 +212,7 @@ collection-channel/
 
 | 文档 | 供应商 API |
 |------|------------|
-| [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | SMS `/v1/sms/send` + Push `/v1/app_notification/send`；API 见 [notification-send-api.md](../../../AI%20collection/相关资料/notification-send-api.md) |
+| [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | SMS + Push；§7 简易对账 · §9 StepResult 草案 · §10 Phase 2 回调（必做） |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `POST /v3/mail/send`；API 附录见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md) |
 | [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `voiceNotification` + 回调 |
 

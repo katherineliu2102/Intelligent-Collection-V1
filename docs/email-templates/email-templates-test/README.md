@@ -2,7 +2,7 @@
 
 > **位置**：`docs/email-templates/email-templates-test/`（Email 模板子目录）  
 > **用途**：SendGrid Dynamic Template 编辑器 **Test Data** 面板 Mock JSON  
-> **联调收件箱**：优先 **`wzynju@126.com`**（92001/92002）
+> **联调收件箱**：优先 **`wzynju@126.com`**（92002 / 93101 / 93201 / 93401 / 93404）
 
 ---
 

@@ -1,12 +1,24 @@
 package com.collection.admin.web;
 
+import com.collection.channel.adapter.NotificationPushAdapter;
+import com.collection.channel.adapter.NotificationSmsAdapter;
+import com.collection.channel.adapter.SendGridEmailAdapter;
+import com.collection.common.dto.ExecutionContext;
+import com.collection.common.dto.StepCommand;
+import com.collection.common.dto.StepResult;
+import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.Stage;
+import com.collection.common.model.ContactPlan;
+import com.collection.common.model.ContactPlanStep;
+import com.collection.common.model.ContextSnapshot;
 import com.collection.common.service.CaseService;
+import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
 import com.collection.service.impl.MockCaseService;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,6 +35,168 @@ public class MockTriggerController {
     private IngestionService ingestionService;
     @Resource
     private CaseService caseService;
+    @Resource
+    private StepResolver stepResolver;
+    @Resource
+    private SendGridEmailAdapter sendGridEmailAdapter;
+
+    @Resource
+    private NotificationSmsAdapter notificationSmsAdapter;
+
+    @Resource
+    private NotificationPushAdapter notificationPushAdapter;
+
+    /**
+     * 直连 SendGrid 发一封 Email（不经 plan/DB）。
+     * 用于 DB 不可用时的渠道冒烟；caseId 见 docs/email-templates/email-e2e-test-cases.md。
+     */
+    @PostMapping("/send-email")
+    public Map<String, Object> sendEmail(@RequestParam Long caseId) {
+        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+        if (snapshot.getUserProfile() == null || snapshot.getUserProfile().getBasic() == null
+                || snapshot.getUserProfile().getBasic().getEmail() == null) {
+            return fail("NO_EMAIL", "caseId=" + caseId + " has no email in mock profile");
+        }
+
+        ContactPlan plan = new ContactPlan();
+        plan.setId(0L);
+        plan.setCaseId(caseId);
+        plan.setUserId(caseId);
+        if (snapshot.getCaseContext() != null) {
+            plan.setStage(snapshot.getCaseContext().getStage());
+        }
+
+        ContactPlanStep step = new ContactPlanStep();
+        step.setChannelType(ChannelType.EMAIL);
+        step.setTemplateId(201L);
+        step.setStepOrder(1);
+        step.setRetryCount(0);
+
+        ExecutionContext execCtx = ExecutionContext.builder()
+                .plan(plan)
+                .currentStep(step)
+                .contextSnapshot(snapshot)
+                .recentTimeline(Collections.emptyList())
+                .build();
+
+        StepCommand command = stepResolver.resolve(execCtx);
+        StepResult result = sendGridEmailAdapter.send(command);
+
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", result.isSuccess());
+        m.put("caseId", caseId);
+        m.put("email", snapshot.getUserProfile().getBasic().getEmail());
+        m.put("scriptSlot", command.getMetadata().get(StepCommand.META_SCRIPT_SLOT));
+        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("providerMsgId", result.getProviderMsgId());
+        if (!result.isSuccess()) {
+            m.put("message", result.getErrorCode());
+        }
+        return m;
+    }
+
+    /**
+     * 直连通知中心发一条 SMS（不经 plan/DB）。
+     * caseId 见 MockSmsTestCases：94100=123456(testSend)、94101/94102=真号。
+     */
+    @PostMapping("/send-sms")
+    public Map<String, Object> sendSms(@RequestParam Long caseId) {
+        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+        if (snapshot.getUserProfile() == null || snapshot.getUserProfile().getBasic() == null
+                || snapshot.getUserProfile().getBasic().getPrimaryPhone() == null) {
+            return fail("NO_PHONE", "caseId=" + caseId + " has no phone in mock profile");
+        }
+
+        ContactPlan plan = new ContactPlan();
+        plan.setId(0L);
+        plan.setCaseId(caseId);
+        plan.setUserId(caseId);
+        if (snapshot.getCaseContext() != null) {
+            plan.setStage(snapshot.getCaseContext().getStage());
+        }
+
+        ContactPlanStep step = new ContactPlanStep();
+        step.setChannelType(ChannelType.SMS);
+        step.setTemplateId(101L);
+        step.setStepOrder(1);
+        step.setRetryCount(0);
+
+        ExecutionContext execCtx = ExecutionContext.builder()
+                .plan(plan)
+                .currentStep(step)
+                .contextSnapshot(snapshot)
+                .recentTimeline(Collections.emptyList())
+                .build();
+
+        StepCommand command = stepResolver.resolve(execCtx);
+        StepResult result = notificationSmsAdapter.send(command);
+
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", result.isSuccess());
+        m.put("caseId", caseId);
+        m.put("phone", snapshot.getUserProfile().getBasic().getPrimaryPhone());
+        m.put("scriptSlot", command.getMetadata().get(StepCommand.META_SCRIPT_SLOT));
+        m.put("smsBody", command.getMetadata().get(StepCommand.META_SMS_BODY));
+        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("providerMsgId", result.getProviderMsgId());
+        if (!result.isSuccess()) {
+            m.put("message", result.getErrorCode());
+        }
+        return m;
+    }
+
+    /**
+     * 直连通知中心发一条 App Push（不经 plan/DB）。
+     * caseId 见 MockPushTestCases：94200=假 jpushToken 占位（走 push）、94201=无 token（验 SMS fallback）。
+     * 同步/异步由 channel.notification.push-sync-mode 决定。
+     */
+    @PostMapping("/send-push")
+    public Map<String, Object> sendPush(@RequestParam Long caseId) {
+        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+
+        ContactPlan plan = new ContactPlan();
+        plan.setId(0L);
+        plan.setCaseId(caseId);
+        plan.setUserId(caseId);
+        if (snapshot.getCaseContext() != null) {
+            plan.setStage(snapshot.getCaseContext().getStage());
+        }
+
+        ContactPlanStep step = new ContactPlanStep();
+        step.setChannelType(ChannelType.PUSH);
+        step.setTemplateId(301L);
+        step.setStepOrder(1);
+        step.setRetryCount(0);
+
+        ExecutionContext execCtx = ExecutionContext.builder()
+                .plan(plan)
+                .currentStep(step)
+                .contextSnapshot(snapshot)
+                .recentTimeline(Collections.emptyList())
+                .build();
+
+        StepCommand command = stepResolver.resolve(execCtx);
+        StepResult result = notificationPushAdapter.send(command);
+
+        boolean hasToken = snapshot.getUserProfile() != null && snapshot.getUserProfile().getDevice() != null
+                && snapshot.getUserProfile().getDevice().getJpushToken() != null;
+
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", result.isSuccess());
+        m.put("caseId", caseId);
+        m.put("jpushToken", hasToken ? snapshot.getUserProfile().getDevice().getJpushToken() : null);
+        m.put("targetAddress", command.getTargetAddress());
+        m.put("scriptSlot", command.getMetadata().get(StepCommand.META_SCRIPT_SLOT));
+        m.put("title", command.getMetadata().get(StepCommand.META_TITLE));
+        m.put("body", command.getMetadata().get(StepCommand.META_BODY));
+        m.put("pushData", command.getMetadata().get(StepCommand.META_PUSH_DATA));
+        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("providerMsgId", result.getProviderMsgId());
+        if (!result.isSuccess()) {
+            m.put("message", result.getErrorCode());
+        }
+        return m;
+    }
 
     /** 注入新案件，触发建计划 → 步骤执行全链路。 */
     @PostMapping("/ingest")
@@ -75,6 +249,14 @@ public class MockTriggerController {
     private Map<String, Object> ok(String msg) {
         Map<String, Object> m = new HashMap<>();
         m.put("ok", true);
+        m.put("message", msg);
+        return m;
+    }
+
+    private Map<String, Object> fail(String code, String msg) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", false);
+        m.put("result", code);
         m.put("message", msg);
         return m;
     }

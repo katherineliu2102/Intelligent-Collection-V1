@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>渠道编排观测 · MOCASA 催收</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --line: #334155; --text: #e2e8f0;
+      --muted: #94a3b8; --accent: #38bdf8; --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text); padding: 24px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+    .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    input, button { font-size: 14px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); }
+    input { background: var(--panel); color: var(--text); width: 180px; }
+    button { background: var(--accent); color: #0b1220; font-weight: 600; cursor: pointer; border: none; }
+    button:disabled { opacity: .5; cursor: default; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      padding: 16px; margin-bottom: 16px; }
+    .card h2 { font-size: 14px; margin: 0 0 12px; color: var(--accent); }
+    .meta { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+    .meta b { color: var(--text); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; }
+    td.wrap { white-space: normal; word-break: break-all; max-width: 280px; }
+    .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .s-COMPLETED, .r-DELIVERED, .r-ANSWERED, .r-READ { background: rgba(52,211,153,.15); color: var(--ok); }
+    .s-EXECUTING, .s-PENDING { background: rgba(56,189,248,.15); color: var(--accent); }
+    .s-FAILED, .r-FAILED, .r-REJECTED, .r-CHANNEL_DOWN { background: rgba(248,113,113,.15); color: var(--bad); }
+    .s-SKIPPED, .s-CANCELLED, .r-NO_ANSWER, .r-BUSY { background: rgba(251,191,36,.15); color: var(--warn); }
+    .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+    .err { color: var(--bad); font-size: 13px; }
+    .chan { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>渠道编排观测</h1>
+  <div class="sub">只读视图 · 输入案件 ID 查看活跃计划、步骤序列与触达时间线（数据来自 /plans REST）</div>
+
+  <div class="bar">
+    <input id="caseId" type="number" placeholder="案件 caseId" />
+    <button id="loadBtn" onclick="load()">查询</button>
+    <span id="hint" class="sub" style="margin:0"></span>
+  </div>
+
+  <div id="error" class="err"></div>
+  <div id="content"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function pill(kind, v) {
+      if (v === null || v === undefined || v === '') return '<span class="pill">-</span>';
+      return '<span class="pill ' + kind + '-' + v + '">' + v + '</span>';
+    }
+    function fmt(t) { return t ? String(t).replace('T', ' ').slice(0, 19) : '-'; }
+    function esc(s) {
+      if (s === null || s === undefined) return '-';
+      return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    }
+
+    function renderPlan(view) {
+      const p = view.plan || {};
+      const steps = view.steps || [];
+      let rows = steps.map(s => `
+        <tr>
+          <td>${s.stepOrder}</td>
+          <td class="chan">${esc(s.channelType)}</td>
+          <td>${esc(s.templateId)}</td>
+          <td>${fmt(s.triggerTime)}</td>
+          <td>${pill('s', s.status)}</td>
+          <td>${pill('r', s.result)}</td>
+          <td>${s.retryCount || 0}</td>
+          <td class="wrap">${esc(s.idempotencyKey)}</td>
+          <td>${fmt(s.completedAt)}</td>
+        </tr>`).join('');
+      if (!rows) rows = '<tr><td colspan="9" class="empty">无步骤</td></tr>';
+      return `
+        <div class="card">
+          <h2>计划 #${esc(p.id)} · ${esc(p.stage)} · ${pill('s', p.status)}</h2>
+          <div class="meta">
+            <span>userId <b>${esc(p.userId)}</b></span>
+            <span>当前步 <b>${p.currentStep}/${p.totalSteps}</b></span>
+            <span>开始 <b>${fmt(p.startedAt)}</b></span>
+            <span>完成 <b>${fmt(p.completedAt)}</b></span>
+            <span>幂等键 <b>${esc(p.idempotencyKey)}</b></span>
+          </div>
+          <table>
+            <thead><tr><th>#</th><th>渠道</th><th>模板</th><th>触发时间</th><th>步骤状态</th>
+              <th>结果</th><th>重试</th><th>幂等键</th><th>完成时间</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    function renderTimeline(records) {
+      let rows = (records || []).map(r => `
+        <tr>
+          <td>${fmt(r.createdAt)}</td>
+          <td class="chan">${esc(r.channel)}</td>
+          <td>${esc(r.direction)}</td>
+          <td>${pill('r', r.result)}</td>
+          <td class="wrap">${esc(r.contentSummary)}</td>
+          <td class="wrap">${esc(r.providerMsgId)}</td>
+          <td>${esc(r.planId)}/${esc(r.stepId)}</td>
+        </tr>`).join('');
+      if (!rows) rows = '<tr><td colspan="7" class="empty">无触达记录</td></tr>';
+      return `
+        <div class="card">
+          <h2>触达时间线（近期）</h2>
+          <table>
+            <thead><tr><th>时间</th><th>渠道</th><th>方向</th><th>结果</th>
+              <th>内容摘要</th><th>providerMsgId</th><th>plan/step</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    async function load() {
+      const caseId = $('caseId').value.trim();
+      $('error').textContent = '';
+      $('content').innerHTML = '';
+      if (!caseId) { $('error').textContent = '请输入案件 caseId'; return; }
+      $('loadBtn').disabled = true; $('hint').textContent = '加载中…';
+      try {
+        const resp = await fetch('/plans/overview/by-case/' + encodeURIComponent(caseId));
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const plans = data.plans || [];
+        let html = `<div class="card"><div class="meta">
+            <span>caseId <b>${esc(data.caseId)}</b></span>
+            <span>userId <b>${esc(data.userId)}</b></span>
+            <span>活跃计划数 <b>${plans.length}</b></span></div></div>`;
+        if (!plans.length) html += '<div class="card empty">该案件无活跃计划</div>';
+        html += plans.map(renderPlan).join('');
+        html += renderTimeline(data.timeline);
+        $('content').innerHTML = html;
+        $('hint').textContent = '更新于 ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        $('error').textContent = '查询失败：' + e.message;
+      } finally {
+        $('loadBtn').disabled = false;
+      }
+    }
+
+    $('caseId').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+  </script>
+</body>
+</html>

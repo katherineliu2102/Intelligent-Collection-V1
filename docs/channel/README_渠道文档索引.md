@@ -44,6 +44,12 @@
 | [MOCASA催收系统升级_Phase1_渠道模板清单与配置.md](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) | **SMS / Push / Email / Voice** scriptSlot 总表、Nacos 配置 |
 | [email-templates/](./email-templates/) | Email HTML、`_layouts/`、`subjects.md`、`email-templates-test/` Test Data |
 
+### 契约对齐
+
+| 文档 | 说明 |
+|------|------|
+| [MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md) | 快照 → StepCommand → 供应商 API 全链字段映射 SSOT |
+
 ### 供应商 Adapter 对接
 
 | 文档 | 说明 |

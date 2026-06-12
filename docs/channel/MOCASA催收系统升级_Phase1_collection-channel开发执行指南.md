@@ -356,10 +356,12 @@ channel:
   plan-templates:
     s1-standard: ...    # 结构与编排 §7.5 日块一致
 
+  notification:
+    base-url: https://service-test.mocasa.com/notification
+    app-code: mocasa
+    app-key: ${NOTIFICATION_APP_KEY}
+    sms-content-type: collection
   lth:
-    sms:
-      url: https://...
-      sender-id: ...
     voice:
       url: https://...
   sendgrid:
@@ -367,10 +369,6 @@ channel:
     from-email: collections@...
     unsubscribe-group-id: 12345
     webhook-public-key: ...
-  fcm:
-    project-id: ...
-    service-account-json: |
-      { ... }
 
   compliance:
     daily-limit:
