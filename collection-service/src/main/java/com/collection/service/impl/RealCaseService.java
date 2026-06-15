@@ -28,9 +28,11 @@ import java.time.LocalDateTime;
  * <p>映射约定：
  * <ul>
  *   <li>caseId = loan_id（数字串）；t_collection.id 是 hex 串不可用。</li>
- *   <li>Stage 不存列，由 dpd 经 {@link Stage#fromDpd(int)} 推导；dpd = overdue_days（正数=已逾期天数）。</li>
+ *   <li>Stage 不存列，由 dpd 经 {@link Stage#fromDpd(int)} 推导；dpd = overdue_days（正数=已逾期天数）。
+ *       边界已对齐编排规格：S2[4,15]、S3[16,30]、S4[31+]。</li>
+ *   <li>penaltyAmount = t_collection.overdue（罚息金额）。</li>
  *   <li>phone 归一化为 E.164 +63；email 脏值（空 / "0"）置 null（EMAIL 渠道走 Guard SKIP）。</li>
- *   <li>PUSH 的 jpushToken 不在 t_collection，留空（PUSH 待 t_user_equipment 接入）。</li>
+ *   <li>PUSH 的 jpushToken 不在 t_collection，留空（待服务同事从 t_user_equipment 接入）。</li>
  *   <li>repaid = full_repay_time 非空或 total_not_paid &lt;= 0；frozen 无来源，固定 false。</li>
  * </ul>
  */
@@ -75,6 +77,7 @@ public class RealCaseService implements CaseService {
         ctx.setStage(Stage.fromDpd(dpd));
         ctx.setProduct(row.getAppName());
         ctx.setTotalOutstanding(row.getTotalNotPaid());
+        ctx.setPenaltyAmount(row.getOverdue());
         ctx.setDueDate(row.getRepaymentDate());
         ctx.setCaseStatus(row.getCollecitonStatus());
         ctx.setRepaymentUrl(repaymentUrlTemplate.replace("{caseId}", String.valueOf(caseId)));

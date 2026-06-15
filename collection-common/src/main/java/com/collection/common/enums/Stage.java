@@ -3,18 +3,17 @@ package com.collection.common.enums;
 /**
  * 催收阶段。对应领域模型 §6.9。
  *
- * <p>{@link #fromDpd(int)} 为默认 DPD→Stage 映射。文档要求区间边界从
- * t_contact_plan_template 配置读取、不硬编码；Phase 1 骨架先用默认值，
- * 渠道编排接管模板表后可改为查表。
+ * <p>{@link #fromDpd(int)} DPD→Stage 映射边界已与渠道编排同事对齐（2026-06-15）：
+ * S1 DPD∈[1,3]、S2 DPD∈[4,15]、S3 DPD∈[16,30]、S4 DPD∈[31,∞)。
+ * DPD≥91 停催逻辑由 PlanFactory.shouldRejectPlan / ingestion 日切独立处理，Stage 不感知。
  */
 public enum Stage {
 
     S0(-3, 0),
     S1(1, 3),
-    S2(4, 10),
-    S3(11, 15),
-    S4(16, 30),
-    S4_PLUS(31, Integer.MAX_VALUE);
+    S2(4, 15),
+    S3(16, 30),
+    S4(31, Integer.MAX_VALUE);
 
     private final int minDpd;
     private final int maxDpd;
@@ -33,9 +32,9 @@ public enum Stage {
     }
 
     /**
-     * 默认 DPD → Stage 映射。
-     * D-3~D0 → S0，D+1~D+3 → S1，... D+31+ → S4_PLUS。
-     * 注意：D+91 完全停催（CASE_CEASED）不属于 Stage 概念，由引擎单独处理（对齐待办 E1）。
+     * DPD → Stage 映射（边界与渠道编排对齐）。
+     * D-3~D0 → S0，D1~D3 → S1，D4~D15 → S2，D16~D30 → S3，D31+ → S4。
+     * D91+ 停催（CASE_CEASED）不属于 Stage 概念，由 PlanFactory.shouldRejectPlan / ingestion 单独拦截。
      */
     public static Stage fromDpd(int dpd) {
         for (Stage stage : values()) {

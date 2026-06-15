@@ -282,7 +282,6 @@ public class DefaultStepResolver implements StepResolver {
             case S3:
                 return smsFirm ? "S3_SMS_FIRM" : "S3_" + chTag + "_STANDARD";
             case S4:
-            case S4_PLUS:
                 return smsFirm ? "S4_SMS_FIRM" : "S4_" + chTag + "_STANDARD";
             default:
                 return "S1_" + chTag + "_STANDARD";

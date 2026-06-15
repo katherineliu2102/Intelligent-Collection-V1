@@ -12,7 +12,7 @@ import org.apache.ibatis.annotations.Select;
 public interface CollectionCaseMapper {
 
     /** 按 loan_id 取最近一条催收记录（同一 loan_id 可能有多条，取 create_time 最新）。 */
-    @Select("SELECT loan_id, user_id, overdue_days, repayment_date, total_not_paid, " +
+    @Select("SELECT loan_id, user_id, overdue_days, repayment_date, total_not_paid, overdue, " +
             "       full_repay_time, real_name, phone, email, app_name, colleciton_status " +
             "FROM t_collection WHERE loan_id = #{loanId} " +
             "ORDER BY create_time DESC LIMIT 1")
