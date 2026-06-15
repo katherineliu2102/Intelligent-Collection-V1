@@ -13,7 +13,7 @@ import java.util.Optional;
  * Phase 1 Email 全链路联调 case 注册表（方式 C）。
  *
  * <p>caseId = userId；邮箱统一 {@code wzynju@126.com}（见 {@link MockProfileService}）。
- * 文档 SSOT：{@code docs/email-templates/email-e2e-test-cases.md}
+ * Phase 1 实际发信仅 5 个 scriptSlot，联调见 {@code docs/email-templates/email-e2e-test-cases.md}。
  */
 final class MockEmailTestCases {
 

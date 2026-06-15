@@ -119,7 +119,7 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 | 渠道编排规格 v1.4（含 §3.5 Phase 1 范围） | [docs/MOCASA催收系统升级_Phase1_渠道编排规格.md](./docs/MOCASA催收系统升级_Phase1_渠道编排规格.md) |
 | 核心引擎规格 | [docs/MOCASA催收系统升级_Phase1_核心引擎规格.md](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md) |
 | collection-channel 总规格 | [docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md](./docs/MOCASA催收系统升级_Phase1_collection-channel总规格.md) |
-| LTH SMS / SendGrid Email / LTH Voice / FCM Push | 见 [文档索引](./docs/README_渠道文档索引.md) |
+| Notification（SMS+Push）/ SendGrid Email / LTH Voice | 见 [文档索引](./docs/channel/README_渠道文档索引.md) · [Notification 对接说明](./docs/channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) |
 
 #### A1. `MockPlanFactory` → `DefaultPlanFactory`
 

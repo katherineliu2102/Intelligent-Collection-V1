@@ -33,7 +33,7 @@ NACOS_PASSWORD=<测试环境公共密码>
 | `intelligent-collection-local.yml`  | `local` profile 下的测试环境覆盖              |
 
 
-渠道开发时 Nacos 中典型配置项：`channel.lth.sms.*`、`channel.sendgrid.*`、`channel.fcm.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。详见 [collection-channel 开发执行指南 §6](docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单渠道模块使用)。
+渠道开发时 Nacos 中典型配置项：`channel.notification.*`（SMS/Push）、`channel.sendgrid.*`、`channel.lth.voice.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。详见 [collection-channel 开发执行指南 §6](docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单渠道模块使用)。
 
 注意：不要将真实账号、密码提交到 Git 仓库。
 
