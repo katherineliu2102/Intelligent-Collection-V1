@@ -53,6 +53,14 @@ public class NotificationPushAdapter implements ChannelAdapter {
         String token = command.getTargetAddress();
         String fallbackPhone = AdapterSupport.metadataString(command, "fallbackPhone");
 
+        // 测试 app 隔离：配了 push-test-token 时强制覆盖目标，所有 push 投到测试 app（跳过 fallback，绝不触达真实用户）
+        String testToken = properties.getNotification().getPushTestToken();
+        if (StringUtils.isNotBlank(testToken)) {
+            log.info("[NotificationPushAdapter] push-test-token active → override target to test app token");
+            token = testToken.trim();
+            fallbackPhone = null;
+        }
+
         // 无有效 jpushToken（StepResolver 用手机号占位并写 fallbackPhone）→ 同槽改 SMS
         if (StringUtils.isBlank(token) || token.equals(fallbackPhone)) {
             log.info("[NotificationPushAdapter] no jpushToken, fallback SMS phone={}",

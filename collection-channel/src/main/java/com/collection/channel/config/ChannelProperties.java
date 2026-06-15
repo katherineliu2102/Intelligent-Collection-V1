@@ -80,6 +80,11 @@ public class ChannelProperties {
          * 注意：Push 无免签名测试端点，无论同步/异步都需 appKey 签名。
          */
         private boolean pushSyncMode = false;
+        /**
+         * 测试 app 隔离开关：非空时所有 Push 强制打到该 jpushToken，跳过按用户取 token 与无 token→SMS fallback。
+         * 用于联调时把全部 stage 的 push 都投到一个测试 app，绝不触达真实用户。生产留空。
+         */
+        private String pushTestToken = "";
     }
 
     /**

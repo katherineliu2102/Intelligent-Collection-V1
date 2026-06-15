@@ -30,6 +30,7 @@ channel:
     sms-content-type: collection
     sms-test-mode: false  # 真号生产：走 /v1/sms/send（签名，内部路由 QH/Hiway/BORI）；改 true 走 testSend Virtual 免签名
     push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
+    push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
   debug:
     legacy-three-step: false
     single-step: SMS
