@@ -18,6 +18,7 @@ import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
+import com.collection.engine.spi.SpiInvoker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -66,6 +67,7 @@ class StepExecutionOrchestratorTest {
     @Mock private TimelineRepository timelineRepository;
     @Mock private CollectionEventBus eventBus;
     @Spy  private EngineProperties props = new EngineProperties();
+    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private StepExecutionOrchestrator orchestrator;
 

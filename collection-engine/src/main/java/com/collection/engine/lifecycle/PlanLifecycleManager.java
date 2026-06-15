@@ -12,6 +12,8 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.spi.SpiInvoker;
+import com.collection.engine.spi.SpiType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -46,6 +48,8 @@ public class PlanLifecycleManager {
     private ExhaustionPolicy exhaustionPolicy;
     @Resource
     private PredictiveDialerService predictiveDialerService;
+    @Resource
+    private SpiInvoker spiInvoker;
 
     // ───────────────────────── 计划创建（§2.2） ─────────────────────────
 
@@ -165,8 +169,10 @@ public class PlanLifecycleManager {
         ContactPlanStep completed = planRepository.findStepById(stepId);
         StepResult stepResult = toStepResult(completed);
 
-        AdvancementDecision decision = advancementPolicy.decide(
-                buildLiteContext(plan, completed), stepResult);
+        // SPI 硬超时 10ms；异常/超时上抛 → 事务回滚 → NACK 延迟重消费（核心引擎规格 §4.1）
+        com.collection.common.dto.ExecutionContext liteCtx = buildLiteContext(plan, completed);
+        AdvancementDecision decision = spiInvoker.call(SpiType.ADVANCEMENT_POLICY,
+                () -> advancementPolicy.decide(liteCtx, stepResult));
 
         switch (decision) {
             case ADVANCE_NEXT:
@@ -240,7 +246,9 @@ public class PlanLifecycleManager {
         CaseInfo caseInfo = caseService.getCaseInfo(plan.getCaseId());
         ContextSnapshot snapshot = caseService.getContextSnapshot(plan.getCaseId());
 
-        ExhaustionResult result = exhaustionPolicy.handle(plan, caseInfo, snapshot);
+        // SPI 硬超时 50ms；异常/超时上抛 → NACK（穷尽是生命周期关键节点，不可丢）
+        ExhaustionResult result = spiInvoker.call(SpiType.EXHAUSTION_POLICY,
+                () -> exhaustionPolicy.handle(plan, caseInfo, snapshot));
         switch (result.getAction()) {
             case REBUILD:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null); // 旧计划正常完成
@@ -287,7 +295,8 @@ public class PlanLifecycleManager {
         }
         CaseInfo caseInfo = caseService.getCaseInfo(caseId);
         ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
-        ExhaustionResult result = exhaustionPolicy.handle(last, caseInfo, snapshot);
+        ExhaustionResult result = spiInvoker.call(SpiType.EXHAUSTION_POLICY,
+                () -> exhaustionPolicy.handle(last, caseInfo, snapshot));
         if (result.getAction() == ExhaustionAction.REBUILD) {
             createPlanForStage(caseId, last.getStage());
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
@@ -318,7 +327,9 @@ public class PlanLifecycleManager {
             return;
         }
 
-        ContactPlan plan = planFactory.create(caseInfo, stage, snapshot); // SPI：异常→NACK
+        // SPI 硬超时 50ms；异常/超时上抛 → NACK 延迟重消费（丢失整个计划 = 案件完全无触达，核心引擎规格 §4.1）
+        ContactPlan plan = spiInvoker.call(SpiType.PLAN_FACTORY,
+                () -> planFactory.create(caseInfo, stage, snapshot));
         if (plan == null) {
             log.info("[create] PlanFactory returned null for case {} stage {}, no plan", caseId, stage);
             return;
