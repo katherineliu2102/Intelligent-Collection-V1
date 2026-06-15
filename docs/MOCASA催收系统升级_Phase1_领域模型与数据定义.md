@@ -328,11 +328,21 @@ flowchart TD
 
 | 字段 | 类型 | 必填 | 来源 | Phase 1 状态 |
 |---|---|---|---|---|
+| jpushToken | String | 否 | t_user_equipment / App 上报 | **Phase 1 实现**：JPush Registration ID，供 Push 渠道；`StepResolver` 填入 `StepCommand.targetAddress`；见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §2.2 |
 | deviceModel | String | 否 | t_user_equipment | 现有数据 |
 | osVersion | String | 否 | t_user_equipment | 现有数据 |
 | phoneValidity | PhoneValidity | 否 | t_user_profile_ext | 预留，需号码检测供应商 |
 | viberRegistered | Boolean | 否 | t_user_profile_ext | 预留，需 Viber API 查询 |
 | whatsappRegistered | Boolean | 否 | t_user_profile_ext | 预留，需 WhatsApp API 查询 |
+
+**ingestion 约定（Phase 1）**
+
+| 项 | 说明 |
+|----|------|
+| 写入路径 | App 登录/启动时上报 JPush Registration ID → 信贷/App 后端 → `t_user_equipment` → `ProfileService.getFullProfile` |
+| 字段映射 | DB 列名与 Java `jpushToken` 对齐（实现时定，建议与现网设备表扩展字段一致） |
+| 多设备 | Phase 1 **单 token**（最新设备）；多 token 逗号拼接见 Notification 附录 B #5 |
+| 与 FCM 区分 | **不使用** FCM token；催收 Push 经通知中心走 JPush |
 
 #### RiskScore（Phase 1 渐进填充）
 

@@ -95,12 +95,12 @@ timeline 出现 **3 条**（SMS→PUSH→SMS，templateId 101/102/103）且 plan
 | # | 文件/模块 | 变更 | 验收 |
 |---|-----------|------|------|
 | 0-1 | `UserProfile.BasicInfo` | 增加 `email` | Mock Profile 可返回测试邮箱 |
-| 0-2 | `UserProfile.DeviceInfo` | 增加 `fcmToken` | Mock Profile 可返回测试 token |
+| 0-2 | `UserProfile.DeviceInfo` | 增加 `jpushToken`（JPush Registration ID） | Mock Profile 可返回测试 token |
 | 0-3 | `CaseContext` | 增加 `repaymentUrl` | ingest/snapshot 可带入深链 |
 | 0-4 | `StepCommand` | 补全 metadata 常量：`META_SCRIPT_SLOT`、`META_SMS_BODY`、`META_DYNAMIC_TEMPLATE_DATA`、`META_CASE_ID`、`META_FALLBACK_SMS`（与总规格 §3.1 一致） | Resolver / Adapter 编译通过 |
 | 0-5 | `EventType` | 新增 **`CASE_CEASED`** | `mvn compile`；枚举与 [编排规格 §4.2](./MOCASA催收系统升级_Phase1_渠道编排规格.md#42-完全停催d91) 一致 |
 | 0-6 | `CollectionEvent` | 新增 payload 常量：`MAX_DPD`、`DISPOSITION`、`PROVIDER_MSG_ID`、`RESULT`（Voice 回调 / Webhook 复用） | 发布/订阅方可 `event.with(CollectionEvent.MAX_DPD, 91)` |
-| 0-7 | `MockProfileService` | 按 `userId` 返回 phone / email / fcmToken | 单渠道联调有数据 |
+| 0-7 | `MockProfileService` | 按 `userId` 返回 phone / email / jpushToken | 单渠道联调有数据 |
 | 0-8 | `collection-channel/pom.xml` | 增加 HTTP 客户端依赖（`spring-web` 或 `okhttp`） | `mvn compile` 通过 |
 
 ```bash
@@ -147,7 +147,9 @@ collection-channel/src/main/java/com/collection/channel/
 │   ├── ChannelGatewayImpl.java
 │   └── MockChannelGateway.java         # @Primary 切到 Impl 后删除
 ├── adapter/
-│   └── LthSmsAdapter.java              # 第一个真实 Adapter
+│   ├── NotificationClient.java
+│   ├── NotificationSmsAdapter.java
+│   └── NotificationPushAdapter.java    # 过渡期可保留 LthSmsAdapter / FcmPushAdapter
 └── strategy/                           # 阶段 3 陆续补齐
     ├── MockStepResolver.java           # 阶段 1b 最小增强
     └── ...
@@ -158,7 +160,7 @@ collection-channel/src/main/java/com/collection/channel/
 | 步骤 | 类 | 要点 |
 |------|-----|------|
 | 1 | `ChannelProperties` | `@ConfigurationProperties(prefix = "channel")` + `@RefreshScope`，字段见 §6 |
-| 2 | `ChannelGatewayImpl` | 渠道幂等占位；`SMS` → `LthSmsAdapter`；其余暂委托 Mock 或 `UnsupportedChannelException` |
+| 2 | `ChannelGatewayImpl` | 渠道幂等占位；`SMS` → `NotificationSmsAdapter`（现代码仍为 `LthSmsAdapter`，待迁移）；`PUSH` → `NotificationPushAdapter`；其余暂委托 Mock 或 `UnsupportedChannelException` |
 | 3 | Bean | `ChannelGatewayImpl` `@Primary` 实现 `ChannelGateway` |
 
 ### 2.3 阶段 1b：MockStepResolver 最小增强（**Adapter 冒烟前置**）
@@ -168,17 +170,17 @@ collection-channel/src/main/java/com/collection/channel/
 | 渠道 | `targetAddress` | `metadata` 最小填充 |
 |------|-----------------|---------------------|
 | SMS | `primaryPhone` | `sms_body`（联调可用 `"[MOCK] " + scriptSlot`）、`scriptSlot`、`language=tl` |
-| PUSH | `fcmToken` | `scriptSlot`；无 token 时仍解析 phone 供 fallback |
+| PUSH | `jpushToken` | `title`、`body`、`data`（JSON 字符串）；无 token 时仍解析 phone 供 fallback |
 | EMAIL | `email` | `dynamicTemplateData`（含 `repaymentUrl`）、`case_id` |
 | AI_CALL / TTS | `primaryPhone` | `callbackUrl` = `channel.callback.base-url` + `/lth/voice`；`timeoutMinutes=60` |
 
 异步渠道 **禁止** 使用相对路径 `"/webhook/channel-callback"`，必须拼完整 `base-url`。
 
-### 2.4 阶段 1c：LthSmsAdapter + 单步联调
+### 2.4 阶段 1c：NotificationSmsAdapter + 单步联调
 
 | 步骤 | 类 | 要点 |
 |------|-----|------|
-| 1 | `LthSmsAdapter` | 读 `META_SMS_BODY`；映射 [LTH SMS](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md) §4 |
+| 1 | `NotificationSmsAdapter` + `NotificationClient` | 读 `META_SMS_BODY`；`POST /v1/sms/send`；`contentType=collection`；映射 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §1 |
 | 2 | `MockPlanFactory` | Nacos `channel.debug.single-step: SMS` 时仅 1 步、`delayMinutes=0` |
 | 3 | 验收 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) **TC-SMS-01** |
 
@@ -195,8 +197,8 @@ steps.add(buildStep(1, ChannelType.SMS, 0, 0, 101L));
 
 | 顺序 | Adapter | 文档 | 同步/异步 | 备注 |
 |------|---------|------|-----------|------|
-| 1 | `LthSmsAdapter` | LTH SMS | 同步 → STEP_COMPLETED | 阶段 1 已完成 |
-| 2 | `FcmPushAdapter` | FCM Push | 同步 | 无 token / 失败 → **同槽 SMS fallback**，`metadata.fallback_sms=true` |
+| 1 | `NotificationSmsAdapter` | 通知中心 SMS | 同步 → STEP_COMPLETED（`requestSuccess=true`） | 阶段 1 占位完成（`LthSmsAdapter` 待替换） |
+| 2 | `NotificationPushAdapter` | 通知中心 Push（JPush） | 入队成功 → STEP_COMPLETED | 无 token → **同槽 SMS fallback**；JPush 投递失败 Phase 1 不 fallback |
 | 3 | `SendGridEmailAdapter` | SendGrid Email | 同步 | `custom_args.idempotency_key`；Event Webhook **不**完成 step |
 | 4 | `LthVoiceAdapter` | LTH Voice | 异步 | **`AI_CALL` 与 `TTS` 共用一个 Adapter** |
 
@@ -250,7 +252,7 @@ Voice **终态**由 `CHANNEL_CALLBACK` + `AdvancementPolicy` 处理；Adapter di
 
 | 约束 | 编排依据 |
 |------|----------|
-| `match(stage, tone)` | 8 套骨架：S0–S4 **STANDARD** + S2–S4 **FIRM**（§7.1）；tone 读 snapshot `strategy_tone` |
+| `match(stage, tone)` | 8 套骨架：S0–S4 **STANDARD** + S2–S4 **FIRM**（§7.1）；tone 读 snapshot `strategy_tone`；**FIRM 判定口径**见 [渠道编排 §6.3.1](./MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) |
 | 一 Stage 一 plan | 进入 Stage 时 **单次 `create`** 展开全部未过期 `DayBlock`（S4 约 60 日块一次铺完，§7.1） |
 | 晚进案（跨日） | 跳过已过期 `dpd_day` 日块，**不追溯补发**（§7.0） |
 | **晚进案（同日）** | 见下表 |
@@ -277,7 +279,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 | 项 | 要求 |
 |----|------|
 | I/O | **零 DB**；只读 `ExecutionContext` + `contextSnapshot` |
-| 地址 | SMS→phone，EMAIL→email，PUSH→fcmToken，AI_CALL/TTS→phone |
+| 地址 | SMS→phone，EMAIL→email，PUSH→jpushToken，AI_CALL/TTS→phone |
 | SMS | 按 `scriptSlot` + snapshot 渲染 **`sms_body`**（`repaymentUrl`、产品变量；**F10 Offer Phase 1 占位**，见下） |
 | EMAIL | `dynamicTemplateData` + SendGrid `templateId`（[渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) `channel.sendgrid.templates`） |
 | 异步 | `callbackUrl`、`timeoutMinutes`（默认 60） |
@@ -354,10 +356,12 @@ channel:
   plan-templates:
     s1-standard: ...    # 结构与编排 §7.5 日块一致
 
+  notification:
+    base-url: https://service-test.mocasa.com/notification
+    app-code: mocasa
+    app-key: ${NOTIFICATION_APP_KEY}
+    sms-content-type: collection
   lth:
-    sms:
-      url: https://...
-      sender-id: ...
     voice:
       url: https://...
   sendgrid:
@@ -365,10 +369,6 @@ channel:
     from-email: collections@...
     unsubscribe-group-id: 12345
     webhook-public-key: ...
-  fcm:
-    project-id: ...
-    service-account-json: |
-      { ... }
 
   compliance:
     daily-limit:
@@ -392,9 +392,8 @@ spring:
 
 | Nacos 路径 | 使用方 | 说明 |
 |------------|--------|------|
-| `channel.lth.sms.*` | `LthSmsAdapter` | URL、Sender ID |
+| `channel.notification.*` | `NotificationSmsAdapter` / `NotificationPushAdapter` | `base-url`、`app-code`、`app-key`；见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §0.4 |
 | `channel.sendgrid.*` | `SendGridEmailAdapter` | API Key、发件人、退订组 |
-| `channel.fcm.*` | `FcmPushAdapter` | 服务账号 |
 | `channel.lth.voice.*` | `LthVoiceAdapter` | 外呼 API |
 | `channel.callback.base-url` | `DefaultStepResolver` / Mock 增强版 | 完整 callbackUrl |
 | `channel.compliance.*` | `ComplianceExecutionGuard` | 限额（含 AI_CALL/TTS）、时区、触达窗 |
@@ -421,8 +420,8 @@ spring:
 [ ] 1.  阶段 0：common 契约（含 CASE_CEASED、StepCommand/CollectionEvent 常量）
 [ ] 2.  ChannelProperties + Nacos channel.* 段
 [ ] 3.  MockStepResolver 最小增强（sms_body / 多地址 / 完整 callbackUrl）
-[ ] 4.  LthSmsAdapter + ChannelGatewayImpl → TC-SMS-01
-[ ] 5.  FcmPushAdapter（含 fallback）→ TC-PUSH-01/02
+[ ] 4.  NotificationSmsAdapter + ChannelGatewayImpl → TC-SMS-01
+[ ] 5.  NotificationPushAdapter（含 fallback）→ TC-PUSH-01/02
 [ ] 6.  SendGridEmailAdapter → TC-EMAIL-01/02
 [ ] 7.  LthVoiceAdapter（AI_CALL + TTS）+ /webhook/lth/voice → TC-VOICE-01/02
 [ ] 8.  DefaultPlanFactory（8 套骨架、晚进案、S4 分段、禁止条件 Email）

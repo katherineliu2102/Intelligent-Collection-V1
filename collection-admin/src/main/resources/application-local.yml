@@ -8,7 +8,6 @@ spring:
       config:
         username: ${NACOS_USERNAME}
         password: ${NACOS_PASSWORD}
-  # Nacos ConfigData 早期加载失败时的本地回退（MyBatis 驼峰映射必需，否则 plan_id→planId 失败）
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
 mybatis:
@@ -24,29 +23,35 @@ collection:
 channel:
   callback:
     base-url: http://localhost:8888/webhook
+  notification:
+    base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
+    app-code: mocasa
+    app-key: ${NOTIFICATION_APP_KEY:}
+    sms-content-type: collection
+    sms-test-mode: false  # 真号生产：走 /v1/sms/send（签名，内部路由 QH/Hiway/BORI）；改 true 走 testSend Virtual 免签名
+    push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
   debug:
     legacy-three-step: false
-    # D0 邮件单步冒烟：取消下行注释并填写 SendGrid 密钥（勿提交 Git）
-    single-step: EMAIL
+    single-step: SMS
+  scripts:
+    push-default-deep-link: https://app.mocasa.com/repay
+    sms:
+      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the SKYPAYLOANS app only."
+    push:
+      S1_PUSH_STANDARD:
+        title: "Overdue: PHP {amount}"
+        body: "{name}, your payment is past due. Tap to settle in the app."
   sendgrid:
     api-key: ${SENDGRID_API_KEY:}
-    from-email: ${SENDGRID_FROM_EMAIL:collections@mocasa.test}
+    from-email: ${SENDGRID_FROM_EMAIL:collections@mocasa.com}
     from-name: MOCASA Collections
-    # scriptSlot → d-xxx（见 docs/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md §3）
+    # Phase 1 仅 5 个里程碑 Email（见 docs/email-templates/subjects.md）
     templates:
-      S0_DUE_TODAY_EMAIL: ${SENDGRID_D0_TEMPLATE_ID:d-39cb3cd90ee44451887c5c67bd1ac073}
-      S1_EMAIL_OVERDUE_NOTICE: d-8f802444870c4623a750f1502afa45bc
-      S1_EMAIL_STAGE_WARNING: d-72c68f1e83074ea2b183a0e7f3f6c17b
-      S2_EMAIL_ENTRY: d-9353d39a741d4e51bc3458b4d3f8cea9
-      S2_EMAIL_MID: d-7c4ee2dceaa34d81b0c3cc518f112064
-      S2_EMAIL_PRE_S3: d-fae607f9b20d49d886fd226232973f3f
-      S3_EMAIL_ENTRY: d-f82a59b63b83485291cb642231cf1b1a
-      S3_EMAIL_MID: d-d9f66c376bc04408ad80446506120bcf
-      S3_EMAIL_PRE_S4: d-5104ed17e6984b738c98d3e66d67cd37
-      S4_EMAIL_ENTRY: d-c2ef2c34bc9b41409fd62423a74688c2
-      S4_EMAIL_FINAL_REMINDER: d-0db13155d990471287029a120e3dee00
-      S4_EMAIL_MID: d-428fd5db13ff4a8c8a2fb8eb0bef4b56
-      S4_EMAIL_PRE_CLOSE: d-e28ba12db2344c8e9c0a4d9a4e26a107
+      S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
+      S1_EMAIL_OVERDUE_NOTICE: d-bc7f5aee7e304caf93ca4d435a73a1d7
+      S2_EMAIL_ENTRY: d-86ed8faae3b24489ad7db8a11067b8c4
+      S4_EMAIL_ENTRY: d-658d5be184ab4710a19c8419ed66bca9
+      S4_EMAIL_PRE_CLOSE: d-881ce23667cc4df2abf82097b890cae1
     unsubscribe-group-id: 0
 logging:
   level:

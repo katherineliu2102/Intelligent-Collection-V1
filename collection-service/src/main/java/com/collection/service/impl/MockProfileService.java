@@ -26,7 +26,26 @@ public class MockProfileService implements ProfileService {
 
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
 
-        // Email E2E 联调：93xxx / 92001-92002 → wzynju@126.com
+        // SMS 联调：94100–94102 指定手机号（见 MockSmsTestCases）
+        if (MockSmsTestCases.isSmsTestCase(userId)) {
+            MockSmsTestCases.find(userId).ifPresent(tc -> {
+                basic.setName(tc.displayName());
+                basic.setPrimaryPhone(tc.primaryPhone);
+            });
+        }
+
+        // Push 联调：94200/94201（假 jpushToken 占位 / 无 token 验 fallback，见 MockPushTestCases）
+        if (MockPushTestCases.isPushTestCase(userId)) {
+            MockPushTestCases.find(userId).ifPresent(tc -> {
+                basic.setName(tc.displayName());
+                basic.setPrimaryPhone(tc.primaryPhone);
+                if (tc.jpushToken != null) {
+                    device.setJpushToken(tc.jpushToken);
+                }
+            });
+        }
+
+        // Email E2E 联调：92001–93404 → wzynju@126.com（见 MockEmailTestCases）
         if (MockEmailTestCases.isEmailTestCase(userId)) {
             MockEmailTestCases.find(userId).ifPresent(tc -> basic.setName(tc.displayName()));
             basic.setEmail(MockEmailTestCases.TEST_EMAIL);
@@ -34,9 +53,9 @@ public class MockProfileService implements ProfileService {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
 
-        // 90003：故意无 fcmToken，供 TC-PUSH-02
+        // 90003：故意无 jpushToken，供 TC-PUSH-02
         if (userId == 90002L || userId == 91000L || userId == 91001L) {
-            device.setFcmToken("mock-fcm-token-" + userId);
+            device.setJpushToken("mock-jpush-rid-" + userId);
         }
 
         profile.setBasic(basic);

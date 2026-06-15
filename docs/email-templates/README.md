@@ -1,8 +1,8 @@
 # MOCASA Email 模板设计系统（Phase 1）
 
-> **版本**: v1.4 · **日期**: 2026-06-05 · **文案**: v3 催收心理学优化  
-> **状态**: ✅ Email HTML 17/17 草稿齐全；SendGrid 建站 S0 已联调  
-> **适用范围**: Phase 1 里程碑 Email（13）+ 条件 Email（4，Phase 2 Plan）  
+> **版本**: v1.5 · **日期**: 2026-06-10 · **文案**: v3 催收心理学优化  
+> **状态**: ✅ Email HTML 17/17 草稿齐全；SendGrid **Phase 1 启用 5 封**  
+> **适用范围**: Phase 1 **实际发信 5 封** + 里程碑 HTML 8 封备用 + 条件 Email 4 封（Phase 2）  
 > **上游**: [渠道模板清单与配置 §3](../MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [渠道编排规格 §7.9](../MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)
 
 ---
@@ -95,9 +95,11 @@ email-templates/
 
 | 项 | 决策 | 状态 |
 |----|------|------|
+| **发信频率** | Phase 1 **仅 5 封**（D0 / D+1 / D+4 / D+31 / D+75）；其余 HTML 保留不发，控频降封号风险 | ✅ |
+| **发件人** | `collections@mocasa.com` | ✅ |
 | **语言** | 仅英文；Tagalog 走 Phase 2 独立 `*_TL` scriptSlot | ✅ |
 | **Offer（S2+）** | Phase 1 **无**减免/分期政策；S2 底部仅陈述「直接还款窗口收窄」，不虚构 Hardship Program；`offer_amount` Phase 2 | ✅ |
-| **scriptSlot** | 13 独立 slot = SendGrid Template Name | ✅ |
+| **scriptSlot** | 13 独立 slot = SendGrid Template Name；**Nacos 仅映射 5 个活跃** | ✅ |
 | **Subject** | SendGrid Settings；SSOT 见 `subjects.md` | ✅ |
 | **S4_PRE_CLOSE 变量** | `assignment_date` = 对外 **final review 截止日**（= 内部 D+91）；**非委外** | ✅ |
 
@@ -141,7 +143,7 @@ email-templates/
 
 | 场景 | 要求 |
 |------|------|
-| 联调收件箱 | **优先 `wzynju@126.com`**（92001/92002） |
+| 联调收件箱 | **优先 `wzynju@126.com`**（92002 / 93101 / 93201 / 93401 / 93404） |
 | Gmail | 易 DMARC 拦截，非默认测试邮箱 |
 
 ---

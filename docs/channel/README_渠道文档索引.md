@@ -44,14 +44,22 @@
 | [MOCASA催收系统升级_Phase1_渠道模板清单与配置.md](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) | **SMS / Push / Email / Voice** scriptSlot 总表、Nacos 配置 |
 | [email-templates/](./email-templates/) | Email HTML、`_layouts/`、`subjects.md`、`email-templates-test/` Test Data |
 
+### 契约对齐
+
+| 文档 | 说明 |
+|------|------|
+| [MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md) | 快照 → StepCommand → 供应商 API 全链字段映射 SSOT |
+
 ### 供应商 Adapter 对接
 
 | 文档 | 说明 |
 |------|------|
-| [MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md](./MOCASA催收系统升级_Phase1_LTH_SMS对接说明.md) | `LthSmsAdapter`（对齐现网 `LthFunction.sendSms`） |
+| [MOCASA催收系统升级_Phase1_Notification对接说明.md](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | **SSOT**：`NotificationSmsAdapter` + `NotificationPushAdapter`（通知中心） |
+| [MOCASA催收系统升级_Phase1_App_Push对接说明.md](./MOCASA催收系统升级_Phase1_App_Push对接说明.md) | App Push 别名入口 → Notification §2 |
+| [MOCASA催收系统升级_Phase1_SMS对接说明.md](./MOCASA催收系统升级_Phase1_SMS对接说明.md) | 跳转页 → Notification §1 |
 | [MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `SendGridEmailAdapter` |
 | [MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `LthVoiceAdapter`（Phase 1 仅 TTS） |
-| [MOCASA催收系统升级_Phase1_FCM_Push对接说明.md](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md) | `FcmPushAdapter` |
+| [MOCASA催收系统升级_Phase1_FCM_Push对接说明.md](./MOCASA催收系统升级_Phase1_FCM_Push对接说明.md) | 跳转页（已废止 FCM 直连） |
 
 ---
 
@@ -75,4 +83,8 @@
 | [SendGrid催收邮件接入指南.md](../../AI%20collection/SendGrid催收邮件接入指南.md) | SendGrid API 附录（`POST /v3/mail/send` 等） |
 | [MOCASA催收策略编排_行业调研报告_v1.md](../../AI%20collection/MOCASA催收策略编排_行业调研报告_v1.md) | 行业编排对照 |
 | [philippines_fintech_channel_vendor_selection_report.md](../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md) | 菲律宾渠道选型 |
-| [case-assign-and-LTH-lifecycle.md](../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) | LTH 现网生命周期 |
+| [notification-send-api.md](../../AI%20collection/相关资料/notification-send-api.md) | **通知中心 API SSOT**（SMS / App Push） |
+| [case-assign-and-LTH-lifecycle.md](../../AI%20collection/相关资料/case-assign-and-LTH-lifecycle.md) | LTH 现网生命周期（外呼） |
+| [QH SMS 接口.md](../../AI%20collection/相关资料/QH%20SMS%20接口.md) | 通知中心底层排障（非引擎直连） |
+| [HiwayIO-API 1.5.2.docx](../../AI%20collection/相关资料/HiwayIO-API%201.5.2.docx) | 同上 |
+| [【BORI】HTTP 对接开发文档1.0.docx](../../AI%20collection/相关资料/【BORI】HTTP%20对接开发文档1.0.docx) | 同上 |
