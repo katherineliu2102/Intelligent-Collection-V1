@@ -154,7 +154,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **关键约束**
   - **零 DB I/O**，只读 `ExecutionContext.contextSnapshot`
   - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL/TTS）必填
-  - 硬超时 50ms；不允许返回 `null`（应抛异常触发 FAILED）
+  - 硬超时 50ms；返回 `null` = **主动跳过该步**（引擎标 SKIPPED 推进，非失败，用于 EMAIL 非里程碑 DPD / 无邮箱）；异常/超时 = FAILED
 
 #### A4. `MockAdvancementPolicy` → `DefaultAdvancementPolicy`
 

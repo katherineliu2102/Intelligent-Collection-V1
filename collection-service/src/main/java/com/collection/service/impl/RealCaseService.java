@@ -87,7 +87,8 @@ public class RealCaseService implements CaseService {
         ctx.setRepaymentUrl(repaymentUrlTemplate.replace("{caseId}", String.valueOf(caseId)));
         ctx.setStrategyTone("STANDARD");
         ctx.setComplaintFrozen(false);
-        ctx.setCollectionStatus("ACTIVE");
+        // D+91 完全停催：collectionStatus=CEASED，PlanFactory.shouldRejectPlan 据此拒建计划（双保险，对齐 seed 99000005）
+        ctx.setCollectionStatus(dpd >= 91 ? "CEASED" : "ACTIVE");
         return ctx;
     }
 
