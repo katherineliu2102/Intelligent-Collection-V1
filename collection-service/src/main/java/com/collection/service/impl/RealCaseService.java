@@ -9,6 +9,8 @@ import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
 import com.collection.service.mapper.CollectionCaseMapper;
 import com.collection.service.mapper.CollectionCaseRow;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
@@ -40,6 +42,8 @@ import java.time.LocalDateTime;
 @Primary
 @ConditionalOnProperty(prefix = "collection", name = "case-service", havingValue = "real")
 public class RealCaseService implements CaseService {
+
+    private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
     @Resource
     private CollectionCaseMapper caseMapper;
@@ -112,10 +116,16 @@ public class RealCaseService implements CaseService {
         basic.setLanguage("en");
         profile.setBasic(basic);
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
-        // ji_guang_token from t_user_extend; null → PushAdapter fallback to SMS automatically
-        String jiGuangToken = caseMapper.selectJiGuangToken(row.getUserId());
-        if (jiGuangToken != null && !jiGuangToken.trim().isEmpty()) {
-            device.setJpushToken(jiGuangToken.trim());
+        // ji_guang_token from t_user_extend; null → PushAdapter fallback to SMS / push-test-token override.
+        // 防御：t_user_extend 可能尚未建表/无数据，查询失败不应阻断整个快照组装。
+        try {
+            String jiGuangToken = caseMapper.selectJiGuangToken(row.getUserId());
+            if (jiGuangToken != null && !jiGuangToken.trim().isEmpty()) {
+                device.setJpushToken(jiGuangToken.trim());
+            }
+        } catch (Exception e) {
+            log.warn("[RealCaseService] selectJiGuangToken failed (t_user_extend missing?) userId={}: {}",
+                    row.getUserId(), e.getMessage());
         }
         profile.setDevice(device);
         snapshot.setUserProfile(profile);

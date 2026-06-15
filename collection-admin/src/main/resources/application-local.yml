@@ -36,12 +36,46 @@ channel:
     single-step: SMS
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
+    # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。
     sms:
-      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the SKYPAYLOANS app only."
+      # S0（到期前/当日，SMS 与 PUSH 共用同槽，无渠道后缀）
+      S0_REMINDER: "[S0] MOCASA: {name}, your payment of PHP {amount} is due soon. Pay in the app."
+      S0_REMINDER_URGENT: "[S0-URGENT] MOCASA: {name}, your PHP {amount} is due tomorrow. Please prepare payment."
+      S0_DUE_TODAY: "[S0-DUE] MOCASA: {name}, your PHP {amount} is due today. Settle in the app to avoid penalties."
+      # S1 standard
+      S1_SMS_STANDARD: "[S1] MOCASA: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the app."
+      # S2 standard + firm
+      S2_SMS_STANDARD: "[S2] MOCASA: {name}, {dpd} days overdue. Please pay PHP {amount} now to avoid escalation."
+      S2_SMS_FIRM: "[S2-FIRM] MOCASA: {name}, you are {dpd} days overdue. Pay PHP {amount} immediately."
+      # S3 standard + firm
+      S3_SMS_STANDARD: "[S3] MOCASA: {name}, {dpd} days overdue. Outstanding PHP {amount}. Settle urgently."
+      S3_SMS_FIRM: "[S3-FIRM] MOCASA: {name}, {dpd} days overdue. PHP {amount} must be paid now to avoid further action."
+      # S4 standard + firm
+      S4_SMS_STANDARD: "[S4] MOCASA: {name}, {dpd} days overdue. Final notice for PHP {amount}. Pay immediately."
+      S4_SMS_FIRM: "[S4-FIRM] MOCASA: {name}, {dpd} days overdue. PHP {amount} overdue. Account at risk of closure."
     push:
+      # S0（共用槽）
+      S0_REMINDER:
+        title: "[S0] Payment due soon"
+        body: "{name}, PHP {amount} is due soon. Tap to pay in the app."
+      S0_REMINDER_URGENT:
+        title: "[S0] Due tomorrow"
+        body: "{name}, your PHP {amount} is due tomorrow. Tap to settle."
+      S0_DUE_TODAY:
+        title: "[S0] Due today"
+        body: "{name}, PHP {amount} is due today. Tap to pay now."
       S1_PUSH_STANDARD:
-        title: "Overdue: PHP {amount}"
-        body: "{name}, your payment is past due. Tap to settle in the app."
+        title: "[S1] Overdue: PHP {amount}"
+        body: "{name}, your payment is {dpd} day(s) past due. Tap to settle."
+      S2_PUSH_STANDARD:
+        title: "[S2] {dpd} days overdue"
+        body: "{name}, pay PHP {amount} now to avoid escalation."
+      S3_PUSH_STANDARD:
+        title: "[S3] {dpd} days overdue"
+        body: "{name}, outstanding PHP {amount}. Settle urgently."
+      S4_PUSH_STANDARD:
+        title: "[S4] Final notice"
+        body: "{name}, {dpd} days overdue. Pay PHP {amount} immediately."
   sendgrid:
     api-key: ${SENDGRID_API_KEY:}
     from-email: ${SENDGRID_FROM_EMAIL:collections@mocasa.com}
