@@ -32,7 +32,7 @@ import java.time.LocalDateTime;
  *       边界已对齐编排规格：S2[4,15]、S3[16,30]、S4[31+]。</li>
  *   <li>penaltyAmount = t_collection.overdue（罚息金额）。</li>
  *   <li>phone 归一化为 E.164 +63；email 脏值（空 / "0"）置 null（EMAIL 渠道走 Guard SKIP）。</li>
- *   <li>PUSH 的 jpushToken 不在 t_collection，留空（待服务同事从 t_user_equipment 接入）。</li>
+ *   <li>PUSH 的 jpushToken = t_user_extend.ji_guang_token（按 user_id 查，null 时 PushAdapter 自动 fallback SMS）。</li>
  *   <li>repaid = full_repay_time 非空或 total_not_paid &lt;= 0；frozen 无来源，固定 false。</li>
  * </ul>
  */
@@ -111,8 +111,13 @@ public class RealCaseService implements CaseService {
         basic.setEmail(cleanEmail(row.getEmail()));
         basic.setLanguage("en");
         profile.setBasic(basic);
-        // device.jpushToken 暂无来源，PUSH 渠道待 t_user_equipment 接入。
-        profile.setDevice(new UserProfile.DeviceInfo());
+        UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
+        // ji_guang_token from t_user_extend; null → PushAdapter fallback to SMS automatically
+        String jiGuangToken = caseMapper.selectJiGuangToken(row.getUserId());
+        if (jiGuangToken != null && !jiGuangToken.trim().isEmpty()) {
+            device.setJpushToken(jiGuangToken.trim());
+        }
+        profile.setDevice(device);
         snapshot.setUserProfile(profile);
 
         snapshot.setSnapshotTime(LocalDateTime.now());

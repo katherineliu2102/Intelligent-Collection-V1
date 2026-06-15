@@ -17,4 +17,11 @@ public interface CollectionCaseMapper {
             "FROM t_collection WHERE loan_id = #{loanId} " +
             "ORDER BY create_time DESC LIMIT 1")
     CollectionCaseRow selectByLoanId(@Param("loanId") String loanId);
+
+    /**
+     * 从 t_user_extend 取极光 Registration ID（ji_guang_token）。
+     * PUSH 渠道 targetAddress 来源；token 不存在时返回 null（PushAdapter 自动 fallback SMS）。
+     */
+    @Select("SELECT ji_guang_token FROM t_user_extend WHERE user_id = #{userId} LIMIT 1")
+    String selectJiGuangToken(@Param("userId") String userId);
 }
