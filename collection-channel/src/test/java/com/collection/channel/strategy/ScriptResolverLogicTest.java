@@ -57,8 +57,8 @@ class ScriptResolverLogicTest {
         assertEquals("S2_SMS_STANDARD", DefaultStepResolver.deriveMsgScriptSlot(ChannelType.SMS, ctx(Stage.S2, 6, "STANDARD")));
         // Push 无 FIRM 槽，恒为 STANDARD
         assertEquals("S2_PUSH_STANDARD", DefaultStepResolver.deriveMsgScriptSlot(ChannelType.PUSH, ctx(Stage.S2, 6, "FIRM")));
-        // S4_PLUS 复用 S4 槽
-        assertEquals("S4_SMS_FIRM", DefaultStepResolver.deriveMsgScriptSlot(ChannelType.SMS, ctx(Stage.S4_PLUS, 35, "FIRM")));
+        // dpd=35 → S4（边界对齐后 S4_PLUS 已合并入 S4）
+        assertEquals("S4_SMS_FIRM", DefaultStepResolver.deriveMsgScriptSlot(ChannelType.SMS, ctx(Stage.S4, 35, "FIRM")));
     }
 
     @Test

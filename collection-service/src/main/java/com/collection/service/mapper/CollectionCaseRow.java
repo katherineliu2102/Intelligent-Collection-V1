@@ -20,6 +20,8 @@ public class CollectionCaseRow {
     private Integer overdueDays;
     private LocalDate repaymentDate;
     private BigDecimal totalNotPaid;
+    /** 罚息金额，对应 t_collection.overdue 列；映射到 CaseContext.penaltyAmount。 */
+    private BigDecimal overdue;
     private LocalDateTime fullRepayTime;
     private String realName;
     private String phone;
