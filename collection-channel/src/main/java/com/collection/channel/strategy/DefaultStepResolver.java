@@ -57,6 +57,18 @@ public class DefaultStepResolver implements StepResolver {
 
         ContextSnapshot snapshot = context.getContextSnapshot();
         String scriptSlot = resolveScriptSlot(step, snapshot);
+
+        // EMAIL 主动跳过（返回 null → 引擎 SKIPPED 推进，不 FAILED）：
+        //   #1 非里程碑 DPD（无 Phase1 Email 槽）；#5 无有效邮箱（不发占位地址给 SendGrid）
+        if (step.getChannelType() == ChannelType.EMAIL) {
+            if (!EmailMilestoneScriptSlots.isPhase1Active(scriptSlot)) {
+                return null;
+            }
+            if (StringUtils.isBlank(extractEmail(snapshot))) {
+                return null;
+            }
+        }
+
         ScriptVars vars = buildScriptVars(snapshot);
         Map<String, Object> metadata = new HashMap<>();
 
@@ -89,6 +101,14 @@ public class DefaultStepResolver implements StepResolver {
                 .idempotencyKey(context.getPlan().getId() + ":" + step.getStepOrder() + ":" + step.getRetryCount())
                 .metadata(metadata)
                 .build();
+    }
+
+    private static String extractEmail(ContextSnapshot snapshot) {
+        if (snapshot != null && snapshot.getUserProfile() != null
+                && snapshot.getUserProfile().getBasic() != null) {
+            return snapshot.getUserProfile().getBasic().getEmail();
+        }
+        return null;
     }
 
     private static String resolveLanguage(ContextSnapshot snapshot) {
@@ -220,7 +240,8 @@ public class DefaultStepResolver implements StepResolver {
 
         switch (channel) {
             case EMAIL:
-                return StringUtils.isNotBlank(email) ? email : "no-email@invalid.local";
+                // 无邮箱时 resolve() 已返回 null 跳过；此处直接回邮箱（理论上非空）
+                return email;
             case PUSH:
                 if (StringUtils.isNotBlank(jpushToken)) {
                     return jpushToken;

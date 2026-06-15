@@ -71,6 +71,12 @@ public class SendGridEmailAdapter implements ChannelAdapter {
 
             ResponseEntity<String> response = channelRestTemplate.postForEntity(
                     resolveSendUrl(), entity, String.class);
+            // SendGrid 正常受理固定 202 Accepted；其余 2xx 不视为成功，避免误报 DELIVERED
+            int status = response.getStatusCodeValue();
+            if (status != 202) {
+                log.warn("[SendGridEmailAdapter] unexpected status={} email={} (expected 202)", status, maskEmail(email));
+                return AdapterSupport.permanentFailure("SENDGRID_UNEXPECTED_STATUS_" + status);
+            }
             String msgId = response.getHeaders().getFirst("X-Message-Id");
             if (StringUtils.isBlank(msgId)) {
                 msgId = "sg-" + command.getIdempotencyKey();

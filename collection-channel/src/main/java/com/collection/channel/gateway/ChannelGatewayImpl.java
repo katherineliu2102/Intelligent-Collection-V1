@@ -74,11 +74,13 @@ public class ChannelGatewayImpl implements ChannelGateway {
                 log.info("[ChannelGatewayImpl] duplicate dispatch, return cached key={}", idempotencyKey);
                 return cached;
             }
+            // 锁被占但首次结果尚未回填（并发/重试窗口）：不可断定已发送 → retryable，让引擎退避重试，不伪装 DELIVERED
+            log.warn("[ChannelGatewayImpl] dispatch in-flight, no cached result key={} → retryable", idempotencyKey);
             return StepResult.builder()
-                    .success(true)
-                    .contactResult(ContactResult.DELIVERED)
-                    .retryable(false)
-                    .providerMsgId("dedup:" + idempotencyKey)
+                    .success(false)
+                    .contactResult(ContactResult.FAILED)
+                    .retryable(true)
+                    .errorCode("DISPATCH_IN_FLIGHT")
                     .build();
         }
 
@@ -98,9 +100,16 @@ public class ChannelGatewayImpl implements ChannelGateway {
         ChannelAdapter adapter = adapterMap.get(command.getChannelType());
         if (adapter != null) {
             StepResult result = adapter.send(command);
-            if (shouldFallbackToMock(result)) {
-                log.warn("[ChannelGatewayImpl] adapter not configured for {}, use mock", command.getChannelType());
-                return mockChannelGateway.dispatch(command);
+            if (isNotConfigured(result)) {
+                if (channelProperties.isFallbackToMock()) {
+                    log.warn("[ChannelGatewayImpl] adapter not configured for {}, use mock (fallback-to-mock=true)",
+                            command.getChannelType());
+                    return mockChannelGateway.dispatch(command);
+                }
+                // 联调/生产：不回退 Mock，原样返回未配置失败，避免误报 DELIVERED
+                log.error("[ChannelGatewayImpl] adapter not configured for {} and fallback-to-mock=false → FAILED",
+                        command.getChannelType());
+                return result;
             }
             return result;
         }
@@ -108,8 +117,8 @@ public class ChannelGatewayImpl implements ChannelGateway {
         return mockChannelGateway.dispatch(command);
     }
 
-    /** 本地/Nacos 未配密钥时回退 Mock，避免阻断 Mock 链路验收。 */
-    private static boolean shouldFallbackToMock(StepResult result) {
+    /** Adapter 因未配密钥返回 *_NOT_CONFIGURED。 */
+    private static boolean isNotConfigured(StepResult result) {
         if (result == null || result.isSuccess()) {
             return false;
         }

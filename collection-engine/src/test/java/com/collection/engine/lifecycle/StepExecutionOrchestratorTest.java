@@ -180,14 +180,15 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#8b StepResolver 返回 null → FAILED + 推进")
-    void resolverNull_failed() {
+    @DisplayName("#8b StepResolver 返回 null → SKIPPED + 推进（主动跳过，非失败）")
+    void resolverNull_skipped() {
         when(stepResolver.resolve(any())).thenReturn(null);
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.SKIPPED);
         verify(eventBus).publish(any());
+        verify(channelGateway, never()).dispatch(any());
     }
 
     @Test

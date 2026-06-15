@@ -96,13 +96,16 @@ public class StepExecutionOrchestrator {
         StepCommand command;
         try {
             command = spiInvoker.call(SpiType.STEP_RESOLVER, () -> stepResolver.resolve(context));
-            if (command == null) {
-                throw new IllegalStateException("StepResolver returned null");
-            }
         } catch (Exception e) {
-            // 异常 / 超时 / 返回 null 均 → FAILED → 推进（核心引擎规格 §4.1）
+            // 异常 / 超时 → FAILED → 推进（核心引擎规格 §4.1）
             log.warn("[execStep] StepResolver failed → FAILED: {}", e.getMessage());
             markFailed(plan, step, "RESOLVER_ERROR");
+            return;
+        }
+        // 返回 null = Resolver 主动跳过该步（如 EMAIL 非里程碑 DPD / 无邮箱）→ SKIPPED 推进，不算失败
+        if (command == null) {
+            log.info("[execStep] StepResolver returned null → SKIPPED (no-op) step {}", step.getId());
+            markSkipped(plan, step, ContactResult.SKIPPED, "RESOLVER_SKIP");
             return;
         }
 

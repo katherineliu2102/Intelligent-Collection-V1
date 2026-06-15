@@ -30,6 +30,13 @@ public class ChannelProperties {
     /** 渠道 dispatch 幂等 TTL（小时），默认 24h。 */
     private int idempotencyTtlHours = 24;
 
+    /**
+     * Adapter 未配密钥（*_NOT_CONFIGURED）时是否回退 MockChannelGateway 并标记成功。
+     * true（默认）：纯 Mock 链路验收用，避免被密钥阻断。
+     * false：联调/生产用 —— 未配密钥直接返回失败，不伪装成功（避免误报 DELIVERED）。
+     */
+    private boolean fallbackToMock = true;
+
     @Data
     public static class Debug {
         /** 空=正常；SMS|PUSH|EMAIL|AI_CALL|TTS 时仅生成单步 plan。 */
