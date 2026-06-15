@@ -20,6 +20,7 @@ import com.collection.common.service.PredictiveDialerService;
 import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
+import com.collection.engine.spi.SpiInvoker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -62,6 +64,7 @@ class PlanLifecycleManagerTest {
     @Mock private AdvancementPolicy advancementPolicy;
     @Mock private ExhaustionPolicy exhaustionPolicy;
     @Mock private PredictiveDialerService predictiveDialerService;
+    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private PlanLifecycleManager manager;
 

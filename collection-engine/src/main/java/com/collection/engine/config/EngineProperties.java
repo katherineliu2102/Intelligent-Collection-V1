@@ -20,6 +20,7 @@ public class EngineProperties {
     private final Plan plan = new Plan();
     private final Consumer consumer = new Consumer();
     private final Context context = new Context();
+    private final Spi spi = new Spi();
 
     @Data
     public static class Step {
@@ -47,5 +48,22 @@ public class EngineProperties {
     @Data
     public static class Context {
         private int historyMaxRecords = 50;
+    }
+
+    /**
+     * SPI 硬超时配置（核心引擎规格 §4.1 / 基础设施规范 附录 engine.spi.*）。
+     *
+     * <p>引擎调用 5 个 SPI 时用 {@code Future.get(timeoutMs)} 强制截断，
+     * 超时按对应失败语义处理（Guard fail-close→SKIPPED、Resolver→FAILED、其余 NACK）。
+     * {@code timeoutEnabled=false} 时退化为直连调用（不引第二个线程池），便于本地/单测。
+     */
+    @Data
+    public static class Spi {
+        private boolean timeoutEnabled = true;
+        private long planFactoryTimeoutMs = 50;
+        private long executionGuardTimeoutMs = 20;
+        private long stepResolverTimeoutMs = 50;
+        private long advancementPolicyTimeoutMs = 10;
+        private long exhaustionPolicyTimeoutMs = 50;
     }
 }

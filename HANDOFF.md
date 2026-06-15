@@ -16,7 +16,7 @@
 | 模块 | 内容 | 代码性质 |
 |---|---|---|
 | `collection-common` | 15 枚举、9 领域模型、5 DTO、**5 个 SPI 接口**、`CollectionEventBus`、`ChannelGateway`、Repository/Service 接口 | 跨模块契约（初版，可演进，改前对齐） |
-| `collection-engine` | `EventConsumerDispatcher`（路由）、`PlanLifecycleManager`（6 态状态机）、`StepExecutionOrchestrator`（七步管线）、`PreFlightChecker`、内存事件总线、内存幂等 | ✅ 真实实现（主框架） |
+| `collection-engine` | `EventConsumerDispatcher`（路由）、`PlanLifecycleManager`（6 态状态机）、`StepExecutionOrchestrator`（七步管线）、`PreFlightChecker`、`SpiInvoker`（SPI 硬超时）、内存事件总线、内存幂等 | ✅ 真实实现（主框架） |
 | `collection-service` | 4 张新表 MyBatis Mapper + Repository 实现 + Mock CaseService/ProfileService | 持久化真实，业务数据 Mock |
 | `collection-channel` | 5 个 SPI Mock + Mock ChannelGateway + Mock 外呼过滤 | Mock，待替换 |
 | `collection-ingestion` | 发布领域事件（Mock 入案）、DPD 日切 Job 占位 | Mock，待替换 |
@@ -37,7 +37,7 @@
 | 事件总线 | 内存版 | Redis Stream + Consumer Group + PEL/看门狗/DLQ（基础设施规范 §1-§2） |
 | 幂等锁 | 内存版 | Redis SETNX（基础设施规范 §3） |
 | 调度 | Spring `@Scheduled` | XXL-Job Handler（基础设施规范 §4） |
-| SPI 硬超时 | 仅 try-catch | 线程级强制超时（10–50ms，核心引擎规格 §4.1） |
+| SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | 切 Redis 后 I/O 型 SPI 另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
 | 可观测性 | 无 | Micrometer + MDC 跨线程（基础设施规范 §6） |
 
@@ -251,10 +251,12 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - 配置切换：`collection.idempotency=redis`
 - key 格式：`lock:plan:{step_idempotency_key}`
 
-#### D3. SPI 硬超时强制执行
+#### D3. SPI 硬超时强制执行 ✅ 已完成（2026-06-11）
 
-- 引擎调用 5 个 SPI 时，用 `Future.get(timeoutMs)` 实现强制超时（核心引擎规格 §4.1）
-- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 20ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms
+- 引擎调用 5 个 SPI 经 `SpiInvoker`（`engine.spi`）用 `Future.get(timeoutMs)` 强制超时（核心引擎规格 §4.1）
+- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 20ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms（`engine.spi.*-timeout-ms` 可配）
+- 单个共享有界线程池（大小=Consumer 池，预热）+ `MdcTaskDecorator` 语义跨线程传递 MDC；超时转 `SpiTimeoutException`，失败语义沿用调用方 try-catch（Guard fail-close、Resolver FAILED、其余 NACK）
+- ⚠ 遗留：`Future.cancel` 掐不断卡死 I/O，I/O 型 SPI（ExecutionGuard Redis Lua 等）真实化时须自带 client 级超时
 
 #### D4. 可观测性
 

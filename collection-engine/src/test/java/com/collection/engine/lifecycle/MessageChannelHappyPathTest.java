@@ -21,6 +21,7 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
+import com.collection.engine.spi.SpiInvoker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -72,6 +73,7 @@ class MessageChannelHappyPathTest {
     @Mock private TimelineRepository timelineRepository;
     @Mock private CollectionEventBus eventBus;
     @Spy  private EngineProperties props = new EngineProperties();
+    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private StepExecutionOrchestrator orchestrator;
 
@@ -186,6 +188,7 @@ class MessageChannelHappyPathTest {
         inject(manager, "advancementPolicy", advancementPolicy);
         inject(manager, "exhaustionPolicy", exhaustionPolicy);
         inject(manager, "predictiveDialerService", dialer);
+        inject(manager, "spiInvoker", SpiInvoker.direct());
 
         when(repo.findPlanWithLock(PLAN_ID)).thenReturn(plan);
         when(repo.findStepById(STEP_ID)).thenReturn(step);

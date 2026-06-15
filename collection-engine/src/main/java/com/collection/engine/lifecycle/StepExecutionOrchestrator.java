@@ -16,6 +16,8 @@ import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
+import com.collection.engine.spi.SpiInvoker;
+import com.collection.engine.spi.SpiType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -53,6 +55,8 @@ public class StepExecutionOrchestrator {
     @Resource
     private CollectionEventBus eventBus;
     @Resource
+    private SpiInvoker spiInvoker;
+    @Resource
     private com.collection.engine.config.EngineProperties props;
 
     public void executeStep(ContactPlan plan, ContactPlanStep step) {
@@ -72,12 +76,12 @@ public class StepExecutionOrchestrator {
         planRepository.updateStepStatus(step.getId(), StepStatus.EXECUTING, null);
         ExecutionContext context = contextAssembler.assemble(plan, step);
 
-        // ── ③ 业务级守卫（合规） ──
+        // ── ③ 业务级守卫（合规，硬超时 20ms） ──
         GuardVerdict verdict;
         try {
-            verdict = executionGuard.evaluate(context);
+            verdict = spiInvoker.call(SpiType.EXECUTION_GUARD, () -> executionGuard.evaluate(context));
         } catch (Exception e) {
-            // fail-close：标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
+            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
             log.warn("[execStep] ExecutionGuard failed (fail-close → SKIPPED): {}", e.getMessage());
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
             return;
@@ -88,14 +92,15 @@ public class StepExecutionOrchestrator {
             return;
         }
 
-        // ── ④ 步骤解析（零 DB I/O） ──
+        // ── ④ 步骤解析（零 DB I/O，硬超时 50ms） ──
         StepCommand command;
         try {
-            command = stepResolver.resolve(context);
+            command = spiInvoker.call(SpiType.STEP_RESOLVER, () -> stepResolver.resolve(context));
             if (command == null) {
                 throw new IllegalStateException("StepResolver returned null");
             }
         } catch (Exception e) {
+            // 异常 / 超时 / 返回 null 均 → FAILED → 推进（核心引擎规格 §4.1）
             log.warn("[execStep] StepResolver failed → FAILED: {}", e.getMessage());
             markFailed(plan, step, "RESOLVER_ERROR");
             return;

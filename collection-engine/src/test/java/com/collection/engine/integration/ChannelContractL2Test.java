@@ -120,6 +120,7 @@ class ChannelContractL2Test {
         inject(orchestrator, "planRepository", planRepo);
         inject(orchestrator, "timelineRepository", timelineRepo);
         inject(orchestrator, "eventBus", bus);
+        inject(orchestrator, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
@@ -130,6 +131,7 @@ class ChannelContractL2Test {
         inject(manager, "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
         inject(manager, "predictiveDialerService", (PredictiveDialerService) userId -> { });
+        inject(manager, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
