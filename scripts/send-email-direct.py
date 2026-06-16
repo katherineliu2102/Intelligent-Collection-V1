@@ -40,6 +40,28 @@ def load_dotenv():
         os.environ.setdefault(k.strip(), v.strip())
 
 
+def load_nacos_publish_yaml():
+    """Standalone 脚本从 nacos-publish.local.yml 读取 SendGrid 密钥（应用运行时从 Nacos 下发）。"""
+    path = ROOT / "nacos-publish.local.yml"
+    if not path.exists():
+        return
+    section = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("sendgrid:"):
+            section = "sendgrid"
+            continue
+        if line.startswith("notification:") or line.startswith("channel:"):
+            section = None
+            continue
+        if section == "sendgrid" and line.startswith("api-key:"):
+            os.environ.setdefault("SENDGRID_API_KEY", line.split(":", 1)[1].strip())
+        if section == "sendgrid" and line.startswith("from-email:"):
+            os.environ.setdefault("SENDGRID_FROM_EMAIL", line.split(":", 1)[1].strip())
+
+
 def assignment_date(due: date) -> str:
     d = due.replace(day=due.day)  # copy
     from datetime import timedelta
@@ -91,10 +113,11 @@ def send_one(api_key, from_email, case_id, name, slot, dpd, amount, due):
 
 def main():
     load_dotenv()
+    load_nacos_publish_yaml()
     api_key = os.environ.get("SENDGRID_API_KEY", "")
     from_email = os.environ.get("SENDGRID_FROM_EMAIL", "collections@mocasa.com")
     if not api_key:
-        print("SENDGRID_API_KEY missing in .env")
+        print("SENDGRID_API_KEY missing (Nacos channel.sendgrid.api-key 或 nacos-publish.local.yml)")
         sys.exit(1)
 
     print(f"from={from_email} to={EMAIL} (no DB)")

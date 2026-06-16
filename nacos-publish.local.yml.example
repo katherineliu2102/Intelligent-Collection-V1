@@ -1,0 +1,12 @@
+# 复制为 nacos-publish.local.yml 并填写真实密钥，再执行 scripts/publish-channel-secrets-to-nacos.ps1
+# 或手动粘贴 channel 段到 Nacos → intelligent-collection-local.yml
+#
+# SMS/Push 全量文案见 docs/channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md §7
+# channel.scripts.sms（10 槽）+ channel.scripts.push（7 槽）须一并写入 Nacos，否则联调走 [MOCK] 占位
+
+channel:
+  sendgrid:
+    api-key: SG.xxxx
+    from-email: collections@mocasa.com
+  notification:
+    app-key: <运维下发>

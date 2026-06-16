@@ -39,6 +39,10 @@
   </style>
 </head>
 <body>
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <a href="catalog.html" style="color:#94a3b8;font-size:12px;text-decoration:none;padding:6px 12px;border:1px solid #334155;border-radius:6px">← 策略目录</a>
+    <span style="color:#38bdf8;font-size:12px;padding:6px 12px;border:1px solid #334155;border-radius:6px;background:rgba(56,189,248,.08)">运行观测</span>
+  </div>
   <h1>渠道编排观测</h1>
   <div class="sub">只读视图 · 输入案件 ID 查看活跃计划、步骤序列与触达时间线（数据来自 /plans REST）</div>
 
@@ -149,6 +153,9 @@
     }
 
     $('caseId').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+
+    const saved = localStorage.getItem('observeCaseId');
+    if (saved) { $('caseId').value = saved; localStorage.removeItem('observeCaseId'); load(); }
   </script>
 </body>
 </html>

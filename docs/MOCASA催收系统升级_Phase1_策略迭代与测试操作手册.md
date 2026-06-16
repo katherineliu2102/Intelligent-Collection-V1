@@ -27,7 +27,7 @@
 | **计划骨架**（Stage×Tone、日块、槽位） | Java 常量 / Nacos `channel.plan-templates`（待 `DefaultPlanFactory`） | ❌ `t_contact_plan_template` **未建** |
 | **话术 scriptSlot → 模板** | [渠道模板清单 SSOT](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)；Email 见 `email-templates/` | ❌ 无独立话术表 |
 | **合规限额/触达窗** | Nacos `channel.compliance.*`（待 Guard） | ❌ `t_compliance_rule` **未建** |
-| **渠道密钥** | Nacos / `.env` `channel.*` | ❌ `t_channel_config` **未建** |
+| **渠道密钥** | Nacos `channel.*`（`intelligent-collection-local.yml`） | ❌ `t_channel_config` **未建** |
 | **运行态计划/步骤** | MySQL | ✅ 见 [§2](#2-数据库表职责) |
 
 **结论**：Phase 1 策略迭代主路径是 **Git 文档 + Nacos + 代码发布**；DB 仅存运行实例。
@@ -68,18 +68,18 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 
 ## 3. 供应商模板与密钥
 
-### 3.1 Nacos / `.env` 渠道密钥
+### 3.1 Nacos 渠道密钥（Data ID: `intelligent-collection-local.yml`）
 
 | Nacos 路径 | 用途 | 测试 TC |
 |------------|------|---------|
-| `channel.notification.*` | 通知中心 SMS + Push | TC-SMS-01、TC-PUSH-01/02 |
-| `channel.sendgrid.*` + `templates` 映射 | SendGrid Email | TC-EMAIL-01、TC-EMAIL-D0-01 |
+| `channel.notification.app-key` 等 | 通知中心 SMS + Push | TC-SMS-01、TC-PUSH-01/02 |
+| `channel.sendgrid.api-key` + `templates` 映射 | SendGrid Email | TC-EMAIL-01、TC-EMAIL-D0-01 |
 | `channel.lth.voice.url` | LTH 外呼 | TC-VOICE-01 |
 | `channel.callback.base-url` | Voice 回调 | TC-VOICE-03 |
 | `channel.compliance.*` | 合规 Guard | TC-GUARD-* |
 | `channel.debug.single-step` | 单渠道冒烟 | 各单渠道 TC |
 
-> Email **不要**每个模板一条 `.env`；`d-xxx` 写在 Nacos `channel.sendgrid.templates`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射)）。
+> 密钥不进 `.env`；发布见 `scripts/publish-channel-secrets-to-nacos.ps1`。Email **不要**每个模板一条配置项；`d-xxx` 写在 `channel.sendgrid.templates`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射)）。
 
 ### 3.2 scriptSlot 与素材位置
 

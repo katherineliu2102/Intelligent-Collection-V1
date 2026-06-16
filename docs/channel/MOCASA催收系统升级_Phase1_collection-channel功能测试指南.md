@@ -211,7 +211,7 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-sms?caseId=94100" -Metho
 | 项 | 内容 |
 |----|------|
 | 门禁 | 运维已签发 `appKey`；**禁止** `sms-test-mode=true`（testSend 走 Virtual，不会真下发） |
-| 前置 | `sms-test-mode=false`；`.env` 填 `NOTIFICATION_APP_KEY`；`application-local.yml` 或 Nacos 引用该变量 |
+| 前置 | `sms-test-mode=false`；Nacos `channel.notification.app-key` 已配置；`application-local.yml` 不配 `app-key` 覆盖 |
 | 方式 A（推荐 · 适配器） | `POST /mock/send-sms?caseId=94101` |
 | 方式 B（curl + 签名） | 见下方 PowerShell 签名示例 |
 | 预期 | `code=0`、`requestSuccess=true`、真机收到；`data.channel` 为 QH/Hiway/BORI 等（非 Virtual） |
@@ -235,7 +235,7 @@ $sign = -join ($signBytes | ForEach-Object { '{0:x2}' -f $_ })
 $body = @{
   appCode = $appCode; dateTime = $dateTime; sign = $sign
   mobile = "9451374358"
-  content = "MOCASA Collections: test prod SMS. Pay in the SKYPAYLOANS app only."
+  content = "MOCASA Collections: test prod SMS. Please settle your payment promptly."
   contentType = "collection"
 } | ConvertTo-Json
 Invoke-RestMethod -Uri "https://service-test.mocasa.com/notification/v1/sms/send" -Method POST -Body $body -ContentType "application/json"

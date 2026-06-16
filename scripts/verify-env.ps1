@@ -32,6 +32,15 @@ if ($yaml -match '(?m)^\s*username:\s*(\S+)') { $dbUser = $Matches[1] }
 if ($yaml -match '(?m)^\s*password:\s*(.+)$') { $dbPass = $Matches[1].Trim() }
 Write-Host "JDBC URL OK (user=$dbUser)"
 
+Write-Host "`n=== 3b. 渠道密钥（Nacos channel.*）==="
+$hasSgKey = $yaml -match '(?m)^\s*api-key:\s*\S+' -and $yaml -match 'sendgrid:'
+$hasNotifKey = $yaml -match '(?m)notification:\s*\n\s*app-key:\s*\S+'
+if ($hasSgKey -and $hasNotifKey) {
+    Write-Host "channel.sendgrid.api-key + channel.notification.app-key OK"
+} else {
+    Write-Warning "Nacos 缺少渠道密钥：请在控制台合并 nacos-publish.local.yml 的 channel 段，或运行 scripts/publish-channel-secrets-to-nacos.ps1"
+}
+
 Write-Host "`n=== 4. 启动应用（后台 90s 冒烟）==="
 $jar = Join-Path $root "collection-admin\target\collection-admin.jar"
 $psi = New-Object System.Diagnostics.ProcessStartInfo

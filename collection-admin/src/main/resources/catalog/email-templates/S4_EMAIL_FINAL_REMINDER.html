@@ -1,0 +1,39 @@
+<!--
+scriptSlot: S4_EMAIL_FINAL_REMINDER
+stage: S4 | dpd: 45
+layout: legal-letter
+subject: Formal Collection Continues—Final Reminder to Pay
+preheader: {{overdue_days}} days overdue. MOCASA formal collection is ongoing—pay full balance now.
+-->
+<html>
+  <head><title></title></head>
+  <body>
+    <div style="font-family: Georgia, 'Times New Roman', Times, serif; max-width: 600px; margin: 0 auto; padding: 32px 28px; color: #111111; background-color: #ffffff; border: 1px solid #111111;">
+      <div style="border-bottom: 2px solid #111111; padding-bottom: 14px; margin-bottom: 24px;">
+        <p style="margin: 0; font-size: 13px; font-weight: bold; letter-spacing: 3px; text-transform: uppercase;">MOCASA</p>
+        <p style="margin: 10px 0 0 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;">Formal Collection—Final Reminder</p>
+      </div>
+      <p style="font-size: 15px; margin-top: 0;">Dear <strong>{{borrower_name}}</strong>,</p>
+      <p style="font-size: 15px; line-height: 1.75; color: #111111;">
+        This is a <strong>final reminder</strong> under formal collection. Your balance of
+        <strong>₱ {{amount_due}}</strong> has remained unpaid for <strong>{{overdue_days}} days</strong>.
+        <strong>MOCASA continues active recovery on your account.</strong> Despite prior notices,
+        no payment has been received.
+      </p>
+      <p style="font-size: 15px; line-height: 1.75; color: #111111;">
+        Your delinquency may be reported to credit bureaus, affecting your ability to borrow
+        or secure employment. Late fees continue to accrue until the full balance is paid.
+      </p>
+      <p style="font-size: 13px; margin: 20px 0 4px 0; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;">Outstanding Balance</p>
+      <p style="font-size: 32px; font-weight: bold; margin: 0 0 24px 0;">₱ {{amount_due}}</p>
+      <a href="{{payment_link}}" style="display: inline-block; background-color: #111111; color: #ffffff; padding: 14px 28px; text-decoration: none; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase;">Pay Full Balance Now</a>
+      <p style="font-size: 14px; line-height: 1.75; margin-top: 28px; padding-top: 18px; border-top: 1px solid #cccccc; color: #111111;">
+        <strong>Your only option is to pay the full balance immediately.</strong>
+        Formal collection by MOCASA will continue until this obligation is settled.
+      </p>
+      <div style="margin-top: 28px; font-size: 11px; color: #666666; line-height: 1.6;">
+        <p style="margin: 0;">If you have already paid, please disregard this notice.</p>
+      </div>
+    </div>
+  </body>
+</html>

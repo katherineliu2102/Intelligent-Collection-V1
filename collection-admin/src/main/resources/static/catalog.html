@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>策略目录 · MOCASA Intelligent Collection</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #131c31;
+      --surface2: #1a2540;
+      --line: #2a3655;
+      --text: #e8edf7;
+      --muted: #8b9bb8;
+      --accent: #5b9cf5;
+      --accent2: #7c6cf0;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --bad: #f87171;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", -apple-system, Roboto, "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 28px; border-bottom: 1px solid var(--line);
+      background: rgba(19,28,49,.85); backdrop-filter: blur(8px);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo {
+      width: 36px; height: 36px; border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff;
+    }
+    .brand h1 { font-size: 15px; font-weight: 600; }
+    .brand p { font-size: 11px; color: var(--muted); }
+    .nav { display: flex; gap: 6px; }
+    .nav a {
+      text-decoration: none; color: var(--muted); font-size: 13px;
+      padding: 7px 14px; border-radius: 8px; border: 1px solid transparent;
+      transition: .15s;
+    }
+    .nav a:hover { color: var(--text); background: var(--surface2); }
+    .nav a.active { color: var(--accent); border-color: var(--line); background: var(--surface); }
+
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(91,156,245,.12), rgba(124,108,240,.08));
+      border: 1px solid var(--line); border-radius: 16px;
+      padding: 28px 32px; margin-bottom: 24px;
+    }
+    .hero h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .hero .tagline { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      font-size: 12px; padding: 5px 12px; border-radius: 999px;
+      background: var(--surface2); border: 1px solid var(--line); color: var(--muted);
+    }
+    .chip strong { color: var(--text); font-weight: 500; }
+
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 24px;
+    }
+    .stat {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 16px 18px;
+    }
+    .stat .num { font-size: 28px; font-weight: 700; color: var(--accent); }
+    .stat .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .tabs {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      border-bottom: 1px solid var(--line); padding-bottom: 0;
+    }
+    .tab {
+      padding: 10px 18px; font-size: 13px; font-weight: 500;
+      color: var(--muted); cursor: pointer; border: none; background: none;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: .15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .panel { display: none; }
+    .panel.on { display: block; }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+    }
+    .card h3 { font-size: 14px; color: var(--accent); margin-bottom: 14px; font-weight: 600; }
+
+    .stage-grid { display: grid; gap: 14px; }
+    .stage-card {
+      background: var(--surface2); border: 1px solid var(--line);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .stage-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px; border-bottom: 1px solid var(--line);
+      cursor: pointer; user-select: none;
+    }
+    .stage-head:hover { background: rgba(91,156,245,.04); }
+    .stage-id {
+      font-size: 18px; font-weight: 800; color: var(--accent);
+      width: 42px;
+    }
+    .stage-info { flex: 1; }
+    .stage-info .name { font-size: 14px; font-weight: 600; }
+    .stage-info .range { font-size: 12px; color: var(--muted); }
+    .stage-pos { font-size: 12px; color: var(--muted); max-width: 280px; text-align: right; }
+    .stage-body { padding: 12px 18px 16px; display: none; }
+    .stage-card.open .stage-body { display: block; }
+
+    .timeline { display: flex; flex-direction: column; gap: 8px; }
+    .tl-row {
+      display: grid; grid-template-columns: 64px 90px 1fr auto;
+      gap: 10px; align-items: start; font-size: 12px;
+      padding: 8px 10px; border-radius: 8px; background: var(--surface);
+    }
+    .tl-time { font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .tl-chan { font-weight: 600; }
+    .tl-slot { color: var(--muted); word-break: break-all; }
+    .tl-note { font-size: 11px; color: var(--muted); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+    tr:hover td { background: rgba(91,156,245,.03); }
+    td.mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; letter-spacing: .02em;
+    }
+    .b-LIVE, .b-ACTIVE { background: rgba(52,211,153,.15); color: var(--ok); }
+    .b-MOCK, .b-DRAFT { background: rgba(251,191,36,.15); color: var(--warn); }
+    .b-PHASE2, .b-RESERVED { background: rgba(139,155,184,.15); color: var(--muted); }
+    .b-SEPARATE { background: rgba(124,108,240,.15); color: var(--accent2); }
+    .b-yes { background: rgba(52,211,153,.12); color: var(--ok); }
+    .b-no { background: rgba(248,113,113,.12); color: var(--bad); }
+
+    .runtime-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+    .rt-item {
+      background: var(--surface2); border-radius: 8px; padding: 10px 12px;
+      font-size: 12px;
+    }
+    .rt-item .k { color: var(--muted); }
+    .rt-item .v { font-weight: 600; margin-top: 2px; }
+
+    .ql-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+    .ql-card {
+      background: var(--surface2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 14px;
+    }
+    .ql-card .title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .ql-card .path { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 10px; word-break: break-all; }
+    .ql-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .btn {
+      font-size: 12px; padding: 6px 12px; border-radius: 6px; border: none;
+      cursor: pointer; font-weight: 600; transition: .15s;
+    }
+    .btn-primary { background: var(--accent); color: #0b1220; }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--accent); }
+    .btn:disabled { opacity: .45; cursor: default; }
+
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filter-bar select, .filter-bar input {
+      background: var(--surface2); border: 1px solid var(--line); color: var(--text);
+      padding: 6px 10px; border-radius: 6px; font-size: 12px;
+    }
+
+    .loading, .err { text-align: center; padding: 48px; color: var(--muted); }
+    .err { color: var(--bad); }
+    .foot { text-align: center; font-size: 11px; color: var(--muted); margin-top: 32px; }
+    .preview { color: var(--muted); font-size: 11px; max-width: 320px; }
+
+    .tpl-row { cursor: pointer; }
+    .tpl-row:hover td { background: rgba(91,156,245,.06); }
+    .view-link {
+      color: var(--accent); font-size: 11px; font-weight: 600;
+      background: none; border: none; cursor: pointer; padding: 0;
+    }
+    .view-link:hover { text-decoration: underline; }
+    .src-tag { font-size: 10px; color: var(--muted); margin-left: 6px; }
+
+    .modal-mask {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(5,10,22,.72); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center; padding: 24px;
+    }
+    .modal-mask.open { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 16px; width: min(920px, 100%); max-height: 90vh;
+      display: flex; flex-direction: column; box-shadow: 0 24px 48px rgba(0,0,0,.4);
+    }
+    .modal-head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 20px 24px 12px; border-bottom: 1px solid var(--line);
+    }
+    .modal-head h2 { font-size: 16px; font-weight: 700; }
+    .modal-head .sub2 { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .modal-close {
+      background: var(--surface2); border: 1px solid var(--line); color: var(--muted);
+      width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 18px;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 16px 24px 24px; overflow-y: auto; flex: 1; }
+    .modal-tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .mtab {
+      padding: 7px 14px; font-size: 12px; border-radius: 8px; border: 1px solid var(--line);
+      background: var(--surface2); color: var(--muted); cursor: pointer;
+    }
+    .mtab.on { background: rgba(91,156,245,.12); color: var(--accent); border-color: var(--accent); }
+    .mpanel { display: none; }
+    .mpanel.on { display: block; }
+    .copy-block {
+      background: var(--surface2); border: 1px solid var(--line);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+    }
+    .copy-block .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+    .copy-block .txt { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .copy-block .txt.rendered { color: #a8d4ff; border-left: 3px solid var(--accent); padding-left: 12px; }
+    .var-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .var-chip { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); font-family: monospace; }
+    .email-preview {
+      width: 100%; height: 420px; border: 1px solid var(--line);
+      border-radius: 10px; background: #fff;
+    }
+    .phone-mock {
+      max-width: 360px; margin: 0 auto; background: #1a1a2e;
+      border-radius: 24px; padding: 16px; border: 3px solid #333;
+    }
+    .phone-mock .push-title { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+    .phone-mock .push-body { font-size: 12px; color: #ccc; line-height: 1.4; }
+    .phone-mock .sms-bubble {
+      background: #2d3748; color: #e2e8f0; padding: 12px 14px;
+      border-radius: 16px 16px 16px 4px; font-size: 13px; line-height: 1.5;
+    }
+
+    @media (max-width: 700px) {
+      .tl-row { grid-template-columns: 1fr; gap: 4px; }
+      .stage-pos { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">IC</div>
+      <div>
+        <h1>MOCASA Intelligent Collection</h1>
+        <p>Strategy & Channel Catalog</p>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="catalog.html" class="active">策略目录</a>
+      <a href="orchestration.html">运行观测</a>
+    </nav>
+  </header>
+
+  <div class="wrap" id="app">
+    <div class="loading">加载策略目录…</div>
+  </div>
+
+  <div class="modal-mask" id="tplModal" onclick="if(event.target===this)closeTplModal()">
+    <div class="modal" role="dialog">
+      <div class="modal-head">
+        <div>
+          <h2 id="modalTitle">—</h2>
+          <div class="sub2" id="modalSub"></div>
+        </div>
+        <button class="modal-close" onclick="closeTplModal()" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script>
+    const PHASE_LABEL = {
+      LIVE: '已接入', ACTIVE: 'Phase 1 启用', MOCK: 'Mock',
+      DRAFT: '文案初稿', RESERVED: 'HTML 备用', PHASE2: 'Phase 2',
+      SEPARATE: '人工轨'
+    };
+
+    function badge(phase) {
+      const p = phase || 'DRAFT';
+      const lbl = PHASE_LABEL[p] || p;
+      return '<span class="badge b-' + p + '">' + lbl + '</span>';
+    }
+    function cfgBadge(yes) {
+      return '<span class="badge ' + (yes ? 'b-yes">已配置' : 'b-no">未配置') + '</span>';
+    }
+    function esc(s) {
+      if (s == null || s === undefined) return '';
+      return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    }
+
+    function renderHero(d) {
+      return `
+        <section class="hero">
+          <h2>${esc(d.title)}</h2>
+          <p class="tagline">${esc(d.subtitle)} · 只读目录 · 运行时配置 + 设计规格聚合</p>
+          <div class="chips">
+            <span class="chip"><strong>编排范式</strong> ${esc(d.paradigm)}</span>
+            <span class="chip"><strong>触达窗</strong> ${esc(d.touchWindow)}</span>
+            <span class="chip"><strong>停催规则</strong> ${esc(d.ceaseRule)}</span>
+            <span class="chip"><strong>更新</strong> ${esc(d.generatedAt || '').slice(0, 19).replace('T', ' ')}</span>
+          </div>
+        </section>`;
+    }
+
+    function renderStats(s) {
+      return `
+        <div class="stats">
+          <div class="stat"><div class="num">${s.stagesCount}</div><div class="lbl">催收阶段 S0–S4</div></div>
+          <div class="stat"><div class="num">${s.channelsLive}</div><div class="lbl">已接入渠道</div></div>
+          <div class="stat"><div class="num">${s.emailConfiguredCount}/${s.emailActiveCount}</div><div class="lbl">Email 里程碑已映射</div></div>
+          <div class="stat"><div class="num">${s.smsConfiguredCount}</div><div class="lbl">SMS 文案已配置</div></div>
+          <div class="stat"><div class="num">${s.pushConfiguredCount}</div><div class="lbl">Push 文案已配置</div></div>
+        </div>`;
+    }
+
+    function renderRuntime(rt) {
+      const c = rt.connectivity || {};
+      const items = [
+        ['SendGrid', c.sendGrid ? '✓ 已配置' : '✗ 未配置'],
+        ['通知中心', c.notification ? '✓ 生产' : (c.notificationTest ? '✓ 测试' : '✗ 未配置')],
+        ['LTH Voice', c.lthVoice ? '✓ URL 已设' : '— Mock'],
+        ['Debug 单步', rt.debug?.singleStep || '—'],
+        ['合规时区', rt.compliance?.timezone],
+        ['触达窗', rt.compliance?.touchWindow],
+        ['发件人', rt.sendgrid?.fromEmail],
+        ['Push 模式', rt.notification?.pushSyncMode ? 'sync（联调）' : 'async（生产）'],
+      ];
+      return `
+        <div class="card">
+          <h3>运行时快照（当前实例）</h3>
+          <div class="runtime-grid">
+            ${items.map(([k,v]) => `<div class="rt-item"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}
+          </div>
+        </div>`;
+    }
+
+    function renderStages(stages) {
+      const cards = (stages || []).map((st, i) => {
+        const rows = (st.schedule || []).map(s => `
+          <div class="tl-row">
+            <span class="tl-time">${esc(s.time)}</span>
+            <span class="tl-chan">${esc(s.channel)}</span>
+            <span class="tl-slot">${esc(s.slot)}</span>
+            <span>${s.phase1 ? badge(s.phase1) : ''} <span class="tl-note">${esc(s.note || '')}</span></span>
+          </div>`).join('');
+        return `
+          <div class="stage-card${i === 0 ? ' open' : ''}" onclick="toggleStage(this, event)">
+            <div class="stage-head">
+              <span class="stage-id">${esc(st.id)}</span>
+              <div class="stage-info">
+                <div class="name">${esc(st.name)}</div>
+                <div class="range">${esc(st.dpdRange)}</div>
+              </div>
+              <div class="stage-pos">${esc(st.positioning)}</div>
+            </div>
+            <div class="stage-body"><div class="timeline">${rows}</div></div>
+          </div>`;
+      }).join('');
+      return `<div class="stage-grid">${cards}</div>`;
+    }
+
+    function renderChannels(channels) {
+      const rows = (channels || []).map(ch => `
+        <tr>
+          <td><strong>${esc(ch.type)}</strong></td>
+          <td>${esc(ch.provider)}</td>
+          <td class="mono">${esc(ch.adapter)}</td>
+          <td>${badge(ch.phase1)}</td>
+          <td>${ch.inMachinePlan ? '机器轨' : '—'}</td>
+          <td>${cfgBadge(ch.configured)}</td>
+          <td>${esc(ch.description)}</td>
+        </tr>`).join('');
+      return `
+        <table>
+          <thead><tr>
+            <th>渠道</th><th>供应商</th><th>Adapter</th><th>Phase 1</th>
+            <th>计划</th><th>连通</th><th>说明</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderSpi(spi) {
+      const rows = (spi || []).map(s => `
+        <tr>
+          <td class="mono">${esc(s.name)}</td>
+          <td class="mono">${esc(s.impl)}</td>
+          <td>${badge(s.status)}</td>
+          <td>${esc(s.note)}</td>
+        </tr>`).join('');
+      return `
+        <div class="card" style="margin-top:16px">
+          <h3>策略 SPI 实现状态</h3>
+          <table>
+            <thead><tr><th>SPI</th><th>实现类</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    function srcTag(src) {
+      if (!src) return '';
+      const m = { RUNTIME: 'Nacos 已配', DRAFT: '文档初稿', 'RUNTIME+DRAFT': 'Nacos+文档', NONE: '' };
+      return '<span class="src-tag">' + esc(m[src] || src) + '</span>';
+    }
+
+    function tplViewCell(t) {
+      return t.viewable
+        ? '<button class="view-link" type="button">查看文案 →</button>'
+        : '<span style="color:var(--muted)">—</span>';
+    }
+
+    function renderTemplates(templates) {
+      const email = (templates?.email || []).map(t => `
+        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+          <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td>${esc(t.stage)}</td>
+          <td>${esc(t.trigger || '')}</td>
+          <td class="preview">${esc(t.subject || t.preview || '—')}</td>
+          <td>${badge(t.phase1)}</td>
+          <td>${cfgBadge(t.configured)}</td>
+          <td>${tplViewCell(t)}</td>
+        </tr>`).join('');
+      const sms = (templates?.sms || []).map(t => `
+        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+          <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td>${esc(t.stage)}</td>
+          <td>${esc(t.trigger || '')}</td>
+          <td class="preview">${esc(t.preview || '—')}</td>
+          <td>${badge(t.phase1)}</td>
+          <td>${cfgBadge(t.configured)}</td>
+          <td>${tplViewCell(t)}</td>
+        </tr>`).join('');
+      const push = (templates?.push || []).map(t => `
+        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+          <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td>${esc(t.stage)}</td>
+          <td class="preview">${esc(t.title || '—')}</td>
+          <td class="preview">${esc(t.preview || '—')}</td>
+          <td>${badge(t.phase1)}</td>
+          <td>${cfgBadge(t.configured)}</td>
+          <td>${tplViewCell(t)}</td>
+        </tr>`).join('');
+      return `
+        <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+          点击行或「查看文案」打开详情 · 蓝色示例为注入变量后的渲染效果 · Email 支持 HTML 预览
+        </p>
+        <div class="filter-bar">
+          <select id="tplFilter" onchange="filterTemplates()">
+            <option value="">全部阶段</option>
+            <option value="S0">S0</option><option value="S1">S1</option>
+            <option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option>
+          </select>
+          <select id="phaseFilter" onchange="filterTemplates()">
+            <option value="">全部状态</option>
+            <option value="ACTIVE">Phase 1 启用</option>
+            <option value="DRAFT">文案初稿</option>
+            <option value="MOCK">Mock</option>
+            <option value="RESERVED">备用</option>
+          </select>
+        </div>
+        <div class="card">
+          <h3>Email 里程碑（SendGrid）</h3>
+          <table class="tpl-table"><thead><tr>
+            <th>scriptSlot</th><th>Stage</th><th>触发</th><th>Subject</th><th>状态</th><th>配置</th><th></th>
+          </tr></thead><tbody>${email}</tbody></table>
+        </div>
+        <div class="card">
+          <h3>SMS 文案</h3>
+          <table class="tpl-table"><thead><tr>
+            <th>scriptSlot</th><th>Stage</th><th>触发</th><th>预览</th><th>状态</th><th>配置</th><th></th>
+          </tr></thead><tbody>${sms}</tbody></table>
+        </div>
+        <div class="card">
+          <h3>Push 文案</h3>
+          <table class="tpl-table"><thead><tr>
+            <th>scriptSlot</th><th>Stage</th><th>Title</th><th>Body 预览</th><th>状态</th><th>配置</th><th></th>
+          </tr></thead><tbody>${push}</tbody></table>
+        </div>`;
+    }
+
+    function renderQuickLinks(links) {
+      return (links || []).map(l => {
+        const isObserve = l.type === 'observe';
+        const path = isObserve ? '' : esc(l.path);
+        const actions = isObserve
+          ? `<a class="btn btn-ghost" href="orchestration.html" onclick="localStorage.setItem('observeCaseId','${l.caseId}');return true;">打开观测页</a>`
+          : `<button class="btn btn-primary" onclick="runMock('${esc(l.path)}', this)">执行</button>
+             <a class="btn btn-ghost" href="orchestration.html" onclick="localStorage.setItem('observeCaseId','${l.caseId}');return true;">观测 ${l.caseId}</a>`;
+        return `
+          <div class="ql-card">
+            <div class="title">${esc(l.label)} <span style="color:var(--muted);font-weight:400">${esc(l.tc || '')}</span></div>
+            <div class="path">${isObserve ? 'caseId=' + l.caseId : l.method + ' ' + path}</div>
+            <div class="ql-actions">${actions}</div>
+            <div class="ql-result" style="font-size:11px;margin-top:8px;color:var(--muted)"></div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderConfigIndex(idx) {
+      const rows = (idx || []).map(c => `
+        <tr>
+          <td class="mono">${esc(c.key)}</td>
+          <td>${esc(c.purpose)}</td>
+          <td>${esc(c.doc)}</td>
+        </tr>`).join('');
+      return `
+        <div class="card">
+          <h3>Nacos 配置索引（只读）</h3>
+          <table>
+            <thead><tr><th>配置键</th><th>用途</th><th>文档</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    function renderAll(d) {
+      return `
+        ${renderHero(d)}
+        ${renderStats(d.summary || {})}
+        <div class="tabs">
+          <button class="tab on" data-tab="strategy">策略全景</button>
+          <button class="tab" data-tab="channels">渠道能力</button>
+          <button class="tab" data-tab="templates">模板库</button>
+          <button class="tab" data-tab="devtools">联调入口</button>
+        </div>
+        <div class="panel on" id="panel-strategy">
+          ${renderRuntime(d.runtime)}
+          ${renderStages(d.stages)}
+        </div>
+        <div class="panel" id="panel-channels">
+          <div class="card"><h3>渠道能力矩阵</h3>${renderChannels(d.channels)}</div>
+          ${renderSpi(d.spi)}
+        </div>
+        <div class="panel" id="panel-templates">
+          ${renderTemplates(d.templates)}
+        </div>
+        <div class="panel" id="panel-devtools">
+          <div class="card">
+            <h3>常用联调用例 · 一键触发</h3>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+              执行后点击「观测」跳转运行观测页，对照策略应有 vs 实际执行。
+            </p>
+            <div class="ql-grid">${renderQuickLinks(d.quickLinks)}</div>
+          </div>
+          ${renderConfigIndex(d.configIndex)}
+        </div>
+        <div class="foot">只读目录 · 配置变更请走 Nacos / 文档 SSOT · Phase 2 将接入统一管理后台</div>`;
+    }
+
+    function bindTabs() {
+      document.querySelectorAll('.tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
+          document.querySelectorAll('.panel').forEach(p => p.classList.remove('on'));
+          btn.classList.add('on');
+          document.getElementById('panel-' + btn.dataset.tab).classList.add('on');
+        });
+      });
+    }
+
+    window.toggleStage = function(card, ev) {
+      if (ev.target.closest('.btn')) return;
+      card.classList.toggle('open');
+    };
+
+    window.filterTemplates = function() {
+      const stage = document.getElementById('tplFilter')?.value || '';
+      const phase = document.getElementById('phaseFilter')?.value || '';
+      document.querySelectorAll('.tpl-table tbody tr').forEach(tr => {
+        const okStage = !stage || tr.dataset.stage === stage;
+        const okPhase = !phase || tr.dataset.phase === phase;
+        tr.style.display = okStage && okPhase ? '' : 'none';
+      });
+    };
+
+    window.runMock = async function(path, btn) {
+      const card = btn.closest('.ql-card');
+      const result = card.querySelector('.ql-result');
+      btn.disabled = true;
+      result.textContent = '执行中…';
+      try {
+        const resp = await fetch(path, { method: 'POST' });
+        const text = await resp.text();
+        let msg;
+        try { msg = JSON.stringify(JSON.parse(text), null, 0).slice(0, 200); }
+        catch { msg = text.slice(0, 200); }
+        result.textContent = (resp.ok ? '✓ ' : '✗ HTTP ' + resp.status + ' ') + msg;
+        result.style.color = resp.ok ? 'var(--ok)' : 'var(--bad)';
+      } catch (e) {
+        result.textContent = '失败: ' + e.message;
+        result.style.color = 'var(--bad)';
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    const $ = (id) => document.getElementById(id);
+    window.__TPL_MAP__ = {};
+    window.__SAMPLES__ = {};
+
+    function buildTplIndex(templates) {
+      window.__TPL_MAP__ = {};
+      ['email', 'sms', 'push'].forEach(k => {
+        (templates[k] || []).forEach(t => { window.__TPL_MAP__[t.slot] = Object.assign({ _type: k }, t); });
+      });
+    }
+
+    function bindTplRows() {
+      document.querySelectorAll('.tpl-row').forEach(tr => {
+        tr.addEventListener('click', () => openTplModal(tr.dataset.slot));
+      });
+    }
+
+    function renderVarChips(vars, samples) {
+      if (!vars || !vars.length) return '';
+      return '<div class="var-chips">' + vars.map(v =>
+        '<span class="var-chip">{{' + esc(v) + '}} → ' + esc(samples[v] || '—') + '</span>'
+      ).join('') + '</div>';
+    }
+
+    function openTplModal(slot) {
+      const t = window.__TPL_MAP__[slot];
+      if (!t || !t.viewable) return;
+      const samples = window.__SAMPLES__ || {};
+      $('modalTitle').textContent = slot;
+      $('modalSub').innerHTML = [
+        t.stage, (t.channel || (t._type || '').toUpperCase()), t.trigger,
+        badge(t.phase1), srcTag(t.contentSource)
+      ].filter(Boolean).join(' · ');
+
+      let html = '';
+      if (t._type === 'email') {
+        html = `
+          <div class="modal-tabs">
+            <button class="mtab on" data-mtab="copy" onclick="switchMtab('copy')">文案</button>
+            <button class="mtab" data-mtab="preview" onclick="switchMtab('preview')">HTML 预览</button>
+          </div>
+          <div class="mpanel on" id="mpanel-copy">
+            <div class="copy-block"><div class="lbl">Subject（SendGrid Settings）</div>
+              <div class="txt">${esc(t.subject || '—')}</div></div>
+            <div class="copy-block"><div class="lbl">Preheader</div>
+              <div class="txt">${esc(t.preheader || '—')}</div></div>
+            <div class="copy-block"><div class="lbl">SendGrid Template ID ${cfgBadge(t.configured)}</div>
+              <div class="txt mono">${esc(t.templateIdFull || t.templateId || '—')}</div></div>
+            ${renderVarChips(t.variables, samples)}
+          </div>
+          <div class="mpanel" id="mpanel-preview">
+            ${t.hasHtmlPreview
+              ? '<iframe class="email-preview" src="/catalog/template/' + encodeURIComponent(slot) + '/preview"></iframe>'
+              : '<p style="color:var(--muted)">暂无 HTML 预览</p>'}
+          </div>`;
+      } else if (t._type === 'sms') {
+        html = `
+          <div class="copy-block"><div class="lbl">模板原文 ${srcTag(t.contentSource)}</div>
+            <div class="txt mono">${esc(t.body || '—')}</div></div>
+          ${t.tone ? '<div class="copy-block"><div class="lbl">Tone</div><div class="txt">' + esc(t.tone) + '</div></div>' : ''}
+          <div class="copy-block"><div class="lbl">示例渲染（Maria · ₱12,500 · 3天逾期）</div>
+            <div class="phone-mock"><div class="sms-bubble">${esc(t.bodyRendered || t.body || '—')}</div></div>
+          </div>`;
+      } else if (t._type === 'push') {
+        html = `
+          <div class="copy-block"><div class="lbl">Title 模板 ${srcTag(t.contentSource)}</div>
+            <div class="txt mono">${esc(t.title || '—')}</div></div>
+          <div class="copy-block"><div class="lbl">Body 模板</div>
+            <div class="txt mono">${esc(t.body || '—')}</div></div>
+          <div class="copy-block"><div class="lbl">通知栏预览</div>
+            <div class="phone-mock">
+              <div class="push-title">${esc(t.titleRendered || t.title || '—')}</div>
+              <div class="push-body">${esc(t.bodyRendered || t.body || '—')}</div>
+            </div>
+          </div>
+          ${t.dataExample ? '<div class="copy-block"><div class="lbl">data payload（JPush）</div><div class="txt mono">'
+            + esc(JSON.stringify(t.dataExample, null, 2)) + '</div></div>' : ''}`;
+      }
+      $('modalBody').innerHTML = html;
+      $('tplModal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    window.switchMtab = function(id) {
+      document.querySelectorAll('.mtab').forEach(b => b.classList.toggle('on', b.dataset.mtab === id));
+      document.querySelectorAll('.mpanel').forEach(p => p.classList.toggle('on', p.id === 'mpanel-' + id));
+    };
+
+    window.closeTplModal = function() {
+      $('tplModal').classList.remove('open');
+      document.body.style.overflow = '';
+      $('modalBody').innerHTML = '';
+    };
+
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTplModal(); });
+
+    async function init() {
+      const app = document.getElementById('app');
+      try {
+        const resp = await fetch('/catalog/overview');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        window.__SAMPLES__ = data.samples || {};
+        buildTplIndex(data.templates || {});
+        app.innerHTML = renderAll(data);
+        bindTabs();
+        bindTplRows();
+      } catch (e) {
+        app.innerHTML = '<div class="err">加载失败：' + esc(e.message) + '<br><br>请确认 collection-admin 已启动。</div>';
+      }
+    }
+    init();
+  </script>
+</body>
+</html>

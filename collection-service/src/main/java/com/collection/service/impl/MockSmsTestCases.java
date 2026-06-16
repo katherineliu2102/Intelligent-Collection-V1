@@ -20,11 +20,14 @@ final class MockSmsTestCases {
     /** 通知中心 testSend 默认测试号（Virtual 通道，不真实下发）。 */
     static final String TEST_MOBILE_VIRTUAL = "123456";
 
-    /** 生产 /send 真号 A（菲律宾，无国家码前缀）。 */
-    static final String PROD_MOBILE_A = "9451374358";
+    /** 生产 /send 真号 A（E.164）。 */
+    static final String PROD_MOBILE_A = "639451374358";
 
-    /** 生产 /send 真号 B（验运营商路由）。 */
+    /** 生产 /send 真号 B（9451373897，通知中心补 63）。 */
     static final String PROD_MOBILE_B = "9451373897";
+
+    /** 生产 /send 真号 C（E.164）。 */
+    static final String PROD_MOBILE_C = "639153239069";
 
     private static final Map<Long, SmsTestCase> BY_CASE_ID;
 
@@ -33,6 +36,7 @@ final class MockSmsTestCases {
         m.put(94100L, c(94100L, "sms_test_virtual", TEST_MOBILE_VIRTUAL, 1, Stage.S1, "5000.00"));
         m.put(94101L, c(94101L, "sms_prod_phone_a", PROD_MOBILE_A, 1, Stage.S1, "5000.00"));
         m.put(94102L, c(94102L, "sms_prod_phone_b", PROD_MOBILE_B, 1, Stage.S1, "5000.00"));
+        m.put(94103L, c(94103L, "sms_prod_phone_c", PROD_MOBILE_C, 1, Stage.S1, "5000.00"));
         BY_CASE_ID = Collections.unmodifiableMap(m);
     }
 

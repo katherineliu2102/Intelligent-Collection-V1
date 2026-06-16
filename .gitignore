@@ -13,3 +13,4 @@ logs/
 *.log
 .env
 notification配置
+nacos-publish.local.yml
