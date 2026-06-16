@@ -1,40 +1,10 @@
-server:
-  port: 8888
-spring:
-  application:
-    name: intelligent-collection-local
-  cloud:
-    nacos:
-      config:
-        username: ${NACOS_USERNAME}
-        password: ${NACOS_PASSWORD}
-  datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-mybatis:
-  configuration:
-    map-underscore-to-camel-case: true
-    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
-    jdbc-type-for-null: "NULL"
-collection:
-  scan:
-    interval-ms: 5000
-  idempotency: memory
-  eventbus: memory
+# 粘贴到 Nacos → intelligent-collection-local.yml 的 channel.scripts 段
+# 与 docs/channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md §7 保持一致
+# 合并到现有配置，勿覆盖 spring.datasource / channel.sendgrid / channel.notification 等已有段
+
 channel:
-  callback:
-    base-url: http://localhost:8888/webhook
-  notification:
-    base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
-    app-code: mocasa
-    # app-key 由 Nacos channel.notification.app-key 下发（intelligent-collection-local.yml）
-    sms-content-type: collection
-    sms-test-mode: false  # 真号生产：走 /v1/sms/send（签名，内部路由 QH/Hiway/BORI）；改 true 走 testSend Virtual 免签名
-    push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
-  debug:
-    legacy-three-step: false
-    single-step: SMS
   scripts:
-    push-default-deep-link: https://app.mocasa.com/repay
+    push-default-deep-link: "https://app.mocasa.com/repay"
     sms:
       S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current."
       S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current."
@@ -68,20 +38,3 @@ channel:
       S4_PUSH_STANDARD:
         title: "Final notice: {dpd} days overdue"
         body: "Resolve PHP {amount} now. View your options in the app."
-  sendgrid:
-    # api-key / from-email 由 Nacos channel.sendgrid.* 下发（intelligent-collection-local.yml）
-    from-name: MOCASA Collections
-    # Phase 1 仅 5 个里程碑 Email（见 docs/email-templates/subjects.md）
-    templates:
-      S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
-      S1_EMAIL_OVERDUE_NOTICE: d-bc7f5aee7e304caf93ca4d435a73a1d7
-      S2_EMAIL_ENTRY: d-86ed8faae3b24489ad7db8a11067b8c4
-      S4_EMAIL_ENTRY: d-658d5be184ab4710a19c8419ed66bca9
-      S4_EMAIL_PRE_CLOSE: d-881ce23667cc4df2abf82097b890cae1
-    unsubscribe-group-id: 0
-logging:
-  level:
-    root: INFO
-    com.collection: DEBUG
-    org.mybatis: INFO
-    org.springframework.web: INFO

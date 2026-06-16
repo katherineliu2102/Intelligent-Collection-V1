@@ -126,20 +126,24 @@ docs/
 
 ### 3.1 配置映射
 
-**密钥**（`.env`，勿提交 Git）：
+**密钥**（Nacos `intelligent-collection-local.yml`，勿提交 Git）：
 
-```dotenv
-SENDGRID_API_KEY=SG.xxxx
-SENDGRID_FROM_EMAIL=collections@mocasa.com
+```yaml
+channel:
+  sendgrid:
+    api-key: SG.xxxx
+    from-email: collections@mocasa.com
+  notification:
+    app-key: <运维下发>
 ```
+
+发布：`scripts/publish-channel-secrets-to-nacos.ps1`（需 Nacos 写权限）或控制台手动合并。
 
 **scriptSlot → d-xxx**（Nacos / `application-local.yml`，**Phase 1 仅 5 项**）：
 
 ```yaml
 channel:
   sendgrid:
-    api-key: ${SENDGRID_API_KEY:}
-    from-email: ${SENDGRID_FROM_EMAIL:collections@mocasa.com}
     from-name: MOCASA Collections
     templates:
       S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
@@ -203,28 +207,28 @@ channel:
 | **发送** | `POST /v1/sms/send`（同步），`contentType=collection`；运营商路由在通知中心后台 |
 | **配置** | `channel.notification.base-url`、`app-code`、`app-key`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §1） |
 | **文案存放** | Phase 1：Nacos `channel.scripts.sms`（见 §7，待 `DefaultStepResolver` 读取）；长期：策略后台 |
-| **变量** | `{name}`=borrower_name、`{amount}`=amount_due(PHP)、`{dpd}`=overdue_days；**SMS 不放裸链接**（短链风险，引导走 SKYPAYLOANS App） |
+| **变量** | `{name}`=borrower_name、`{amount}`=amount_due(PHP)、`{dpd}`=overdue_days；**SMS 不放裸链接**（短链风险；还款渠道多样，文案仅敦促还款、不绑定单一渠道） |
 
 ### 4.1 SMS 文案（英文初稿）
 
-> **品牌**：正文 MOCASA；还款入口 **SKYPAYLOANS** App。CTA `in the SKYPAYLOANS app only` 同时承担 **防诈骗**（只在官方 App 还款）与引导。  
-> **Tone**：S0 友好（禁 Collections）；S1+ 允许 Collections；S2+ 加入 **Offer 诱饵**（引导进 App 看专属方案，不写固定折扣）；施压一律用**客观账户后果**（reported as delinquent / limit your account / future loan eligibility），**不用**主观威胁词（avoid further action/escalation）。  
+> **品牌**：正文 MOCASA；CTA 以**敦促还款**为主，不写死单一还款渠道（App / 线下 biller 等均可）。  
+> **Tone**：S0 友好（禁 Collections）；S1+ 允许 Collections；S2+ 加入 **Offer 诱饵**（引导查看专属还款方案，不写固定折扣）；施压一律用**客观账户后果**（reported as delinquent / limit your account / future loan eligibility），**不用**主观威胁词（avoid further action/escalation）。  
 > **排版（保送达）**：**禁用全大写词**（URGENT/PAY NOW/FINAL NOTICE 一律首字母大写），降低运营商 Spam 拦截。  
 > **长度（控成本）**：英文 GSM-7，160 字/段；去寒暄（无 Hi），为 `{name}`/`{amount}` 预留余量；下表 `段` 为典型值预估，>1 段请终审裁剪。  
 > **占位符**：`{name}` `{amount}` `{dpd}` 由 Resolver 注入；`{name}` 缺失时 Resolver 自动省略并清理标点空格。
 
 | scriptSlot | Stage/日块 | Tone | 正文（EN · 专家修订版） | 段 |
 |------------|-----------|------|----------------|----|
-| `S0_REMINDER` | S0 · D-3/D-2 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due soon. Pay in the SKYPAYLOANS app only.` | 1 |
-| `S0_REMINDER_URGENT` | S0 · D-1 | 友好+提醒 | `MOCASA: {name}, your PHP {amount} payment is due tomorrow. Pay today in the SKYPAYLOANS app only to keep your account current.` | 1 |
-| `S0_DUE_TODAY` | S0 · D0 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due today. Pay in the SKYPAYLOANS app only to stay current.` | 1 |
-| `S1_SMS_STANDARD` | S1 · D+1~3 08:00 | 标准 | `MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the SKYPAYLOANS app only.` | 1 |
-| `S2_SMS_STANDARD` | S2 · 08:00 | 标准+Offer | `MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount} in the SKYPAYLOANS app only.` | 1 |
-| `S2_SMS_FIRM` | S2 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount} in the SKYPAYLOANS app only.` | 1~2 |
-| `S3_SMS_STANDARD` | S3 · 08:00 | Pay+Offer | `MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. View your options for PHP {amount} in the SKYPAYLOANS app only.` | 1~2 |
-| `S3_SMS_FIRM` | S3 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Settle PHP {amount} or view your options in the SKYPAYLOANS app only.` | 1~2 |
-| `S4_SMS_STANDARD` | S4 · 08:00 Remedial | Final+Offer | `MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. View your resolution options for PHP {amount} in the SKYPAYLOANS app only.` | 1~2 |
-| `S4_SMS_FIRM` | S4 · D+31~60 难催 | Final+Offer | `MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Resolve PHP {amount} via your options in the SKYPAYLOANS app only.` | 1~2 |
+| `S0_REMINDER` | S0 · D-3/D-2 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current.` | 1 |
+| `S0_REMINDER_URGENT` | S0 · D-1 | 友好+提醒 | `MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current.` | 1 |
+| `S0_DUE_TODAY` | S0 · D0 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current.` | 1 |
+| `S1_SMS_STANDARD` | S1 · D+1~3 08:00 | 标准 | `MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly.` | 1 |
+| `S2_SMS_STANDARD` | S2 · 08:00 | 标准+Offer | `MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}.` | 1 |
+| `S2_SMS_FIRM` | S2 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}.` | 1~2 |
+| `S3_SMS_STANDARD` | S3 · 08:00 | Pay+Offer | `MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options.` | 1~2 |
+| `S3_SMS_FIRM` | S3 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options.` | 1~2 |
+| `S4_SMS_STANDARD` | S4 · 08:00 Remedial | Final+Offer | `MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options.` | 1~2 |
+| `S4_SMS_FIRM` | S4 · D+31~60 难催 | Final+Offer | `MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly.` | 1~2 |
 
 > **合规/送达校验点**：①无委外/legal/third-party；②无裸 URL；③**无全大写词**；④后果用客观描述（delinquency record / limited account / future eligibility），不写主观威胁；⑤Sender ID 统一 `MOCASA`；⑥S0 不含 Collections。
 
@@ -287,7 +291,7 @@ channel:
   notification:
     base-url: https://service-test.mocasa.com/notification
     app-code: mocasa
-    app-key: ${NOTIFICATION_APP_KEY}     # 生产 /v1/sms/send 必需；测试 /testSend 免签名可空
+    app-key: <运维下发>                  # 生产 /v1/sms/send 必需；测试 /testSend 免签名可空
     sms-content-type: collection
     sms-test-mode: false                  # true → SMS 走 /v1/sms/testSend（免签名，联调用）
     sms-test-account-name: ""             # 可选：指定测试通道账号名
@@ -298,16 +302,16 @@ channel:
   scripts:                        # SMS/Push 文案（§4.1/§5.1），DefaultStepResolver 按 scriptSlot 读取并注入变量
     push-default-deep-link: "https://app.mocasa.com/repay"   # repaymentUrl 缺失时兜底（到 App 还款页，待 App 确认）
     sms:
-      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Pay in the SKYPAYLOANS app only."
-      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Pay today in the SKYPAYLOANS app only to keep your account current."
-      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Pay in the SKYPAYLOANS app only to stay current."
-      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the SKYPAYLOANS app only."
-      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount} in the SKYPAYLOANS app only."
-      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount} in the SKYPAYLOANS app only."
-      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. View your options for PHP {amount} in the SKYPAYLOANS app only."
-      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Settle PHP {amount} or view your options in the SKYPAYLOANS app only."
-      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. View your resolution options for PHP {amount} in the SKYPAYLOANS app only."
-      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Resolve PHP {amount} via your options in the SKYPAYLOANS app only."
+      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current."
+      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current."
+      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current."
+      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly."
+      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}."
+      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}."
+      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options."
+      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options."
+      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options."
+      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly."
     push:                         # 每槽 title + body 两键
       S0_REMINDER: { title: "Payment due soon", body: "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app." }
       S0_REMINDER_URGENT: { title: "Due tomorrow", body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app." }

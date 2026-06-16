@@ -12,3 +12,4 @@ target/
 logs/
 *.log
 .env
+nacos-publish.local.yml
