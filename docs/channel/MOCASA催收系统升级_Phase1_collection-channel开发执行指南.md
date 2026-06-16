@@ -359,7 +359,7 @@ channel:
   notification:
     base-url: https://service-test.mocasa.com/notification
     app-code: mocasa
-    app-key: ${NOTIFICATION_APP_KEY}
+    app-key: <运维下发>
     sms-content-type: collection
   lth:
     voice:
@@ -409,7 +409,7 @@ spring:
 |------|------|
 | 测试 Nacos 公共账号 | `.env` 填 `NACOS_*` |
 | 本机端口/日志 | `application-local.yml` |
-| 临时密钥 | `application-local.yml` 内 `channel.*`（勿提交） |
+| 渠道密钥 | Nacos `intelligent-collection-local.yml` → `channel.sendgrid.*` / `channel.notification.app-key`（`scripts/publish-channel-secrets-to-nacos.ps1`） |
 
 ---
 

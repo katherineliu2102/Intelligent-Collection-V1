@@ -167,4 +167,4 @@ email-templates/
 | 线上模板 | SendGrid `d-xxx` |
 | 映射 | Nacos `channel.sendgrid.templates` |
 
-`.env` 仅放 `SENDGRID_API_KEY`、`SENDGRID_FROM_EMAIL`。
+`.env` 仅放 `NACOS_*`；SendGrid 密钥在 Nacos `channel.sendgrid.api-key` / `from-email`。

@@ -77,7 +77,7 @@ channel:
   notification:
     base-url: ${NOTIFICATION_BASE_URL:https://service-test.mocasa.com/notification}
     app-code: ${NOTIFICATION_APP_CODE:mocasa}      # 催收引擎专用，须与通知中心登记一致
-    app-key: ${NOTIFICATION_APP_KEY:}              # 密钥不进仓库
+    app-key: <运维下发>              # Nacos channel.notification.app-key，勿进仓库
     sms-content-type: collection                   # 固定，对应后台 contentType
 ```
 

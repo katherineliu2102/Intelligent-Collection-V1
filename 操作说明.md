@@ -12,7 +12,7 @@ collection-admin/src/main/resources/application-local.yml
 
 ## 2. Nacos 配置
 
-项目启动时会从 Nacos 读取配置。测试环境已提供**公共账号**，向项目负责人获取地址与命名空间后，在 `.env` 中填写即可（全员共享同一套渠道密钥与 DB 配置）。
+项目启动时会从 Nacos 读取配置。测试环境已提供**公共账号**，向项目负责人获取地址与命名空间后，在 `.env` 中填写 `NACOS_*` 即可；**Email / SMS 密钥**在 Nacos `intelligent-collection-local.yml` 的 `channel.sendgrid.*` / `channel.notification.app-key`（`.env` 不再存放）。
 
 需要准备以下信息：
 
@@ -51,15 +51,8 @@ Windows CMD 可使用：
 copy .env.example .env
 ```
 
-然后在 `.env` 中填写实际配置：
+然后在 `.env` 中填写 Nacos 连接信息（**不含** SendGrid / Notification 密钥）：
 
-```dotenv
-SPRING_PROFILES_ACTIVE=local
-NACOS_SERVER_ADDR=
-NACOS_NAMESPACE=
-NACOS_GROUP=
-NACOS_USERNAME=
-NACOS_PASSWORD=
 ```dotenv
 SPRING_PROFILES_ACTIVE=local
 # 格式必须是 host:port，例如 34.96.213.197:8847（不要带 http:// 或 /nacos）
@@ -70,6 +63,8 @@ NACOS_USERNAME=
 NACOS_PASSWORD=
 APP_PORT=8080
 ```
+
+渠道密钥首次部署：复制 `nacos-publish.local.yml.example` → `nacos-publish.local.yml` 填密钥后执行 `scripts/publish-channel-secrets-to-nacos.ps1`，或在 Nacos 控制台手动合并 `channel` 段。
 
 `.env` 仅用于本地运行，不要提交到 Git。
 
@@ -83,7 +78,7 @@ APP_PORT=8080
 |---|-----|-------------|------|
 | 1 | JDK 8 | `java -version` | 1.8.x |
 | 2 | Maven | `mvn -version` | 3.6+ |
-| 3 | `.env` | 复制 `.env.example` → `.env` 并填写 | 7 个变量非空 |
+| 3 | `.env` | 复制 `.env.example` → `.env` 并填写 | `NACOS_*` + `APP_PORT` 非空 |
 | 4 | Nacos 地址格式 | `NACOS_SERVER_ADDR=host:port` | **勿**写 `http://` 或 `/nacos` |
 | 5 | Nacos 连通 | 浏览器或 curl 访问 `http://<host>:<port>/nacos` | 可打开或 200 |
 | 6 | 库表 | DBA 确认 `ai_collection_db` 已执行 `db/schema.sql` | 存在 `t_contact_plan` 等表 |
