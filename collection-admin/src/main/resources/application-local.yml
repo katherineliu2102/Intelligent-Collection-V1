@@ -23,12 +23,14 @@ collection:
 channel:
   callback:
     base-url: http://localhost:8888/webhook
+  # Level A 联调：未配密钥时不回退 Mock 伪装成功（Bugbot #3）
+  fallback-to-mock: false
   notification:
     base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
     app-code: mocasa
     app-key: ${NOTIFICATION_APP_KEY:}
     sms-content-type: collection
-    sms-test-mode: false  # 真号生产：走 /v1/sms/send（签名，内部路由 QH/Hiway/BORI）；改 true 走 testSend Virtual 免签名
+    sms-test-mode: true   # Level A 冒烟：走 /v1/sms/testSend 免 appKey；生产联调改 false + 配 NOTIFICATION_APP_KEY
     push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
     push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
   debug:
