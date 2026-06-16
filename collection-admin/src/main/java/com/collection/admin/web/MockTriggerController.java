@@ -3,6 +3,11 @@ package com.collection.admin.web;
 import com.collection.channel.adapter.NotificationPushAdapter;
 import com.collection.channel.adapter.NotificationSmsAdapter;
 import com.collection.channel.adapter.SendGridEmailAdapter;
+import com.collection.channel.config.ChannelProperties;
+import com.collection.channel.strategy.PushContent;
+import com.collection.channel.strategy.ScriptLibrary;
+import com.collection.channel.strategy.ScriptVars;
+import com.collection.common.model.CaseContext;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
@@ -11,15 +16,21 @@ import com.collection.common.enums.Stage;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
+import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
 import com.collection.service.impl.MockCaseService;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -45,6 +56,12 @@ public class MockTriggerController {
 
     @Resource
     private NotificationPushAdapter notificationPushAdapter;
+
+    @Resource
+    private ScriptLibrary scriptLibrary;
+
+    @Resource
+    private ChannelProperties channelProperties;
 
     /**
      * 直连 SendGrid 发一封 Email（不经 plan/DB）。
@@ -196,6 +213,179 @@ public class MockTriggerController {
             m.put("message", result.getErrorCode());
         }
         return m;
+    }
+
+    /**
+     * 按 {@code channel.scripts.sms} 已配置槽位逐条下发（联调验收全阶段文案）。
+     * 默认 caseId=94102（9451373897）；每条间隔约 1s，避免瞬时打满供应商。
+     */
+    @PostMapping("/send-all-sms")
+    public Map<String, Object> sendAllSms(@RequestParam(defaultValue = "94102") Long caseId) {
+        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+        if (snapshot.getUserProfile() == null || snapshot.getUserProfile().getBasic() == null
+                || snapshot.getUserProfile().getBasic().getPrimaryPhone() == null) {
+            return fail("NO_PHONE", "caseId=" + caseId + " has no phone in mock profile");
+        }
+        String phone = snapshot.getUserProfile().getBasic().getPrimaryPhone();
+        ScriptVars vars = buildScriptVars(snapshot);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int ok = 0;
+        for (String scriptSlot : channelProperties.getScripts().getSms().keySet()) {
+            String body = scriptLibrary.renderSms(scriptSlot, vars);
+            if (StringUtils.isBlank(body)) {
+                items.add(slotSkip(scriptSlot, "SMS_TEMPLATE_EMPTY"));
+                continue;
+            }
+            StepCommand command = StepCommand.builder()
+                    .channelType(ChannelType.SMS)
+                    .targetAddress(phone)
+                    .templateId("bulk-sms")
+                    .idempotencyKey("bulk:sms:" + caseId + ":" + scriptSlot)
+                    .metadata(buildSmsMetadata(caseId, scriptSlot, body))
+                    .build();
+            StepResult result = notificationSmsAdapter.send(command);
+            items.add(slotResult(scriptSlot, body, result));
+            if (result.isSuccess()) {
+                ok++;
+            }
+            sleepBriefly();
+        }
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", ok == items.size() && !items.isEmpty());
+        m.put("caseId", caseId);
+        m.put("phone", phone);
+        m.put("total", items.size());
+        m.put("success", ok);
+        m.put("items", items);
+        return m;
+    }
+
+    /**
+     * 按 {@code channel.scripts.push} 已配置槽位逐条下发（联调验收全阶段 Push 文案）。
+     * 默认 caseId=94200（真实 jpushToken）；无 token 则失败。
+     */
+    @PostMapping("/send-all-push")
+    public Map<String, Object> sendAllPush(@RequestParam(defaultValue = "94200") Long caseId) {
+        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
+        UserProfile.DeviceInfo device = snapshot.getUserProfile() != null
+                ? snapshot.getUserProfile().getDevice() : null;
+        String token = device != null ? device.getJpushToken() : null;
+        if (StringUtils.isBlank(token)) {
+            return fail("NO_JPUSH_TOKEN", "caseId=" + caseId + " has no jpushToken");
+        }
+        ScriptVars vars = buildScriptVars(snapshot);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int ok = 0;
+        for (String scriptSlot : channelProperties.getScripts().getPush().keySet()) {
+            PushContent push = scriptLibrary.renderPush(scriptSlot, vars);
+            if (push == null || (StringUtils.isBlank(push.getTitle()) && StringUtils.isBlank(push.getBody()))) {
+                items.add(slotSkip(scriptSlot, "PUSH_TEMPLATE_EMPTY"));
+                continue;
+            }
+            Map<String, Object> meta = buildPushMetadata(caseId, snapshot, scriptSlot, push);
+            StepCommand command = StepCommand.builder()
+                    .channelType(ChannelType.PUSH)
+                    .targetAddress(token)
+                    .templateId("bulk-push")
+                    .idempotencyKey("bulk:push:" + caseId + ":" + scriptSlot)
+                    .metadata(meta)
+                    .build();
+            StepResult result = notificationPushAdapter.send(command);
+            items.add(slotResult(scriptSlot, push.getTitle() + " | " + push.getBody(), result));
+            if (result.isSuccess()) {
+                ok++;
+            }
+            sleepBriefly();
+        }
+        Map<String, Object> m = new HashMap<>();
+        m.put("ok", ok == items.size() && !items.isEmpty());
+        m.put("caseId", caseId);
+        m.put("jpushToken", token);
+        m.put("total", items.size());
+        m.put("success", ok);
+        m.put("items", items);
+        return m;
+    }
+
+    private static Map<String, Object> buildSmsMetadata(Long caseId, String scriptSlot, String body) {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put(StepCommand.META_SCRIPT_SLOT, scriptSlot);
+        meta.put(StepCommand.META_SMS_BODY, body);
+        if (caseId != null) {
+            meta.put(StepCommand.META_CASE_ID, caseId);
+        }
+        return meta;
+    }
+
+    private Map<String, Object> buildPushMetadata(Long caseId, ContextSnapshot snapshot,
+                                                  String scriptSlot, PushContent push) {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put(StepCommand.META_SCRIPT_SLOT, scriptSlot);
+        meta.put(StepCommand.META_TITLE, push.getTitle());
+        meta.put(StepCommand.META_BODY, push.getBody());
+        if (caseId != null) {
+            meta.put(StepCommand.META_CASE_ID, caseId);
+        }
+        String deepLink = scriptLibrary.defaultDeepLink();
+        CaseContext ctx = snapshot != null ? snapshot.getCaseContext() : null;
+        if (ctx != null && StringUtils.isNotBlank(ctx.getRepaymentUrl())) {
+            deepLink = ctx.getRepaymentUrl();
+        }
+        Map<String, String> data = new HashMap<>();
+        data.put("scene", "collection");
+        data.put("script_slot", scriptSlot);
+        if (caseId != null) {
+            data.put("case_id", String.valueOf(caseId));
+        }
+        if (StringUtils.isNotBlank(deepLink)) {
+            data.put("deep_link", deepLink);
+        }
+        meta.put(StepCommand.META_PUSH_DATA, com.alibaba.fastjson.JSON.toJSONString(data));
+        return meta;
+    }
+
+    private static ScriptVars buildScriptVars(ContextSnapshot snapshot) {
+        String name = null;
+        BigDecimal amount = null;
+        int dpd = 0;
+        if (snapshot != null) {
+            if (snapshot.getUserProfile() != null && snapshot.getUserProfile().getBasic() != null) {
+                name = snapshot.getUserProfile().getBasic().getName();
+            }
+            if (snapshot.getCaseContext() != null) {
+                amount = snapshot.getCaseContext().getTotalOutstanding();
+                dpd = snapshot.getCaseContext().getDpd();
+            }
+        }
+        BigDecimal v = amount != null ? amount : BigDecimal.ZERO;
+        String amountStr = String.format(Locale.US, "%,.2f", v);
+        return new ScriptVars(name, amountStr, dpd);
+    }
+
+    private static Map<String, Object> slotResult(String scriptSlot, String preview, StepResult result) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("scriptSlot", scriptSlot);
+        row.put("preview", preview);
+        row.put("ok", result.isSuccess());
+        row.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        row.put("providerMsgId", result.getProviderMsgId());
+        return row;
+    }
+
+    private static Map<String, Object> slotSkip(String scriptSlot, String reason) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("scriptSlot", scriptSlot);
+        row.put("ok", false);
+        row.put("result", reason);
+        return row;
+    }
+
+    private static void sleepBriefly() {
+        try {
+            Thread.sleep(1000L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** 注入新案件，触发建计划 → 步骤执行全链路。 */

@@ -12,21 +12,17 @@ import java.util.Optional;
 /**
  * Phase 1 App Push 联调 case 注册表。
  *
- * <p>caseId = userId。Phase 1 暂无真实极光 Registration ID，使用 <b>假 jpushToken 占位</b>
- * （{@link #PLACEHOLDER_JPUSH_TOKEN}）先跑通「编排 → DefaultStepResolver → NotificationPushAdapter → 通知中心」链路。
- * 拿到真实 token 后，仅需在 ingestion / profile 写入真实值即可，无需改适配器。
+ * <p>caseId = userId。94200 使用联调真实极光 Registration ID（{@link #PUSH_TEST_JPUSH_TOKEN}）；
+ * 94201 无 token 验 SMS fallback。
  *
  * <p>联调见功能测试指南 TC-PUSH-*。
  */
 final class MockPushTestCases {
 
-    /**
-     * 假 jpushToken 占位：明显非真实值，仅用于让 PushAdapter 不走 SMS fallback、跑通 push 调用链路。
-     * 通知中心侧用此 token 调极光会因 token 无效而推送失败（联调可见），但不影响链路验证。
-     */
-    static final String PLACEHOLDER_JPUSH_TOKEN = "MOCK_JPUSH_RID_PLACEHOLDER_0001";
+    /** 联调用真实 JPush Registration ID（94200）。 */
+    static final String PUSH_TEST_JPUSH_TOKEN = "1a0018970bf0c19de04";
 
-    /** 94200：有假 jpushToken → 走 push（不 fallback）。 */
+    /** 94200：有 jpushToken → 走 push（不 fallback）。 */
     static final long PUSH_WITH_TOKEN = 94200L;
     /** 94201：无 jpushToken → 验证 push → SMS fallback。 */
     static final long PUSH_NO_TOKEN = 94201L;
@@ -35,7 +31,7 @@ final class MockPushTestCases {
 
     static {
         Map<Long, PushTestCase> m = new LinkedHashMap<>();
-        m.put(PUSH_WITH_TOKEN, c(PUSH_WITH_TOKEN, "push_with_token", PLACEHOLDER_JPUSH_TOKEN,
+        m.put(PUSH_WITH_TOKEN, c(PUSH_WITH_TOKEN, "push_with_token", PUSH_TEST_JPUSH_TOKEN,
                 "9451374358", 1, Stage.S1, "5000.00"));
         m.put(PUSH_NO_TOKEN, c(PUSH_NO_TOKEN, "push_no_token", null,
                 "9451373897", 1, Stage.S1, "5000.00"));

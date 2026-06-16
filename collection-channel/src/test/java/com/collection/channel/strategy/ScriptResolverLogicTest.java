@@ -23,9 +23,9 @@ class ScriptResolverLogicTest {
 
     @Test
     void inject_replacesAllPlaceholders() {
-        String tpl = "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Settle PHP {amount} in the SKYPAYLOANS app only.";
+        String tpl = "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly.";
         String out = ScriptLibrary.inject(tpl, new ScriptVars("Juan", "1,500.00", 3));
-        assertEquals("MOCASA Collections: Juan, your account is 3 day(s) overdue. Settle PHP 1,500.00 in the SKYPAYLOANS app only.", out);
+        assertEquals("MOCASA Collections: Juan, your account is 3 day(s) overdue. Please settle PHP 1,500.00 promptly.", out);
     }
 
     @Test

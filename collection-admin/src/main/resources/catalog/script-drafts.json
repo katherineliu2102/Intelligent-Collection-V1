@@ -1,0 +1,113 @@
+{
+  "samples": {
+    "name": "Maria",
+    "amount": "12,500",
+    "dpd": "3",
+    "borrower_name": "Maria",
+    "amount_due": "12,500",
+    "overdue_days": "3",
+    "payment_link": "https://app.mocasa.com/repay?bill=demo",
+    "assignment_date": "2026-09-15"
+  },
+  "sms": {
+    "S0_REMINDER": { "tone": "友好", "body": "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current." },
+    "S0_REMINDER_URGENT": { "tone": "友好+提醒", "body": "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current." },
+    "S0_DUE_TODAY": { "tone": "友好", "body": "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current." },
+    "S1_SMS_STANDARD": { "tone": "标准", "body": "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly." },
+    "S2_SMS_STANDARD": { "tone": "标准+Offer", "body": "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}." },
+    "S2_SMS_FIRM": { "tone": "FIRM+Offer", "body": "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}." },
+    "S3_SMS_STANDARD": { "tone": "Pay+Offer", "body": "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options." },
+    "S3_SMS_FIRM": { "tone": "FIRM+Offer", "body": "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options." },
+    "S4_SMS_STANDARD": { "tone": "Final+Offer", "body": "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options." },
+    "S4_SMS_FIRM": { "tone": "Final+Offer", "body": "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly." }
+  },
+  "push": {
+    "S0_REMINDER": { "title": "Payment due soon", "body": "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app." },
+    "S0_REMINDER_URGENT": { "title": "Due tomorrow", "body": "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app." },
+    "S0_DUE_TODAY": { "title": "Due today", "body": "{name}, PHP {amount} is due today. Tap to pay now." },
+    "S1_PUSH_STANDARD": { "title": "Overdue: PHP {amount}", "body": "{name}, your payment is past due. Tap to settle in the app." },
+    "S2_PUSH_STANDARD": { "title": "{dpd} days overdue", "body": "See your personalized payment options for PHP {amount}. Tap to view." },
+    "S3_PUSH_STANDARD": { "title": "{dpd} days overdue", "body": "Delay may limit your account. View your options for PHP {amount}. Tap now." },
+    "S4_PUSH_STANDARD": { "title": "Final notice: {dpd} days overdue", "body": "Resolve PHP {amount} now. View your options in the app." }
+  },
+  "email": {
+    "S0_DUE_TODAY_EMAIL": {
+      "subject": "⚠️ Action Required: Your Payment Is Due Today",
+      "preheader": "Pay ₱{{amount_due}} today to avoid late fees and protect your credit record.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S0_DUE_TODAY_EMAIL.html"
+    },
+    "S1_EMAIL_OVERDUE_NOTICE": {
+      "subject": "Overdue: Payment Not Received—Late Fees Apply",
+      "preheader": "{{overdue_days}} day overdue. Pay ₱{{amount_due}} today to avoid account escalation.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S1_EMAIL_OVERDUE_NOTICE.html"
+    },
+    "S2_EMAIL_ENTRY": {
+      "subject": "Notice: Account Escalated—Late Fees Accruing",
+      "preheader": "₱{{amount_due}} · {{overdue_days}} days overdue. Pay now to stop further escalation.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S2_EMAIL_ENTRY.html"
+    },
+    "S4_EMAIL_ENTRY": {
+      "subject": "Formal Collection Notice—Pay Full Balance Immediately",
+      "preheader": "Your account is now in formal collection. Pay ₱{{amount_due}} in full—no alternatives offered.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S4_EMAIL_ENTRY.html"
+    },
+    "S4_EMAIL_PRE_CLOSE": {
+      "subject": "⚠️ Final Notice: Account Scheduled for Final Review",
+      "preheader": "Before {{assignment_date}}, pay ₱{{amount_due}} in full. Unpaid files enter final delinquency status.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link", "assignment_date"],
+      "htmlFile": "S4_EMAIL_PRE_CLOSE.html"
+    },
+    "S1_EMAIL_STAGE_WARNING": {
+      "subject": "Action Required: Account Escalation Starts If Unpaid",
+      "preheader": "Pay ₱{{amount_due}} today or late fees increase and your account escalates.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S1_EMAIL_STAGE_WARNING.html"
+    },
+    "S2_EMAIL_MID": {
+      "subject": "Follow-Up: Escalation Continues—Balance Unpaid",
+      "preheader": "{{overdue_days}} days overdue. Additional late fees apply each day you remain unpaid.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S2_EMAIL_MID.html"
+    },
+    "S2_EMAIL_PRE_S3": {
+      "subject": "Warning: Legal Review Starts Soon",
+      "preheader": "Without payment, expect intensified follow-up and escalation to legal review.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S2_EMAIL_PRE_S3.html"
+    },
+    "S3_EMAIL_ENTRY": {
+      "subject": "Urgent: Legal Review Initiated—Pay Immediately",
+      "preheader": "Credit reporting warning. Pay ₱{{amount_due}} before further action.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S3_EMAIL_ENTRY.html"
+    },
+    "S3_EMAIL_MID": {
+      "subject": "Second Notice: Credit Reporting Under Review",
+      "preheader": "{{overdue_days}} days overdue. Pay today to avoid bureau reporting.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S3_EMAIL_MID.html"
+    },
+    "S3_EMAIL_PRE_S4": {
+      "subject": "Final Warning Before Formal Collection",
+      "preheader": "Credit bureau reporting imminent. Pay ₱{{amount_due}} now.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S3_EMAIL_PRE_S4.html"
+    },
+    "S4_EMAIL_FINAL_REMINDER": {
+      "subject": "Formal Collection Continues—Final Reminder to Pay",
+      "preheader": "{{overdue_days}} days overdue. MOCASA formal collection is ongoing—pay full balance now.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S4_EMAIL_FINAL_REMINDER.html"
+    },
+    "S4_EMAIL_MID": {
+      "subject": "Serious Delinquency—Formal Collection Ongoing",
+      "preheader": "{{overdue_days}} days overdue. MOCASA continues formal collection—pay full balance now.",
+      "variables": ["borrower_name", "amount_due", "overdue_days", "payment_link"],
+      "htmlFile": "S4_EMAIL_MID.html"
+    }
+  }
+}

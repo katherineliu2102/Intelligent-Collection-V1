@@ -1,0 +1,190 @@
+{
+  "title": "MOCASA Intelligent Collection",
+  "subtitle": "Strategy & Channel Catalog · Phase 1",
+  "paradigm": "L1 — Stage Plan + Fact Tags (STANDARD / FIRM)",
+  "touchWindow": "08:00 – 21:00 PHT",
+  "ceaseRule": "D+91 完全停催（CASE_CEASED）",
+  "stages": [
+    {
+      "id": "S0",
+      "name": "Pre-Due Reminder",
+      "dpdRange": "D-3 ~ D0",
+      "positioning": "到期前提醒 · 无语音外呼",
+      "schedule": [
+        { "time": "08:00", "channel": "PUSH→SMS", "slot": "S0_REMINDER / S0_REMINDER_URGENT / S0_DUE_TODAY", "note": "D-3/D-2/D-1/D0 各一槽" },
+        { "time": "14:00", "channel": "EMAIL", "slot": "S0_DUE_TODAY_EMAIL", "note": "D0 里程碑 · Phase 1 启用", "phase1": "ACTIVE" }
+      ]
+    },
+    {
+      "id": "S1",
+      "name": "Early / FPD",
+      "dpdRange": "D+1 ~ D+3",
+      "positioning": "早期催收 · AI 外呼为主",
+      "schedule": [
+        { "time": "08:00", "channel": "SMS", "slot": "S1_SMS_STANDARD", "note": "每日" },
+        { "time": "09:15+", "channel": "AI_CALL", "slot": "S1_VOICE_PRIMARY", "note": "Wave-1 · LTH Mock", "phase1": "MOCK" },
+        { "time": "12:00", "channel": "PUSH", "slot": "S1_PUSH_STANDARD", "note": "每日" },
+        { "time": "14:00", "channel": "EMAIL", "slot": "S1_EMAIL_OVERDUE_NOTICE", "note": "D+1 里程碑", "phase1": "ACTIVE" }
+      ]
+    },
+    {
+      "id": "S2",
+      "name": "Mid-Stage + Offer",
+      "dpdRange": "D+4 ~ D+15",
+      "positioning": "中期 · Offer 起步",
+      "schedule": [
+        { "time": "08:00", "channel": "SMS", "slot": "S2_SMS_STANDARD / S2_SMS_FIRM", "note": "FIRM 由难催标记触发" },
+        { "time": "09:15+", "channel": "AI_CALL", "slot": "S2_VOICE_*", "phase1": "MOCK" },
+        { "time": "12:00", "channel": "PUSH", "slot": "S2_PUSH_STANDARD" },
+        { "time": "14:00", "channel": "EMAIL", "slot": "S2_EMAIL_ENTRY", "note": "D+4 里程碑", "phase1": "ACTIVE" }
+      ]
+    },
+    {
+      "id": "S3",
+      "name": "Mid-Late",
+      "dpdRange": "D+16 ~ D+30",
+      "positioning": "中晚期 · Pay Now 加重",
+      "schedule": [
+        { "time": "08:00", "channel": "SMS", "slot": "S3_SMS_*" },
+        { "time": "09:15+", "channel": "AI_CALL", "slot": "S3_VOICE_*", "phase1": "MOCK" },
+        { "time": "12:00", "channel": "PUSH", "slot": "S3_PUSH_STANDARD" },
+        { "time": "14:00", "channel": "EMAIL", "slot": "S3_EMAIL_*", "note": "Phase 1 不发 Email", "phase1": "RESERVED" }
+      ]
+    },
+    {
+      "id": "S4",
+      "name": "Late / Remedial",
+      "dpdRange": "D+31 ~ D+90",
+      "positioning": "晚期 · Remedial 催告",
+      "schedule": [
+        { "time": "08:00", "channel": "SMS", "slot": "S4_SMS_STANDARD" },
+        { "time": "09:15+", "channel": "AI_CALL", "slot": "S4_VOICE_*", "phase1": "MOCK" },
+        { "time": "12:00", "channel": "PUSH", "slot": "S4_PUSH_STANDARD" },
+        { "time": "14:00", "channel": "EMAIL", "slot": "S4_EMAIL_ENTRY / S4_EMAIL_PRE_CLOSE", "note": "D+31 / D+75 里程碑", "phase1": "ACTIVE" }
+      ]
+    }
+  ],
+  "channels": [
+    {
+      "type": "SMS",
+      "provider": "通知中心 (common-notification)",
+      "adapter": "NotificationSmsAdapter",
+      "phase1": "LIVE",
+      "inMachinePlan": true,
+      "description": "contentType=collection，内部路由 QH/Hiway/BORI"
+    },
+    {
+      "type": "PUSH",
+      "provider": "通知中心 → JPush",
+      "adapter": "NotificationPushAdapter",
+      "phase1": "LIVE",
+      "inMachinePlan": true,
+      "description": "无 token 时 Adapter 内 fallback SMS"
+    },
+    {
+      "type": "EMAIL",
+      "provider": "SendGrid Dynamic Template",
+      "adapter": "SendGridEmailAdapter",
+      "phase1": "LIVE",
+      "inMachinePlan": true,
+      "description": "Phase 1 仅 5 封里程碑 · collections@mocasa.com"
+    },
+    {
+      "type": "AI_CALL",
+      "provider": "LTH Voice",
+      "adapter": "LthVoiceAdapter",
+      "phase1": "MOCK",
+      "inMachinePlan": true,
+      "description": "可对话外呼 · 回调 disposition 驱动推进"
+    },
+    {
+      "type": "TTS",
+      "provider": "LTH Voice",
+      "adapter": "LthVoiceAdapter",
+      "phase1": "MOCK",
+      "inMachinePlan": true,
+      "description": "AI 不可对话时降级播报"
+    },
+    {
+      "type": "VIBER",
+      "provider": "—",
+      "adapter": "—",
+      "phase1": "PHASE2",
+      "inMachinePlan": false,
+      "description": "Adapter 预留"
+    },
+    {
+      "type": "WHATSAPP",
+      "provider": "—",
+      "adapter": "—",
+      "phase1": "PHASE2",
+      "inMachinePlan": false,
+      "description": "Adapter 预留"
+    },
+    {
+      "type": "HUMAN_CALL",
+      "provider": "LTH 人工轨",
+      "adapter": "—",
+      "phase1": "SEPARATE",
+      "inMachinePlan": false,
+      "description": "例外池 · 禁止写入机器轨 ContactPlan"
+    }
+  ],
+  "scriptSlots": [
+    { "slot": "S0_DUE_TODAY_EMAIL", "stage": "S0", "channel": "EMAIL", "trigger": "D0 · 14:00", "phase1": "ACTIVE", "dpd": 0 },
+    { "slot": "S0_REMINDER", "stage": "S0", "channel": "SMS", "trigger": "D-3/D-2 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S0_REMINDER_URGENT", "stage": "S0", "channel": "SMS", "trigger": "D-1 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S0_DUE_TODAY", "stage": "S0", "channel": "SMS", "trigger": "D0 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S0_REMINDER", "stage": "S0", "channel": "PUSH", "trigger": "D-3/D-2 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S0_REMINDER_URGENT", "stage": "S0", "channel": "PUSH", "trigger": "D-1 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S0_DUE_TODAY", "stage": "S0", "channel": "PUSH", "trigger": "D0 · 08:00", "phase1": "DRAFT" },
+    { "slot": "S1_SMS_STANDARD", "stage": "S1", "channel": "SMS", "trigger": "每日 08:00", "phase1": "DRAFT" },
+    { "slot": "S1_PUSH_STANDARD", "stage": "S1", "channel": "PUSH", "trigger": "每日 12:00", "phase1": "DRAFT" },
+    { "slot": "S1_EMAIL_OVERDUE_NOTICE", "stage": "S1", "channel": "EMAIL", "trigger": "D+1 · 14:00", "phase1": "ACTIVE", "dpd": 1 },
+    { "slot": "S1_EMAIL_STAGE_WARNING", "stage": "S1", "channel": "EMAIL", "trigger": "D+3 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S1_VOICE_PRIMARY", "stage": "S1", "channel": "AI_CALL", "trigger": "09:15+ Wave-1", "phase1": "MOCK" },
+    { "slot": "S2_SMS_STANDARD", "stage": "S2", "channel": "SMS", "trigger": "每日 08:00", "phase1": "DRAFT" },
+    { "slot": "S2_SMS_FIRM", "stage": "S2", "channel": "SMS", "trigger": "每日 08:00 · 难催", "phase1": "DRAFT" },
+    { "slot": "S2_PUSH_STANDARD", "stage": "S2", "channel": "PUSH", "trigger": "每日 12:00", "phase1": "DRAFT" },
+    { "slot": "S2_EMAIL_ENTRY", "stage": "S2", "channel": "EMAIL", "trigger": "D+4 · 14:00", "phase1": "ACTIVE", "dpd": 4 },
+    { "slot": "S2_EMAIL_MID", "stage": "S2", "channel": "EMAIL", "trigger": "D+7 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S2_EMAIL_PRE_S3", "stage": "S2", "channel": "EMAIL", "trigger": "D+12 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S3_SMS_STANDARD", "stage": "S3", "channel": "SMS", "trigger": "每日 08:00", "phase1": "DRAFT" },
+    { "slot": "S3_PUSH_STANDARD", "stage": "S3", "channel": "PUSH", "trigger": "每日 12:00", "phase1": "DRAFT" },
+    { "slot": "S3_EMAIL_ENTRY", "stage": "S3", "channel": "EMAIL", "trigger": "D+16 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S3_EMAIL_MID", "stage": "S3", "channel": "EMAIL", "trigger": "D+23 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S3_EMAIL_PRE_S4", "stage": "S3", "channel": "EMAIL", "trigger": "D+30 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S4_SMS_STANDARD", "stage": "S4", "channel": "SMS", "trigger": "每日 08:00", "phase1": "DRAFT" },
+    { "slot": "S4_SMS_FIRM", "stage": "S4", "channel": "SMS", "trigger": "D+31~60 · 难催", "phase1": "DRAFT" },
+    { "slot": "S4_PUSH_STANDARD", "stage": "S4", "channel": "PUSH", "trigger": "每日 12:00", "phase1": "DRAFT" },
+    { "slot": "S4_EMAIL_ENTRY", "stage": "S4", "channel": "EMAIL", "trigger": "D+31 · 14:00", "phase1": "ACTIVE", "dpd": 31 },
+    { "slot": "S4_EMAIL_FINAL_REMINDER", "stage": "S4", "channel": "EMAIL", "trigger": "D+45 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S4_EMAIL_MID", "stage": "S4", "channel": "EMAIL", "trigger": "D+60 · 14:00", "phase1": "RESERVED" },
+    { "slot": "S4_EMAIL_PRE_CLOSE", "stage": "S4", "channel": "EMAIL", "trigger": "D+75 · 14:00", "phase1": "ACTIVE", "dpd": 75 }
+  ],
+  "spi": [
+    { "name": "PlanFactory", "impl": "MockPlanFactory", "status": "MOCK", "note": "Phase 1 单步/三步 debug 模式" },
+    { "name": "ExecutionGuard", "impl": "MockExecutionGuard", "status": "MOCK", "note": "合规规则待上线" },
+    { "name": "StepResolver", "impl": "DefaultStepResolver", "status": "LIVE", "note": "scriptSlot → StepCommand" },
+    { "name": "AdvancementPolicy", "impl": "MockAdvancementPolicy", "status": "MOCK", "note": "步骤推进策略" },
+    { "name": "ExhaustionPolicy", "impl": "MockExhaustionPolicy", "status": "MOCK", "note": "计划穷尽后续建/升档" }
+  ],
+  "configIndex": [
+    { "key": "channel.notification.*", "purpose": "通知中心 SMS + Push", "doc": "Notification对接说明" },
+    { "key": "channel.sendgrid.templates", "purpose": "scriptSlot → SendGrid d-xxx", "doc": "渠道模板清单 §3" },
+    { "key": "channel.scripts.sms", "purpose": "SMS 文案库", "doc": "渠道模板清单 §4" },
+    { "key": "channel.scripts.push", "purpose": "Push title/body", "doc": "渠道模板清单 §5" },
+    { "key": "channel.compliance.*", "purpose": "触达窗/静默/日限额", "doc": "渠道编排规格 §10" },
+    { "key": "channel.debug.single-step", "purpose": "单渠道冒烟 (SMS|PUSH|EMAIL|…)", "doc": "功能测试指南" },
+    { "key": "channel.lth.voice.url", "purpose": "LTH 外呼 API", "doc": "LTH Voice对接说明" }
+  ],
+  "quickLinks": [
+    { "label": "SMS 生产路由", "method": "POST", "path": "/mock/send-sms?caseId=94100", "caseId": 94100, "tc": "TC-SMS-PROD-05" },
+    { "label": "SMS 测试端点", "method": "POST", "path": "/mock/send-sms?caseId=94101", "caseId": 94101, "tc": "TC-SMS-TEST-01" },
+    { "label": "Push 联调", "method": "POST", "path": "/mock/send-push?caseId=94200", "caseId": 94200, "tc": "TC-PUSH-01" },
+    { "label": "Push → SMS fallback", "method": "POST", "path": "/mock/send-push?caseId=94201", "caseId": 94201, "tc": "TC-PUSH-02" },
+    { "label": "S1 全链路 ingest", "method": "POST", "path": "/mock/ingest?caseId=90001&userId=90001&stage=S1", "caseId": 90001, "tc": "TC-REG-02" },
+    { "label": "S0 Email D0", "method": "POST", "path": "/mock/ingest?caseId=92002&userId=92002&stage=S0", "caseId": 92002, "tc": "TC-EMAIL-D0-01" },
+    { "label": "观测页 · case 90001", "type": "observe", "caseId": 90001 }
+  ]
+}
