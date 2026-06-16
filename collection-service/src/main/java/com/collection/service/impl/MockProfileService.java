@@ -45,10 +45,12 @@ public class MockProfileService implements ProfileService {
             });
         }
 
-        // Email E2E 联调：92001–93404 → wzynju@126.com（见 MockEmailTestCases）
+        // Email E2E 联调：92001–93404 → 126；95xxx → Gmail（收件箱见各 case testEmail）
         if (MockEmailTestCases.isEmailTestCase(userId)) {
-            MockEmailTestCases.find(userId).ifPresent(tc -> basic.setName(tc.displayName()));
-            basic.setEmail(MockEmailTestCases.TEST_EMAIL);
+            MockEmailTestCases.find(userId).ifPresent(tc -> {
+                basic.setName(tc.displayName());
+                basic.setEmail(tc.testEmail);
+            });
         } else if (userId != 90005L) {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
