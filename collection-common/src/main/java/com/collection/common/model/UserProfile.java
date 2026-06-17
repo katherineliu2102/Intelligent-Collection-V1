@@ -3,17 +3,16 @@ package com.collection.common.model;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.PhoneValidity;
 import com.collection.common.enums.SensitivityTag;
-import lombok.Data;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import lombok.Data;
 
 /**
- * 用户画像。ContextSnapshot 组成部分。对应领域模型 §3.2。
- * 由 ProfileService.getFullProfile(userId) 构建；Phase 1 部分维度渐进填充（可能为 null）。
+ * 用户画像。ContextSnapshot 组成部分。对应领域模型 §3.2。 由 ProfileService.getFullProfile(userId) 构建；Phase 1
+ * 部分维度渐进填充（可能为 null）。
  */
 @Data
 public class UserProfile {
@@ -43,6 +42,7 @@ public class UserProfile {
         private String email;
         /** 用户语言偏好 ISO 639-1（tl/en）；StepResolver → metadata.language；默认 en。 */
         private String language;
+
         private List<String> alternatePhones;
     }
 
@@ -92,9 +92,8 @@ public class UserProfile {
         private Boolean viberRegistered;
         private Boolean whatsappRegistered;
         /**
-         * JPush Registration ID，PUSH 渠道 targetAddress 来源（经通知中心 → JPush）。
-         * 来源：App 登录/启动上报 → 信贷/App 后端 → t_user_equipment → ProfileService。
-         * 契约已拍板（2026-06-09）：以 jpushToken 为准，fcmToken 已移除。
+         * JPush Registration ID，PUSH 渠道 targetAddress 来源（经通知中心 → JPush）。 来源：App 登录/启动上报 → 信贷/App 后端
+         * → t_user_equipment → ProfileService。 契约已拍板（2026-06-09）：以 jpushToken 为准，fcmToken 已移除。
          */
         private String jpushToken;
     }

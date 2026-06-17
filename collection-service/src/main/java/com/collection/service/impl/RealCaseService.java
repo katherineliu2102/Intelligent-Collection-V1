@@ -9,17 +9,16 @@ import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
 import com.collection.service.mapper.CollectionCaseMapper;
 import com.collection.service.mapper.CollectionCaseRow;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
-
-import javax.annotation.Resource;
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
 
 /**
  * 真实 CaseService —— 映射旧库 t_collection → CaseInfo / CaseContext / ContextSnapshot。
@@ -28,14 +27,16 @@ import java.time.LocalDateTime;
  * 默认关闭，保证纯 Mock 单测 / CI 不受影响。用于 Phase 1 真实数据链路测试（SMS / EMAIL）。
  *
  * <p>映射约定：
+ *
  * <ul>
- *   <li>caseId = loan_id（数字串）；t_collection.id 是 hex 串不可用。</li>
+ *   <li>caseId = loan_id（数字串）；t_collection.id 是 hex 串不可用。
  *   <li>Stage 不存列，由 dpd 经 {@link Stage#fromDpd(int)} 推导；dpd = overdue_days（正数=已逾期天数）。
- *       边界已对齐编排规格：S2[4,15]、S3[16,30]、S4[31+]。</li>
- *   <li>penaltyAmount = t_collection.overdue（罚息金额）。</li>
- *   <li>phone 归一化为 E.164 +63；email 脏值（空 / "0"）置 null（EMAIL 渠道走 Guard SKIP）。</li>
- *   <li>PUSH 的 jpushToken = t_user_extend.ji_guang_token（按 user_id 查，null 时 PushAdapter 自动 fallback SMS）。</li>
- *   <li>repaid = full_repay_time 非空或 total_not_paid &lt;= 0；frozen 无来源，固定 false。</li>
+ *       边界已对齐编排规格：S2[4,15]、S3[16,30]、S4[31+]。
+ *   <li>penaltyAmount = t_collection.overdue（罚息金额）。
+ *   <li>phone 归一化为 E.164 +63；email 脏值（空 / "0"）置 null（EMAIL 渠道走 Guard SKIP）。
+ *   <li>PUSH 的 jpushToken = t_user_extend.ji_guang_token（按 user_id 查，null 时 PushAdapter 自动 fallback
+ *       SMS）。
+ *   <li>repaid = full_repay_time 非空或 total_not_paid &lt;= 0；frozen 无来源，固定 false。
  * </ul>
  */
 @Service
@@ -45,8 +46,7 @@ public class RealCaseService implements CaseService {
 
     private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
-    @Resource
-    private CollectionCaseMapper caseMapper;
+    @Resource private CollectionCaseMapper caseMapper;
 
     /** 还款深链模板，{caseId} 占位。 */
     @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
@@ -87,7 +87,8 @@ public class RealCaseService implements CaseService {
         ctx.setRepaymentUrl(repaymentUrlTemplate.replace("{caseId}", String.valueOf(caseId)));
         ctx.setStrategyTone("STANDARD");
         ctx.setComplaintFrozen(false);
-        // D+91 完全停催：collectionStatus=CEASED，PlanFactory.shouldRejectPlan 据此拒建计划（双保险，对齐 seed 99000005）
+        // D+91 完全停催：collectionStatus=CEASED，PlanFactory.shouldRejectPlan 据此拒建计划（双保险，对齐 seed
+        // 99000005）
         ctx.setCollectionStatus(dpd >= 91 ? "CEASED" : "ACTIVE");
         return ctx;
     }
@@ -117,7 +118,8 @@ public class RealCaseService implements CaseService {
         basic.setLanguage("en");
         profile.setBasic(basic);
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
-        // ji_guang_token from t_user_extend; null → PushAdapter fallback to SMS / push-test-token override.
+        // ji_guang_token from t_user_extend; null → PushAdapter fallback to SMS / push-test-token
+        // override.
         // 防御：t_user_extend 可能尚未建表/无数据，查询失败不应阻断整个快照组装。
         try {
             String jiGuangToken = caseMapper.selectJiGuangToken(row.getUserId());
@@ -125,8 +127,10 @@ public class RealCaseService implements CaseService {
                 device.setJpushToken(jiGuangToken.trim());
             }
         } catch (Exception e) {
-            log.warn("[RealCaseService] selectJiGuangToken failed (t_user_extend missing?) userId={}: {}",
-                    row.getUserId(), e.getMessage());
+            log.warn(
+                    "[RealCaseService] selectJiGuangToken failed (t_user_extend missing?) userId={}: {}",
+                    row.getUserId(),
+                    e.getMessage());
         }
         profile.setDevice(device);
         snapshot.setUserProfile(profile);
@@ -156,7 +160,8 @@ public class RealCaseService implements CaseService {
         if (row.getFullRepayTime() != null) {
             return true;
         }
-        return row.getTotalNotPaid() != null && row.getTotalNotPaid().compareTo(BigDecimal.ZERO) <= 0;
+        return row.getTotalNotPaid() != null
+                && row.getTotalNotPaid().compareTo(BigDecimal.ZERO) <= 0;
     }
 
     private Long parseUserId(CollectionCaseRow row, Long fallback) {

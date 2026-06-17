@@ -1,5 +1,8 @@
 package com.collection.engine.lifecycle;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
+
 import com.collection.common.model.CaseInfo;
 import com.collection.common.service.CaseService;
 import org.junit.jupiter.api.DisplayName;
@@ -9,12 +12,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
-
 /**
- * PreFlightChecker 系统级守卫分支单测（核心引擎规格 §3.1②、§5.1）。全 mock，不连库。
- * 覆盖测试矩阵 #5a-5e：案件不存在 / 已还款 / 冻结 / 存活 / 读失败 fail-close。
+ * PreFlightChecker 系统级守卫分支单测（核心引擎规格 §3.1②、§5.1）。全 mock，不连库。 覆盖测试矩阵 #5a-5e：案件不存在 / 已还款 / 冻结 / 存活 /
+ * 读失败 fail-close。
  */
 @ExtendWith(MockitoExtension.class)
 class PreFlightCheckerTest {

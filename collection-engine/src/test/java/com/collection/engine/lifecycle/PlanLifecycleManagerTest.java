@@ -1,5 +1,12 @@
 package com.collection.engine.lifecycle;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.collection.common.dto.ExhaustionResult;
 import com.collection.common.enums.AdvancementDecision;
 import com.collection.common.enums.CancelReason;
@@ -21,6 +28,9 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.engine.spi.SpiInvoker;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,21 +43,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-/**
- * PlanLifecycleManager 状态机纯逻辑单测（核心引擎规格 §2）。全 mock，不连库。
- * 覆盖测试矩阵 #15-27。
- */
+/** PlanLifecycleManager 状态机纯逻辑单测（核心引擎规格 §2）。全 mock，不连库。 覆盖测试矩阵 #15-27。 */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class PlanLifecycleManagerTest {
@@ -64,7 +60,7 @@ class PlanLifecycleManagerTest {
     @Mock private AdvancementPolicy advancementPolicy;
     @Mock private ExhaustionPolicy exhaustionPolicy;
     @Mock private PredictiveDialerService predictiveDialerService;
-    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
+    @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private PlanLifecycleManager manager;
 
@@ -119,7 +115,8 @@ class PlanLifecycleManagerTest {
 
         List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
 
-        verify(planRepository).updateStepTriggerTime(eq(NEXT_STEP_ID), any(), eq(StepStatus.PENDING));
+        verify(planRepository)
+                .updateStepTriggerTime(eq(NEXT_STEP_ID), any(), eq(StepStatus.PENDING));
         verify(planRepository).updateCurrentStep(PLAN_ID, 2);
         verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
         assertThat(out).isEmpty();
@@ -137,7 +134,8 @@ class PlanLifecycleManagerTest {
 
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getEventType()).isEqualTo(EventType.PLAN_EXHAUSTED);
-        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_SCHEDULED), any());
+        verify(planRepository, never())
+                .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_SCHEDULED), any());
     }
 
     // ───────────────────────── prepareStepDue（#17、#18、#19） ─────────────────────────
@@ -167,7 +165,8 @@ class PlanLifecycleManagerTest {
         StepDuePreparation prep = manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
 
         assertThat(prep.isExecute()).isFalse();
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
         assertThat(prep.getEvents()).hasSize(1);
         assertThat(prep.getEvents().get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
@@ -199,9 +198,10 @@ class PlanLifecycleManagerTest {
         created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
         when(planFactory.create(any(), eq(Stage.S1), any())).thenReturn(created);
 
-        CollectionEvent event = CollectionEvent.of(EventType.CASE_INGESTED)
-                .with(CollectionEvent.CASE_ID, CASE_ID)
-                .with(CollectionEvent.STAGE, "S1");
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S1");
 
         manager.onCaseIngested(event);
 
@@ -216,9 +216,10 @@ class PlanLifecycleManagerTest {
     void onCaseIngested_idempotentSkip() {
         when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(plan);
 
-        CollectionEvent event = CollectionEvent.of(EventType.CASE_INGESTED)
-                .with(CollectionEvent.CASE_ID, CASE_ID)
-                .with(CollectionEvent.STAGE, "S1");
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S1");
 
         manager.onCaseIngested(event);
 
@@ -226,7 +227,8 @@ class PlanLifecycleManagerTest {
         verify(planRepository, never()).savePlan(any());
     }
 
-    // ───────────────────────── onChannelCallback / onCallbackTimeout（#22、#23） ─────────────────────────
+    // ───────────────────────── onChannelCallback / onCallbackTimeout（#22、#23）
+    // ─────────────────────────
 
     @Test
     @DisplayName("#22 异步回调 → 步骤 COMPLETED + 发布 STEP_COMPLETED")
@@ -237,7 +239,8 @@ class PlanLifecycleManagerTest {
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
@@ -248,7 +251,8 @@ class PlanLifecycleManagerTest {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
 
-        List<CollectionEvent> out = manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
+        List<CollectionEvent> out =
+                manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
 
         verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
         assertThat(out).hasSize(1);
@@ -260,14 +264,17 @@ class PlanLifecycleManagerTest {
     @Test
     @DisplayName("#24 还款到账 → 取消活跃计划(REPAID) + 过滤外呼名单")
     void onRepaymentReceived_cancelsAndFilters() {
-        when(planRepository.findActivePlansByUser(USER_ID)).thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findActivePlansByUser(USER_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
 
-        CollectionEvent event = CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
-                .with(CollectionEvent.USER_ID, USER_ID);
+        CollectionEvent event =
+                CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
+                        .with(CollectionEvent.USER_ID, USER_ID);
         manager.onRepaymentReceived(event);
 
-        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
         verify(predictiveDialerService).filterRepaidUser(USER_ID);
     }
 
@@ -330,7 +337,8 @@ class PlanLifecycleManagerTest {
     @DisplayName("#26 阶段变更 → 取消旧阶段计划(STAGE_UPGRADE) + 新建")
     void onStageChanged_cancelsOldAndCreatesNew() {
         ContactPlan old = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);
-        when(planRepository.findActivePlansByCase(CASE_ID)).thenReturn(new ArrayList<>(Arrays.asList(old)));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(old)));
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(old);
         when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S3)).thenReturn(null);
         when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
@@ -339,12 +347,14 @@ class PlanLifecycleManagerTest {
         created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
         when(planFactory.create(any(), eq(Stage.S3), any())).thenReturn(created);
 
-        CollectionEvent event = CollectionEvent.of(EventType.STAGE_CHANGED)
-                .with(CollectionEvent.CASE_ID, CASE_ID)
-                .with(CollectionEvent.STAGE, "S3");
+        CollectionEvent event =
+                CollectionEvent.of(EventType.STAGE_CHANGED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S3");
         manager.onStageChanged(event);
 
-        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
         verify(planRepository).savePlan(any());
     }
 
@@ -354,24 +364,27 @@ class PlanLifecycleManagerTest {
     @DisplayName("#27-已还款 PTP 到期 → 补偿取消活跃计划")
     void onPtpExpired_repaidCancels() {
         when(caseService.isRepaid(CASE_ID)).thenReturn(true);
-        when(planRepository.findActivePlansByCase(CASE_ID)).thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
 
-        CollectionEvent event = CollectionEvent.of(EventType.PTP_EXPIRED)
-                .with(CollectionEvent.CASE_ID, CASE_ID);
+        CollectionEvent event =
+                CollectionEvent.of(EventType.PTP_EXPIRED).with(CollectionEvent.CASE_ID, CASE_ID);
         manager.onPtpExpired(event);
 
-        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
     }
 
     @Test
     @DisplayName("#27-计划仍活跃 PTP 到期 → 不动（正常流程继续）")
     void onPtpExpired_activePlanNoop() {
         when(caseService.isRepaid(CASE_ID)).thenReturn(false);
-        when(planRepository.findActivePlansByCase(CASE_ID)).thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
 
-        CollectionEvent event = CollectionEvent.of(EventType.PTP_EXPIRED)
-                .with(CollectionEvent.CASE_ID, CASE_ID);
+        CollectionEvent event =
+                CollectionEvent.of(EventType.PTP_EXPIRED).with(CollectionEvent.CASE_ID, CASE_ID);
         manager.onPtpExpired(event);
 
         verify(planRepository, never()).updatePlanStatus(any(), any(), any());
