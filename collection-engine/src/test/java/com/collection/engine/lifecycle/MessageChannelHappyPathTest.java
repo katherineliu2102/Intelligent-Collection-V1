@@ -1,5 +1,14 @@
 package com.collection.engine.lifecycle;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.collection.common.channel.ChannelGateway;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
@@ -32,26 +41,15 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 /**
  * 消息渠道（SMS/PUSH）happy-path 纯逻辑单测——不连库，全 mock SPI / Repository / EventBus。
  *
- * <p>验证阶段 1 最小可验收切片：一条消息渠道从七步管线执行到状态机推进至 PLAN_COMPLETED。
- * 覆盖三段：
+ * <p>验证阶段 1 最小可验收切片：一条消息渠道从七步管线执行到状态机推进至 PLAN_COMPLETED。 覆盖三段：
+ *
  * <ol>
- *   <li>{@link StepExecutionOrchestrator} 七步管线（无观察期 → STEP_COMPLETED）</li>
- *   <li>消息渠道带观察期 → STEP_WAITING 分支</li>
- *   <li>{@link PlanLifecycleManager#onStepCompleted} 推进至 PLAN_COMPLETED</li>
+ *   <li>{@link StepExecutionOrchestrator} 七步管线（无观察期 → STEP_COMPLETED）
+ *   <li>消息渠道带观察期 → STEP_WAITING 分支
+ *   <li>{@link PlanLifecycleManager#onStepCompleted} 推进至 PLAN_COMPLETED
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
@@ -72,8 +70,8 @@ class MessageChannelHappyPathTest {
     @Mock private ContactPlanRepository planRepository;
     @Mock private TimelineRepository timelineRepository;
     @Mock private CollectionEventBus eventBus;
-    @Spy  private EngineProperties props = new EngineProperties();
-    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
+    @Spy private EngineProperties props = new EngineProperties();
+    @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private StepExecutionOrchestrator orchestrator;
 
@@ -104,17 +102,21 @@ class MessageChannelHappyPathTest {
         when(contextAssembler.assemble(plan, step))
                 .thenReturn(ExecutionContext.builder().plan(plan).currentStep(step).build());
         when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.allow());
-        when(stepResolver.resolve(any())).thenReturn(StepCommand.builder()
-                .channelType(ChannelType.SMS)
-                .targetAddress("+639170000000")
-                .templateId("T_SMS_01")
-                .idempotencyKey("k-1")
-                .build());
-        when(channelGateway.dispatch(any())).thenReturn(StepResult.builder()
-                .success(true)
-                .contactResult(ContactResult.DELIVERED)
-                .providerMsgId("MSG-1")
-                .build());
+        when(stepResolver.resolve(any()))
+                .thenReturn(
+                        StepCommand.builder()
+                                .channelType(ChannelType.SMS)
+                                .targetAddress("+639170000000")
+                                .templateId("T_SMS_01")
+                                .idempotencyKey("k-1")
+                                .build());
+        when(channelGateway.dispatch(any()))
+                .thenReturn(
+                        StepResult.builder()
+                                .success(true)
+                                .contactResult(ContactResult.DELIVERED)
+                                .providerMsgId("MSG-1")
+                                .build());
         // ⑤½ 回写前取消复检：计划仍非终态
         when(planRepository.findById(PLAN_ID)).thenReturn(plan);
     }
@@ -129,14 +131,16 @@ class MessageChannelHappyPathTest {
 
         verify(channelGateway).dispatch(any(StepCommand.class));
         verify(timelineRepository).writeTimeline(any());
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
 
         ArgumentCaptor<CollectionEvent> captor = ArgumentCaptor.forClass(CollectionEvent.class);
         verify(eventBus).publish(captor.capture());
         assertThat(captor.getValue().getEventType().name()).isEqualTo("STEP_COMPLETED");
         assertThat(captor.getValue().getLong(CollectionEvent.PLAN_ID)).isEqualTo(PLAN_ID);
 
-        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
+        verify(planRepository, never())
+                .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
     }
 
     @Test
@@ -179,7 +183,8 @@ class MessageChannelHappyPathTest {
         com.collection.common.spi.ExhaustionPolicy exhaustionPolicy =
                 org.mockito.Mockito.mock(com.collection.common.spi.ExhaustionPolicy.class);
         com.collection.common.service.PredictiveDialerService dialer =
-                org.mockito.Mockito.mock(com.collection.common.service.PredictiveDialerService.class);
+                org.mockito.Mockito.mock(
+                        com.collection.common.service.PredictiveDialerService.class);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
         inject(manager, "planRepository", repo);
@@ -195,9 +200,10 @@ class MessageChannelHappyPathTest {
         step.setResult(ContactResult.DELIVERED);
         when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.PLAN_COMPLETED);
 
-        CollectionEvent event = CollectionEvent.of(com.collection.common.enums.EventType.STEP_COMPLETED)
-                .with(CollectionEvent.PLAN_ID, PLAN_ID)
-                .with(CollectionEvent.STEP_ID, STEP_ID);
+        CollectionEvent event =
+                CollectionEvent.of(com.collection.common.enums.EventType.STEP_COMPLETED)
+                        .with(CollectionEvent.PLAN_ID, PLAN_ID)
+                        .with(CollectionEvent.STEP_ID, STEP_ID);
 
         manager.onStepCompleted(event);
 

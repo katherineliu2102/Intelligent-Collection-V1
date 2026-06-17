@@ -1,5 +1,14 @@
 package com.collection.engine.lifecycle;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import com.collection.common.channel.ChannelGateway;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
@@ -19,6 +28,10 @@ import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.spi.SpiInvoker;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,23 +44,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-import java.time.Duration;
-import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
 /**
- * StepExecutionOrchestrator 七步管线分支单测（核心引擎规格 §3.1）。全 mock，不连库。
- * 覆盖测试矩阵 #4-13（happy path #1-3 见 MessageChannelHappyPathTest）。
+ * StepExecutionOrchestrator 七步管线分支单测（核心引擎规格 §3.1）。全 mock，不连库。 覆盖测试矩阵 #4-13（happy path #1-3 见
+ * MessageChannelHappyPathTest）。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -66,8 +65,8 @@ class StepExecutionOrchestratorTest {
     @Mock private ContactPlanRepository planRepository;
     @Mock private TimelineRepository timelineRepository;
     @Mock private CollectionEventBus eventBus;
-    @Spy  private EngineProperties props = new EngineProperties();
-    @Spy  private SpiInvoker spiInvoker = SpiInvoker.direct();
+    @Spy private EngineProperties props = new EngineProperties();
+    @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
 
     @InjectMocks private StepExecutionOrchestrator orchestrator;
 
@@ -100,8 +99,14 @@ class StepExecutionOrchestratorTest {
     }
 
     private void stubResolver(ChannelType ch) {
-        when(stepResolver.resolve(any())).thenReturn(StepCommand.builder()
-                .channelType(ch).targetAddress("addr").templateId("T").idempotencyKey("k").build());
+        when(stepResolver.resolve(any()))
+                .thenReturn(
+                        StepCommand.builder()
+                                .channelType(ch)
+                                .targetAddress("addr")
+                                .templateId("T")
+                                .idempotencyKey("k")
+                                .build());
     }
 
     private void stubDispatch(StepResult result) {
@@ -113,8 +118,12 @@ class StepExecutionOrchestratorTest {
     }
 
     private StepResult fail(boolean retryable) {
-        return StepResult.builder().success(false).contactResult(ContactResult.FAILED)
-                .errorCode("E").retryable(retryable).build();
+        return StepResult.builder()
+                .success(false)
+                .contactResult(ContactResult.FAILED)
+                .errorCode("E")
+                .retryable(retryable)
+                .build();
     }
 
     @Test
@@ -127,7 +136,8 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
         verify(eventBus).publish(any());
     }
 
@@ -140,17 +150,20 @@ class StepExecutionOrchestratorTest {
 
         verify(channelGateway, never()).dispatch(any());
         verify(eventBus, never()).publish(any());
-        verify(planRepository, never()).updateStepStatus(eq(STEP_ID), eq(StepStatus.EXECUTING), any());
+        verify(planRepository, never())
+                .updateStepStatus(eq(STEP_ID), eq(StepStatus.EXECUTING), any());
     }
 
     @Test
     @DisplayName("#6 业务守卫拦截 → SKIPPED(COMPLIANCE_BLOCKED) + 推进")
     void guardBlocked_skipped() {
-        when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.block("freq", "FREQUENCY_LIMIT"));
+        when(executionGuard.evaluate(any()))
+                .thenReturn(GuardVerdict.block("freq", "FREQUENCY_LIMIT"));
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
@@ -162,7 +175,8 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
@@ -245,7 +259,8 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         verify(timelineRepository).writeTimeline(any());
-        verify(planRepository, never()).updateStepStatus(eq(STEP_ID), eq(StepStatus.COMPLETED), any());
+        verify(planRepository, never())
+                .updateStepStatus(eq(STEP_ID), eq(StepStatus.COMPLETED), any());
         verify(eventBus, never()).publish(any());
     }
 
@@ -260,7 +275,8 @@ class StepExecutionOrchestratorTest {
 
         verify(planRepository).updateStepTimeoutTime(eq(STEP_ID), any());
         verify(eventBus, never()).publish(any());
-        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
+        verify(planRepository, never())
+                .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
     }
 
     @Test
@@ -274,7 +290,8 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         ArgumentCaptor<LocalDateTime> at = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(planRepository).updateStepTriggerTime(eq(STEP_ID), at.capture(), eq(StepStatus.PENDING));
+        verify(planRepository)
+                .updateStepTriggerTime(eq(STEP_ID), at.capture(), eq(StepStatus.PENDING));
         long delaySec = Duration.between(before, at.getValue()).getSeconds();
         assertThat(delaySec).isBetween(240L, 250L);
     }
@@ -291,7 +308,8 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         ArgumentCaptor<LocalDateTime> at = ArgumentCaptor.forClass(LocalDateTime.class);
-        verify(planRepository).updateStepTriggerTime(eq(STEP_ID), at.capture(), eq(StepStatus.PENDING));
+        verify(planRepository)
+                .updateStepTriggerTime(eq(STEP_ID), at.capture(), eq(StepStatus.PENDING));
         long delaySec = Duration.between(before, at.getValue()).getSeconds();
         assertThat(delaySec).isBetween(100L, 110L);
     }
@@ -301,9 +319,15 @@ class StepExecutionOrchestratorTest {
     void asyncTimeout_metadataOverridesDefault() {
         Map<String, Object> meta = new HashMap<>();
         meta.put(StepCommand.META_TIMEOUT_MINUTES, 15);
-        when(stepResolver.resolve(any())).thenReturn(StepCommand.builder()
-                .channelType(ChannelType.AI_CALL).targetAddress("addr").templateId("T")
-                .idempotencyKey("k").metadata(meta).build());
+        when(stepResolver.resolve(any()))
+                .thenReturn(
+                        StepCommand.builder()
+                                .channelType(ChannelType.AI_CALL)
+                                .targetAddress("addr")
+                                .templateId("T")
+                                .idempotencyKey("k")
+                                .metadata(meta)
+                                .build());
         stubDispatch(ok(ContactResult.ANSWERED));
         step.setChannelType(ChannelType.AI_CALL);
 
@@ -340,7 +364,8 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         verify(timelineRepository).writeTimeline(any());
-        verify(planRepository, never()).updateStepStatus(eq(STEP_ID), eq(StepStatus.COMPLETED), any());
+        verify(planRepository, never())
+                .updateStepStatus(eq(STEP_ID), eq(StepStatus.COMPLETED), any());
         verify(eventBus, never()).publish(any());
     }
 }

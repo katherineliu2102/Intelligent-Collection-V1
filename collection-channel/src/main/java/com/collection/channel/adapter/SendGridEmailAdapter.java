@@ -5,6 +5,10 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
 import com.collection.common.enums.ChannelType;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,16 +19,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
-import javax.annotation.Resource;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * SendGrid Email 同步渠道 Adapter。
  *
- * <p>HTTP 202 → DELIVERED + STEP_COMPLETED；Event Webhook 不完成 step。
- * 无邮箱由 ExecutionGuard 拦截，Adapter 侧仍校验 targetAddress。
+ * <p>HTTP 202 → DELIVERED + STEP_COMPLETED；Event Webhook 不完成 step。 无邮箱由 ExecutionGuard 拦截，Adapter
+ * 侧仍校验 targetAddress。
  *
  * @see docs/MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md
  */
@@ -34,11 +33,9 @@ public class SendGridEmailAdapter implements ChannelAdapter {
     private static final Logger log = LoggerFactory.getLogger(SendGridEmailAdapter.class);
     private static final String DEFAULT_SEND_URL = "https://api.sendgrid.com/v3/mail/send";
 
-    @Resource
-    private ChannelProperties properties;
+    @Resource private ChannelProperties properties;
 
-    @Resource
-    private RestTemplate channelRestTemplate;
+    @Resource private RestTemplate channelRestTemplate;
 
     @Override
     public ChannelType channelType() {
@@ -69,12 +66,15 @@ public class SendGridEmailAdapter implements ChannelAdapter {
             headers.setBearerAuth(properties.getSendgrid().getApiKey());
             HttpEntity<String> entity = new HttpEntity<>(JSON.toJSONString(payload), headers);
 
-            ResponseEntity<String> response = channelRestTemplate.postForEntity(
-                    resolveSendUrl(), entity, String.class);
+            ResponseEntity<String> response =
+                    channelRestTemplate.postForEntity(resolveSendUrl(), entity, String.class);
             // SendGrid 正常受理固定 202 Accepted；其余 2xx 不视为成功，避免误报 DELIVERED
             int status = response.getStatusCodeValue();
             if (status != 202) {
-                log.warn("[SendGridEmailAdapter] unexpected status={} email={} (expected 202)", status, maskEmail(email));
+                log.warn(
+                        "[SendGridEmailAdapter] unexpected status={} email={} (expected 202)",
+                        status,
+                        maskEmail(email));
                 return AdapterSupport.permanentFailure("SENDGRID_UNEXPECTED_STATUS_" + status);
             }
             String msgId = response.getHeaders().getFirst("X-Message-Id");
@@ -84,7 +84,10 @@ public class SendGridEmailAdapter implements ChannelAdapter {
             log.info("[SendGridEmailAdapter] accepted email={} msgId={}", maskEmail(email), msgId);
             return AdapterSupport.delivered(msgId);
         } catch (Exception e) {
-            log.warn("[SendGridEmailAdapter] send failed email={}: {}", maskEmail(email), e.getMessage());
+            log.warn(
+                    "[SendGridEmailAdapter] send failed email={}: {}",
+                    maskEmail(email),
+                    e.getMessage());
             return AdapterSupport.mapHttpException("SENDGRID", e);
         }
     }
@@ -107,8 +110,10 @@ public class SendGridEmailAdapter implements ChannelAdapter {
                 }
             }
         }
-        log.error("[SendGridEmailAdapter] no template mapping for scriptSlot={} tid={}",
-                scriptSlot, tid);
+        log.error(
+                "[SendGridEmailAdapter] no template mapping for scriptSlot={} tid={}",
+                scriptSlot,
+                tid);
         return null;
     }
 
@@ -132,7 +137,8 @@ public class SendGridEmailAdapter implements ChannelAdapter {
         }
 
         Map<String, Object> personalization = new HashMap<>();
-        personalization.put("to", Collections.singletonList(Collections.singletonMap("email", email)));
+        personalization.put(
+                "to", Collections.singletonList(Collections.singletonMap("email", email)));
         personalization.put("dynamic_template_data", dynamicData);
         personalization.put("custom_args", customArgs);
 

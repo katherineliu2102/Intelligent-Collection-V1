@@ -2,9 +2,8 @@ package com.collection.service.impl;
 
 import com.collection.common.model.UserProfile;
 import com.collection.common.service.ProfileService;
-import org.springframework.stereotype.Service;
-
 import java.util.Collections;
+import org.springframework.stereotype.Service;
 
 /**
  * Phase 1 Mock ProfileService —— 按约定 userId 返回联调画像（见功能测试指南 §1.3）。
@@ -28,29 +27,35 @@ public class MockProfileService implements ProfileService {
 
         // SMS 联调：94100–94102 指定手机号（见 MockSmsTestCases）
         if (MockSmsTestCases.isSmsTestCase(userId)) {
-            MockSmsTestCases.find(userId).ifPresent(tc -> {
-                basic.setName(tc.displayName());
-                basic.setPrimaryPhone(tc.primaryPhone);
-            });
+            MockSmsTestCases.find(userId)
+                    .ifPresent(
+                            tc -> {
+                                basic.setName(tc.displayName());
+                                basic.setPrimaryPhone(tc.primaryPhone);
+                            });
         }
 
         // Push 联调：94200/94201（假 jpushToken 占位 / 无 token 验 fallback，见 MockPushTestCases）
         if (MockPushTestCases.isPushTestCase(userId)) {
-            MockPushTestCases.find(userId).ifPresent(tc -> {
-                basic.setName(tc.displayName());
-                basic.setPrimaryPhone(tc.primaryPhone);
-                if (tc.jpushToken != null) {
-                    device.setJpushToken(tc.jpushToken);
-                }
-            });
+            MockPushTestCases.find(userId)
+                    .ifPresent(
+                            tc -> {
+                                basic.setName(tc.displayName());
+                                basic.setPrimaryPhone(tc.primaryPhone);
+                                if (tc.jpushToken != null) {
+                                    device.setJpushToken(tc.jpushToken);
+                                }
+                            });
         }
 
         // Email E2E 联调：92001–93404 → 126；95xxx → Gmail（收件箱见各 case testEmail）
         if (MockEmailTestCases.isEmailTestCase(userId)) {
-            MockEmailTestCases.find(userId).ifPresent(tc -> {
-                basic.setName(tc.displayName());
-                basic.setEmail(tc.testEmail);
-            });
+            MockEmailTestCases.find(userId)
+                    .ifPresent(
+                            tc -> {
+                                basic.setName(tc.displayName());
+                                basic.setEmail(tc.testEmail);
+                            });
         } else if (userId != 90005L) {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }

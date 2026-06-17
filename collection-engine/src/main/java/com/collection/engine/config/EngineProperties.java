@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component;
 /**
  * 引擎配置参数。对应基础设施规范 附录·配置参数汇总。
  *
- * <p>Phase 1 骨架从 application.properties（前缀 engine）读取；
- * 生产应改为从 t_system_property 加载 + 定时轮询热更（基础设施规范 §6.1）。
+ * <p>Phase 1 骨架从 application.properties（前缀 engine）读取； 生产应改为从 t_system_property 加载 + 定时轮询热更（基础设施规范
+ * §6.1）。
  */
 @Getter
 @Component
@@ -53,9 +53,9 @@ public class EngineProperties {
     /**
      * SPI 硬超时配置（核心引擎规格 §4.1 / 基础设施规范 附录 engine.spi.*）。
      *
-     * <p>引擎调用 5 个 SPI 时用 {@code Future.get(timeoutMs)} 强制截断，
-     * 超时按对应失败语义处理（Guard fail-close→SKIPPED、Resolver→FAILED、其余 NACK）。
-     * {@code timeoutEnabled=false} 时退化为直连调用（不引第二个线程池），便于本地/单测。
+     * <p>引擎调用 5 个 SPI 时用 {@code Future.get(timeoutMs)} 强制截断， 超时按对应失败语义处理（Guard
+     * fail-close→SKIPPED、Resolver→FAILED、其余 NACK）。 {@code timeoutEnabled=false}
+     * 时退化为直连调用（不引第二个线程池），便于本地/单测。
      */
     @Data
     public static class Spi {

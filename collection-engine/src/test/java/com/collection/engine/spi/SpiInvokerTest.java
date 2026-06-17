@@ -1,18 +1,18 @@
 package com.collection.engine.spi;
 
-import com.collection.engine.config.EngineProperties;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.collection.engine.config.EngineProperties;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
 /**
  * SpiInvoker 硬超时机制单测（核心引擎规格 §4.1）。
  *
- * <p>验证：超时 → SpiTimeoutException；运行时异常原样上抛；正常返回；直连模式不强制超时。
- * 失败语义（fail-close / NACK）由调用方决定，本类只验证调用器本身的"截断 + 异常透传"。
+ * <p>验证：超时 → SpiTimeoutException；运行时异常原样上抛；正常返回；直连模式不强制超时。 失败语义（fail-close /
+ * NACK）由调用方决定，本类只验证调用器本身的"截断 + 异常透传"。
  */
 class SpiInvokerTest {
 
@@ -41,10 +41,15 @@ class SpiInvokerTest {
     @DisplayName("超时：body 超过阈值 → 抛 SpiTimeoutException（携带 spiName/timeoutMs）")
     void throwsOnTimeout() {
         SpiInvoker invoker = timeoutInvoker();
-        Throwable t = catchThrowable(() -> invoker.call(SpiType.EXECUTION_GUARD, () -> {
-            sleep(800);
-            return "late";
-        }));
+        Throwable t =
+                catchThrowable(
+                        () ->
+                                invoker.call(
+                                        SpiType.EXECUTION_GUARD,
+                                        () -> {
+                                            sleep(800);
+                                            return "late";
+                                        }));
         assertThat(t).isInstanceOf(SpiTimeoutException.class);
         SpiTimeoutException ex = (SpiTimeoutException) t;
         assertThat(ex.getSpiName()).isEqualTo(SpiType.EXECUTION_GUARD.name());
@@ -55,9 +60,13 @@ class SpiInvokerTest {
     @DisplayName("异常透传：body 抛运行时异常 → 原样上抛（不包装成超时）")
     void propagatesRuntimeException() {
         SpiInvoker invoker = timeoutInvoker();
-        assertThatThrownBy(() -> invoker.call(SpiType.STEP_RESOLVER, () -> {
-            throw new IllegalStateException("resolver boom");
-        }))
+        assertThatThrownBy(
+                        () ->
+                                invoker.call(
+                                        SpiType.STEP_RESOLVER,
+                                        () -> {
+                                            throw new IllegalStateException("resolver boom");
+                                        }))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("resolver boom");
     }
@@ -79,10 +88,13 @@ class SpiInvokerTest {
     @DisplayName("直连模式：不强制超时，慢 body 也照常返回（单测/本地用）")
     void directModeDoesNotEnforceTimeout() {
         SpiInvoker invoker = SpiInvoker.direct();
-        String result = invoker.call(SpiType.PLAN_FACTORY, () -> {
-            sleep(50);
-            return "direct-ok";
-        });
+        String result =
+                invoker.call(
+                        SpiType.PLAN_FACTORY,
+                        () -> {
+                            sleep(50);
+                            return "direct-ok";
+                        });
         assertThat(result).isEqualTo("direct-ok");
     }
 
