@@ -1,0 +1,17 @@
+services:
+  collection-admin:
+    # context 指向仓库根，使 Dockerfile 内 COPY collection-admin/target/... 与根级 .dockerignore 生效
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: intelligent-collection-admin:latest
+    container_name: collection-admin
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    # 相对路径以本 compose 文件所在目录(deploy/)为基准，故用 ../ 回到仓库根
+    env_file:
+      - path: "${APP_ENV_FILE:-../.env}"
+        required: false
+    restart: unless-stopped
+    volumes:
+      - ../logs:/opt/app/logs

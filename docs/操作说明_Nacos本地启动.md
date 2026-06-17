@@ -64,7 +64,7 @@ NACOS_PASSWORD=
 APP_PORT=8080
 ```
 
-渠道密钥首次部署：复制 `nacos-publish.local.yml.example` → `nacos-publish.local.yml` 填密钥后执行 `scripts/publish-channel-secrets-to-nacos.ps1`，或在 Nacos 控制台手动合并 `channel` 段。
+渠道密钥首次部署：复制 `deploy/nacos/nacos-publish.local.yml.example` → `deploy/nacos/nacos-publish.local.yml` 填密钥后执行 `scripts/publish-channel-secrets-to-nacos.ps1`，或在 Nacos 控制台手动合并 `channel` 段。
 
 `.env` 仅用于本地运行，不要提交到 Git。
 
@@ -184,13 +184,13 @@ cp .env.example .env
 填写 `.env` 后，在项目根目录执行：
 
 ```bash
-.\start-docker.cmd
+./deploy/start-docker.sh
 ```
 
 Windows CMD 可执行：
 
 ```cmd
-start-docker.cmd
+deploy\start-docker.cmd
 ```
 
 脚本会先编译 `collection-admin` 及其依赖模块，然后重新构建并启动 Docker 容器。

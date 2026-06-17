@@ -41,8 +41,8 @@ def load_dotenv():
 
 
 def load_nacos_publish_yaml():
-    """Standalone 脚本从 nacos-publish.local.yml 读取 SendGrid 密钥（应用运行时从 Nacos 下发）。"""
-    path = ROOT / "nacos-publish.local.yml"
+    """Standalone 脚本从 deploy/nacos/nacos-publish.local.yml 读取 SendGrid 密钥（应用运行时从 Nacos 下发）。"""
+    path = ROOT / "deploy" / "nacos" / "nacos-publish.local.yml"
     if not path.exists():
         return
     section = None
