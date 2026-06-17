@@ -1,0 +1,27 @@
+#!/bin/sh
+# Angular Conventional Commit 校验（无 Node 依赖，纯 POSIX sh）
+# 由 git-build-hook-maven-plugin 通过 core.hooksPath 自动启用。
+
+FIRST_LINE=$(head -n 1 "$1")
+
+# 放行自动生成的 merge / revert 提交
+case "$FIRST_LINE" in
+  "Merge "*|"Revert "*) exit 0 ;;
+esac
+
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([a-z0-9._-]+\))?!?: .+'
+
+if ! printf '%s' "$FIRST_LINE" | grep -Eq "$PATTERN"; then
+  echo "----------------------------------------------------------------"
+  echo "✗ 提交信息不符合 Angular 规范，已拦截。"
+  echo ""
+  echo "  格式：<type>(<scope>): <subject>"
+  echo "  type：feat | fix | docs | style | refactor | perf | test | build | ci | chore"
+  echo ""
+  echo "  示例：feat(engine): 七步管线增加 SPI 超时兜底"
+  echo "        fix(channel): 修复空地址未拦截导致的 NPE"
+  echo ""
+  echo "  你的首行：$FIRST_LINE"
+  echo "----------------------------------------------------------------"
+  exit 1
+fi

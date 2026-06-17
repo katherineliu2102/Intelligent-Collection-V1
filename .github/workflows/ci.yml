@@ -13,6 +13,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Spotless 的 ratchetFrom origin/main 需要完整历史与 main 引用
+          fetch-depth: 0
 
       - name: Set up JDK 8
         uses: actions/setup-java@v4
@@ -20,6 +23,13 @@ jobs:
           distribution: temurin
           java-version: '8'
           cache: maven
+
+      - name: Ensure origin/main ref (for Spotless ratchet)
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main || true
+
+      # 格式门禁：只校验相对 main 改动过的文件，不达标即失败（本地钩子可被 --no-verify 绕过，这里是真闸）
+      - name: Check formatting (Spotless, incremental vs main)
+        run: mvn -B -ntp spotless:check
 
       # Phase 1 纯逻辑单测不连库（mock SPI/Repository/EventBus），无需 MySQL/Redis。
       - name: Build & run unit tests
