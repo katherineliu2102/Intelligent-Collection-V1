@@ -38,7 +38,7 @@ $hasNotifKey = $yaml -match '(?m)notification:\s*\n\s*app-key:\s*\S+'
 if ($hasSgKey -and $hasNotifKey) {
     Write-Host "channel.sendgrid.api-key + channel.notification.app-key OK"
 } else {
-    Write-Warning "Nacos 缺少渠道密钥：请在控制台合并 nacos-publish.local.yml 的 channel 段，或运行 scripts/publish-channel-secrets-to-nacos.ps1"
+    Write-Warning "Nacos 缺少渠道密钥：请在控制台合并 deploy/nacos/nacos-publish.local.yml 的 channel 段，或运行 scripts/publish-channel-secrets-to-nacos.ps1"
 }
 
 Write-Host "`n=== 4. 启动应用（后台 90s 冒烟）==="

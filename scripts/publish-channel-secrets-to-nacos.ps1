@@ -1,6 +1,6 @@
 # 将渠道密钥发布到 Nacos intelligent-collection-local.yml（需 Nacos 写权限）
 # 用法：
-#   1. 在 nacos-publish.local.yml 填写 channel.sendgrid / channel.notification 密钥
+#   1. 在 deploy/nacos/nacos-publish.local.yml 填写 channel.sendgrid / channel.notification 密钥
 #   2. .\scripts\publish-channel-secrets-to-nacos.ps1
 # 或从环境变量注入（CI/运维）：
 #   $env:SENDGRID_API_KEY=...; $env:SENDGRID_FROM_EMAIL=...; $env:NOTIFICATION_APP_KEY=...; .\scripts\publish-channel-secrets-to-nacos.ps1
@@ -21,7 +21,7 @@ $sgKey = $env:SENDGRID_API_KEY
 $sgFrom = if ($env:SENDGRID_FROM_EMAIL) { $env:SENDGRID_FROM_EMAIL } else { "collections@mocasa.com" }
 $notifKey = $env:NOTIFICATION_APP_KEY
 
-$patchFile = Join-Path $root "nacos-publish.local.yml"
+$patchFile = Join-Path $root "deploy/nacos/nacos-publish.local.yml"
 if ((-not $sgKey -or -not $notifKey) -and (Test-Path $patchFile)) {
     $patch = Get-Content $patchFile -Raw
     if ($patch -match '(?m)^\s*api-key:\s*(\S+)') { if (-not $sgKey) { $sgKey = $Matches[1] } }
@@ -30,7 +30,7 @@ if ((-not $sgKey -or -not $notifKey) -and (Test-Path $patchFile)) {
 }
 
 if (-not $sgKey -or -not $notifKey) {
-    Write-Error "缺少密钥：设置环境变量 SENDGRID_API_KEY / NOTIFICATION_APP_KEY，或填写 nacos-publish.local.yml"
+    Write-Error "缺少密钥：设置环境变量 SENDGRID_API_KEY / NOTIFICATION_APP_KEY，或填写 deploy/nacos/nacos-publish.local.yml"
 }
 
 $params = @{
