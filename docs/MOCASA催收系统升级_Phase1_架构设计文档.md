@@ -176,7 +176,7 @@ executeStep(plan, step):
 | 组件 | 职责 |
 |---|---|
 | `EventConsumerDispatcher` | 消费 Redis Stream 事件，路由到状态机，终态拦截，并发锁获取 |
-| `PlanLifecycleManager` | 状态机（7 状态 / 2 终态），管理计划全生命周期状态转换 |
+| `PlanLifecycleManager` | 状态机（6 状态 / 2 终态），管理计划全生命周期状态转换 |
 | `StepExecutionOrchestrator` | 步骤执行骨架（见 [§1.2.2](#122-步骤执行骨架)） |
 | `PreFlightChecker` | 系统级守卫：案件是否已还款/冻结/关闭 |
 
@@ -223,11 +223,11 @@ executeStep(plan, step):
 
 **缺失后果**：模块间直接调用，耦合度高；调度线程被渠道 I/O 阻塞。
 
-系统采用**事件驱动为主、定时触发为辅**的混合模式。8 种领域事件通过 Redis Stream 流转；XXL-Job 采用 **Trigger-to-Event** 模式——仅发布事件立即返回，业务逻辑全部由 Consumer 线程池执行。两个上下文严格隔离，渠道供应商变慢只影响 Consumer 池，不阻塞调度。
+系统采用**事件驱动为主、定时触发为辅**的混合模式。10 种内部事件（8 核心业务事件 + `CALLBACK_TIMEOUT` 哨兵 + `CASE_CEASED` 停催）通过 Redis Stream 流转；XXL-Job 采用 **Trigger-to-Event** 模式——仅发布事件立即返回，业务逻辑全部由 Consumer 线程池执行。两个上下文严格隔离，渠道供应商变慢只影响 Consumer 池，不阻塞调度。
 
 > ⏳ Phase 2 可评估延迟消息替代 cron 扫描。Phase 1 保持 cron——触达对时间精度要求低（±1min 可接受）。
 
-> 详见 [核心引擎规格 §1.2 Trigger-to-Event 线程隔离](./MOCASA催收系统升级_Phase1_核心引擎规格.md#12-trigger-to-event-线程隔离)；事件 Payload Schema 见 [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)。
+> 详见 [核心引擎规格 §1.2 Trigger-to-Event 线程隔离](./MOCASA催收系统升级_Phase1_核心引擎规格.md#12-trigger-to-event-线程隔离)；事件枚举见 [领域模型 §6.6 EventType](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型)；事件 Payload Schema 见数据接入与事件规格 §2（**规划中**，见 [阶段C 审计 C3-2](./audit/MOCASA催收系统升级_Phase1_跨文档去重_机制层_阶段C审计_20260618.md)）。
 
 #### 1.3.2 决策上下文快照化
 
@@ -235,15 +235,15 @@ executeStep(plan, step):
 
 案件接入时，数据接入层将用户画像核心标签序列化为不可变 JSON 快照写入 `t_contact_plan.context_snapshot`，SPI 决策实现读快照而非实时查 DB。不可快照的实时状态（还款/冻结）由 PreFlightChecker 和 ExecutionGuard 在步骤执行时实时校验。
 
-> 详见 [核心引擎规格 §5.7 ExecutionContext](./MOCASA催收系统升级_Phase1_核心引擎规格.md#57-共享-dto-定义) / [§3.1 execute_step](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-executestep-七步管线)。
+> 详见 [核心引擎规格 §4.2 共享 DTO 定义](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-共享-dto-定义)（ExecutionContext 契约边界）/ [§3.1 execute_step](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-executestep-七步管线)。
 
 #### 1.3.3 幂等键契约
 
 **缺失后果**：Redis Stream At-least-once 语义下，同一事件重复消费导致同一步骤被多次发送给用户。
 
-每个步骤生成唯一 `idempotency_key`。核心引擎执行骨架首步通过分布式锁排他；渠道执行子层在调用供应商前通过 Redis SETNX 做二次去重。双层保障。
+每个步骤生成唯一 `idempotency_key`。核心引擎执行骨架首步通过分布式锁排他；渠道执行子层在调用供应商前通过 Redis SETNX 做二次去重。双层保障之外另有消费层事件去重——三个去重 key（`processed:` 事件消费 / `lock:plan:` 步骤锁 / `idempotency:channel:` 渠道二次）的前缀与 TTL 规格见基础设施 §3。
 
-> 详见 [核心引擎规格 §3.1 步骤①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-executestep-七步管线) / [§6.2 Redis 使用规范](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-redis-使用规范)。
+> 详见 [核心引擎规格 §3.1 步骤①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-executestep-七步管线) / [基础设施交互规范 §3 运行时状态（Redis KV）](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-运行时状态redis-kv)。
 
 #### 1.3.4 并发竞态控制
 
@@ -257,9 +257,9 @@ executeStep(plan, step):
 
 **缺失后果**：事件总线是所有模块的唯一通信介质。若消费循环静默假死（无错误日志、无告警），整个系统停止处理所有事件，触达任务全部积压。
 
-`CollectionEventBus` 接口定义于共享模块，Phase 1 由基于 Lettuce 原生 API 的 `RedisStreamEventBusImpl` 实现（Spring Boot 2.1 无标准 Stream 抽象）。因手写消费循环存在连接假死风险，引入消费线程看门狗：循环每次轮询更新心跳时间戳，守护线程定期检查，超时则重建消费上下文并触发告警。接口抽象使未来替换消息中间件时业务代码零改动。
+`CollectionEventBus` 接口定义于共享模块，Phase 1 由基于 Lettuce 原生 API 的 `RedisStreamEventBusImpl` 实现（Spring Boot 2.1 无标准 Stream 抽象）。因手写消费循环存在连接假死风险，引入消费线程看门狗（心跳 + 超时重建）。接口抽象使未来替换消息中间件时业务代码零改动。
 
-> 详见 [数据接入与事件规格 §事件总线](./MOCASA催收系统升级_Phase1_数据接入与事件规格.md)。
+> 看门狗心跳/重建机制、PEL 拾取与 ACK 规格详见 [基础设施交互规范 §2 事件总线（Redis Stream）](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)。
 
 #### 1.3.6 死信队列
 
@@ -267,15 +267,15 @@ executeStep(plan, step):
 
 三级恢复：即时重试（指数退避）→ 自动重放（MySQL 持久化 + 定时扫描重投）→ 人工介入。关键补充：重放前检查合规时段，避免"业务时间毒丸"——原始事件在合规窗口内触发，进入死信后在禁呼时段被盲目重放。
 
-> 详见 [渠道编排规格 §错误恢复](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)。
+> DLQ 写入/ACK 机制规格见 [基础设施交互规范 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)；引擎侧各管线阶段的 DLQ/NACK 行为见 [核心引擎规格 §5.1 L1 基础设施异常](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-l1-基础设施异常)；自动重放合规时段检查待入数据接入与事件规格（**规划中**，见 [阶段C 审计 C3-4](./audit/MOCASA催收系统升级_Phase1_跨文档去重_机制层_阶段C审计_20260618.md)）。
 
 #### 1.3.7 异步回调对账
 
 **缺失后果**：事件驱动模型假设"事件终将到达"，但人工外呼的回调事件来自外部系统，存在永久丢失的可能。若无对账，计划静默卡死在 STEP_EXECUTING——无错误日志、无告警、无法自愈。
 
-定时对账清理器扫描超时未回调的步骤，主动查询外部系统状态并补发事件，恢复状态机流转。
+定时对账清理器扫描超时未回调的步骤，主动查询外部系统状态并补发事件，恢复状态机流转。两级兜底：一级"引擎超时哨兵"为状态机主路径自愈，二级"渠道对账扫描"为运维兜底。
 
-> 详见 [渠道编排规格 §15.2 兜底扫描任务](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#152-兜底扫描任务)。
+> 一级超时哨兵（`CALLBACK_TIMEOUT`）与跨存储修复见 [核心引擎规格 §2.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#234-异步回调超时兜底) / [§5.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#52-跨存储一致性修复)；二级对账扫描见 [渠道编排规格 §15.2 兜底扫描任务](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#152-兜底扫描任务)。
 
 ### 1.4 渠道编排层
 
@@ -316,7 +316,7 @@ executeStep(plan, step):
 | XXL-Job 任务注册 | Trigger-to-Event 模式，仅发事件不跑业务逻辑，毫秒级返回 |
 | 到期前通知接管 | D-3 ~ D0 的 Push/SMS 职责完整迁移至新系统 |
 
-> 迁移方案见 [数据接入与事件规格 §迁移](./MOCASA催收系统升级_Phase1_数据接入与事件规格.md)。
+> 迁移方案见数据接入与事件规格 §迁移（**规划中**——该规格待新建，EXTRACT 计划见 [阶段C 审计 C3-3](./audit/MOCASA催收系统升级_Phase1_跨文档去重_机制层_阶段C审计_20260618.md)）。
 
 ---
 
@@ -423,7 +423,7 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 | 2 | 本文档 | 系统分层、SPI 架构、关键机制、技术栈、演进路径 |
 | 3 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | 模型字段、枚举值、DDL（共有基础，被所有技术文档引用） |
 | 4 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | 事件路由、计划生命周期、状态机、步骤执行骨架、SPI 接口定义、并发控制、基础设施规格（核心引擎） |
-| 5 | [数据接入与事件规格](./MOCASA催收系统升级_Phase1_数据接入与事件规格.md) | 事件总线契约、PubSub 消费、消息路由、阶段变更检测、迁移 |
+| 5 | 数据接入与事件规格（**规划中**，EXTRACT 计划见 [阶段C 审计 C3](./audit/MOCASA催收系统升级_Phase1_跨文档去重_机制层_阶段C审计_20260618.md)） | 事件总线契约、PubSub 消费、消息路由、阶段变更检测、迁移 |
 | 6 | [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md) | 计划状态机、步骤执行流、决策规则、合规检查、渠道适配器、人工外呼、模板（渠道编排） |
 | 7 | [运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md) | 业务/技术指标、告警规则、Grafana Dashboard、跨团队沟通清单 |
 
