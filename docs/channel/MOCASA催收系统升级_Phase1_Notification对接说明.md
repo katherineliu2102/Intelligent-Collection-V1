@@ -366,7 +366,7 @@ collection-channel/
 ```json
 POST {base-url}/v1/sms/testSend
 { "appCode": "mocasa", "mobile": "123456",
-  "content": "[MOCASA TEST] Payment due. Pay only via SKYPAYLOANS.",
+  "content": "[MOCASA TEST] Payment due. Please pay on time to keep your account current.",
   "contentType": "collection", "accountName": "<可空，指定测试通道>" }
 ```
 
@@ -383,7 +383,7 @@ POST {base-url}/v1/sms/testSend
 POST {base-url}/v1/sms/send
 { "appCode": "mocasa", "dateTime": "1749693900000", "sign": "<md5_hex>",
   "mobile": "9451374358",
-  "content": "[MOCASA] Payment due. Pay via SKYPAYLOANS app.",
+  "content": "[MOCASA] Collections: payment due. Please settle promptly.",
   "contentType": "collection" }
 ```
 

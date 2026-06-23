@@ -945,14 +945,14 @@ Language: Tagalog / English（单语，默认 Tagalog）
 Product: 一期 / 三期（同一套日时间表，变量不同）
 ```
 
-**品牌**：正文 **MOCASA**；还款 **SKYPAYLOANS**（App biller）。
+**品牌**：正文 **MOCASA**；CTA **敦促还款**，不写死单一 App / biller（跳转由 `deep_link` / App 内还款页承载）。
 
 ### 8.3 片段库（节选）
 
 
 | 片段           | 适用                            |
 | ------------ | ----------------------------- |
-| 防诈骗          | S0 起；Pay only via SKYPAYLOANS |
+| 防诈骗          | S0 起；Repay only via official MOCASA app / authorized channels |
 | Pay Now / 深链 | S1+                           |
 | Collections  | **S1+**；S0 禁用                 |
 | late fee     | S0 D-1 轻量                     |

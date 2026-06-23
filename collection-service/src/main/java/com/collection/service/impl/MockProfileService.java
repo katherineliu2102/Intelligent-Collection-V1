@@ -53,6 +53,16 @@ public class MockProfileService implements ProfileService {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
 
+        // 94001：三渠道合成 case（L4a-1）——同一 caseId 同时挂真 SMS + 真 JPush + 真 Email，
+        // 供 channel.debug.three-channel-step（SMS→PUSH→EMAIL）逐步取址。
+        // Email 用 Gmail（zoewang532@gmail.com）：多数用户为 Gmail 且投递已验证可达，正常断言收到。
+        if (userId == 94001L) {
+            basic.setName("Tri Channel Synthetic");
+            basic.setPrimaryPhone(MockSmsTestCases.PROD_MOBILE_A);
+            device.setJpushToken(MockPushTestCases.PUSH_TEST_JPUSH_TOKEN);
+            basic.setEmail("zoewang532@gmail.com");
+        }
+
         // 90002：联调真实 jpushToken（与 MockPushTestCases 94200 同源，供 ingest 全链路）
         if (userId == 90002L) {
             device.setJpushToken(MockPushTestCases.PUSH_TEST_JPUSH_TOKEN);

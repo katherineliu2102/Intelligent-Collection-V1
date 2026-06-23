@@ -22,7 +22,9 @@ import java.util.Locale;
 /**
  * Phase 1 Mock 实现 —— DefaultPlanFactory 的占位。
  *
- * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→SMS（TC-REG-01）。
+ * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→SMS（TC-REG-01）；
+ * {@code channel.debug.three-channel-step=true} 时 SMS→PUSH→EMAIL（L4a-1 薄层三渠道联调桩）；
+ * {@code channel.debug.observation-minutes>0} 时为步骤注入观察期（L4a-6 薄层结转联调桩）。
  */
 @Component
 public class MockPlanFactory implements PlanFactory {
@@ -74,10 +76,27 @@ public class MockPlanFactory implements PlanFactory {
         if (StringUtils.isNotBlank(singleStep)) {
             return buildSingleStep(singleStep.trim().toUpperCase(Locale.ROOT));
         }
+        if (channelProperties.getDebug().isThreeChannelStep()) {
+            return buildThreeChannelFlow();
+        }
         if (channelProperties.getDebug().isLegacyThreeStep()) {
             return buildLegacyThreeStep();
         }
         return buildPushEmailFlow();
+    }
+
+    /** 三渠道联调编排（L4a-1 薄层桩）：SMS(0) → PUSH(1min) → EMAIL(1min)；观察期由 debug.observationMinutes 注入。 */
+    private List<ContactPlanStep> buildThreeChannelFlow() {
+        int obs = obsMinutes();
+        List<ContactPlanStep> steps = new ArrayList<>();
+        steps.add(buildStep(1, ChannelType.SMS, 0, obs, 101L));
+        steps.add(buildStep(2, ChannelType.PUSH, 1, obs, 102L));
+        steps.add(buildStep(3, ChannelType.EMAIL, 1, obs, 201L));
+        return steps;
+    }
+
+    private int obsMinutes() {
+        return Math.max(0, channelProperties.getDebug().getObservationMinutes());
     }
 
     /** 简单 Email/Push 编排：PUSH(0) → EMAIL(1min)。 */
@@ -126,7 +145,7 @@ public class MockPlanFactory implements PlanFactory {
                 templateId = 101L;
         }
         List<ContactPlanStep> steps = new ArrayList<>();
-        steps.add(buildStep(1, type, 0, 0, templateId));
+        steps.add(buildStep(1, type, 0, obsMinutes(), templateId));
         return steps;
     }
 

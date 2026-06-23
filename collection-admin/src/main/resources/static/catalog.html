@@ -435,8 +435,9 @@
 
     function renderTemplates(templates) {
       const email = (templates?.email || []).map(t => `
-        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+        <tr class="tpl-row" data-key="email:${esc(t.slot)}" data-slot="${esc(t.slot)}" data-channel="EMAIL" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
           <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td><span class="badge b-LIVE">EMAIL</span></td>
           <td>${esc(t.stage)}</td>
           <td>${esc(t.trigger || '')}</td>
           <td class="preview">${esc(t.subject || t.preview || '—')}</td>
@@ -445,8 +446,9 @@
           <td>${tplViewCell(t)}</td>
         </tr>`).join('');
       const sms = (templates?.sms || []).map(t => `
-        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+        <tr class="tpl-row" data-key="sms:${esc(t.slot)}" data-slot="${esc(t.slot)}" data-channel="SMS" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
           <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td><span class="badge b-LIVE">SMS</span></td>
           <td>${esc(t.stage)}</td>
           <td>${esc(t.trigger || '')}</td>
           <td class="preview">${esc(t.preview || '—')}</td>
@@ -455,8 +457,9 @@
           <td>${tplViewCell(t)}</td>
         </tr>`).join('');
       const push = (templates?.push || []).map(t => `
-        <tr class="tpl-row" data-slot="${esc(t.slot)}" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
+        <tr class="tpl-row" data-key="push:${esc(t.slot)}" data-slot="${esc(t.slot)}" data-channel="PUSH" data-stage="${esc(t.stage)}" data-phase="${esc(t.phase1)}">
           <td class="mono"><strong>${esc(t.slot)}</strong></td>
+          <td><span class="badge b-LIVE">PUSH</span></td>
           <td>${esc(t.stage)}</td>
           <td class="preview">${esc(t.title || '—')}</td>
           <td class="preview">${esc(t.preview || '—')}</td>
@@ -485,19 +488,19 @@
         <div class="card">
           <h3>Email 里程碑（SendGrid）</h3>
           <table class="tpl-table"><thead><tr>
-            <th>scriptSlot</th><th>Stage</th><th>触发</th><th>Subject</th><th>状态</th><th>配置</th><th></th>
+            <th>scriptSlot</th><th>渠道</th><th>Stage</th><th>触发</th><th>Subject</th><th>状态</th><th>配置</th><th></th>
           </tr></thead><tbody>${email}</tbody></table>
         </div>
         <div class="card">
           <h3>SMS 文案</h3>
           <table class="tpl-table"><thead><tr>
-            <th>scriptSlot</th><th>Stage</th><th>触发</th><th>预览</th><th>状态</th><th>配置</th><th></th>
+            <th>scriptSlot</th><th>渠道</th><th>Stage</th><th>触发</th><th>预览</th><th>状态</th><th>配置</th><th></th>
           </tr></thead><tbody>${sms}</tbody></table>
         </div>
         <div class="card">
           <h3>Push 文案</h3>
           <table class="tpl-table"><thead><tr>
-            <th>scriptSlot</th><th>Stage</th><th>Title</th><th>Body 预览</th><th>状态</th><th>配置</th><th></th>
+            <th>scriptSlot</th><th>渠道</th><th>Stage</th><th>Title</th><th>Body 预览</th><th>状态</th><th>配置</th><th></th>
           </tr></thead><tbody>${push}</tbody></table>
         </div>`;
     }
@@ -625,13 +628,19 @@
     function buildTplIndex(templates) {
       window.__TPL_MAP__ = {};
       ['email', 'sms', 'push'].forEach(k => {
-        (templates[k] || []).forEach(t => { window.__TPL_MAP__[t.slot] = Object.assign({ _type: k }, t); });
+        (templates[k] || []).forEach(t => {
+          const key = k + ':' + t.slot;
+          window.__TPL_MAP__[key] = Object.assign({ _type: k, _key: key }, t);
+        });
       });
     }
 
     function bindTplRows() {
       document.querySelectorAll('.tpl-row').forEach(tr => {
-        tr.addEventListener('click', () => openTplModal(tr.dataset.slot));
+        tr.addEventListener('click', (e) => {
+          if (e.target.closest('.view-link')) e.preventDefault();
+          openTplModal(tr.dataset.key);
+        });
       });
     }
 
@@ -642,13 +651,14 @@
       ).join('') + '</div>';
     }
 
-    function openTplModal(slot) {
-      const t = window.__TPL_MAP__[slot];
+    function openTplModal(key) {
+      const t = window.__TPL_MAP__[key];
       if (!t || !t.viewable) return;
       const samples = window.__SAMPLES__ || {};
-      $('modalTitle').textContent = slot;
+      const ch = (t.channel || t._type || '').toUpperCase();
+      $('modalTitle').textContent = t.slot + ' · ' + ch;
       $('modalSub').innerHTML = [
-        t.stage, (t.channel || (t._type || '').toUpperCase()), t.trigger,
+        t.stage, t.trigger,
         badge(t.phase1), srcTag(t.contentSource)
       ].filter(Boolean).join(' · ');
 
@@ -670,7 +680,7 @@
           </div>
           <div class="mpanel" id="mpanel-preview">
             ${t.hasHtmlPreview
-              ? '<iframe class="email-preview" src="/catalog/template/' + encodeURIComponent(slot) + '/preview"></iframe>'
+              ? '<iframe class="email-preview" src="/catalog/template/' + encodeURIComponent(t.slot) + '/preview"></iframe>'
               : '<p style="color:var(--muted)">暂无 HTML 预览</p>'}
           </div>`;
       } else if (t._type === 'sms') {

@@ -36,6 +36,10 @@ public class ChannelProperties {
         private String singleStep = "";
         /** true 时走 SMS→PUSH→SMS 三步步（TC-REG-01 回归）。 */
         private boolean legacyThreeStep = false;
+        /** true 时走 SMS→PUSH→EMAIL 三渠道编排（L4a-1 薄层联调桩，非生产 DefaultPlanFactory）。 */
+        private boolean threeChannelStep = false;
+        /** >0 时为 mock 计划步骤注入观察期分钟（L4a-6 薄层「观察期结转」联调桩；默认 0 不改原行为）。 */
+        private int observationMinutes = 0;
     }
 
     @Data

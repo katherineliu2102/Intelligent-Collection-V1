@@ -245,12 +245,12 @@ channel:
 
 ### 5.1 Push 文案（英文初稿）
 
-> **占位符**同 §4.1；Push `body` 力求极短（通知栏一行）。**标题前置关键信息**（逾期天数/金额/Offer），强化首因效应拉点击。`data` 统一携带 `scene/case_id/script_slot/deep_link`（`deep_link`=`caseContext.repaymentUrl`，缺失时用 `channel.scripts.push-default-deep-link` 兜底；**所有 value 均为 string**）。
+> **占位符**同 §4.1；Push `body` 力求极短（通知栏一行）。**标题前置关键信息**（逾期天数/金额/Offer），强化首因效应拉点击。CTA 与 SMS 一致：**不写死单一还款渠道**，用「in the app」+ `deep_link` 跳转（`repaymentUrl` 或 `push-default-deep-link`）。`data` 统一携带 `scene/case_id/script_slot/deep_link`（**所有 value 均为 string**）。
 
 | scriptSlot | Stage/日块 | title（前置关键信息） | body（EN · 专家修订版） |
 |------------|-----------|-------|----------------|
-| `S0_REMINDER` | S0 · D-3/D-2 | `Payment due soon` | `{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app.` |
-| `S0_REMINDER_URGENT` | S0 · D-1 | `Due tomorrow` | `{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app.` |
+| `S0_REMINDER` | S0 · D-3/D-2 | `Payment due soon` | `{name}, PHP {amount} is due soon. Tap to pay in the app.` |
+| `S0_REMINDER_URGENT` | S0 · D-1 | `Due tomorrow` | `{name}, PHP {amount} is due tomorrow. Tap to pay in the app.` |
 | `S0_DUE_TODAY` | S0 · D0 | `Due today` | `{name}, PHP {amount} is due today. Tap to pay now.` |
 | `S1_PUSH_STANDARD` | S1 · 12:00 | `Overdue: PHP {amount}` | `{name}, your payment is past due. Tap to settle in the app.` |
 | `S2_PUSH_STANDARD` | S2 · 12:00 | `{dpd} days overdue` | `See your personalized payment options for PHP {amount}. Tap to view.` |
@@ -313,8 +313,8 @@ channel:
       S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options."
       S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly."
     push:                         # 每槽 title + body 两键
-      S0_REMINDER: { title: "Payment due soon", body: "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app." }
-      S0_REMINDER_URGENT: { title: "Due tomorrow", body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app." }
+      S0_REMINDER: { title: "Payment due soon", body: "{name}, PHP {amount} is due soon. Tap to pay in the app." }
+      S0_REMINDER_URGENT: { title: "Due tomorrow", body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the app." }
       S0_DUE_TODAY: { title: "Due today", body: "{name}, PHP {amount} is due today. Tap to pay now." }
       S1_PUSH_STANDARD: { title: "Overdue: PHP {amount}", body: "{name}, your payment is past due. Tap to settle in the app." }
       S2_PUSH_STANDARD: { title: "{dpd} days overdue", body: "See your personalized payment options for PHP {amount}. Tap to view." }

@@ -22,8 +22,8 @@
     "S4_SMS_FIRM": { "tone": "Final+Offer", "body": "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly." }
   },
   "push": {
-    "S0_REMINDER": { "title": "Payment due soon", "body": "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app." },
-    "S0_REMINDER_URGENT": { "title": "Due tomorrow", "body": "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app." },
+    "S0_REMINDER": { "title": "Payment due soon", "body": "{name}, PHP {amount} is due soon. Tap to pay in the app." },
+    "S0_REMINDER_URGENT": { "title": "Due tomorrow", "body": "{name}, PHP {amount} is due tomorrow. Tap to pay in the app." },
     "S0_DUE_TODAY": { "title": "Due today", "body": "{name}, PHP {amount} is due today. Tap to pay now." },
     "S1_PUSH_STANDARD": { "title": "Overdue: PHP {amount}", "body": "{name}, your payment is past due. Tap to settle in the app." },
     "S2_PUSH_STANDARD": { "title": "{dpd} days overdue", "body": "See your personalized payment options for PHP {amount}. Tap to view." },

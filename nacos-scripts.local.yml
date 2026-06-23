@@ -19,10 +19,10 @@ channel:
     push:
       S0_REMINDER:
         title: "Payment due soon"
-        body: "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app."
+        body: "{name}, PHP {amount} is due soon. Tap to pay in the app."
       S0_REMINDER_URGENT:
         title: "Due tomorrow"
-        body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app."
+        body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the app."
       S0_DUE_TODAY:
         title: "Due today"
         body: "{name}, PHP {amount} is due today. Tap to pay now."
