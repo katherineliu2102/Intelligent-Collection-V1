@@ -25,9 +25,9 @@ public class MockProfileService implements ProfileService {
 
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
 
-        // SMS 联调：94100–94102 指定手机号（见 MockSmsTestCases）
-        if (MockSmsTestCases.isSmsTestCase(userId)) {
-            MockSmsTestCases.find(userId)
+        // SMS 联调：94100–94102 指定手机号（见 SmsCaseRegistry）
+        if (SmsCaseRegistry.isSmsTestCase(userId)) {
+            SmsCaseRegistry.find(userId)
                     .ifPresent(
                             tc -> {
                                 basic.setName(tc.displayName());
@@ -35,9 +35,9 @@ public class MockProfileService implements ProfileService {
                             });
         }
 
-        // Push 联调：94200/94201（假 jpushToken 占位 / 无 token 验 fallback，见 MockPushTestCases）
-        if (MockPushTestCases.isPushTestCase(userId)) {
-            MockPushTestCases.find(userId)
+        // Push 联调：94200/94201（假 jpushToken 占位 / 无 token 验 fallback，见 PushCaseRegistry）
+        if (PushCaseRegistry.isPushTestCase(userId)) {
+            PushCaseRegistry.find(userId)
                     .ifPresent(
                             tc -> {
                                 basic.setName(tc.displayName());
@@ -49,8 +49,8 @@ public class MockProfileService implements ProfileService {
         }
 
         // Email E2E 联调：92001–93404 → 126；95xxx → Gmail（收件箱见各 case testEmail）
-        if (MockEmailTestCases.isEmailTestCase(userId)) {
-            MockEmailTestCases.find(userId)
+        if (EmailCaseRegistry.isEmailTestCase(userId)) {
+            EmailCaseRegistry.find(userId)
                     .ifPresent(
                             tc -> {
                                 basic.setName(tc.displayName());
@@ -60,9 +60,9 @@ public class MockProfileService implements ProfileService {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
 
-        // 90002：联调真实 jpushToken（与 MockPushTestCases 94200 同源，供 ingest 全链路）
+        // 90002：联调真实 jpushToken（与 PushCaseRegistry 94200 同源，供 ingest 全链路）
         if (userId == 90002L) {
-            device.setJpushToken(MockPushTestCases.PUSH_TEST_JPUSH_TOKEN);
+            device.setJpushToken(PushCaseRegistry.PUSH_TEST_JPUSH_TOKEN);
         }
         // 90003：故意无 jpushToken，供 TC-PUSH-02
         if (userId == 91000L || userId == 91001L) {

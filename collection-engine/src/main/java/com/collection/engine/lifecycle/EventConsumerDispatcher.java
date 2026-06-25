@@ -40,7 +40,8 @@ public class EventConsumerDispatcher {
         eventBus.subscribe(EventType.CHANNEL_CALLBACK, e -> publishAll(manager.onChannelCallback(e)));
         eventBus.subscribe(EventType.CALLBACK_TIMEOUT, e -> publishAll(manager.onCallbackTimeout(e)));
         eventBus.subscribe(EventType.PLAN_EXHAUSTED, e -> publishAll(manager.onPlanExhausted(e)));
-        eventBus.subscribe(EventType.PTP_EXPIRED, e -> publishAll(manager.onPtpExpired(e)));
+        // Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED（核心引擎规格 §2.6）。manager.onPtpExpired 保留作前向兼容。
+        // eventBus.subscribe(EventType.PTP_EXPIRED, e -> publishAll(manager.onPtpExpired(e)));
         eventBus.subscribe(EventType.PLAN_STEP_DUE, this::onPlanStepDue);
         log.info("[Dispatcher] all engine handlers registered");
     }

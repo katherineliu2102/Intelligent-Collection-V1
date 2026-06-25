@@ -24,7 +24,9 @@ public class ContactHistory {
     private ChannelType lastTouchChannel;
     private ContactResult lastTouchResult;
     private int currentPlanAiBotFailCount;
-    private int ptpCount;
-    private int ptpFulfilledCount;
+    /** PTP 承诺总次数。Phase 1 不计算，为 null；Phase 2 从 t_contact_timeline 聚合。 */
+    private Integer ptpCount;
+    /** PTP 兑现次数。Phase 1 不计算，为 null；Phase 2 从 t_contact_timeline 聚合。 */
+    private Integer ptpFulfilledCount;
     private LocalDate stageEntryDate;
 }

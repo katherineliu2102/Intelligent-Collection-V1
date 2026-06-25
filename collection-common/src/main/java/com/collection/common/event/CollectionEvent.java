@@ -22,6 +22,7 @@ public class CollectionEvent {
     public static final String PLAN_ID = "planId";
     public static final String STEP_ID = "stepId";
     public static final String STAGE = "stage";
+    /** Phase 2 预留：仅 PTP_EXPIRED 事件使用，Phase 1 引擎不消费（核心引擎规格 §2.6）。 */
     public static final String PTP_ID = "ptpId";
     public static final String TARGET_STAGE = "targetStage";
     public static final String MAX_DPD = "maxDpd";

@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 渠道回调入口。对应架构设计文档 §1.5：统一接收外部供应商回调，鉴权后发布 CHANNEL_CALLBACK。
+ * 渠道回调入口。对应架构设计文档 §1.7：统一接收外部供应商回调，鉴权后发布 CHANNEL_CALLBACK。
  *
  * <p>Phase 1 骨架：跳过鉴权（TODO：Shiro/签名校验），直接转事件。
  * 用于验证电话/人工类（AI_CALL/TTS/HUMAN_CALL）异步回调链路。

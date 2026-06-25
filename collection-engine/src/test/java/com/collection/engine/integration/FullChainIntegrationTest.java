@@ -192,6 +192,58 @@ class FullChainIntegrationTest {
         assertThat(plan.getCancelReason()).isEqualTo(CancelReason.REPAID);
     }
 
+    @Test
+    @DisplayName("D24 入案建 S1 → STAGE_CHANGED(S2) → 旧 S1 取消(STAGE_UPGRADE) + 新建 S2(PENDING)")
+    void stageChanged_cancelsOldAndBuildsNewStagePlan() {
+        bus.publish(
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.STAGE, Stage.S1.name()));
+        bus.drainAll();
+
+        bus.publish(
+                CollectionEvent.of(EventType.STAGE_CHANGED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, Stage.S2.name()));
+        bus.drainAll();
+
+        ContactPlan oldPlan = findPlanByStage(Stage.S1);
+        ContactPlan newPlan = findPlanByStage(Stage.S2);
+        assertThat(oldPlan.getStatus()).isEqualTo(PlanStatus.PLAN_CANCELLED);
+        assertThat(oldPlan.getCancelReason()).isEqualTo(CancelReason.STAGE_UPGRADE);
+        assertThat(newPlan.getStatus()).isEqualTo(PlanStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("D29-L1 入案建 S1 → CASE_CEASED → 活跃计划取消(CEASED)，不 rebuild")
+    void caseCeasedCancelsActivePlan() {
+        bus.publish(
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.STAGE, Stage.S1.name()));
+        bus.drainAll();
+
+        bus.publish(
+                CollectionEvent.of(EventType.CASE_CEASED).with(CollectionEvent.CASE_ID, CASE_ID));
+        bus.drainAll();
+
+        assertThat(planRepo.plans).hasSize(1); // 不 rebuild
+        ContactPlan plan = planRepo.plans.values().iterator().next();
+        assertThat(plan.getStatus()).isEqualTo(PlanStatus.PLAN_CANCELLED);
+        assertThat(plan.getCancelReason()).isEqualTo(CancelReason.CEASED);
+    }
+
+    private ContactPlan findPlanByStage(Stage stage) {
+        for (ContactPlan p : planRepo.plans.values()) {
+            if (p.getStage() == stage) {
+                return p;
+            }
+        }
+        throw new IllegalStateException("no plan for stage " + stage);
+    }
+
     // ───────────────────────── 同步事件总线（drain 串行处理，避免线程时序） ─────────────────────────
 
     static class SyncEventBus implements CollectionEventBus {

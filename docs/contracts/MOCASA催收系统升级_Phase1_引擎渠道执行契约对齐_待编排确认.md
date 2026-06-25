@@ -139,4 +139,4 @@
 
 ---
 
-> 本文结论定稿后，同步更新 `ic-v1-channel-contract.mdc`（若语义冻结值变化）与 `测试总览_Phase1.md` 的 C1–C7。
+> 本文结论定稿后，同步更新 `ic-v1-channel-contract.mdc`（若语义冻结值变化）与 `MOCASA催收系统升级_Phase1_测试文档.md` 的 C1–C7。

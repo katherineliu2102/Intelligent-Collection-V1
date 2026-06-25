@@ -247,6 +247,22 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
+    @DisplayName("②-D20 发送失败不可重试(retryable=false) → FAILED + 推进，不退避")
+    void notRetryable_failedNoBackoff() {
+        stubResolver(ChannelType.SMS);
+        stubDispatch(fail(false));
+        step.setRetryCount(0); // 即便未超上限，retryable=false 也不重试
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verify(eventBus).publish(any());
+        verify(planRepository, never()).incrementRetryCount(STEP_ID);
+        verify(planRepository, never())
+                .updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
+    }
+
+    @Test
     @DisplayName("#12 回写前计划已取消（⑤½ 复检）→ 仅记录 timeline，不推进")
     void cancelledDuringDispatch_recordOnly() {
         stubResolver(ChannelType.SMS);

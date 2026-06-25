@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 内存事件总线（Phase 1 链路验证默认实现）。对应 {@link CollectionEventBus} 抽象。
  *
  * <p>语义对齐生产 Redis Stream：发布后由 Consumer 线程池异步消费、与发布线程隔离。
- * 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档 §1.3.5）。
+ * 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档 §1.8.2）。
  *
  * <p>激活条件：collection.eventbus=memory（缺省默认）。
  */

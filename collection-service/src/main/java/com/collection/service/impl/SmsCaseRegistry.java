@@ -15,7 +15,7 @@ import java.util.Optional;
  * <p>caseId = userId；手机号见 {@link #primaryPhone}。
  * 联调见功能测试指南 TC-SMS-TEST-* / TC-SMS-PROD-*。
  */
-final class MockSmsTestCases {
+final class SmsCaseRegistry {
 
     /** 通知中心 testSend 默认测试号（Virtual 通道，不真实下发）。 */
     static final String TEST_MOBILE_VIRTUAL = "123456";
@@ -78,6 +78,6 @@ final class MockSmsTestCases {
         }
     }
 
-    private MockSmsTestCases() {
+    private SmsCaseRegistry() {
     }
 }

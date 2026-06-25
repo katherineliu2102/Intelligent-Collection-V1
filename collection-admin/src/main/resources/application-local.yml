@@ -10,6 +10,10 @@ spring:
         password: ${NACOS_PASSWORD}
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      data-source-properties:
+        allowPublicKeyRetrieval: "true"
+        useSSL: "false"
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
@@ -35,7 +39,33 @@ channel:
     push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
   debug:
     legacy-three-step: false
-    single-step: SMS
+    # 空=使用 plan-templates（DefaultPlanFactory）；非空时仅生成单步 plan（冒烟用）
+    single-step: ""
+  # L4a-全：DefaultPlanFactory 计划模板（stage→步序）。非密钥，放本地配置；密钥仍走 Nacos。
+  plan-templates:
+    S0:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+    S1:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 201 }
+    S2:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: SMS, delayMin: 1, observeMin: 0, templateId: 103 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 202 }
+    S3:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 203 }
+    S4:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 204 }
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
     # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。

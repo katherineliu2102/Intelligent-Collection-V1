@@ -267,7 +267,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 E：应用层 → `collection-admin`
 
-**负责人参考文档：《架构设计文档》§1.5**
+**负责人参考文档：《架构设计文档》§1.7**
 
 #### E1. `TriggerScanner` → XXL-Job Handler
 

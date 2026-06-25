@@ -2,9 +2,6 @@ package com.collection.common.model;
 
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.PhoneValidity;
-import com.collection.common.enums.SensitivityTag;
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -21,10 +18,8 @@ public class UserProfile {
     private BasicInfo basic;
     private WorkInfo work;
     private List<ContactInfo> contacts;
-    private RepaymentInfo repayment;
     private BehaviorProfile behavior;
     private DeviceInfo device;
-    private RiskScore risk;
     /** 画像完整度 0.0-1.0（非空字段数 / 总字段数）。 */
     private double profileCompleteness;
 
@@ -63,18 +58,6 @@ public class UserProfile {
     }
 
     @Data
-    public static class RepaymentInfo {
-        private int totalLoans;
-        private BigDecimal paidAmount;
-        private BigDecimal remainingAmount;
-        private BigDecimal overdueFee;
-        private BigDecimal penaltyFee;
-        private LocalDate lastRepaymentDate;
-        private BigDecimal lastRepaymentAmount;
-        private int payCount;
-    }
-
-    @Data
     public static class BehaviorProfile {
         private Integer bestContactHour;
         private ChannelType preferredChannel;
@@ -96,15 +79,5 @@ public class UserProfile {
          * → t_user_equipment → ProfileService。 契约已拍板（2026-06-09）：以 jpushToken 为准，fcmToken 已移除。
          */
         private String jpushToken;
-    }
-
-    @Data
-    public static class RiskScore {
-        private Double repaymentAbilityScore;
-        private Double collectionDifficultyScore;
-        private Double collectionPriority;
-        private SensitivityTag sensitivityTag;
-        private Double ptpFulfillRate;
-        private int complaintCount;
     }
 }

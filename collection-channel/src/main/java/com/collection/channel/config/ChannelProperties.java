@@ -1,6 +1,8 @@
 package com.collection.channel.config;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -25,6 +27,7 @@ public class ChannelProperties {
     private Notification notification = new Notification();
     private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
+    private Map<String, PlanTemplate> planTemplates = new HashMap<>();
 
     /** 渠道 dispatch 幂等 TTL（小时），默认 24h。 */
     private int idempotencyTtlHours = 24;
@@ -128,6 +131,19 @@ public class ChannelProperties {
         private String quietHoursEnd = "08:00";
         private String touchWindowStart = "08:00";
         private String touchWindowEnd = "21:00";
+    }
+
+    @Data
+    public static class PlanTemplate {
+        private List<PlanStepDef> steps = new ArrayList<>();
+    }
+
+    @Data
+    public static class PlanStepDef {
+        private String channel;
+        private int delayMin = 0;
+        private int observeMin = 0;
+        private long templateId = 0;
     }
 
     /** 完整 Voice 回调 URL：baseUrl + /lth/voice */

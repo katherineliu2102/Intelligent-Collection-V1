@@ -279,8 +279,12 @@ public class PlanLifecycleManager {
         }
     }
 
-    // ───────────────────────── PTP 到期（§2.6） ─────────────────────────
+    // ───────────────────────── PTP 到期（§2.6，Phase 2 预留） ─────────────────────────
 
+    /**
+     * Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED（Dispatcher 未订阅，核心引擎规格 §2.6）。
+     * 方法体保留作 Phase 2 前向兼容，Phase 1 不会被事件总线触发。
+     */
     @Transactional
     public List<CollectionEvent> onPtpExpired(CollectionEvent event) {
         Long caseId = event.getLong(CollectionEvent.CASE_ID);

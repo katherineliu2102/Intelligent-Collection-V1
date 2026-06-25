@@ -12,6 +12,7 @@ public enum CancelReason {
     CEASED(true),
     COMPLAINT(false),
     MANUAL(false),
+    /** Phase 2 预留：Phase 1 引擎不写入、不使用（核心引擎规格 §2.6）。 */
     PTP_EXPIRED(false);
 
     private final boolean engineManaged;
