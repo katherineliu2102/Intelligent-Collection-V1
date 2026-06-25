@@ -7,6 +7,67 @@
 
 ---
 
+## 最新：阶段 D 引擎回执（2026-06-23）— 编排同事待办
+
+> **背景**：主架构已完成 [阶段 D 审计 Batch 1](../audit/MOCASA催收系统升级_Phase1_核心引擎规格_阶段D审计_20260623.md)（仅改 [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)）。下列为**编排侧**须跟进项；引擎侧 E-1/E-2/E-5/E-6 已关闭，**E1 讨论结论可填「引擎已采纳 E1-A，2026-06-23」**。
+
+### 文档对齐（优先）
+
+| ID | 优先级 | 动作 | 改哪里 | 对齐依据 | 规模 |
+|---|---|---|---|---|---|
+| **CH-1** | **P1** | **SMS 步骤完成时机改写**：删除「SMS dispatch 成功即同步 STEP_COMPLETED」；改为 **SMS 两段语义**（dispatch=受理 → `STEP_WAITING` → DLR 短路结转 / 最长等观察期上限） | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md) L236 | [引擎 §2.3.3](../MOCASA催收系统升级_Phase1_核心引擎规格.md)（DLR 短路 + 10min 上限）、[执行契约 §1/§3](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | S |
+| **CH-2** | P2 | **二级·渠道对账扫描**：补独立章节（或文首标「规划中」并写占位索引），供引擎 §2.3.4 / 架构 §1.8.9 回链 | 渠道编排规格（新 § 或 README 索引） | 阶段 D 审计 Q3-6；一级超时哨兵已在引擎，二级属运维兜底 | M |
+
+**CH-1 建议替换文案（可直接粘贴改 L236 段）**：
+
+> **与引擎步骤完成时机（必读）**（SSOT=引擎 + [执行契约 §3](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)）：
+>
+> | 渠道 | dispatch 后计划态 | 步骤完成方式 |
+> |---|---|---|
+> | **PUSH / EMAIL** | 无观察期 | `dispatch` 成功即 `STEP_COMPLETED`；SendGrid `delivered`/`open` **不**用于完成 plan step |
+> | **SMS** | `STEP_WAITING`（观察期） | ① `dispatch` 成功=**供应商受理**；② 收到 **DLR** → `CHANNEL_CALLBACK` → **立即短路** `STEP_COMPLETED`；③ 观察期内未收到 DLR → 定时结转（默认最长 **10min**，由 `PlanFactory` 写 `observationMinutes`） |
+> | **AI_CALL / TTS** | `STEP_EXECUTING` | 等 `CHANNEL_CALLBACK`（见 [引擎 §3.1⑦](../MOCASA催收系统升级_Phase1_核心引擎规格.md)） |
+>
+> Phase 1 **无** `HUMAN_CALL` step（E4）。
+
+### 实现 / 联调（L2 前，与文档并行）
+
+| ID | 优先级 | 动作 | 负责人 | 依据 |
+|---|---|---|---|---|
+| **CH-3** | **P1** | **`PlanFactory` 写 `observationMinutes`**：SMS 步骤 >0（默认 **10** min，可按 stage 覆盖）；PUSH/EMAIL=**0** | 编排 `DefaultPlanFactory` | 执行契约 §3；引擎只读该字段 |
+| **CH-4** | **P1** | **SMS DLR → `CHANNEL_CALLBACK`**：LTH/通知中心 DLR Webhook 经 admin 鉴权发布事件；`map_callback_to_result` 映射为 DELIVERED 等 | 编排 Adapter + admin Webhook | 引擎 §2.3.3 已放开 `STEP_WAITING` 消费 DLR |
+| **CH-5** | P1 | **执行契约 S2 真实化**（未完成的 Mock 替换）：`ChannelGateway` 三情形 StepResult、PUSH fallback；`ExecutionGuard` NO_EMAIL/NO_PHONE/NO_TOKEN；`StepResolver` language/templateId | 编排 | [执行契约 §推进路线 S2](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) |
+| **CH-6** | P2 | **`jpushToken` 收口**：PushAdapter 取号切到 `device.jpushToken`；完成后通知主架构删 `fcmToken` | 编排 → 主架构改 common | 执行契约 token 口径 |
+| **CH-7** | P2 | **E4 代码自检**：`StepResolver` / `PlanFactory` Phase 1 **永不输出** `channelType=HUMAN_CALL`（文档 E4 已定，引擎 Batch1 已标注 Phase 2 预留） | 编排 Code Review | 对齐待办 E4 + 引擎 §2.3.4 |
+
+### 编排无需改 / 仅知会
+
+| 项 | 说明 |
+|---|---|
+| **E1 / CASE_CEASED** | 引擎已补 §1.1 路由、§2.4 `on_case_ceased`、cancel_reason=`CEASED`；事件名 **`CASE_CEASED` 不变**，渠道 §4.2/§9 **无需回改** |
+| **E2 日切 Job** | 仍归 **ingestion + 基础设施**（`dpdStageRollHandler`），编排 Consumer 无改动 |
+| **HUMAN_CALL** | 引擎已标 Phase 2 预留；渠道 §3.5 L234「禁止 HUMAN_CALL step」**保持** |
+
+### 通知模板（可复制发编排群）
+
+```text
+【阶段 D 引擎回执 · 编排待办 2026-06-23】
+
+引擎 Batch1 已合入核心引擎规格（CASE_CEASED / SMS DLR 短路 / HUMAN_CALL Phase2 预留）。
+请编排同事优先处理：
+
+1. [P1] CH-1：改渠道编排规格 §3.5 L236 — SMS 改为「受理→STEP_WAITING→DLR 短路，最长 10min」；PUSH/EMAIL 仍 dispatch 即完成。文案见对齐待办「CH-1 建议替换文案」。
+2. [P1] CH-3：DefaultPlanFactory 为 SMS 写 observationMinutes=10（可 stage 覆盖），PUSH/EMAIL=0。
+3. [P1] CH-4：SMS DLR Webhook → CHANNEL_CALLBACK（引擎 §2.3.3 已支持 STEP_WAITING 短路结转）。
+4. [P1] CH-5：执行契约 S2 Mock 真实化（Guard/Resolver/Gateway），L2 联调前置。
+5. [P2] CH-2：补「二级渠道对账扫描」章节或标规划中（引擎/架构在等回链目标）。
+
+E1 引擎侧已关闭（CASE_CEASED），渠道规格事件名无需改。
+明细表：docs/channel/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md §「阶段 D 引擎回执」
+```
+
+---
+
 ## 议程一：E1 + E2 — 停催事件与日切 Job（约 20 min）
 
 ### 渠道编排已定（沟通时不必重议）
@@ -25,7 +86,7 @@
 
 | 编号     | 缺口                                                                      | 不对齐的后果                               |
 | ------ | ----------------------------------------------------------------------- | ------------------------------------ |
-| **E1** | 核心引擎 §2.4 **无** `CASE_CEASED` 分支；`STAGE_CHANGED` 仅表达「换 Stage → 重建 plan」 | D+91 仍可能触发 `PLAN_STEP_DUE`、误发 SMS/AI |
+| **E1** | ~~核心引擎 §2.4 **无** `CASE_CEASED` 分支~~ → **✅ 2026-06-23 引擎 Batch1 已补**（§1.1 路由 / §2.4 `on_case_ceased` / cancel_reason=CEASED） | — |
 | **E2** | 基础设施 §4 Cron **无** Max DPD 日切任务                                         | S1→S2、S4 内日块、**D+91 停催** 均不会自动发生     |
 
 
@@ -57,7 +118,7 @@
 
 **请引擎确认**: 事件名是否采纳 `CASE_CEASED`？Payload 最小字段（`case_id`, `max_dpd`, `occurred_at`）？
 
-**讨论结论**: _______________
+**讨论结论**: **✅ 引擎已采纳 E1-A（`CASE_CEASED`），2026-06-23 Batch1 合入核心引擎规格。** Payload 字段仍待 ingestion 规格落地时与引擎对齐（非编排阻塞项）。
 
 ---
 
@@ -287,15 +348,15 @@ Offer：入案 / 重建 plan 前 ingestion 跑 F10/t_discount_rule
 
 | 负责人  | 动作                                                                       |
 | ---- | ------------------------------------------------------------------------ |
-| 引擎   | 按议程结论更新：§2.4（E1/E3）、事件路由、禁止 plan 内 HUMAN_CALL（E4）、ContextSnapshot 字段（E6） |
+| 引擎   | ~~§2.4（E1/E3）、事件路由~~ E1 **✅ 2026-06-23**；E3 仍待；E4 文档 **✅**（HUMAN_CALL Phase2 预留）；E6 ContextSnapshot 字段待定 |
 | 基础设施 | `dpdStageRollHandler`（E2）写入基础设施规范并实现                                     |
-| 渠道编排 | 仅当引擎事件命名与 `CASE_CEASED` 不一致时改 §4.2/§9                                    |
+| 渠道编排 | **阶段 D**：CH-1~CH-7（见文首「阶段 D 引擎回执」）；E1 **无需**改 §4.2/§9                                    |
 
 
 
 | 议程  | 结论（填写） |
 | --- | ------ |
-| E1  |        |
+| E1  | **✅ 引擎 E1-A（CASE_CEASED），2026-06-23** |
 | E2  |        |
 | E3  |        |
 | E4  |        |

@@ -88,8 +88,6 @@ public class MockCaseService implements CaseService {
         h.setTodayTouchCount(0);
         h.setTodayPhoneAnswered(false);
         h.setCurrentPlanAiBotFailCount(0);
-        h.setPtpCount(0);
-        h.setPtpFulfilledCount(0);
         h.setStageEntryDate(LocalDate.now());
         return h;
     }
@@ -119,19 +117,19 @@ public class MockCaseService implements CaseService {
             return new MockCaseProfile(-3, Stage.S0, "ACTIVE", false, "STANDARD",
                     new BigDecimal("5000.00"), LocalDate.now().plusDays(3), null);
         }
-        Optional<MockCaseProfile> smsProfile = MockSmsTestCases.find(caseId)
+        Optional<MockCaseProfile> smsProfile = SmsCaseRegistry.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, null));
         if (smsProfile.isPresent()) {
             return smsProfile.get();
         }
-        Optional<MockCaseProfile> pushProfile = MockPushTestCases.find(caseId)
+        Optional<MockCaseProfile> pushProfile = PushCaseRegistry.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, null));
         if (pushProfile.isPresent()) {
             return pushProfile.get();
         }
-        return MockEmailTestCases.find(caseId)
+        return EmailCaseRegistry.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, tc.emailScriptSlot))
                 .orElseGet(() -> {

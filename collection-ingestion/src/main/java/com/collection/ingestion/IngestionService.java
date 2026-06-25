@@ -68,7 +68,7 @@ public class IngestionService {
         log.info("[Ingestion] publish CASE_CEASED case={} maxDpd={}", caseId, maxDpd);
     }
 
-    /** PTP 到期 → 发布 PTP_EXPIRED。 */
+    /** PTP 到期 → 发布 PTP_EXPIRED。Phase 2 预留：Phase 1 引擎不消费此事件（核心引擎规格 §2.6）。 */
     public void ptpExpired(Long caseId, Long ptpId) {
         eventBus.publish(CollectionEvent.of(EventType.PTP_EXPIRED)
                 .with(CollectionEvent.CASE_ID, caseId)

@@ -1,8 +1,10 @@
 package com.collection.engine.lifecycle;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,6 +19,7 @@ import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.Stage;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.event.CollectionEvent;
+import com.collection.common.model.CaseContext;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
@@ -28,6 +31,7 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.engine.spi.SpiInvoker;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -358,10 +362,10 @@ class PlanLifecycleManagerTest {
         verify(planRepository).savePlan(any());
     }
 
-    // ───────────────────────── onPtpExpired（#27） ─────────────────────────
+    // ─────────── onPtpExpired（#27，Phase 2 预留：Phase 1 Dispatcher 不订阅，仅直测处理器逻辑） ───────────
 
     @Test
-    @DisplayName("#27-已还款 PTP 到期 → 补偿取消活跃计划")
+    @DisplayName("#27-[Phase2]已还款 PTP 到期 → 补偿取消活跃计划")
     void onPtpExpired_repaidCancels() {
         when(caseService.isRepaid(CASE_ID)).thenReturn(true);
         when(planRepository.findActivePlansByCase(CASE_ID))
@@ -377,7 +381,7 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("#27-计划仍活跃 PTP 到期 → 不动（正常流程继续）")
+    @DisplayName("#27-[Phase2]计划仍活跃 PTP 到期 → 不动（正常流程继续）")
     void onPtpExpired_activePlanNoop() {
         when(caseService.isRepaid(CASE_ID)).thenReturn(false);
         when(planRepository.findActivePlansByCase(CASE_ID))
@@ -389,6 +393,217 @@ class PlanLifecycleManagerTest {
 
         verify(planRepository, never()).updatePlanStatus(any(), any(), any());
         verify(planRepository, never()).savePlan(any());
+    }
+
+    // ───────────────────────── 差集补全：链路① 建计划守卫（D21/D22/D23/D25） ─────────────────────────
+
+    @Test
+    @DisplayName("①-D21 PlanFactory 返回 null → 不建计划（savePlan 不调）")
+    void onCaseIngested_factoryNull_noPlan() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(null);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(planFactory.create(any(), eq(Stage.S1), any())).thenReturn(null);
+
+        manager.onCaseIngested(ingestEvent("S1"));
+
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("①-D22 caseInfo.caseStatus=CEASED → 跳过工厂，不建计划")
+    void onCaseIngested_ceasedCaseStatus_skip() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(null);
+        CaseInfo ceased = caseInfoWithUser();
+        ceased.setCaseStatus("CEASED");
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(ceased);
+
+        manager.onCaseIngested(ingestEvent("S1"));
+
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("①-D22 snapshot.caseContext.collectionStatus=CEASED → 跳过工厂，不建计划")
+    void onCaseIngested_ceasedSnapshot_skip() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(null);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        ContextSnapshot snap = new ContextSnapshot();
+        CaseContext cc = new CaseContext();
+        cc.setCollectionStatus("CEASED");
+        snap.setCaseContext(cc);
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(snap);
+
+        manager.onCaseIngested(ingestEvent("S1"));
+
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("①-D23 建计划首步 trigger≈now(delay=0) + snapshot 冻结写入")
+    void onCaseIngested_firstStepTriggerTime_andSnapshotFrozen() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(null);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        ContactPlan created = newPlan(0L, null, Stage.S1);
+        created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null)); // delayMinutes 默认 0
+        when(planFactory.create(any(), eq(Stage.S1), any())).thenReturn(created);
+
+        LocalDateTime before = LocalDateTime.now();
+        manager.onCaseIngested(ingestEvent("S1"));
+
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        ContactPlan saved = captor.getValue();
+        assertThat(saved.getContextSnapshot()).isNotNull(); // 快照冻结为 JSON
+        ContactPlanStep first = saved.getSteps().get(0);
+        assertThat(first.getStatus()).isEqualTo(StepStatus.PENDING);
+        assertThat(first.getTriggerTime())
+                .isBetween(before.minusMinutes(1), LocalDateTime.now().plusMinutes(1));
+    }
+
+    @Test
+    @DisplayName("①-D25 建计划阶段 CaseService 读失败 → 异常上抛(NACK)，不建计划")
+    void onCaseIngested_caseServiceReadFailure_propagates() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(null);
+        when(caseService.getCaseInfo(CASE_ID)).thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> manager.onCaseIngested(ingestEvent("S1")))
+                .isInstanceOf(RuntimeException.class);
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    // ───────────────────────── 差集补全：链路② 推进 delay=0（D1） ─────────────────────────
+
+    @Test
+    @DisplayName("②-D1 推进 delay=0 → 下一步 trigger≈now + STEP_SCHEDULED，无后续事件")
+    void onStepCompleted_advanceNext_delayZero_schedulesWithNowTrigger() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 2, ChannelType.PUSH, StepStatus.PENDING);
+        next.setDelayMinutes(0);
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        LocalDateTime before = LocalDateTime.now();
+        List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        ArgumentCaptor<LocalDateTime> trigger = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(planRepository)
+                .updateStepTriggerTime(eq(NEXT_STEP_ID), trigger.capture(), eq(StepStatus.PENDING));
+        assertThat(trigger.getValue())
+                .isBetween(before.minusSeconds(5), LocalDateTime.now().plusSeconds(5));
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
+        assertThat(out).isEmpty();
+    }
+
+    // ───────────────────────── 差集补全：链路③ 观察期缺省结转（D26） ─────────────────────────
+
+    @Test
+    @DisplayName("③-D26 观察期到期且 best_result 缺省 → SENT_NO_RESPONSE 结转")
+    void prepareStepDue_waitingCarryOver_defaultSentNoResponse() {
+        plan.setStatus(PlanStatus.STEP_WAITING);
+        step.setResult(null); // 观察期内无结果回填
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+
+        StepDuePreparation prep = manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
+
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.SENT_NO_RESPONSE);
+        assertThat(prep.getEvents()).hasSize(1);
+        assertThat(prep.getEvents().get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
+    }
+
+    // ───────────────────────── 差集补全：链路④ 异步回调态拦截/映射（D16/D17/D18） ─────────────────────────
+
+    @Test
+    @DisplayName("④-D16 回调时计划非 STEP_EXECUTING → 静默吸收，不改步骤")
+    void onChannelCallback_nonExecuting_silentlyAbsorbs() {
+        ContactPlan waiting = newPlan(PLAN_ID, PlanStatus.STEP_WAITING, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(waiting);
+
+        CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
+        List<CollectionEvent> out = manager.onChannelCallback(event);
+
+        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("④-D17 超时兜底时计划非 STEP_EXECUTING（回调已正常处理）→ 忽略")
+    void onCallbackTimeout_nonExecuting_noop() {
+        ContactPlan completed = newPlan(PLAN_ID, PlanStatus.PLAN_COMPLETED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(completed);
+
+        List<CollectionEvent> out =
+                manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
+
+        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值兜底 ANSWERED")
+    void onChannelCallback_mapsResultVariants() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+
+        manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NO_ANSWER"));
+        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.NO_ANSWER);
+
+        manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "BUSY"));
+        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.BUSY);
+
+        manager.onChannelCallback(
+                stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NOT_A_RESULT"));
+        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
+    }
+
+    // ───────────────────────── 差集补全：链路⑤ 还款过滤失败/CASE_CEASED（D28/D29-L0） ─────────────────────────
+
+    @Test
+    @DisplayName("⑤-D28 filterRepaidUser 抛异常 → 计划仍取消(REPAID)")
+    void onRepaymentReceived_filterFails_stillCancels() {
+        when(planRepository.findActivePlansByUser(USER_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        doThrow(new RuntimeException("dialer down"))
+                .when(predictiveDialerService)
+                .filterRepaidUser(USER_ID);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
+                        .with(CollectionEvent.USER_ID, USER_ID);
+        manager.onRepaymentReceived(event);
+
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+    }
+
+    @Test
+    @DisplayName("⑤-D29 CASE_CEASED → 取消活跃计划(CEASED)，不再建计划")
+    void onCaseCeased_cancelsActivePlanAndNoRebuild() {
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_CEASED).with(CollectionEvent.CASE_ID, CASE_ID);
+        manager.onCaseCeased(event);
+
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    private CollectionEvent ingestEvent(String stage) {
+        return CollectionEvent.of(EventType.CASE_INGESTED)
+                .with(CollectionEvent.CASE_ID, CASE_ID)
+                .with(CollectionEvent.STAGE, stage);
     }
 
     private CaseInfo caseInfoWithUser() {

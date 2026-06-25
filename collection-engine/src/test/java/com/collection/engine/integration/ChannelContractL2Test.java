@@ -58,7 +58,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * L2 引擎↔渠道执行契约测试骨架（C1–C7，对应 {@code docs/测试总览_Phase1.md} L2 表）。
+ * L2 引擎↔渠道执行契约测试骨架（C1–C7，对应 {@code docs/MOCASA催收系统升级_Phase1_测试文档.md} L2 表）。
  *
  * <p>定位：用<b>编码了 2026-06-11 定稿契约语义的可配置替身</b>（StepResolver / ExecutionGuard /
  * ChannelGateway）驱动<b>真实引擎组件</b>，断言引擎在各渠道返回情形下的行为。 编排同事真实化 Mock 后，契约语义一致即对接即绿；本类是双方对接的验收基线。

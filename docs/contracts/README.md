@@ -27,4 +27,4 @@
 - **空地址**：方案 A(Guard block NO_EMAIL/NO_PHONE/NO_TOKEN→SKIPPED)；PUSH 叠加 fallback SMS。
 - **幂等 key**：`plan:stepOrder:retryCount`。
 
-> 关联：执行语义冻结值同步在 `.cursor/rules/ic-v1-channel-contract.mdc`；C1–C7 测试见 `../测试总览_Phase1.md`。
+> 关联：执行语义冻结值同步在 `.cursor/rules/ic-v1-channel-contract.mdc`；C1–C7 测试见 `../MOCASA催收系统升级_Phase1_测试文档.md`。

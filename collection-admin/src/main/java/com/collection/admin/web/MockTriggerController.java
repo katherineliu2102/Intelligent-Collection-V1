@@ -415,11 +415,11 @@ public class MockTriggerController {
         return ok("STAGE_CHANGED published, caseId=" + caseId + " stage=" + stage);
     }
 
-    /** 模拟 PTP 到期。 */
+    /** 模拟 PTP 到期。Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED，此端点仅发布事件、无消费方（核心引擎规格 §2.6）。 */
     @PostMapping("/ptp-expired")
     public Map<String, Object> ptpExpired(@RequestParam Long caseId, @RequestParam Long ptpId) {
         ingestionService.ptpExpired(caseId, ptpId);
-        return ok("PTP_EXPIRED published, caseId=" + caseId);
+        return ok("PTP_EXPIRED published (Phase 2 预留, no engine consumer in Phase 1), caseId=" + caseId);
     }
 
     /**

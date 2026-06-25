@@ -14,7 +14,7 @@ import java.util.Optional;
  * <p>caseId = userId；邮箱统一 {@code wzynju@126.com}（见 {@link MockProfileService}）。 Phase 1 实际发信仅 5 个
  * scriptSlot，联调见 {@code docs/email-templates/email-e2e-test-cases.md}。
  */
-final class MockEmailTestCases {
+final class EmailCaseRegistry {
 
     /** 默认联调收件箱（优先；Gmail 易被 DMARC 拦截）。 */
     static final String TEST_EMAIL = "wzynju@126.com";
@@ -291,5 +291,5 @@ final class MockEmailTestCases {
         }
     }
 
-    private MockEmailTestCases() {}
+    private EmailCaseRegistry() {}
 }

@@ -57,7 +57,7 @@
 
 ## 金额 SSOT（对外文案变量）
 
-对外文案金额变量**只认 `caseContext.*`**；`userProfile.repayment.*` 仅画像辅助，**不得**被 StepResolver 用作文案变量。
+对外文案金额变量**只认 `caseContext.*`**。（注：原 `userProfile.repayment.*` 仅画像辅助、禁用于文案，已于 **2026-06-18** 从 Phase 1 模型移除，见文末变更。）
 
 | 文案变量 | SSOT 字段 |
 |---|---|
@@ -70,9 +70,16 @@
 1. **PUSH device token 来源**：✅ 已决 → `device.jpushToken`（JPush RID），App → `t_user_equipment` → ProfileService。
 2. **`targetAddress` 由谁定**：✅ 已决 → **StepResolver** 从快照填入，Gateway/Adapter 不再取号。
 3. **手机号格式**：✅ 已决 → 快照统一 **E.164 `+63...`**；通知中心 `mobile` 可容错，Adapter 可再归一化。
-4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填；**结构保留**，PlanFactory/Guard 可能读取。
+4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填。**更新（2026-06-18，编排同事已授权）**：`repayment.*`（金额冗余）与 `risk.*`（编排策略不需要、PTP 履约率暂不计算）**Phase 1 移除**；`work.* / contacts.* / behavior.* / device.{deviceModel,osVersion,phoneValidity,viber/whatsapp}` 及 `basic` 人口属性 **结构保留、Phase 1 不填充（Phase 2 预留）**。
 
 ## 约定
 
 - 快照契约（本目录）由**我（主架构）维护**；任何字段增删先在此对齐再改 `collection-common`。
 - 样例 JSON 字段名 = Java 模型字段名（fastjson 默认）；注意 `isFirstLoan` 序列化为 `firstLoan`。
+
+## 变更记录
+
+| 日期 | 变更 | 说明 |
+|---|---|---|
+| 2026-06-18 | **移除 `UserProfile.repayment`（RepaymentInfo）与 `UserProfile.risk`（RiskScore）** | 编排同事已授权。理由：`repayment.*` 与 `caseContext` 金额冗余且禁用于文案；`risk.*` 编排策略不需要、PTP 履约率暂不计算；二者均无代码消费。`work / contacts / behavior / device 扩展维度` 与 `basic` 人口属性结构保留，Phase 1 不填充（Phase 2 预留）。样例 JSON 已同步移除两块。 |
+| 2026-06-18 | **`ContactHistory.ptpCount` / `ptpFulfilledCount` Phase 1 为 null** | 类型 `int`→`Integer`；Phase 1 不计算 PTP，返回 null（非 0），避免与「零承诺」混淆。样例 JSON 已同步为 null。 |

@@ -32,8 +32,7 @@
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [测试总览](./测试总览_Phase1.md) | 🟡 | 5 层测试地图(L0✅/L1✅/L2🟡/L3⬜/L4⬜) |
-| [测试矩阵 engine 阶段1](./测试矩阵_engine阶段1.md) | ✅ | 引擎纯逻辑单测清单(43 绿) |
+| [测试文档](./MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | Phase 1 测试 SSOT（v2）：5 层测试地图(L0✅/L1✅/L2🟡/L3⬜/L4⬜)、引擎纯逻辑单测清单(43 绿)、链路 × 层级矩阵 |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 

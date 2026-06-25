@@ -22,7 +22,7 @@ public class CaseInfo {
     private String caseStatus;
     private BigDecimal totalOutstanding;
     private LocalDate dueDate;
-    /** 实时还款状态：true 表示已结清（PreFlightChecker / PTP 处理使用）。 */
+    /** 实时还款状态：true 表示已结清（PreFlightChecker 使用）。 */
     private boolean repaid;
     /** 是否冻结（投诉冻结等）。 */
     private boolean frozen;

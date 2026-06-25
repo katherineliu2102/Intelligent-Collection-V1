@@ -10,12 +10,12 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
     case_id             BIGINT          NOT NULL COMMENT '关联案件ID',
     user_id             BIGINT          NOT NULL COMMENT '用户ID',
-    stage               VARCHAR(16)     NOT NULL COMMENT '催收阶段: S0/S1/S2/S3/S4/S4_PLUS',
+    stage               VARCHAR(16)     NOT NULL COMMENT '催收阶段: S0/S1/S2/S3/S4',
     plan_template_id    BIGINT          NULL     COMMENT '触达计划模板ID',
     status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
     current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
     total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/COMPLAINT/MANUAL/PTP_EXPIRED',
+    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/COMPLAINT/MANUAL（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键 case_id:stage:create_timestamp',
     renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Phase 1 未使用，预留',
@@ -96,17 +96,6 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     INDEX idx_plan (plan_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
 
--- 7.2.2 用户画像扩展表
-CREATE TABLE IF NOT EXISTS t_user_profile_ext (
-    id                      BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    user_id                 BIGINT          NOT NULL UNIQUE COMMENT '用户ID',
-    best_contact_hour       INT             NULL,
-    preferred_channel       VARCHAR(32)     NULL,
-    phone_validity          VARCHAR(16)     NULL DEFAULT 'UNKNOWN',
-    viber_registered        TINYINT(1)      NULL,
-    whatsapp_registered     TINYINT(1)      NULL,
-    sensitivity_tag         VARCHAR(32)     NULL,
-    ptp_fulfill_rate        DECIMAL(5,4)    NULL,
-    created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户画像扩展表';
+-- 7.2.2 用户画像扩展表 t_user_profile_ext：Phase 1 不建表，押后 Phase 2
+--   原因：Phase 1 无代码消费 / 无 mapper（MockProfileService 仅填 basic + device.jpushToken）。
+--   待数仓/号码检测供应商就绪或坐席标记上线再建，届时同步领域模型 §7.2.2。

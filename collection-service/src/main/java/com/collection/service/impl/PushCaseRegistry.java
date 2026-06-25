@@ -17,7 +17,7 @@ import java.util.Optional;
  *
  * <p>联调见功能测试指南 TC-PUSH-*。
  */
-final class MockPushTestCases {
+final class PushCaseRegistry {
 
     /** 联调用真实 JPush Registration ID（94200）。 */
     static final String PUSH_TEST_JPUSH_TOKEN = "1a0018970bf0c19de04";
@@ -80,6 +80,6 @@ final class MockPushTestCases {
         }
     }
 
-    private MockPushTestCases() {
+    private PushCaseRegistry() {
     }
 }
