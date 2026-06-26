@@ -104,10 +104,10 @@
 ## 6. 契约引用（不复制，按需 @）
 
 - 执行运行时契约（StepResult/StepCommand/观察期/空地址方案A）：`docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md`
-- 快照字段 / 取号口径：`docs/contracts/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md` + `ContextSnapshot.sample.json`
+- 快照字段 / 取号口径：`do../contracts/README_ContextSnapshot契约对齐.md` + `ContextSnapshot.sample.json`
 - SPI 实现约束 + 生命周期 E1–E8：`docs/contracts/README_编排同事对齐清单.md`
 - 渠道功能测试 `TC-*`、模板/合规/计划结构：`docs/channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md`
-- L4a 用例清单（8 条）：`docs/MOCASA催收系统升级_Phase1_测试文档.md` §L4a
+- L4a 用例清单（8 条）：`docs/testing/MOCASA催收系统升级_Phase1_测试文档.md` §L4a
 
 ---
 
@@ -199,3 +199,26 @@ channel:
 2. **A5 续建计数器同上**：重启后无法延续之前的续建次数。
 3. **A2 无放弃率/CONNECT_AND_STOP**：Phase 1 恒放行这两项规则，不影响 L4a 验收。
 4. **A1 未接模板表**：计划结构来自 YAML 静态配置，非动态；L4a 测试前需确认 YAML 模板已配。
+5. **`legacy-three-step` 步序已对齐文档**：SMS→PUSH→EMAIL（2026-06-25 修正，原 Mock 为 SMS→PUSH→SMS）。
+
+### 8.6 L4a 官方用例补齐（2026-06-25）
+
+| 组件 | 说明 |
+|---|---|
+| `L4aCaseRegistry` | case `94999` 三渠道 / `94801` Guard / `94804` REBUILD |
+| `channel.l4a.*` | `application-local.yml` 与 `ChannelProperties.L4a` 对齐 |
+| `GET /plans/by-case/{id}/history` | 断言 `cancelReason`（REPAID/STAGE_UPGRADE/CEASED） |
+| `POST /mock/ingest?legacyThreeStep=true` | L4a-1 单次 legacy 模式，不污染全局配置 |
+| `scripts/test/l4a-official-test.sh` | §L4a 官方 8 条 + Guard SKIPPED + REBUILD/ESCALATE |
+| `scripts/test/restart-and-l4a.sh` | **一键**：停服 → 编译 → 后台起 → 健康检查 → 上脚本 |
+| `scripts/dev/start-local.sh` / `stop-local.sh` | macOS/Linux 启停（同 `start-local.ps1`） |
+
+跑法：
+
+```bash
+./scripts/test/restart-and-l4a.sh              # 全量（含 mvn）
+./scripts/test/restart-and-l4a.sh --no-build   # 仅重启 + 测试
+./scripts/test/l4a-official-test.sh            # App 已运行时
+```
+
+08:00–21:00 PHT；L4a-6 观察期默认额外等待 ~90s。日志：`logs/run/l4a.last.log`、`logs/run/admin.log`。

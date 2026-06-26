@@ -79,7 +79,7 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 | `channel.compliance.*` | 合规 Guard | TC-GUARD-* |
 | `channel.debug.single-step` | 单渠道冒烟 | 各单渠道 TC |
 
-> 密钥不进 `.env`；发布见 `scripts/publish-channel-secrets-to-nacos.ps1`。Email **不要**每个模板一条配置项；`d-xxx` 写在 `channel.sendgrid.templates`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射)）。
+> 密钥不进 `.env`；发布见 `scripts/dev/publish-channel-secrets-to-nacos.ps1`。Email **不要**每个模板一条配置项；`d-xxx` 写在 `channel.sendgrid.templates`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射)）。
 
 ### 3.2 scriptSlot 与素材位置
 

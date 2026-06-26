@@ -25,6 +25,33 @@ public class MockProfileService implements ProfileService {
 
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
 
+        // L4a-1 三渠道合成 case（94999）
+        if (L4aCaseRegistry.isThreeChannel(userId)) {
+            basic.setName("l4a three channel");
+            basic.setPrimaryPhone(SmsCaseRegistry.PROD_MOBILE_A);
+            basic.setEmail(EmailCaseRegistry.TEST_EMAIL);
+            device.setJpushToken(PushCaseRegistry.PUSH_TEST_JPUSH_TOKEN);
+        }
+
+        // L4a Guard 频率：94805 两步 SMS（第二步 FREQUENCY_LIMIT）
+        if (L4aCaseRegistry.isGuardFrequency(userId)) {
+            basic.setName("l4a guard frequency");
+            basic.setPrimaryPhone(SmsCaseRegistry.TEST_MOBILE_VIRTUAL);
+        }
+
+        // L4a Guard block：无手机号/邮箱（94801）
+        if (L4aCaseRegistry.isGuardNoPhone(userId)) {
+            basic.setName("l4a guard no phone");
+            basic.setPrimaryPhone("");
+            basic.setEmail("");
+        }
+
+        // L4a REBUILD：正常邮箱，计划内用无效 templateId 触发 dispatch 失败（94804）
+        if (L4aCaseRegistry.isRebuildFail(userId)) {
+            basic.setName("l4a rebuild fail");
+            basic.setEmail(EmailCaseRegistry.TEST_EMAIL);
+        }
+
         // SMS 联调：94100–94102 指定手机号（见 SmsCaseRegistry）
         if (SmsCaseRegistry.isSmsTestCase(userId)) {
             SmsCaseRegistry.find(userId)
@@ -56,7 +83,7 @@ public class MockProfileService implements ProfileService {
                                 basic.setName(tc.displayName());
                                 basic.setEmail(tc.testEmail);
                             });
-        } else if (userId != 90005L) {
+        } else if (!L4aCaseRegistry.isL4aCase(userId) && userId != 90005L) {
             basic.setEmail("mock" + userId + "@mocasa.test");
         }
 

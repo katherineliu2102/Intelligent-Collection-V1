@@ -65,7 +65,7 @@
 | `overdue_days` | `caseContext.dpd` |
 | 罚息展示 | `caseContext.penaltyAmount` |
 
-## 开放问题（已定稿 2026-06-09，详见 [契约对齐回复](./MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) §6）
+## 开放问题（已定稿 2026-06-09，详见 [契约对齐回复](./README_ContextSnapshot契约对齐.md) §6）
 
 1. **PUSH device token 来源**：✅ 已决 → `device.jpushToken`（JPush RID），App → `t_user_equipment` → ProfileService。
 2. **`targetAddress` 由谁定**：✅ 已决 → **StepResolver** 从快照填入，Gateway/Adapter 不再取号。

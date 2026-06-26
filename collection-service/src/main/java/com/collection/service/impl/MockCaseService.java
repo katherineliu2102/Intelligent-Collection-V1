@@ -117,6 +117,11 @@ public class MockCaseService implements CaseService {
             return new MockCaseProfile(-3, Stage.S0, "ACTIVE", false, "STANDARD",
                     new BigDecimal("5000.00"), LocalDate.now().plusDays(3), null);
         }
+        if (L4aCaseRegistry.isL4aCase(caseId)) {
+            String slot = L4aCaseRegistry.isRebuildFail(caseId) ? "INVALID_L4A_REBUILD_SLOT" : null;
+            return new MockCaseProfile(1, Stage.S1, "OVERDUE", false, "STANDARD",
+                    new BigDecimal("5000.00"), LocalDate.now().minusDays(1), slot);
+        }
         Optional<MockCaseProfile> smsProfile = SmsCaseRegistry.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, null));

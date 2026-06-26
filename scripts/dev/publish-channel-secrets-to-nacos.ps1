@@ -1,11 +1,11 @@
 # 将渠道密钥发布到 Nacos intelligent-collection-local.yml（需 Nacos 写权限）
 # 用法：
 #   1. 在 deploy/nacos/nacos-publish.local.yml 填写 channel.sendgrid / channel.notification 密钥
-#   2. .\scripts\publish-channel-secrets-to-nacos.ps1
+#   2. .\scripts\dev\publish-channel-secrets-to-nacos.ps1
 # 或从环境变量注入（CI/运维）：
-#   $env:SENDGRID_API_KEY=...; $env:SENDGRID_FROM_EMAIL=...; $env:NOTIFICATION_APP_KEY=...; .\scripts\publish-channel-secrets-to-nacos.ps1
+#   $env:SENDGRID_API_KEY=...; $env:SENDGRID_FROM_EMAIL=...; $env:NOTIFICATION_APP_KEY=...; .\scripts\dev\publish-channel-secrets-to-nacos.ps1
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 Get-Content ".env" | ForEach-Object {

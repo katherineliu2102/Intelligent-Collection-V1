@@ -1,8 +1,8 @@
 # Phase 1 Email E2E (5 emails, original caseIds)
-# Usage: .\scripts\run-email-e2e.ps1
+# Usage: .\scripts\test\run-email-e2e.ps1
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 function Load-DotEnv {
@@ -38,7 +38,7 @@ function Get-DbEnvFromNacos {
 function Test-Database {
     $env:DB_HOST = $DbHost; $env:DB_PORT = $DbPort; $env:DB_NAME = $DbName
     $env:DB_USER = $DbUser; $env:DB_PASS = $DbPass
-    python (Join-Path $root "scripts\_db_ping.py")
+    python (Join-Path $root "scripts\dev\db-ping.py")
     return ($LASTEXITCODE -eq 0)
 }
 

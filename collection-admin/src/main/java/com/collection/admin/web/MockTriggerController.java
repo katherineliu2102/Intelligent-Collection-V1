@@ -392,8 +392,19 @@ public class MockTriggerController {
     @PostMapping("/ingest")
     public Map<String, Object> ingest(@RequestParam Long caseId,
                                       @RequestParam(required = false) Long userId,
-                                      @RequestParam(required = false) Stage stage) {
-        ingestionService.ingestCase(caseId, userId, stage);
+                                      @RequestParam(required = false) Stage stage,
+                                      @RequestParam(required = false) Boolean legacyThreeStep) {
+        boolean prevLegacy = channelProperties.getDebug().isLegacyThreeStep();
+        if (legacyThreeStep != null) {
+            channelProperties.getDebug().setLegacyThreeStep(legacyThreeStep);
+        }
+        try {
+            ingestionService.ingestCase(caseId, userId, stage);
+        } finally {
+            if (legacyThreeStep != null) {
+                channelProperties.getDebug().setLegacyThreeStep(prevLegacy);
+            }
+        }
         return ok("CASE_INGESTED published, caseId=" + caseId);
     }
 

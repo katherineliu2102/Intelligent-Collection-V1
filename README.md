@@ -103,9 +103,9 @@ curl -X POST "http://localhost:8080/webhook/channel-callback?planId=1&stepId=3&r
 |---|---|
 | `collection-*/` | 6 个业务模块（见 §2） |
 | `deploy/` | Docker / 启动脚本 / Nacos 配置模板（部署相关全在此）；`deploy/secrets/` 放本地密钥（已忽略） |
-| `scripts/` | 本地联调辅助脚本（冒烟 / 环境校验 / 密钥发布） |
+| `scripts/` | 本地联调脚本：[`scripts/README.md`](./scripts/README.md)（`dev/` 启停 · `test/` E2E） |
 | `db/` | `schema.sql` / `mock-data.sql` / 测试 seed |
-| `docs/` | 全部规格与协作文档，入口 [`docs/README.md`](./docs/README.md)；新增 `architecture/` `api/` `testing/` 给后续同学 |
+| `docs/` | 全部规格与协作文档，入口 [`docs/README.md`](./docs/README.md)；测试 SSOT 在 `docs/testing/` |
 | `.github/` | CI 工作流 + PR 模板 |
 
 ---

@@ -11,7 +11,7 @@
 | 角色 | 从这里开始 |
 |------|-----------|
 | 开发 | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) → [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) |
-| 策略 / 运营 | [策略迭代与测试操作手册](../MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)（docs 根） |
+| 策略 / 运营 | [策略迭代与测试操作手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) |
 | QA | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
 | 模板 / 运营 | [渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) → [email-templates/](../email-templates/)（docs 根） |
 | 本地启动 | [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)（docs 根） |

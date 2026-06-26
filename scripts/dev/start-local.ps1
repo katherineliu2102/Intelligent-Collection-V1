@@ -1,8 +1,8 @@
 # 本地启动 collection-admin（PowerShell）
-# 用法：在项目根目录执行  .\scripts\start-local.ps1
+# 用法：在项目根目录执行  .\scripts\dev\start-local.ps1
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 $envFile = Join-Path $root ".env"

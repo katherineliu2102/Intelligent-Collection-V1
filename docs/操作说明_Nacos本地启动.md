@@ -64,7 +64,7 @@ NACOS_PASSWORD=
 APP_PORT=8080
 ```
 
-渠道密钥首次部署：复制 `deploy/nacos/nacos-publish.local.yml.example` → `deploy/nacos/nacos-publish.local.yml` 填密钥后执行 `scripts/publish-channel-secrets-to-nacos.ps1`，或在 Nacos 控制台手动合并 `channel` 段。
+渠道密钥首次部署：复制 `deploy/nacos/nacos-publish.local.yml.example` → `deploy/nacos/nacos-publish.local.yml` 填密钥后执行 `scripts/dev/publish-channel-secrets-to-nacos.ps1`，或在 Nacos 控制台手动合并 `channel` 段。
 
 `.env` 仅用于本地运行，不要提交到 Git。
 
@@ -93,7 +93,25 @@ mvn -pl collection-admin -am clean package -DskipTests
 
 预期最后一行：`BUILD SUCCESS`。
 
-### 4.3 启动（Windows 推荐脚本）
+### 4.3 启动
+
+**macOS / Linux（推荐）**
+
+```bash
+cd Intelligent-Collection-V1
+
+# 前台启动（日志在终端，Ctrl+C 停止）
+./scripts/dev/start-local.sh
+
+# 后台启动
+./scripts/dev/start-local.sh --detach
+tail -f logs/run/admin.log
+
+# 停止
+./scripts/dev/stop-local.sh
+```
+
+**Windows（PowerShell）**
 
 ```powershell
 cd Intelligent-Collection-V1
@@ -101,6 +119,15 @@ cd Intelligent-Collection-V1
 ```
 
 脚本会：加载 `.env` → 修正 Nacos 地址格式 → 从 Nacos 拉取 JDBC 并注入 → 启动 **8888** 端口。
+
+**手动启动（macOS，与当前终端习惯一致）**
+
+```bash
+cd Intelligent-Collection-V1
+set -a && source .env && set +a
+# 若 NACOS_SERVER_ADDR 含 http:// 或 /nacos，先 strip（见 start-local.sh）
+java -jar collection-admin/target/collection-admin.jar
+```
 
 **手动启动（PowerShell）**：
 
@@ -147,11 +174,13 @@ Invoke-RestMethod -Uri "http://localhost:8888/plans/timeline/91000?limit=10"
 | 现象 | 原因 | 处理 |
 |------|------|------|
 | `illegal dataId` | `NACOS_SERVER_ADDR` 含 `http://` 或 `/nacos` | 改为 `host:port` |
-| `Failed to configure a DataSource` | Nacos ConfigData 未拉到 `intelligent-collection-local.yml` | 用 `scripts/start-local.ps1`（自动注入 JDBC） |
+| `Failed to configure a DataSource` | Nacos ConfigData 未拉到 `intelligent-collection-local.yml` | 用 `scripts/dev/start-local.ps1`（自动注入 JDBC） |
 | plan 一直 PENDING、timeline 0 条 | MyBatis 未开驼峰映射，`planId` 为 null | 确认 `application-local.yml` 含 `mybatis.configuration.map-underscore-to-camel-case: true` |
 | 端口不对 | 本地 profile 覆盖为 8888 | 用 `8888` 而非 8080 |
 
 ## 5. Java 命令启动（Git Bash / Linux）
+
+等价于 `./scripts/dev/start-local.sh`（推荐直接用脚本）。
 
 先进入项目根目录，编译代码：
 
@@ -162,14 +191,30 @@ mvn -pl collection-admin -am clean package -DskipTests
 再通过环境变量启动应用：
 
 ```bash
-export $(grep -v '^#' .env | xargs)
-# 去掉 NACOS 地址中的 http:// 和 /nacos
+set -a && source .env && set +a
 export NACOS_SERVER_ADDR="${NACOS_SERVER_ADDR#http://}"
 export NACOS_SERVER_ADDR="${NACOS_SERVER_ADDR#https://}"
 export NACOS_SERVER_ADDR="${NACOS_SERVER_ADDR%/nacos}"
 
 java -jar collection-admin/target/collection-admin.jar
 ```
+
+### 5.1 重启 + L4a 官方测试（一键）
+
+```bash
+cd Intelligent-Collection-V1
+./scripts/test/restart-and-l4a.sh
+```
+
+流程：`stop-local.sh` → `mvn package` → `start-local.sh --detach` → `wait-health.sh` → `l4a-official-test.sh`。
+
+| 变体 | 命令 |
+|------|------|
+| 跳过编译（jar 已是最新） | `./scripts/test/restart-and-l4a.sh --no-build` |
+| 仅重启 App | `./scripts/dev/stop-local.sh && ./scripts/dev/start-local.sh --detach` |
+| App 已在跑，只测 L4a | `./scripts/test/l4a-official-test.sh` |
+
+测试报告：`logs/run/l4a.last.log`；App 日志：`logs/run/admin.log`。
 
 ## 6. Docker 启动
 

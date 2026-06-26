@@ -1,6 +1,6 @@
 # 环境确认脚本（不启动常驻服务时可用于一次性冒烟）
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
+$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 Write-Host "=== 1. 加载 .env ==="
@@ -38,7 +38,7 @@ $hasNotifKey = $yaml -match '(?m)notification:\s*\n\s*app-key:\s*\S+'
 if ($hasSgKey -and $hasNotifKey) {
     Write-Host "channel.sendgrid.api-key + channel.notification.app-key OK"
 } else {
-    Write-Warning "Nacos 缺少渠道密钥：请在控制台合并 deploy/nacos/nacos-publish.local.yml 的 channel 段，或运行 scripts/publish-channel-secrets-to-nacos.ps1"
+    Write-Warning "Nacos 缺少渠道密钥：请在控制台合并 deploy/nacos/nacos-publish.local.yml 的 channel 段，或运行 scripts/dev/publish-channel-secrets-to-nacos.ps1"
 }
 
 Write-Host "`n=== 4. 启动应用（后台 90s 冒烟）==="

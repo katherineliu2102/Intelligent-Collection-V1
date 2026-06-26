@@ -3,9 +3,9 @@
 #
 # 前置：服务已启动（8888），.env 已填，DB 可连。
 # 用法：
-#   ./scripts/smoke-level-a.sh direct          # 仅直连 /mock/send-*（快，验文案+通知中心）
-#   ./scripts/smoke-level-a.sh ingest          # 全链路 ingest + 等扫描（慢，验引擎+DB）
-#   ./scripts/smoke-level-a.sh all             # 两者都跑
+#   ./scripts/test/smoke-level-a.sh direct          # 仅直连 /mock/send-*（快，验文案+通知中心）
+#   ./scripts/test/smoke-level-a.sh ingest          # 全链路 ingest + 等扫描（慢，验引擎+DB）
+#   ./scripts/test/smoke-level-a.sh all             # 两者都跑
 
 set -euo pipefail
 
