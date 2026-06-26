@@ -137,7 +137,7 @@ channel:
     app-key: <运维下发>
 ```
 
-发布：`scripts/publish-channel-secrets-to-nacos.ps1`（需 Nacos 写权限）或控制台手动合并。
+发布：`scripts/dev/publish-channel-secrets-to-nacos.ps1`（需 Nacos 写权限）或控制台手动合并。
 
 **scriptSlot → d-xxx**（Nacos / `application-local.yml`，**Phase 1 仅 5 项**）：
 

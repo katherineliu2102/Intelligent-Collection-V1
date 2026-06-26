@@ -87,7 +87,7 @@ mvn -pl collection-admin -am test -Dgroups=integration
 | **L1** | 引擎全链路内存集成 | 同步内存总线 + 内存仓储 + 真实引擎组件 | 否 | 主架构 | ✅ | `collection-engine/.../integration/FullChainIntegrationTest` |
 | **L2** | 引擎↔编排执行契约 | 编码契约替身（StepResolver/Guard/Gateway）+ 真实引擎 | 否 | 主架构 + 编排同事 | 🟡 骨架绿 | `collection-engine/.../integration/ChannelContractL2Test`（C1–C7） |
 | **L3** | 数据落库集成 | MyBatis + MySQL/Testcontainers | 是 | 服务同事 + 主架构 | ⬜ 待环境 | `collection-admin` `@SpringBootTest @Tag("integration")`（待建） |
-| **L4a** | 端到端（mock 数据源 + 真实渠道） | 全模块装配 + Nacos + `MockTriggerController`/`/mock/*` + `*CaseRegistry` 合成案件 + **真实供应商** | 是 | 主架构 + 编排同事 | 🟡 薄可跑（A3/A6 真实；A1/A2/A4/A5 Mock→L4a-薄） | **§L4a 用例清单**（L4a-1…8）+ `POST /mock/*` 驱动 + 渠道指南 `TC-*` |
+| **L4a** | 端到端（mock 数据源 + 真实渠道） | 全模块装配 + Nacos + `MockTriggerController`/`/mock/*` + `*CaseRegistry` 合成案件 + **真实供应商** | 是 | 主架构 + 编排同事 | 🟢 **L4a-全可跑**（A1–A6 临时 `Default*`@Primary，见 §L4a.0） | **§L4a 用例清单**（L4a-1…8 + Guard/REBUILD）+ `scripts/test/l4a-official-test.sh` |
 | **L4b** | 端到端（真实数据源 + 真实渠道） | L4a 基础上换数据源：真实 GCP PubSub（B1 `IngestionService`）+ 真实旧库（`RealCaseService`/`t_collection`）+ DPD 日切（B2 `DpdStageRollHandler`）+ L3 落库 | 是 | 全员 | ⬜ 待 B1/B2 真实化 + L3 环境 | **§L4b 用例清单**（L4b-1…8）+ 真实 ingestion + 渠道指南 `TC-*` |
 
 > **L4 拆分依据**：端到端有两个独立变量——「数据源」（mock ingest ↔ 真实 PubSub/旧库）与「渠道触达」（mock ↔ 真实供应商）。**L4a 先固定数据源为合成案件、只放开真实渠道**，用 `*CaseRegistry`（内置测试号/邮箱：`wzynju@126.com`、94101–94103 真号、94200 真 JPush token）跑通整条触达链路；**L4b 仅替换数据源**接真实 ingestion。L4a 是 L4b 的前置门禁，避免双变量叠加导致定位困难。
@@ -127,7 +127,7 @@ mvn -pl collection-admin -am test -Dgroups=integration
 | 渠道发送/回调 | admin 收 Webhook → 发 `CHANNEL_CALLBACK` | ✅ 供应商对接 + 回调载荷 | **CHANNEL_CALLBACK payload**（result/providerMsgId）→ 映射 ContactResult |
 | 落库映射 | ✅ Mapper/DDL（service/admin） | 读 `t_contact_plan_step`（SPI 取号） | `context_snapshot` JSON 往返、字段映射 |
 
-> **协作断言点 = 契约对齐基线**：`ChannelContractL2Test`（C1–C7）即为双方对接的**验收基线**——编排同事真实化 SPI/Gateway 后，契约语义一致则「对接即绿」。契约定稿见 [`引擎渠道执行契约对齐_待编排确认.md`](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)；快照字段契约见 [`ContextSnapshot契约对齐_re.md`](../contracts/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md)；生命周期 E1–E8 见 [`README_编排同事对齐清单.md`](../contracts/README_编排同事对齐清单.md)。
+> **协作断言点 = 契约对齐基线**：`ChannelContractL2Test`（C1–C7）即为双方对接的**验收基线**——编排同事真实化 SPI/Gateway 后，契约语义一致则「对接即绿」。契约定稿见 [`引擎渠道执行契约对齐_待编排确认.md`](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)；快照字段契约见 [`ContextSnapshot契约对齐_re.md`](../contracts/README_ContextSnapshot契约对齐.md)；生命周期 E1–E8 见 [`README_编排同事对齐清单.md`](../contracts/README_编排同事对齐清单.md)。
 
 ---
 
@@ -1147,7 +1147,7 @@ void caseCeasedCancelsActivePlan() {
 | **[退避]** | 重试递增与封顶 | L0 #28（base×factor³=240s）/#29（封顶取上限）；L2 C4 | ✅ |
 | **[SPI 硬超时]** | `Future.get(timeoutMs)` 截断 + 异常透传 + MDC 传递 | L0 `SpiInvokerTest`（超时/透传/正常/MDC/直连，5 例） | ✅ |
 | **[并发]** | 同计划并发事件串行化（行锁）、竞态时序 | ⬜ 无（内存总线同步 drain，无真实并发）；规格称「完整竞态由集成测试保证」 | ⬜ Phase 1 应补（L3 连库并发） |
-| **[跨存储一致性]** | 外部已发未记录 / 内部已写事件未发 / 事件已消费业务未执行 → 对账修复 | ⬜ 无（§5.2 对账清理器/重发/处理中标记未验证） | ⏭ Phase 2（运维兜底） |
+| **[跨存储一致性]** | 外部已发未记录 / 内部已写事件未发 / 事件已消费业务未执行 → 对账修复；**续建崩溃搁浅（G1/D30）**→终态写最后+原子；**毒消息无限重投（G2/D31）**→max_delivery_count→DLQ；**step=EXECUTING 滞留（G3/D32）**→reaper 扫描兜底 | ⬜ 无（§10.6 G1/G2/G3 + 原 3 模式均未验证） | ⏭ Phase 2 / L5（混沌/故障注入） |
 
 ---
 
@@ -1179,32 +1179,37 @@ void caseCeasedCancelsActivePlan() {
 > **范围**：本节只补**测试文档 + curl/脚本**，**不改引擎/渠道生产代码**；不连真实旧库/PubSub（那是 §1 L4b）。真发优先 `testSend` / `126` 邮箱；Gmail 单独标注 DMARC 风险。
 > **被 §1 L4a 行 / §9 矩阵 L4a 列引用**（见各处 `见 §L4a-n`）。
 
-### L4a.0 运行时装配确认（跑前必读，与「已核对事实」一致）
+### L4a.0 运行时装配确认（2026-06-25 更新：主架构临时 `Default*`）
 
-| SPI / 组件 | bean | 真实/Mock | L4a 行为 | 薄/全 影响 |
+| SPI / 组件 | bean | 真实/Mock | L4a 行为 | 备注 |
 |---|---|---|---|---|
-| A1 `PlanFactory` | `MockPlanFactory` | **Mock** | 默认 `PUSH→EMAIL`；`channel.debug.single-step`=单步 / `legacy-three-step`=`SMS→PUSH→EMAIL` 可切 | 计划结构非真实模板/步序/观察期 → **本层不验真实计划结构** |
-| A2 `ExecutionGuard` | `MockExecutionGuard` | **Mock** | 恒 `allow` | 不触发合规拦截 → **本层不验 block→SKIPPED / 频率/时段** |
-| A3 `StepResolver` | `DefaultStepResolver` | **真实** | 真实取址（CaseRegistry）/模板/scriptSlot/metadata（含 `fallback_sms`） | ✅ 取号口径、scriptSlot、fallback 真实 |
-| A4 `AdvancementPolicy` | `MockAdvancementPolicy` | **Mock** | 末步 → `PLAN_COMPLETED` | 不验真实推进/升档决策 |
-| A5 `ExhaustionPolicy` | `MockExhaustionPolicy` | **Mock** | 恒 `COMPLETE` | 不验 REBUILD/ESCALATE 穷尽决策 |
-| A6 `ChannelGateway` | `ChannelGatewayImpl`@Primary | **真实** | 真实 SendGrid Email + 通知中心 SMS/PUSH adapter（发送/熔断/fallback/对账） | ✅ 真实投递 + `providerMsgId` + 无 token→SMS fallback |
+| A1 `PlanFactory` | **`DefaultPlanFactory`**@Primary | **临时真实** | `channel.plan-templates` 配置驱动；`legacy-three-step`=`SMS→PUSH→EMAIL`；`94102`/`94801`/`94804` 专用步序 | 编排同事回来后 review 替换 |
+| A2 `ExecutionGuard` | **`ConfigurableExecutionGuard`**@Primary | **临时真实** | PHT 静默时段 + 空地址 + 内存频率计数 | 生产需 Redis Lua |
+| A3 `StepResolver` | `DefaultStepResolver` | **真实** | 取址/scriptSlot/fallback | ✅ |
+| A4 `AdvancementPolicy` | **`DefaultAdvancementPolicy`**@Primary | **临时真实** | 非末步→推进；末步成功→COMPLETED；末步失败→EXHAUSTED | 简化版 |
+| A5 `ExhaustionPolicy` | **`DefaultExhaustionPolicy`**@Primary | **临时真实** | 内存续建计数 + Stage 升档 | `engine.plan.max-rebuild-count=2` |
+| A6 `ChannelGateway` | `ChannelGatewayImpl`@Primary | **真实** | SendGrid + 通知中心 adapter | ✅ |
 
-> **入口**：`MockTriggerController`，base = `http://localhost:{{PORT}}/mock`，5 端点：`/ingest`（CASE_INGESTED）、`/repayment`（REPAYMENT_RECEIVED）、`/stage-changed`（STAGE_CHANGED）、`/case-ceased`（CASE_CEASED）、`/ptp-expired`（PTP_EXPIRED，⏭ Phase 2 不验，仅入口存在）。内存总线同步驱动，不连库；到期步骤由 admin 调度扫描器/`delay=0` 即刻驱动。
+> **入口**：`MockTriggerController` base=`/mock`；`/ingest` 支持 `legacyThreeStep=true` 查询参数（单次请求，不污染全局配置）。**断言 API**：`GET /plans/by-case/{caseId}/history`（含 `cancelReason`）、`GET /plans/{planId}/steps`。
 
 ### L4a.1 入场 checklist（逐项打钩再发）
 
 - [ ] **App 起 + Nacos ok**：启动 `collection-admin`（含全模块装配），`/actuator/health` UP，Nacos 配置中心/注册中心连通、无 fail-fast。
 - [ ] **供应商 key 就绪**：SendGrid API key、通知中心 SMS/PUSH 凭证已配置；**默认走 `testSend` / sync 测试模式**（`NotificationSmsAdapter` testMode 命中 testSend 且不签名、`NotificationPushAdapter` sync 模式）；切正式发送前确认额度与签名。
-- [ ] **确认 A3/A6 真实 bean**：`/actuator/beans` 或启动日志确认 `DefaultStepResolver`、`ChannelGatewayImpl`(@Primary) 已装配，且 A1/A2/A4/A5 为 `Mock*`（避免误用替身/真实混装）。
+- [ ] **确认 A1–A6 装配**：`/actuator/beans` 或启动日志确认 `DefaultPlanFactory` / `ConfigurableExecutionGuard` / `DefaultAdvancementPolicy` / `DefaultExhaustionPolicy`（@Primary）+ `DefaultStepResolver` + `ChannelGatewayImpl`。
+- [ ] **L4a 专用 case 就绪**：`94999`（三渠道）、`94801`（Guard）、`94804`（REBUILD）；`channel.l4a.*` 与 `application-local.yml` 对齐。
 - [ ] **限频 ≥1s**：相邻 curl 间隔 ≥1s，规避通知中心/SendGrid 限频与去重导致的误判；多用例串跑加 `sleep 1`。
-- [ ] **计划模式按用例设置**：默认 `PUSH→EMAIL`；L4a-1 需 `channel.debug.legacy-three-step`（SMS→PUSH→EMAIL）；单渠道验证可用 `channel.debug.single-step`。
+- [ ] **计划模式按用例设置**：L4a-1 用 `POST /ingest?...&legacyThreeStep=true`（或 `channel.debug.legacy-three-step=true`）；L4a-6 依赖 `94102` + `channel.l4a.observation-minutes>0`。
 - [ ] **CaseRegistry 真址核对**：被测 caseId 在 registry 的渠道地址为预期真号/邮箱（见 L4a.2），`123456`/虚拟号不真发。
 
 ### L4a.2 CaseRegistry 速查（真实触达地址）
 
 | 渠道 | caseId | 真实地址 / token | 备注 |
 |---|---|---|---|
+| **合成** | **94999** | SMS=`639451374358` + JPush=`1a0018970bf0c19de04` + EMAIL=`wzynju@126.com` | **L4a-1 三渠道**（`L4aCaseRegistry`） |
+| **Guard** | **94801** | 无 phone/email | L4a-全 NO_PHONE→SKIPPED |
+| **Guard** | **94805** | 虚拟号 + 两步 SMS | L4a-全 FREQUENCY 第二步 SKIPPED |
+| **Exhaustion** | **94804** | EMAIL=126 + 无效 `emailScriptSlot` | L4a-全 REBUILD/ESCALATE |
 | SMS | 94101 | `639451374358` | 真号 |
 | SMS | 94102 | `9451373897` | 真号 |
 | SMS | 94103 | `639153239069` | 真号 |
@@ -1218,28 +1223,41 @@ void caseCeasedCancelsActivePlan() {
 
 - **(a) 真实终端收到**：手机收 SMS / 设备收 JPush 通知 / 邮箱（126 或 Gmail）收信；虚拟号（94100）/`testSend` 模式只验链路不验真投。
 - **(b) 返回体 / 日志锚点**：`providerMsgId` + `result`（DELIVERED/FAILED…）+ `scriptSlot`（A3 真实解析）；fallback 场景另看 `metadata.fallback_sms`。
-- **(c) plan / step 终态**：日志关键字 `[execStep]` / `[advance]` / `[callback]`，或 `PlanQueryController` 查询 plan/step 状态与 `cancelReason`。
+- **(c) plan / step 终态**：`GET /plans/by-case/{caseId}/history` 查 `cancelReason`；`GET /plans/{planId}/steps` 查 `SKIPPED`/`STEP_WAITING`；或日志 `[execStep]`/`[advance]`/`[exhausted]`。
 
-### L4a.4 薄/全 边界标注（当前 A1/A2/A4/A5 = Mock）
+### L4a.4 薄/全 边界标注（2026-06-25：已切临时 `Default*`，本层按 **L4a-全** 验收）
 
-> 本层为 **L4a-薄**：因 A1/A2/A4/A5 仍 Mock，**不验真实模板结构 / 合规拦截 / 升档与穷尽决策**。待对应 SPI 切 `Default*` 后，相关用例升级为 **L4a-全**：
-> - **A1 → `DefaultPlanFactory`**：真实计划结构（步序/模板/语气/观察期）→ L4a-1/4/6/8 转「全」（叠加 `TC-PLAN-STRUCT-*`）。
-> - **A2 → `DefaultExecutionGuard`**：合规拦截 `block→SKIPPED`（频率/时段/放弃率/空地址 rule 真值）→ 新增合规用例，转「全」（叠加 `TC-GUARD-*`/`TC-EMAIL-02`/`TC-PUSH-02`）。
-> - **A4 → `DefaultAdvancementPolicy`**：真实推进/升档决策（ADVANCE_NEXT/ESCALATE）→ L4a-4 升档转「全」。
-> - **A5 → `DefaultExhaustionPolicy`**：REBUILD/ESCALATE 穷尽决策 → 续建/升档用例转「全」。
+> 主架构代写 `@Primary` 实现（见 [`L4a 编排同事补全清单`](./MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) §8）。历史 channel 对齐纪要见 [`_archive/L4a_对齐纪要_20260622.md`](./_archive/L4a_对齐纪要_20260622.md)。**已知简化**：A2 无 Redis/放弃率；A4 不细分 contactResult；A5 续建计数内存版。编排同事 review 后替换为生产实现。
+>
+> **L4a-全 补充用例**（官方 8 条之外，脚本一并覆盖）：
+> - **Guard block**：case `94801` → `NO_PHONE`→SKIPPED；case `94805` → 同 plan 第二步 SMS → `FREQUENCY_LIMIT`→SKIPPED
+> - **REBUILD/ESCALATE**：case `94804` → 无效 scriptSlot → 末步 FAILED → 穷尽链（日志 `[exhausted] REBUILD/ESCALATE`）
+
+### L4a.4.1 自动化 vs 人工（2026-06-25）
+
+| 类别 | 项 | 脚本/代码 | 状态 |
+|------|-----|-----------|------|
+| 官方 8 条 | L4a-1…8 | `l4a-official-test.sh` | 可自动化（需 App+Nacos+08–21 PHT） |
+| L4a-全 | NO_PHONE / FREQUENCY / REBUILD | 同上 `guard`/`rebuild` 段 | 可自动化 |
+| 人工 (a) | 手机/126/Gmail 真收到 | — | **必人工** 查终端 |
+| 外链 | `TC-PLAN-STRUCT-*` / 部分 `TC-GUARD-*` | 渠道指南 | 与 L4a 重叠，非阻塞 |
+| 范围外 | Voice/AI_CALL `TC-VOICE-*` | — | L4b/L4 链路④，L4a 不测 |
+| 环境 | `TIME_WINDOW` 静默时段 | — | **21:00–08:00 PHT 勿跑** |
+
+补跑单条：`L4A_ONLY=6 ./scripts/test/l4a-official-test.sh`；全量重启：`./scripts/test/restart-and-l4a.sh`。
 
 ### L4a.5 用例清单
 
-> caseId 取自 L4a.2 registry。「依赖(Mock限制)」列标注本条**真实验证到哪一层**与受 Mock 影响的盲区。终态依 A4 mock「末步→`PLAN_COMPLETED`」。
+> caseId 见 L4a.2。「依赖」列标注临时 `Default*` 简化盲区。终态依 `DefaultAdvancementPolicy`。
 
 | 编号 | 场景 | 触发端点 & 参数 | caseId | 期望真实触达 | 引擎终态 | 断言点 | 依赖（Mock限制） |
 |---|---|---|---|---|---|---|---|
-| **L4a-1** | 三渠道/计划顺序完成（`legacy-three-step`：SMS→PUSH→EMAIL） | `POST /ingest`{caseId, stage:S1}（先置 `channel.debug.legacy-three-step`） | 合成 case（registry 同时配 SMS=`639451374358` / JPush=`1a0018970bf0c19de04` / EMAIL=`wzynju@126.com`） | 手机收 SMS + 设备收 JPush + 126 收信，**依序** | 三步 STEP_COMPLETED → **PLAN_COMPLETED** | (a) 三终端均收到；(b) 每步 `providerMsgId`+`result=DELIVERED`+`scriptSlot`；(c) `[execStep]`×3 + `[advance]`×2 + `PLAN_COMPLETED`（PlanQueryController） | **薄**：A1 mock 步序非真实模板结构；A2 allow（不验合规）；A4 末步→COMPLETED（不验真实升档）→ 待 A1/A4 转「全」 |
+| **L4a-1** | 三渠道/计划顺序完成（`legacy-three-step`：SMS→PUSH→EMAIL） | `POST /ingest?caseId=94999&legacyThreeStep=true&stage=S1` | **94999**（三渠道合成） | 手机收 SMS + 设备收 JPush + 126 收信，**依序** | 三步 COMPLETED → **PLAN_COMPLETED** | (a) 三终端；(b) 三步 `providerMsgId`；(c) timeline 含 SMS/PUSH/EMAIL | **全**：A1 配置步序 + legacy 参数 |
 | **L4a-2** | PUSH 无 token → SMS fallback | `POST /ingest`{caseId:94201, stage:S1}（计划含 PUSH 步；single-step 或默认） | 94201（无 token，fallback SMS=`9451373897`） | `9451373897` 收到 SMS（PUSH 降级） | 该步 STEP_COMPLETED → PLAN_COMPLETED | (a) fallback 手机收 SMS；(b) `providerMsgId` 为 SMS 通道 + `metadata.fallback_sms`；(c) `[execStep]` 标 fallback、step COMPLETED | **偏全**：fallback 由 A3 真实 resolver(`fallback_sms`)+A6 真实 adapter(`noTokenFallbackToSms`) 实现；A4 mock 末步COMPLETED |
 | **L4a-3** | 还款中途 → 计划取消 | `POST /ingest`{caseId, S1} 建计划 →（步间）`POST /repayment`{caseId} | 94101 | 还款前已发步骤真实触达；还款后剩余步骤**不再发** | **PLAN_CANCELLED(REPAID)** | (a) 还款后无新触达；(c) plan `PLAN_CANCELLED` + `cancelReason=REPAID`（PlanQueryController / `[advance]` 日志） | **偏全**：`onRepaymentReceived` 引擎真实，不依赖 A4/A5 |
 | **L4a-4** | STAGE_CHANGED → 旧取消 + 新建 | `POST /ingest`{caseId, S1} → `POST /stage-changed`{caseId, stage:S2} | 94101 | 新阶段计划首步真实触达（视计划 SMS/126） | 旧 **PLAN_CANCELLED(STAGE_UPGRADE)** + 新阶段计划 PENDING→执行 | (c) 旧 plan `PLAN_CANCELLED/STAGE_UPGRADE`、新 plan `stage=S2`；(a) 新计划首步触达 | **半薄**：取消引擎真实；新计划结构由 A1 mock（非真实升档步序）→ 待 A1/A4 转「全」 |
 | **L4a-5** | CASE_CEASED → 取消不重建 | `POST /ingest`{caseId, S1} → `POST /case-ceased`{caseId} | 94101 | ceased 后**无新触达** | **PLAN_CANCELLED(CEASED)**，不再建计划 | (c) plan `PLAN_CANCELLED/CEASED`，后续无新 plan；(a) 无新触达 | **偏全**：`onCaseCeased` 引擎真实（`CancelReason.CEASED`），不依赖 A4/A5 |
-| **L4a-6** | 消息类观察期结转（observation>0） | `POST /ingest`{caseId, S1}（计划含 SMS 步 `observationMinutes>0`） | 94102（SMS=`9451373897`） | SMS 真发，进 STEP_WAITING；观察期到期结转 | 观察期到期 → step COMPLETED → PLAN_COMPLETED | (c) step 先 `STEP_WAITING` 后 `COMPLETED`（`[execStep] WAITING`→`[advance]`）；best_result 缺省→`SENT_NO_RESPONSE`；(a) SMS 真发 | **薄**：`observationMinutes` 由 A1 mock 计划提供（需配 obs>0）；结转引擎真实 → 待 A1 转「全」 |
+| **L4a-6** | 消息类观察期结转（observation>0） | `POST /ingest?caseId=94102&stage=S1` | 94102 | SMS 真发 → **STEP_WAITING** → 观察期到期 | step COMPLETED → PLAN_COMPLETED | (c) `/history` 见 `STEP_WAITING` 再 COMPLETED；(a) SMS 真发 | **全**：A1 对 94102 单步 SMS + `channel.l4a.observation-minutes=1` |
 | **L4a-7** | 重复 ingest 同 case+stage 幂等 | `POST /ingest`{caseId:92001, S1} ×2（间隔≥1s） | 92001（EMAIL=126） | **仅一轮**真实触达（不重复发） | 仅一个活跃计划；第二次幂等跳过 | (c) PlanQueryController 仅 1 plan；第二次日志「单活跃计划幂等跳过」，`planFactory.create`/`savePlan` 不再调；(a) 邮箱仅收一封 | **偏全**：单活跃计划约束（`caseId+stage` 唯一）引擎真实，不依赖 A2/A4/A5 |
 | **L4a-8** | Email scriptSlot×stage 跨服务商（126 vs Gmail） | `POST /ingest`{caseId, stage∈{S0,S1,S2}} 多次 | 92001/93xxx(→126) **vs** 95xxx(→Gmail) | 126 与 Gmail 各收信；不同 stage 内容/scriptSlot 不同 | 各 PLAN_COMPLETED | (b) `scriptSlot` 随 stage 变化（`deriveSlot`：S0 byDpd / S2+ firmOnly）+ `providerMsgId` 双服务商；(a) 两邮箱收信内容差异 | **薄**：scriptSlot/取址/templateId 由 A3 真实；A1 mock 仅决定 EMAIL 步与 stage（不验完整模板合规结构）；**Gmail DMARC 风险**（126 优先，Gmail 可能被拒/进垃圾）→ 待 A1/A2 转「全」 |
 
@@ -1247,12 +1265,75 @@ void caseCeasedCancelsActivePlan() {
 
 ### L4a.6 curl / 脚本（参数字段以 `MockTriggerController` 契约为准）
 
+**一键官方对齐（推荐）**：
+
 ```bash
-PORT=8080                              # collection-admin 实际端口（按 application.yml）
+# 重启 App + 跑完全部 L4a（停服→编译→后台起→测试）
+./scripts/test/restart-and-l4a.sh
+
+# App 已在跑时只测
+./scripts/test/l4a-official-test.sh
+
+# 跳过 mvn 编译（代码未改、jar 已存在）
+./scripts/test/restart-and-l4a.sh --no-build
+```
+
+启动/停止单步命令见 `docs/操作说明_Nacos本地启动.md` §4.3 / §5.1。
+
+**单条 curl（query 参数版，与控制器一致）**：
+
+```bash
+PORT=8888
+BASE="http://localhost:${PORT}/mock"
+PLANS="http://localhost:${PORT}/plans"
+
+# L4a-1：三渠道（94999 + legacyThreeStep）
+curl -s -X POST "$BASE/ingest?caseId=94999&userId=94999&stage=S1&legacyThreeStep=true"; sleep 1
+
+# L4a-2：PUSH fallback
+curl -s -X POST "$BASE/ingest?caseId=94201&userId=94201&stage=S1"; sleep 1
+
+# L4a-3：还款 REPAID — 断言 cancelReason
+curl -s -X POST "$BASE/ingest?caseId=94101&userId=94101&stage=S1"; sleep 15
+curl -s -X POST "$BASE/repayment?userId=94101&caseId=94101"
+curl -s "$PLANS/by-case/94101/history?limit=3" | jq '.[] | {status, cancelReason}'
+
+# L4a-4：STAGE_UPGRADE
+curl -s -X POST "$BASE/ingest?caseId=94101&userId=94101&stage=S1"; sleep 12
+curl -s -X POST "$BASE/stage-changed?caseId=94101&stage=S2"
+
+# L4a-5：CEASED
+curl -s -X POST "$BASE/ingest?caseId=94101&userId=94101&stage=S1"; sleep 8
+curl -s -X POST "$BASE/case-ceased?caseId=94101"
+
+# L4a-6：观察期（94102，默认 observation-minutes=1，需等待 ~90s）
+curl -s -X POST "$BASE/ingest?caseId=94102&userId=94102&stage=S1"
+
+# L4a-7：幂等 92001
+curl -s -X POST "$BASE/ingest?caseId=92001&userId=92001&stage=S1"; sleep 2
+curl -s -X POST "$BASE/ingest?caseId=92001&userId=92001&stage=S1"
+
+# L4a-8：126 vs Gmail
+curl -s -X POST "$BASE/ingest?caseId=92001&userId=92001&stage=S0"; sleep 1
+curl -s -X POST "$BASE/ingest?caseId=95001&userId=95001&stage=S0"
+
+# L4a-全 Guard SKIPPED
+curl -s -X POST "$BASE/ingest?caseId=94801&userId=94801&stage=S1"
+curl -s "$PLANS/by-case/94801/history?limit=1" | jq '.[0].id' | xargs -I{} curl -s "$PLANS/{}/steps"
+
+# L4a-全 REBUILD/ESCALATE
+curl -s -X POST "$BASE/ingest?caseId=94804&userId=94804&stage=S1"
+# 等待 ~90s，查 /plans/by-case/94804/history 与日志 [exhausted]
+```
+
+**旧版 JSON body 示例（若控制器扩展 POST body 时使用）** — 当前以 query 参数为准：
+
+```bash
+PORT=8080
 BASE="http://localhost:${PORT}/mock"
 H='Content-Type: application/json'
 
-# L4a-1：三渠道顺序（先置 legacy-three-step；caseId 为同时配 SMS/JPush/EMAIL 的合成 case）
+# L4a-1（旧示例 caseId=94101，已改为 94999 + legacyThreeStep 查询参数）
 curl -s -XPOST "$BASE/ingest" -H "$H" -d '{"caseId":94101,"userId":94101,"stage":"S1"}'; sleep 1
 
 # L4a-2：PUSH 无 token → SMS fallback
@@ -1347,7 +1428,7 @@ done
 | `collectionStatus` | `dpd>=91 ? CEASED : ACTIVE` |
 | `strategyTone` | 固定 `"STANDARD"`（Phase 1；真实语气策略待 A1/决策层） |
 
-> 金额 SSOT / 取号口径细节以 `docs/contracts/ContextSnapshot契约对齐_re.md` §12 为准，本表不重复定义。
+> 金额 SSOT / 取号口径细节以 `docs/contracts/README_ContextSnapshot契约对齐.md` §12 为准，本表不重复定义。
 
 ### L4b.3 落库断言口径（每条用例三类证据）
 
@@ -1532,6 +1613,9 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | L3 内部已写事件未发 | 扫描重发 STEP_COMPLETED | ⬜ | ⏭ Phase 2 |
 | L3 事件已消费业务未执行 | 处理中标记+超时重发 | ⬜ | ⏭ Phase 2 |
 | 并发竞态（还款 vs 执行） | 行锁串行+终态单调+⑤½ 复检 | 🟡 单线程语义（#12/#32） | 真实并发 ⬜（§8 [并发]） |
+| **G1** 续建/升档崩溃搁浅（§4.5 `on_plan_exhausted` REBUILD/ESCALATE 中途崩溃） | 终态写最后+原子事务保证可重入：旧计划 `PLAN_COMPLETED` 置于后继（新计划持久化 / `STAGE_CHANGED` 发布）之后；崩溃→旧计划仍非终态→重投重跑（[核心引擎规格 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)） | ⬜ | **D30**——需注入崩溃点（mock repository 第二次写入抛异常）验证重投幂等不重复建计划。L3 连库（Phase 2 混沌/L5） |
+| **G2** 毒消息无限重投（retryable 但持续失败的事件占满 Consumer 线程池） | 投递次数达 `max_delivery_count`→DLQ+告警（[核心引擎规格 §7.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#73-l1-基础设施异常)、[基础设施交互规范 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)） | ⬜ | **D31**——需真实 Redis Stream（`XPENDING` delivery_count）或集成替身。内存总线无 delivery_count 语义，Phase 1 不可测（Phase 2 / L5） |
+| **G3** step=EXECUTING 滞留无恢复（消息类 §5.1 ⑤ 之后崩溃，无 `timeout_time` 哨兵） | reaper 扫描 step=EXECUTING 超 `executing_reaper_minutes` 且 `timeout_time` 为空→复检+回查供应商→补 timeline 或重置重试（[核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | ⬜ | **D32**——需真实定时扫描器+Redis 幂等锁 TTL 交互。L3 连库（Phase 2 / L5） |
 
 ### 10.7 差集清单（汇总——所有 ⬜/❓）
 
@@ -1566,6 +1650,9 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | D27 | 链路③ `PLAN_COMPLETED` 未写 `completed_at`（`markCompleted` 生产侧未调用，drift；③-S4） | 落库/状态 | 服务同事（admin）/ L3 | **已拍板（选 b，§11-11）：completed_at 归 L3 admin 落库写，引擎不补码**；归 D14 同环境 |
 | D28 | 链路⑤ 还款 `filterRepaidUser` 失败→告警+继续仍取消，L0 无断言（⑤-S2；#24 仅测成功路径） | 异常/降级 | 主架构 / L0 | ✅ 已补 2026-06-22（`onRepaymentReceived_filterFails_stillCancels`） |
 | D29 | 链路⑤ CASE_CEASED→取消活跃(CEASED)且不再建，L0/L1 无断言（⑤-S9/S13；枚举/handler 已就绪，§11-1） | 状态迁移 | 主架构 / L0+L1 | ✅ 已补 2026-06-22（L0 `onCaseCeased_cancelsActivePlanAndNoRebuild` + L1 `FullChainIntegrationTest#caseCeasedCancelsActivePlan`） |
+| D30 | **G1** 续建/升档崩溃搁浅：`on_plan_exhausted` REBUILD/ESCALATE 中途崩溃→旧计划仍非终态→重投重跑幂等不重复建计划（§10.6 G1） | 崩溃恢复/原子性 | 主架构 / L3 连库（注入崩溃点） | ⏭ Phase 2 / L5 混沌（内存版无法模拟事务半提交；规格 §4.5 已改写为终态写最后+原子事务） |
+| D31 | **G2** 毒消息无限重投：retryable 但持续失败→`max_delivery_count`→DLQ+告警（§10.6 G2） | 基础设施防护 | 主架构 / Redis Stream 真实实现 | ⏭ Phase 2 / L5（内存总线无 delivery_count 语义；规格 §7.3 + 基础设施 §2 已补规范） |
+| D32 | **G3** step=EXECUTING 滞留无恢复：消息类 ⑤ 后崩溃无 `timeout_time` 哨兵→reaper 扫描兜底（§10.6 G3） | 崩溃恢复/定时扫描 | 主架构 / L3 连库+Redis 幂等锁 TTL | ⏭ Phase 2 / L5（需真实扫描器+Redis TTL 交互；规格 §5.1 已补 step→EXECUTING 标记 + §7.4 reaper 行） |
 
 ---
 
@@ -1612,7 +1699,8 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 ### 12.3 Phase 2 延后（⏭）
 
 - 跨存储一致性对账修复（§5.2 三模式：对账清理器 / 重发事件 / 处理中标记）—— D13，运维兜底层。
-- 真实并发/混沌/性能层（用户提及的「L5」）—— 压测、故障注入。
+- **崩溃恢复与基础设施防护**（2026-06-25 §7 审计补登）：续建崩溃搁浅 **D30**（注入崩溃点验证重投幂等）、毒消息 DLQ **D31**（需 Redis Stream `delivery_count`）、step=EXECUTING reaper **D32**（需真实扫描器+Redis TTL）。三项均需真实基础设施，内存版不可测。
+- 真实并发/混沌/性能层（用户提及的「L5」）—— 压测、故障注入（D30/D31/D32 为 L5 首批用例）。
 - LLM 决策替换 SPI（规则引擎→LLM）后的决策回归。
 - VIBER/WHATSAPP（若 §11-4 确认非 Phase 1）。
 - **PTP 相关（已拍板 2026-06-21）：Phase 1 不考虑 PTP 差异化**——PTP 无活跃→续建（M20/D2）、PTP 路径独立 `cancel_reason`（`PTP_EXPIRED`）均延后；Phase 1 维持现状（#27-R/#27-A 已覆盖，补偿取消统一写 `REPAID`）。D2 骨架（§7.2.6 ①）预留待 Phase 2 启用。
@@ -1640,9 +1728,8 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 - [ ] **④ 渠道幂等 TC-IDEM-02**（差集 D12）
   - 相同 `idempotencyKey` 去重（渠道侧 L1 单测）。归属：编排同事。环境：Redis。
 
-- [ ] **⑤ L4a-全（A1/A2/A4/A5 切 `Default*`）→ 跑通 §L4a 8 条用例**
-  - A1 `DefaultPlanFactory`（真实计划结构）、A2 `DefaultExecutionGuard`（合规拦截）、A4/A5 推进/穷尽策略。
-  - 归属：编排同事（见 `docs/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md`）。
+- [x] **⑤ L4a-全（临时 `Default*`@Primary）→ `./scripts/test/l4a-official-test.sh` 跑通 §L4a 8 条 + Guard/REBUILD**（2026-06-25；编排同事仍须 review 替换生产实现）
+  - 主架构代写见 `docs/testing/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md` §8；专用 case：`94999`/`94801`/`94804`。
 
 - [ ] **⑥ L4b-全（B1/B2 真实化 + L3 连库）→ 跑通 §L4b 8 条用例**
   - B1 `IngestionService` 接真实 PubSub Consumer、B2 `DpdStageRollHandler` 日切重算逻辑、`RealCaseService`(`case-service=real`) 连旧库、L3 落库。
@@ -1681,7 +1768,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 L0/L1 全绿（✅ 已达）
   → ① L2 c8（D4）+ ② L2 c9/c10（D5）      ← 内存，立即可补
   → ⑧ WebhookController 鉴权               ← admin，解锁链路④ L4
-  → ⑤ L4a-全（编排同事 A1/A2/A4/A5）        ← 解锁真实计划结构/合规
+  → ⑤ L4a-全（临时 Default* 已就位，跑 official 脚本）  ← 2026-06-25
   → ③ L3 落库单测（D10/D11/D14/D19/D27）   ← 连库环境
   → ④ 渠道幂等 TC-IDEM-02（D12）            ← Redis 环境
   → ⑥ L4b-全（B1/B2 + 旧库 + L3）          ← 数据接入 + 旧库
@@ -1761,7 +1848,7 @@ L0/L1 全绿（✅ 已达）
 | `docs/channel/email-templates/email-e2e-test-cases.md` | 5 封 Email E2E 案例表 | `TC-EMAIL-E2E` 索引 |
 | `docs/channel/...Notification对接说明.md`、`...SendGrid_Email对接说明.md`、`...LTH_Voice对接说明.md` | 供应商接口/签名/回调 | L4 执行细节，不复制 |
 | `docs/contracts/引擎渠道执行契约对齐_待编排确认.md` | StepResult 3 情形 / metadata / 观察期 / 空地址方案 A | §2.2、§10.4 契约基线 |
-| `docs/contracts/ContextSnapshot契约对齐_re.md` + `ContextSnapshot.sample.json` | 快照字段/取号口径 | §2.2、§11-6 |
+| `docs/contracts/README_ContextSnapshot契约对齐.md` + `ContextSnapshot.sample.json` | 快照字段/取号口径 | §2.2、§11-6 |
 | `docs/contracts/README_编排同事对齐清单.md` | SPI 实现约束 + E1–E8 | §2.2、§11 待澄清 |
 | `docs/MOCASA催收系统升级_Phase1_核心引擎规格.md` / `领域模型与数据定义.md` | 状态机/七步/SPI/DTO/枚举/DDL 基准 | 全文场景反推依据 |
 

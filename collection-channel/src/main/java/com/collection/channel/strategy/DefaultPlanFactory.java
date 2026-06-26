@@ -44,7 +44,7 @@ public class DefaultPlanFactory implements PlanFactory {
 
         log.info("[DefaultPlanFactory] build plan for case {} stage {}", caseInfo.getCaseId(), stage);
 
-        List<ContactPlanStep> steps = buildSteps(stage);
+        List<ContactPlanStep> steps = buildSteps(stage, caseInfo.getCaseId());
         if (steps.isEmpty()) {
             log.warn("[DefaultPlanFactory] no steps resolved for stage {}, skip", stage);
             return null;
@@ -58,15 +58,58 @@ public class DefaultPlanFactory implements PlanFactory {
         return plan;
     }
 
-    private List<ContactPlanStep> buildSteps(Stage stage) {
+    private List<ContactPlanStep> buildSteps(Stage stage, Long caseId) {
         String singleStep = channelProperties.getDebug().getSingleStep();
         if (StringUtils.isNotBlank(singleStep)) {
             return buildSingleStep(singleStep.trim().toUpperCase(Locale.ROOT));
+        }
+        if (isGuardNoPhoneCase(caseId)) {
+            return buildSingleStep("SMS");
+        }
+        if (isGuardFrequencyCase(caseId)) {
+            List<ContactPlanStep> steps = new ArrayList<>();
+            steps.add(buildStep(1, ChannelType.SMS, 0, 0, 101L));
+            steps.add(buildStep(2, ChannelType.SMS, 0, 0, 101L));
+            return steps;
+        }
+        if (isRebuildFailCase(caseId)) {
+            List<ContactPlanStep> steps = new ArrayList<>();
+            steps.add(buildStep(1, ChannelType.EMAIL, 0, 0, 201L));
+            return steps;
+        }
+        if (isObservationCase(caseId, stage)) {
+            List<ContactPlanStep> steps = new ArrayList<>();
+            steps.add(buildStep(1, ChannelType.SMS, 0, observationMinutes(), 101L));
+            return steps;
         }
         if (channelProperties.getDebug().isLegacyThreeStep()) {
             return buildLegacyThreeStep();
         }
         return buildFromTemplate(stage);
+    }
+
+    private boolean isGuardFrequencyCase(Long caseId) {
+        return caseId != null && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId());
+    }
+
+    private boolean isGuardNoPhoneCase(Long caseId) {
+        return caseId != null && caseId.equals(channelProperties.getL4a().getGuardNoPhoneCaseId());
+    }
+
+    private boolean isRebuildFailCase(Long caseId) {
+        return caseId != null && caseId.equals(channelProperties.getL4a().getRebuildFailCaseId());
+    }
+
+    private boolean isObservationCase(Long caseId, Stage stage) {
+        ChannelProperties.L4a l4a = channelProperties.getL4a();
+        return caseId != null
+                && caseId == l4a.getObservationCaseId()
+                && stage == Stage.S1;
+    }
+
+    private int observationMinutes() {
+        int mins = channelProperties.getL4a().getObservationMinutes();
+        return mins > 0 ? mins : 1;
     }
 
     private List<ContactPlanStep> buildFromTemplate(Stage stage) {
@@ -115,7 +158,7 @@ public class DefaultPlanFactory implements PlanFactory {
         List<ContactPlanStep> steps = new ArrayList<>();
         steps.add(buildStep(1, ChannelType.SMS, 0, 0, 101L));
         steps.add(buildStep(2, ChannelType.PUSH, 1, 0, 102L));
-        steps.add(buildStep(3, ChannelType.SMS, 1, 0, 103L));
+        steps.add(buildStep(3, ChannelType.EMAIL, 1, 0, 201L));
         return steps;
     }
 

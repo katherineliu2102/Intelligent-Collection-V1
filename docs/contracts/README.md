@@ -17,7 +17,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md](./MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 编排同事一次性审阅回复(2026-06-09)；已拍板结论已并入活跃契约。**待联合重组时移入 `_archive/`** |
+| [MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md](./_archive/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 编排同事一次性审阅回复(2026-06-09)；已拍板结论已并入 [活跃契约](./README_ContextSnapshot契约对齐.md) |
 
 ## 定稿要点(速查)
 
@@ -27,4 +27,4 @@
 - **空地址**：方案 A(Guard block NO_EMAIL/NO_PHONE/NO_TOKEN→SKIPPED)；PUSH 叠加 fallback SMS。
 - **幂等 key**：`plan:stepOrder:retryCount`。
 
-> 关联：执行语义冻结值同步在 `.cursor/rules/ic-v1-channel-contract.mdc`；C1–C7 测试见 `../MOCASA催收系统升级_Phase1_测试文档.md`。
+> 关联：执行语义冻结值同步在 `.cursor/rules/ic-v1-channel-contract.mdc`；C1–C7 测试见 `../testing/MOCASA催收系统升级_Phase1_测试文档.md`。

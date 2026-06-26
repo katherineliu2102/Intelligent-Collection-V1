@@ -53,6 +53,11 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     }
 
     @Override
+    public List<ContactPlan> findRecentPlansByCase(Long caseId, int limit) {
+        return planMapper.selectRecentByCase(caseId, Math.max(1, Math.min(limit, 50)));
+    }
+
+    @Override
     @Transactional
     public void savePlan(ContactPlan plan) {
         if (plan.getStatus() == null) {

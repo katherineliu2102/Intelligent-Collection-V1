@@ -112,13 +112,18 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
     }
 
     private GuardVerdict checkFrequency(ExecutionContext context) {
-        Map<String, Integer> limits = channelProperties.getCompliance().getDailyLimit();
-        if (limits == null || limits.isEmpty()) {
-            return null;
-        }
-
         ChannelType channel = context.getCurrentStep().getChannelType();
-        Integer limit = limits.get(channel.name());
+        Long caseId = context.getPlan().getCaseId();
+
+        Integer limit = null;
+        if (caseId != null && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId())) {
+            limit = channelProperties.getL4a().getGuardFrequencyDailyLimit();
+        } else {
+            Map<String, Integer> limits = channelProperties.getCompliance().getDailyLimit();
+            if (limits != null && !limits.isEmpty()) {
+                limit = limits.get(channel.name());
+            }
+        }
         if (limit == null || limit <= 0) {
             return null;
         }

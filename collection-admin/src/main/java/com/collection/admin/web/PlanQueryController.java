@@ -31,10 +31,23 @@ public class PlanQueryController {
         return planRepository.findById(planId);
     }
 
-    /** 查询某案件的活跃计划。 */
+    /** 查询某案件活跃计划。 */
     @GetMapping("/active/by-case/{caseId}")
     public List<ContactPlan> activeByCase(@PathVariable Long caseId) {
         return planRepository.findActivePlansByCase(caseId);
+    }
+
+    /** 查询某案件最近计划（含终态），供 L4a cancelReason / 幂等断言。 */
+    @GetMapping("/by-case/{caseId}/history")
+    public List<ContactPlan> historyByCase(@PathVariable Long caseId,
+                                           @RequestParam(defaultValue = "10") int limit) {
+        return planRepository.findRecentPlansByCase(caseId, limit);
+    }
+
+    /** 查询计划下全部步骤。 */
+    @GetMapping("/{planId}/steps")
+    public List<com.collection.common.model.ContactPlanStep> stepsByPlan(@PathVariable Long planId) {
+        return planRepository.findStepsByPlan(planId);
     }
 
     /** 查询用户近期触达时间线。 */

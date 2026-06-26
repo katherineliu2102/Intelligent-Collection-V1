@@ -7,7 +7,7 @@
 | 审计日期 | 2026-06-23 |
 | 审计类型 | 一致性审计（阶段 D）；**只读，不修改任何规格正文 / .mdc / Java / schema.sql** |
 | 圆心文档 | [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)（主审） |
-| 参照文档 | [架构设计文档 v1.2](../MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型与数据定义](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[contracts/ 引擎渠道执行契约对齐](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)、[contracts/ ContextSnapshot 契约对齐](../contracts/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md)、[渠道编排规格](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)（引擎边界，只读） |
+| 参照文档 | [架构设计文档 v1.2](../MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型与数据定义](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[contracts/ 引擎渠道执行契约对齐](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)、[contracts/ ContextSnapshot 契约对齐](../contracts/_archive/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md)、[渠道编排规格](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)（引擎边界，只读） |
 | 不重复 | [阶段 A 审计](./MOCASA催收系统升级_Phase1_领域模型与数据定义_阶段A审计_2026-06-17.md)（领域字段级 diff）、[阶段 C 审计](./MOCASA催收系统升级_Phase1_跨文档去重_机制层_阶段C审计_20260618.md)（机制层去重）已结项均**引用不重做** |
 | 裁决优先级 | ①领域模型 ②核心引擎规格 ③基础设施 ④contracts/ ⑤架构（不承载参数/字段）⑥渠道编排规格 |
 

@@ -34,6 +34,9 @@ public interface ContactPlanRepository {
     /** 最近完成/穷尽的计划。 */
     ContactPlan getLastCompletedPlan(Long caseId);
 
+    /** 案件最近计划（含终态），按 id 降序。供 L4a 断言 cancelReason / 幂等。 */
+    List<ContactPlan> findRecentPlansByCase(Long caseId, int limit);
+
     // ── 计划/步骤写入 ──
     /** 持久化计划 + 步骤序列（事务）。回写生成的 id。 */
     void savePlan(ContactPlan plan);

@@ -28,6 +28,7 @@ public class ChannelProperties {
     private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
     private Map<String, PlanTemplate> planTemplates = new HashMap<>();
+    private L4a l4a = new L4a();
 
     /** 渠道 dispatch 幂等 TTL（小时），默认 24h。 */
     private int idempotencyTtlHours = 24;
@@ -42,8 +43,21 @@ public class ChannelProperties {
     public static class Debug {
         /** 空=正常；SMS|PUSH|EMAIL|AI_CALL|TTS 时仅生成单步 plan。 */
         private String singleStep = "";
-        /** true 时走 SMS→PUSH→SMS 三步步（TC-REG-01 回归）。 */
+        /** true 时走 SMS→PUSH→EMAIL 三步步（L4a-1 / TC-REG-01）。 */
         private boolean legacyThreeStep = false;
+    }
+
+    /** L4a 官方用例专用 caseId（与 *CaseRegistry / L4aCaseRegistry 对齐）。 */
+    @Data
+    public static class L4a {
+        private long threeChannelCaseId = 94999L;
+        private long observationCaseId = 94102L;
+        private int observationMinutes = 1;
+        private long guardNoPhoneCaseId = 94801L;
+        private long rebuildFailCaseId = 94804L;
+        private long guardFrequencyCaseId = 94805L;
+        /** 仅对 {@link #guardFrequencyCaseId} 生效的 SMS 日上限（L4a-全 FREQUENCY 用例）。 */
+        private int guardFrequencyDailyLimit = 1;
     }
 
     @Data

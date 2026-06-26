@@ -39,9 +39,15 @@ channel:
     push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
   debug:
     legacy-three-step: false
-    # 空=使用 plan-templates（DefaultPlanFactory）；非空时仅生成单步 plan（冒烟用）
     single-step: ""
-  # L4a-全：DefaultPlanFactory 计划模板（stage→步序）。非密钥，放本地配置；密钥仍走 Nacos。
+  l4a:
+    three-channel-case-id: 94999
+    observation-case-id: 94102
+    observation-minutes: 1
+    guard-no-phone-case-id: 94801
+    rebuild-fail-case-id: 94804
+    guard-frequency-case-id: 94805
+    guard-frequency-daily-limit: 1
   plan-templates:
     S0:
       steps:
@@ -66,6 +72,10 @@ channel:
       steps:
         - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
         - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 204 }
+  compliance:
+    timezone: Asia/Manila
+    quiet-hours-start: "21:00"
+    quiet-hours-end: "08:00"
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
     # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。

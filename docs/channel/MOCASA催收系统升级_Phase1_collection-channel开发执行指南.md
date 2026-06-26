@@ -4,7 +4,7 @@
 > **定位**: 渠道模块负责人的**可执行开发手册**（按步骤写代码、编译、联调）。  
 > **规格 SSOT**: [渠道文档索引](./README_渠道文档索引.md) → [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) → [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)  
 > **测试手册**: [collection-channel 功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)  
-> **本地启动**: [操作说明.md](../操作说明.md)
+> **本地启动**: [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)
 
 ---
 
@@ -54,7 +54,7 @@ export $(grep -v '^#' .env | xargs) && java -jar collection-admin/target/collect
 
 Windows PowerShell 需逐条 `$env:VAR="value"` 设置后启动。
 
-**阶段验收基线**（Mock 未全部替换前也应通过；Windows 见 [操作说明 §4](../操作说明.md#4-环境确认开发前必跑)）：
+**阶段验收基线**（Mock 未全部替换前也应通过；Windows 见 [操作说明 §4](../操作说明_Nacos本地启动.md#4-环境确认开发前必跑)）：
 
 ```bash
 # 端口 local profile 默认 8888
@@ -409,7 +409,7 @@ spring:
 |------|------|
 | 测试 Nacos 公共账号 | `.env` 填 `NACOS_*` |
 | 本机端口/日志 | `application-local.yml` |
-| 渠道密钥 | Nacos `intelligent-collection-local.yml` → `channel.sendgrid.*` / `channel.notification.app-key`（`scripts/publish-channel-secrets-to-nacos.ps1`） |
+| 渠道密钥 | Nacos `intelligent-collection-local.yml` → `channel.sendgrid.*` / `channel.notification.app-key`（`scripts/dev/publish-channel-secrets-to-nacos.ps1`） |
 
 ---
 
@@ -473,4 +473,4 @@ spring:
 | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) | Phase 1 裁剪边界 |
 | [核心引擎规格 §2.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | `CASE_CEASED`、Override 中断 |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | TC 与 curl |
-| [操作说明.md](../操作说明.md) | 本地/Docker 启动 |
+| [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md) | 本地/Docker 启动 |

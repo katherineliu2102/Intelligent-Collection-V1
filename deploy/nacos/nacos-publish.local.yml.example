@@ -1,4 +1,4 @@
-# 复制为 nacos-publish.local.yml 并填写真实密钥，再执行 scripts/publish-channel-secrets-to-nacos.ps1
+# 复制为 nacos-publish.local.yml 并填写真实密钥，再执行 scripts/dev/publish-channel-secrets-to-nacos.ps1
 # 或手动粘贴 channel 段到 Nacos → intelligent-collection-local.yml
 #
 # SMS/Push 全量文案见 docs/channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md §7

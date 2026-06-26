@@ -59,8 +59,12 @@ public class DefaultStepResolver implements StepResolver {
 
         // EMAIL 主动跳过（返回 null → 引擎 SKIPPED 推进，不 FAILED）：
         //   #1 非里程碑 DPD（无 Phase1 Email 槽）；#5 无有效邮箱（不发占位地址给 SendGrid）
+        // 例外：L4a-全-C REBUILD 测试专用 slot → 抛异常让引擎走 FAILED 路径触发 ExhaustionPolicy
         if (step.getChannelType() == ChannelType.EMAIL) {
             if (!EmailMilestoneScriptSlots.isPhase1Active(scriptSlot)) {
+                if ("INVALID_L4A_REBUILD_SLOT".equals(scriptSlot)) {
+                    throw new RuntimeException("L4a REBUILD test: invalid slot forces step failure → ExhaustionPolicy");
+                }
                 return null;
             }
             if (StringUtils.isBlank(extractEmail(snapshot))) {

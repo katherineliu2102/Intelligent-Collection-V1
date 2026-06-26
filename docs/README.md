@@ -26,13 +26,16 @@
 | [ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md) + [样例 JSON](./contracts/ContextSnapshot.sample.json) | ✅ | 快照字段/来源/SSOT；StepResolver 唯一数据源 |
 | [编排同事对齐清单](./contracts/README_编排同事对齐清单.md) | ✅ | SPI 实现/超时/E1–E8 一页清单 |
 | [引擎渠道执行契约对齐(待编排确认)](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | ✅ | dispatch 回填/metadata/观察期/空地址 4 项**已定稿 2026-06-11**；token=jpushToken |
-| [ContextSnapshot 契约对齐回复 _re](./contracts/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 📦 | 编排同事一次性审阅回复；结论已并入上方契约 |
+| [ContextSnapshot 契约对齐回复 _re（归档）](./contracts/_archive/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 📦 | 编排同事一次性审阅；结论已并入 [活跃契约](./contracts/README_ContextSnapshot契约对齐.md) |
 
 ## 三、测试(🟦 主架构)
 
+入口见 [`testing/README.md`](./testing/README.md)。
+
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [测试文档](./MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | Phase 1 测试 SSOT（v2）：5 层测试地图(L0✅/L1✅/L2🟡/L3⬜/L4⬜)、引擎纯逻辑单测清单(43 绿)、链路 × 层级矩阵 |
+| [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4 测试地图、链路 × 层级矩阵、§L4a 用例与脚本索引 |
+| [L4a 编排同事补全清单](./testing/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | 🟡 | L4a-全 SPI 切换前置与官方脚本说明 |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 
@@ -49,4 +52,4 @@
 
 ---
 
-> 物理目录重排（核心规格归 `spec/`、测试归 `test/` 等）押后到渠道 L2 联调收敛后、与编排同事联合进行，以免与其活跃改动反复冲突。
+> 2026-06-26：`docs/testing/`、`scripts/dev/` + `scripts/test/` 已落地；核心规格仍留 `docs/` 根。

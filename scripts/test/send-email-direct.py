@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 EMAIL = "wzynju@126.com"
 
 TEMPLATES = {

@@ -9,6 +9,7 @@ target/
 .classpath
 .project
 .vscode/
+.obsidian/
 logs/
 *.log
 .env

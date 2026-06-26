@@ -350,6 +350,16 @@ class FullChainIntegrationTest {
         }
 
         @Override
+        public List<ContactPlan> findRecentPlansByCase(Long caseId, int limit) {
+            return plans.values().stream()
+                    .filter(p -> caseId.equals(p.getCaseId()))
+                    .sorted((a, b) -> Long.compare(b.getId(), a.getId()))
+                    .limit(limit)
+                    .map(this::attach)
+                    .collect(java.util.stream.Collectors.toList());
+        }
+
+        @Override
         public void savePlan(ContactPlan plan) {
             plan.setId(planSeq.incrementAndGet());
             plans.put(plan.getId(), plan);
