@@ -1,13 +1,10 @@
 # 引擎↔渠道执行契约对齐（email / SMS / push 联调前置）
 
-> **状态**：✅ 4 项已于 2026-06-11 与编排同事讨论定稿（见各节「讨论结论」）；Webhook 签名格式另行安排。
-> **用途**：L2 联调（email/SMS/push）前，引擎与编排同事需书面确认的**执行运行时语义**。
-> **与既有文档分工**：
-> - 快照**数据**契约（字段/来源/SSOT）见 [`ContextSnapshot契约对齐_re.md`](./README_ContextSnapshot契约对齐.md)
-> - SPI 实现/超时/生命周期 E1–E8 见 [`README_编排同事对齐清单.md`](./README_编排同事对齐清单.md)
-> - 本文聚焦 **dispatch 回填 / 入参 metadata / 观察期与幂等 / 空地址** 四项，是上两者未覆盖的执行语义。
-> **现状基线**：渠道侧 Mock 已实现 happy-path 初版值（见各节“现状”），**失败/边界值待真实化**。
-> **维护**：引擎维护本契约；编排同事按此实现 `ChannelGateway` / `StepResolver` / `ExecutionGuard`。
+> **版本**: Phase 1  
+> **日期**: 2026-06-11  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel` / `collection-engine`  
+> **关联文档**: [ContextSnapshot 契约对齐](./README_ContextSnapshot契约对齐.md)、[编排同事对齐清单](./README_编排同事对齐清单.md)
 
 ---
 

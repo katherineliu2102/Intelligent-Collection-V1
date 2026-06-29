@@ -1,9 +1,10 @@
 # MOCASA Phase 1 — LTH Voice（AI 外呼 / TTS）对接说明
 
-> **版本**: v1.0 · **日期**: 2026-06-03  
-> **供应商**: LTH SIP（`LthFunction.voiceNotification`）  
-> **上级文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5、§7.2、§7.10  
-> **代码目标**: `com.collection.channel.adapter.LthVoiceAdapter`
+> **版本**: v1.0  
+> **日期**: 2026-06-03  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5 / §7](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)
 
 ---
 

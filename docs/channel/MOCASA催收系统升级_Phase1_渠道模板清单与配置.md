@@ -1,11 +1,10 @@
 # MOCASA Phase 1 — 渠道模板清单与配置（SSOT）
 
-> **版本**: v2.3 · **日期**: 2026-06-12  
-> **状态**: ✅ Email Phase 1 **启用 5 封**（`collections@mocasa.com`）；SMS/Push **英文初稿已出**（全 S0–S4，见 §4.1/§5.1，待母语润色与法务/业务终审）；Voice ⏳ 待 LTH  
-> **定位**: 全渠道 **scriptSlot** 模板唯一清单（SMS / Push / Email / Voice）  
-> **适用范围**: Phase 1 collection-channel；Phase 2 条件 Email 与策略后台扩展  
-> **上游**: [渠道编排规格 §8.4](./MOCASA催收系统升级_Phase1_渠道编排规格.md#84-各-stage-话术槽拟议) · [collection-channel 总规格 附录 A](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#附录-ascriptslot--供应商-template_id-映射表)  
-> **下游**: [策略迭代手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链) · [功能测试指南 TC-EMAIL-D0-01](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
+> **版本**: v2.3  
+> **日期**: 2026-06-12  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [渠道编排规格 §8.4](./MOCASA催收系统升级_Phase1_渠道编排规格.md#84-各-stage-话术槽拟议)、[collection-channel 总规格 附录 A](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#附录-ascriptslot--供应商-template_id-映射表)、[策略迭代手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
 
 ---
 

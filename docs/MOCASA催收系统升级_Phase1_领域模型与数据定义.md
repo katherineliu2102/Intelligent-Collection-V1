@@ -1,11 +1,10 @@
 # MOCASA 催收系统升级 — Phase 1 领域模型与数据定义
 
-> **版本**: V2.1  
+> **版本**: Phase 1  
 > **日期**: 2026-06-17  
-> **范围**: 菲律宾市场  
-> **模块**: collection-common  
-> **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)、[权威 DDL `../db/schema.sql`](../db/schema.sql)  
-> **定位**: 核心引擎及跨模块共享的领域模型、枚举、DDL 的唯一 source of truth。**Java 字段 / 枚举 / 引擎 DDL 以本文为准；ContextSnapshot 的渠道最小必填集与金额 SSOT 用法见 [contracts](./contracts/README_ContextSnapshot契约对齐.md)。** 渠道编排层内部模型见 §8（预留，待补充）。
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-common`  
+> **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)、[权威 DDL `../db/schema.sql`](../db/schema.sql)
 
 ---
 
@@ -22,6 +21,7 @@
 - [6. 枚举与常量定义](#6-枚举与常量定义)
 - [7. 数据模型 DDL](#7-数据模型-ddl)
 - [8. 渠道编排层模型（预留，待补充）](#8-渠道编排层模型预留待补充)
+- [9. EventPayload 字段定义](#9-eventpayload-字段定义)
 
 ---
 
@@ -39,7 +39,7 @@ flowchart TD
     EXT["上游信贷系统 PubSub"] -->|"case_push / repayment / assign"| ING
 
     subgraph ING["collection-ingestion 数据接入层"]
-        I1["消费消息 → 写 t_collection*\n→ 生成 context_snapshot\n→ 发布 Redis Stream 事件"]
+        I1["消费消息 → 校验清洗 → 写 t_collection*\n→ 发布 Redis Stream 事件\n(快照由引擎建计划时生成)"]
     end
 
     ING -->|"CASE_INGESTED\nSTAGE_CHANGED\nREPAYMENT_RECEIVED"| ENG
@@ -111,6 +111,7 @@ flowchart TD
 | 表名 | 状态 | Owner | 首席写入方 | 核心消费方 | DDL 位置 | 审查方 |
 |---|---|---|---|---|---|---|
 | `t_contact_timeline` | NEW | 跨模块共写 | channel(自动触达), 人工外呼, ingestion(ETL) | 决策引擎(聚合), 合规引擎(频率), 数仓(BI) | §7.2.1 | **全员** |
+| `t_user_device_token` | NEW | 数仓（日同步） | 数仓 ETL（源 = 旧库 `t_user_extend`） | collection-ingestion（enrichment 只读） | §7.2.3 | 主架构 + 数仓 |
 | `t_user_profile_ext` | **NEW（Phase 2 押后）** | service | ProfileService, 坐席后台 | 决策引擎(画像输入) | §7.2.2（Phase 1 不建表） | 主架构 + 数仓 |
 
 #### E. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
@@ -122,7 +123,7 @@ flowchart TD
 | `t_collection` | §3.1 CaseContext | 案件主表，CaseContext 数据来源 |
 | `t_user_repayment_plan` | §3.1 CaseContext | 还款计划，金额/日期来源 |
 | `t_user_basis` | §3.2 UserProfile.BasicInfo | 用户基本信息（name/phone/email/language） |
-| `t_user_equipment` | §3.2 UserProfile.DeviceInfo | 设备信息（jpushToken） |
+| `t_user_equipment` | §3.2 UserProfile.DeviceInfo | 设备信息（jpushToken）；**Phase 1 主读源 = 新库 `t_user_device_token`（数仓同步）**，非运行时直读 |
 
 **Phase 2 才引用**（对应 UserProfile 维度 Phase 1 不填充，见 §3.2 🅿️2）：
 
@@ -346,7 +347,7 @@ flowchart TD
 
 | 字段 | 类型 | 必填 | 来源 | Phase 1 状态 |
 |---|---|---|---|---|
-| jpushToken | String | 否 | t_user_equipment / App 上报 | **Phase 1 实现**：JPush Registration ID，供 Push 渠道；`StepResolver` 填入 `StepCommand.targetAddress`；见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §2.2 |
+| jpushToken | String | 否 | **Phase 1**：上游 `case_push` 或新库 `t_user_device_token`（数仓 ← 旧库 `t_user_extend`）→ ingestion 写入 payload | **Phase 1 实现**：JPush Registration ID；见 [数据接入 §3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)、[Notification §2.2](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md#22-push-渠道) |
 | deviceModel | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | osVersion | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | phoneValidity | PhoneValidity | 否 | t_user_profile_ext（Phase 2） | 🅿️2 预留，需号码检测供应商 |
@@ -391,9 +392,9 @@ flowchart TD
 
 ### 3.4 ContextSnapshot（决策上下文快照）
 
-> 用途：案件接入时，数据接入层将决策所需的全部上下文序列化为不可变 JSON 快照，写入 `t_contact_plan.context_snapshot`。SPI 决策实现读快照而非实时查 DB（零 DB I/O）。  
+> 用途：计划创建时，引擎经 `CaseService`/`ProfileService` 将决策所需上下文序列化为不可变 JSON，写入 `t_contact_plan.context_snapshot`。  
 > Java 类：`com.collection.common.model.ContextSnapshot`  
-> 写入时机：计划创建时（[核心引擎规格 §2.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#22-计划创建)）  
+> 写入时机：计划创建时（[核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）  
 > 消费方：ExecutionContext 的组成部分（§4.1），所有 SPI 实现通过 ExecutionContext.contextSnapshot 读取
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -870,6 +871,20 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
 ```
 
+#### 7.2.3 t_user_device_token — Push Token 镜像（Phase 1）
+
+> **用途**：数仓每日将旧库 `t_user_extend.ji_guang_token` 同步至本表；`collection-ingestion` 消费 `case_push` 时**只读新库** enrichment `CASE_INGESTED` payload 的 `jpushToken`（见 [数据接入 §3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。**不由应用写入**；终态上游 `case_push` 自带 token 后可停同步。
+
+```sql
+CREATE TABLE IF NOT EXISTS t_user_device_token (
+    user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID，与 case_push user_id 对齐',
+    jpush_token         VARCHAR(256)    NULL     COMMENT 'JPush Registration ID（源：旧库 t_user_extend.ji_guang_token）',
+    synced_at           DATETIME        NOT NULL COMMENT '数仓同步批次时间',
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_synced_at (synced_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）';
+```
+
 #### 7.2.2 t_user_profile_ext — 用户画像扩展表（Phase 1 不建表，押后 Phase 2）
 
 > **决定（2026-06-18）**：Phase 1 **不建** `t_user_profile_ext`。其承载字段（bestContactHour / preferredChannel / phoneValidity / viber·whatsapp 注册态 / sensitivityTag / ptpFulfillRate）Phase 1 无代码消费、无 mapper 接线（`MockProfileService` 仅填 `BasicInfo` + `DeviceInfo.jpushToken`）。
@@ -922,4 +937,35 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 
 ---
 
-> MOCASA Collection System Upgrade v2.1 — Phase 1 Domain Model & Data Definition — 2026-06-17
+## 9. EventPayload 字段定义
+
+> Java 载体：`com.collection.common.event.CollectionEvent`（信封字段 `eventId` / `eventType` / `occurredAt` + `payload: Map<String,Object>`）。payload 的 key 以 `CollectionEvent` 的静态常量为准（`CASE_ID` / `USER_ID` / `PLAN_ID` / `STEP_ID` / `STAGE` / `MAX_DPD` / `PTP_ID`，以及决策 B 新增的快照字段常量 `DPD` / `PRODUCT` / `TOTAL_OUTSTANDING` / `PENALTY_AMOUNT` / `DUE_DATE` / `FULL_REPAY_TIME` / `NAME` / `PHONE` / `EMAIL` / `JPUSH_TOKEN` 等）。  
+> **本节是各 EventType 的 payload 字段唯一 SSOT。** EventType 枚举含义与发布/消费方见 [§6.6](#66-eventtype内部事件类型)；JSON 传输信封（序列化 / ACK / Stream / DLQ）见 [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)；`CHANNEL_CALLBACK` 的供应商回调字段细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)。本节不重复上述内容。
+
+### 9.1 信封与 payload 边界
+
+- **信封字段**（`eventId` / `eventType` / `occurredAt`）由 `CollectionEventBus` 在 `publish` 时统一填充，业务代码不手动设置。
+- **payload** 仅承载业务键值；引擎通过 `event.getLong(key)` / `getString(key)` 读取。本节只定义 payload，不定义信封与 Stream 编解码（归 [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）。
+- **key 值类型**：`caseId` / `userId` / `planId` / `stepId` / `ptpId` 为 `Long`；`stage` 为 `String`（`Stage.name()`）；`maxDpd` / `dpd` 为 `Integer`；`result` / `providerMsgId` / `disposition` 为 `String`。
+- **CASE_INGESTED 快照字段类型（决策 B）**：`dpd` 为 `Integer`；`totalOutstanding` / `penaltyAmount` 为 `BigDecimal`（JSON 数值）；`dueDate` / `fullRepayTime` 为 ISO 日期串（`String`）；`product` / `name` / `phone`（E.164）/ `email` / `jpushToken` 为 `String`。映射到 `ContextSnapshot`（`caseContext.*` + `userProfile.basic.*` + `userProfile.device.jpushToken`），溯源见 [contracts](./contracts/README_ContextSnapshot契约对齐.md)。
+
+### 9.2 逐事件 payload 字段
+
+| EventType | 发布者 | payload 字段（key） | 必填 / 缺省 |
+|---|---|---|---|
+| CASE_INGESTED | ingestion | `caseId`、`userId`、`stage` + **快照字段（决策 B，2026-06-29）**：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` Phase 1 由上游消息或新库 `t_user_device_token` enrichment（[§3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；缺失→PUSH fallback SMS |
+| STAGE_CHANGED | ingestion / engine（ESCALATE 续建） | `caseId`、`stage`（=**目标阶段**） | 均必填 |
+| REPAYMENT_RECEIVED | ingestion | `userId`；推荐 `loanId`、`repayTime`、`messageId`（去重 / 全额结清 DEL ingested） | `userId` 必填 |
+| PLAN_STEP_DUE | XXL-Job（`planStepDueHandler`） | `planId`、`stepId` | 均必填 |
+| CHANNEL_CALLBACK | admin（webhook） | `planId`、`stepId`、`result`、`providerMsgId`、`disposition` | `planId`、`stepId` 必填；其余为供应商回调字段，细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload) |
+| STEP_COMPLETED | engine | `caseId`、`userId`、`planId`、`stepId` | 均必填 |
+| PLAN_EXHAUSTED | engine | `caseId`、`planId` | 均必填 |
+| CALLBACK_TIMEOUT | engine（超时哨兵） | `planId`、`stepId` | 均必填 |
+| CASE_CEASED | ingestion（日切 / mock） | `caseId`、`maxDpd` | `caseId` 必填；`maxDpd` 缺省 91 |
+| PTP_EXPIRED（**Phase 2 预留**） | （Phase 2） | `caseId`、`ptpId` | Phase 1 不生产、不消费（见 [§6.6](#66-eventtype内部事件类型)） |
+
+> 新增 payload key 须先在 `CollectionEvent` 增补常量并同步本表（跨模块契约，改前对齐，见 [HANDOFF §五](../HANDOFF.md)）。
+
+---
+
+> MOCASA Collection System Upgrade — Phase 1 Domain Model & Data Definition — 2026-06-17

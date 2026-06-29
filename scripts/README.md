@@ -18,6 +18,7 @@
 | 停止 | `./scripts/dev/stop-local.sh` |
 | 一键 L4a（停→编译→起→测） | `./scripts/test/restart-and-l4a.sh` |
 | 仅跑 L4a 官方 8 条 | `./scripts/test/l4a-official-test.sh` |
+| **L4b 跑前检查** | `./scripts/test/l4b-preflight.sh`（`--strict` 严格模式） |
 | L4a 单条 | `L4A_ONLY=6 ./scripts/test/l4a-official-test.sh` |
 | Level A 冒烟 | `./scripts/test/smoke-level-a.sh all` |
 | 发布渠道密钥到 Nacos | `./scripts/dev/publish-channel-secrets-to-nacos.ps1` |

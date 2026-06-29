@@ -2,9 +2,9 @@
 
 > **版本**: v1.0  
 > **日期**: 2026-06-03  
-> **定位**: 渠道**执行子层**（哑管道）：`ChannelGateway`、供应商 Adapter、Webhook 接入；与 **策略子层** SPI（`PlanFactory` / `ExecutionGuard` / `StepResolver` 等）同属 `collection-channel` 模块。  
-> **范围**: Phase 1 机器轨 — SMS / App Push（**通知中心**）、Email（SendGrid）、AI 外呼 / TTS（LTH）。  
-> **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5、[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../../HANDOFF.md)、[选型报告](../../../AI%20collection/philippines_fintech_channel_vendor_selection_report.md)
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`（执行子层）  
+> **关联文档**: [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../../HANDOFF.md)
 
 ---
 

@@ -6,7 +6,7 @@ import com.collection.common.model.ContactHistory;
 import com.collection.common.model.ContextSnapshot;
 
 /**
- * 数据服务层 — 案件服务。对应架构设计文档 §1.6 数据服务层、领域模型 §3.1/§3.3。
+ * 数据服务层 — 案件服务。对应架构设计文档 §1.5.2 领域服务 Service、领域模型 §3.1/§3.3。
  *
  * <p>Phase 1 骨架提供读 mock 数据的实现；后续由服务层开发者映射旧表（t_collection 等）。
  */

@@ -197,21 +197,21 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 B：数据接入 → `collection-ingestion`
 
-**负责人参考文档：《数据接入与事件规格》**
+**负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §9](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
 
 #### B1. `IngestionService` → 真实 PubSub 消费
 
-- 接 GCP PubSub，消费上游信贷系统推送（case_push / repayment / assign_signal）
-- 清洗数据 → 写 `t_collection`（EXISTING 表，Phase 1 不变更）
-- 生成 `ContextSnapshot`（调 `CaseService.buildContext` + `ProfileService.getFullProfile`），序列化为 JSON
-- 发布 Redis Stream 领域事件（CASE_INGESTED / STAGE_CHANGED / REPAYMENT_RECEIVED）
-- 现有 `IngestionService.ingestCase()` / `repayment()` 等方法是骨架，真实消费在此替换
+- 接 GCP PubSub，消费上游信贷系统推送（`case_push` / `repayment_push_and_load`；`assign_signal` Phase 1 不路由）
+- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；**入案主链路不读**旧库 `t_collection`、**不回写**任何库（**决策 B**，见 [数据接入 §3.0](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#30-入案快照路径决策-b)）
+- 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load` 仅 publish `REPAYMENT_RECEIVED`
+- `context_snapshot` 由**引擎**据 `CASE_INGESTED` payload 组装并写入 plan（[§3.0 / §3.4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`CaseService` 仅 payload 缺失兜底 / L4b 对账
+- 现有 `IngestionService` 骨架方法在此替换为真实 PubSub Consumer
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑
 
-- 每日 0:05 PHT（XXL-Job）重算 Max DPD
-- DPD 1–90 且阶段变化 → 发 `STAGE_CHANGED`
-- DPD ≥ 91 且未停催 → 写 `collection_status=CEASED` + 发 `CASE_CEASED`（对齐待办 E1/E2）
+- 每日 0:05 PHT（XXL-Job）按 [渠道编排 Max DPD 口径](./docs/channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#531-难催子条件计算口径) 重算（读旧库 **只读**）
+- DPD 1–90 且 Stage 变化 → 发 `STAGE_CHANGED`（含 Stage 回退）
+- DPD ≥ 91 → **仅**发 `CASE_CEASED`（不写旧库 CEASED 列）
 - **不改引擎 Consumer，引擎只消费事件**
 
 ---
@@ -314,7 +314,7 @@ collection-common/src/main/java/com/collection/common/enums/      # 所有枚举
 | 4 | 领域模型与数据定义 | 模型字段、枚举值、DDL |
 | 5 | 基础设施交互规范 | Redis / XXL-Job / Repository、配置、可观测性 |
 | 6 | 渠道编排规格 | 计划状态机、决策规则、合规检查、渠道适配器、模板 |
-| 7 | 数据接入与事件规格 | 事件总线契约、PubSub 消费、迁移 |
+| 7 | 数据接入规格 | PubSub 消费、消息路由、清洗写库、DPD 日切、迁移双写（事件 payload→领域 §9；总线运行时→基础设施 §2） |
 | 8 | 运维与协作 | 指标、告警、Grafana Dashboard |
 
 ---

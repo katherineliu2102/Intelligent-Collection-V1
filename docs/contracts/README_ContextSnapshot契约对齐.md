@@ -1,15 +1,18 @@
 # ContextSnapshot 契约对齐（发给编排同事 / 服务同事）
 
-> 用途：阶段 0「冻结快照契约」产物。编排同事拿样例即可开发/确认 `StepResolver`，
-> 服务同事据此确认旧库（`t_collection` 等）→ 快照字段映射，**不必互相等待**。
->
-> 样例文件：[`ContextSnapshot.sample.json`](./ContextSnapshot.sample.json)
-> 模型定义：`collection-common/.../model/ContextSnapshot.java`（含 `CaseContext` / `UserProfile` / `ContactHistory`）
+> **版本**: Phase 1  
+> **日期**: 2026-06-29  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-common`  
+> **关联文档**: [领域模型 §9.2](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)、[ContextSnapshot.sample.json](./ContextSnapshot.sample.json)、[数据接入规格 §3.4](../MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)
+
+---
 
 ## 数据流向
 
 ```
-数据接入层(我) 组装 ContextSnapshot → JSON 落 t_contact_plan.context_snapshot
+接入层从 case_push 填充快照字段 → 随 CASE_INGESTED payload 带出（决策 B，不读旧库）
+        → 引擎建计划时据 payload 组装 ContextSnapshot → JSON 落 t_contact_plan.context_snapshot
         → SPI 决策只读快照（零 DB I/O）
         → StepResolver(编排同事) 读快照产出 StepCommand(channelType/targetAddress/templateId)
         → ChannelGateway 真实发送
@@ -38,7 +41,7 @@
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
 | `caseContext.caseId` / `userId` / `stage` | 选模板、定位 | 服务同事映射 |
-| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | App → `t_user_equipment` → ProfileService |
+| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | **终态**：上游 `case_push` 消息体。**Phase 1（2026-06-29）**：数仓日同步旧库 `t_user_extend.ji_guang_token` → 新库 `t_user_device_token`；ingestion **只读新库** enrichment 进 payload（[接入 §3.5](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。引擎不查库 |
 | `caseContext.repaymentUrl` | `data.deep_link` | 接入 / 信贷结账链路 |
 | `userProfile.behavior.appLastActiveTime` | 活跃度判断（可选块） | 服务同事映射 |
 
@@ -67,7 +70,7 @@
 
 ## 开放问题（已定稿 2026-06-09，详见 [契约对齐回复](./README_ContextSnapshot契约对齐.md) §6）
 
-1. **PUSH device token 来源**：✅ 已决 → `device.jpushToken`（JPush RID），App → `t_user_equipment` → ProfileService。
+1. **PUSH device token 来源**：✅ 字段口径 `device.jpushToken`（JPush RID）已决。**Phase 1（2026-06-29）**：数仓日同步 `t_user_extend` → 新库 `t_user_device_token`；ingestion 只读新库写 payload；**终态**上游 `case_push` 自带。缺失 → fallback SMS。
 2. **`targetAddress` 由谁定**：✅ 已决 → **StepResolver** 从快照填入，Gateway/Adapter 不再取号。
 3. **手机号格式**：✅ 已决 → 快照统一 **E.164 `+63...`**；通知中心 `mobile` 可容错，Adapter 可再归一化。
 4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填。**更新（2026-06-18，编排同事已授权）**：`repayment.*`（金额冗余）与 `risk.*`（编排策略不需要、PTP 履约率暂不计算）**Phase 1 移除**；`work.* / contacts.* / behavior.* / device.{deviceModel,osVersion,phoneValidity,viber/whatsapp}` 及 `basic` 人口属性 **结构保留、Phase 1 不填充（Phase 2 预留）**。

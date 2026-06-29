@@ -30,6 +30,19 @@ public class CollectionEvent {
     public static final String PROVIDER_MSG_ID = "providerMsgId";
     public static final String RESULT = "result";
 
+    // ── 决策 B（2026-06-29）：CASE_INGESTED 携带的快照字段，引擎据此组装 ContextSnapshot，
+    //    运行时不读旧库 t_collection。SSOT 见领域模型 §9.2。
+    public static final String DPD = "dpd";
+    public static final String PRODUCT = "product";
+    public static final String TOTAL_OUTSTANDING = "totalOutstanding";
+    public static final String PENALTY_AMOUNT = "penaltyAmount";
+    public static final String DUE_DATE = "dueDate";
+    public static final String FULL_REPAY_TIME = "fullRepayTime";
+    public static final String NAME = "name";
+    public static final String PHONE = "phone";
+    public static final String EMAIL = "email";
+    public static final String JPUSH_TOKEN = "jpushToken";
+
     private String eventId;
     private EventType eventType;
     private LocalDateTime occurredAt;
@@ -65,5 +78,32 @@ public class CollectionEvent {
     public String getString(String key) {
         Object v = payload.get(key);
         return v == null ? null : v.toString();
+    }
+
+    public Integer getInt(String key) {
+        Object v = payload.get(key);
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number) {
+            return ((Number) v).intValue();
+        }
+        return Integer.valueOf(v.toString().trim());
+    }
+
+    public java.math.BigDecimal getBigDecimal(String key) {
+        Object v = payload.get(key);
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof java.math.BigDecimal) {
+            return (java.math.BigDecimal) v;
+        }
+        return new java.math.BigDecimal(v.toString().trim());
+    }
+
+    /** payload 是否含某 key（用于判断事件是否携带可选字段，如决策 B 的快照字段）。 */
+    public boolean has(String key) {
+        return payload.containsKey(key) && payload.get(key) != null;
     }
 }

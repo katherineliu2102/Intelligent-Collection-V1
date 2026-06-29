@@ -96,6 +96,15 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     INDEX idx_plan (plan_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
 
+-- 7.2.3 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
+CREATE TABLE IF NOT EXISTS t_user_device_token (
+    user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID',
+    jpush_token         VARCHAR(256)    NULL     COMMENT 'JPush Registration ID（源：旧库 t_user_extend.ji_guang_token）',
+    synced_at           DATETIME        NOT NULL COMMENT '数仓同步批次时间',
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_synced_at (synced_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 Push Token 镜像（数仓日同步）';
+
 -- 7.2.2 用户画像扩展表 t_user_profile_ext：Phase 1 不建表，押后 Phase 2
 --   原因：Phase 1 无代码消费 / 无 mapper（MockProfileService 仅填 basic + device.jpushToken）。
 --   待数仓/号码检测供应商就绪或坐席标记上线再建，届时同步领域模型 §7.2.2。

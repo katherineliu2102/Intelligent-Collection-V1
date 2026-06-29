@@ -1,8 +1,10 @@
 # MOCASA Phase 1 — collection-channel 功能测试指南
 
-> **版本**: v1.2 · **日期**: 2026-06-12  
-> **前置**: 应用已启动（见 [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)）；Nacos 已配置渠道密钥（见 [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单)）。  
-> **原则**: 先 Mock 回归 → 单渠道冒烟 → 合规/引擎 → **计划结构验证**（不依赖真实时刻触发多槽位）。
+> **版本**: v1.2  
+> **日期**: 2026-06-12  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单)、[操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)、[测试主文档](../testing/MOCASA催收系统升级_Phase1_测试文档.md)
 
 ---
 

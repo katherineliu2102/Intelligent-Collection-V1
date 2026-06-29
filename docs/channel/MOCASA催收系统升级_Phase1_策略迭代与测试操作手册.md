@@ -1,10 +1,10 @@
 # MOCASA Phase 1 — 策略迭代与测试操作手册
 
-> **版本**: v1.1 · **日期**: 2026-06-05  
-> **状态**: ✅ Phase 1 运行态验证路径可用；策略模板表 Phase 2  
-> **读者**: 策略/运营、渠道开发、QA  
-> **上游**: [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) · [渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)  
-> **下游**: [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) · [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md)
+> **版本**: v1.1  
+> **日期**: 2026-06-05  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
 
 ---
 
