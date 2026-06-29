@@ -1,10 +1,10 @@
 # MOCASA Phase 1 — ContextSnapshot 字段透传说明
 
-> **版本**: v1.0 · **日期**: 2026-06-09  
-> **定位**: 从 **引擎快照 → StepResolver → StepCommand → Adapter → 供应商 API** 的全链字段映射 SSOT。  
-> **快照契约**: [README_ContextSnapshot契约对齐.md](../../../AI%20collection/相关资料/README_ContextSnapshot契约对齐.md)、[ContextSnapshot.sample.json](../../../AI%20collection/相关资料/ContextSnapshot.sample.json)  
-> **渠道 API**: [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md)、[notification-send-api.md](../../../AI%20collection/相关资料/notification-send-api.md)  
-> **引擎契约**: [collection-channel 总规格 §3](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#3-契约stepcommand--stepresult--channel_callback)
+> **版本**: v1.0  
+> **日期**: 2026-06-09  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)、[Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md)、[collection-channel 总规格 §3](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#3-契约stepcommand--stepresult--channel_callback)
 
 ---
 

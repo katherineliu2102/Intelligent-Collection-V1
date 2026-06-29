@@ -1,10 +1,10 @@
 # MOCASA Phase 1 — SendGrid Email 对接说明
 
-> **版本**: v1.1 · **日期**: 2026-06-05  
-> **供应商**: Twilio SendGrid（主）；SES 备（Phase 1 不实现切换）  
-> **上级文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md)（API 附录）、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5  
-> **模板 SSOT**: [渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · HTML [`email-templates/`](./email-templates/README.md) · Test Data [`email-templates/email-templates-test/`](./email-templates/email-templates-test/README.md)  
-> **代码目标**: `com.collection.channel.adapter.SendGridEmailAdapter`
+> **版本**: v1.1  
+> **日期**: 2026-06-05  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[email-templates/](./email-templates/README.md)
 
 ---
 

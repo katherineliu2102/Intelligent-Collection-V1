@@ -1,11 +1,10 @@
 # MOCASA Phase 1 — 通知中心对接说明（SMS + App Push）
 
-> **版本**: v1.1 · **日期**: 2026-06-11  
-> **定位**: 催收 **SMS** 与 **App Push** 经内部 **Notification 通知中心** 发送；collection-channel **不直连** QH/Hiway/BORI/FCM。  
-> **API SSOT**: [notification-send-api.md](../../../AI%20collection/相关资料/notification-send-api.md)  
-> **上级文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) §3.5  
-> **代码目标**: `NotificationSmsAdapter`、`NotificationPushAdapter`（`ChannelType.SMS` / `PUSH`）  
-> **语音外呼**: 仍走 LTH，见 [LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md)
+> **版本**: v1.1  
+> **日期**: 2026-06-11  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[notification-send-api.md](./reference/notification-send-api.md)、[LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md)
 
 ---
 

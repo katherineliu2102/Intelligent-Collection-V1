@@ -1,10 +1,10 @@
 # MOCASA Phase 1 — collection-channel 开发执行指南
 
-> **版本**: v1.2 · **日期**: 2026-06-05  
-> **定位**: 渠道模块负责人的**可执行开发手册**（按步骤写代码、编译、联调）。  
-> **规格 SSOT**: [渠道文档索引](./README_渠道文档索引.md) → [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) → [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)  
-> **测试手册**: [collection-channel 功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)  
-> **本地启动**: [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)
+> **版本**: v1.2  
+> **日期**: 2026-06-05  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [渠道文档索引](./README_渠道文档索引.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)、[操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)
 
 ---
 

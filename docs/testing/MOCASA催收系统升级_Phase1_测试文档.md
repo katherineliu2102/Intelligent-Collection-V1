@@ -1,10 +1,12 @@
 # MOCASA 催收系统升级 — Phase 1 测试主文档（链路 × 层级）
 
-> **版本**: Phase 1 · v2.0（链路视角重构）  
-> **维护人**: 主架构（QA Architect）  
-> **范围**: 仅菲律宾市场；事件驱动状态机 + 七步执行管线；6 个 Maven 模块；JDK8 + Spring Boot 2.7；Phase 1 Mock SPI + 内存总线。  
-> **定位**: 本文是 Phase 1 测试的**唯一信息源（SSOT）**，替代并吸收 `docs/测试总览_Phase1.md` 与 `docs/测试矩阵_engine阶段1.md`（合并 review 后两者删除，仅留 git 历史）。渠道侧 `docs/channel/...功能测试指南.md` 由编排同事维护，本文**只做索引外链，不复制全文**。  
-> **基准**: 以**代码与规格**为准（[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型与数据定义](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[contracts/](../contracts/)）。文档与代码不一致处单列「待澄清」（§11），不擅自编造。
+> **版本**: Phase 1 · v2.0  
+> **日期**: 2026-06-29  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: —  
+> **关联文档**: [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型与数据定义](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[数据接入规格](../MOCASA催收系统升级_Phase1_数据接入规格.md)、[contracts/](../contracts/)、[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)（索引外链）
+
+---
 
 ## 图例与状态约定
 
@@ -109,7 +111,7 @@ mvn -pl collection-admin -am test -Dgroups=integration
 | `collection-common` | 契约层：DTO（ExecutionContext/StepCommand/StepResult/…）、枚举、领域模型、5 个 SPI 接口 + `ChannelGateway` 接口 | L0（被各层引用） | 主架构 |
 | `collection-engine` | 核心引擎：`EventConsumerDispatcher` / `PlanLifecycleManager` / `StepExecutionOrchestrator` / `PreFlightChecker` / `SpiInvoker` / `ContextAssembler` | **L0/L1/L2** | 主架构 |
 | `collection-channel` | 渠道编排：5 个 SPI 的真实实现（策略子层）+ `ChannelGateway`/Adapter（执行子层：SMS/PUSH/EMAIL/Voice） | L0c / L2 真实化 / L4 | 编排同事 |
-| `collection-ingestion` | 数据接入：消费上游 → 写库 → 生成 snapshot → 发布 `CASE_INGESTED/STAGE_CHANGED/REPAYMENT_RECEIVED`；DPD 日切 | L4（事件入口） | 主架构/数据接入 |
+| `collection-ingestion` | 数据接入：消费上游 → 校验 / 组装 payload → 发布 `CASE_INGESTED/STAGE_CHANGED/REPAYMENT_RECEIVED`；DPD 日切 | L4（事件入口） | 主架构/数据接入 |
 | `collection-admin` | 管理后台 + Webhook 回调（鉴权后发 `CHANNEL_CALLBACK`）+ L3 落库集成测试宿主 | **L3** | 服务同事 + 主架构 |
 | `collection-service` | 服务实现：`CaseService`/`ProfileService` 真实实现、MyBatis Mapper、Repository、Mock 测试数据 | L3（Mapper 往返） | 服务同事 |
 
@@ -1382,9 +1384,9 @@ done
 
 | 维度 | L4a（数据源 mock） | L4b（数据源真实） | 现状（代码） |
 |---|---|---|---|
-| **B1 入案数据源** | `MockTriggerController`/`/mock/*` 手动发事件 | 真实 PubSub 消费（topic `case_push`/`repayment`/`assign`）→ `IngestionService` 清洗入库 + 生成 snapshot + 发领域事件 | 🟡 **骨架**：`IngestionService` 仅「发事件」，**无真实 PubSub Consumer**（待数据接入真实化） |
+| **B1 入案数据源** | `MockTriggerController`/`/mock/*` 手动发事件 | 真实 PubSub 消费（**单订阅 `collection-cases` + `dataType` 路由**）→ `IngestionService.ingestCase(.., snapshotFields)` 校验清洗 + 发领域事件（**决策 B：快照字段随 payload 带出，引擎据 payload 组装，运行时不读旧库**；`RealCaseService` 仅兜底/对账） | 🟡 **骨架**：`IngestionService` 已支持 payload 带快照字段重载，**无真实 PubSub Consumer**（待数据接入真实化） |
 | **B2 DPD 日切** | 不涉及 | `DpdStageRollHandler.dailyRoll`（XXL-Job，每日 0:05 PHT）：重算 Max DPD → `STAGE_CHANGED`（1–90 阶段变）/ `CASE_CEASED`（≥91 写 `collection_status=CEASED`） | 🟡 **骨架/占位**：`dailyRoll()` 仅 log，**无重算逻辑 + 未接 XXL-Job**（待真实化） |
-| **CaseService（旧库映射）** | `MockCaseService`（合成画像） | `RealCaseService` 读 `t_collection`(+`t_user_extend`) → `CaseInfo`/`CaseContext`/`ContextSnapshot` | ✅ **已实现**，`@ConditionalOnProperty(collection.case-service=real)` `@Primary` 开启，待连库验证 |
+| **CaseService（旧库映射）** | `MockCaseService`（合成画像） | `RealCaseService` 读 `t_collection`(+设备表，名称待核实) → `CaseInfo`/`CaseContext`/`ContextSnapshot` | ✅ 已实现；**决策 B 降级**：非主快照来源，仅 payload 缺失时兜底 / 对账（`getContextSnapshot`），`isRepaid` 仍为实时还款守卫 |
 | **L3 落库** | 内存仓储 | `ContactPlanRepository` MyBatis 实现 + MySQL `t_contact_plan`/`_step`/`t_contact_timeline` | ⬜ **待建**（差集 D14；DDL `db/schema.sql` 已含三表，缺模板/规则表） |
 | **A1–A6 渠道装配** | A3/A6 真实；A1/A2/A4/A5 Mock | **继承 L4a**（不变） | 同 §L4a.0（薄/全同步） |
 | **Nacos / 供应商** | 必需 | 同 L4a（不变） | — |
@@ -1393,13 +1395,63 @@ done
 
 ### L4b.1 入场 checklist（跑前必读）
 
-- [ ] **真实 PubSub 订阅就绪**：`case_push`/`repayment`/`assign` 的 project/subscription 配置（GCP 凭证经环境变量注入），`IngestionService` 真实 Consumer 已接入（B1 真实化）。
-- [ ] **旧库只读账号**：`t_collection`(+`t_user_extend`) **只读**连接（向主架构负责人获取，**不入仓**）；`collection.case-service=real` 开启 `RealCaseService`。
-- [ ] **MySQL schema 就绪**：`db/schema.sql` 已建 `t_contact_plan`/`t_contact_plan_step`/`t_contact_timeline`/`t_decision_log`；**补全模板表/合规规则表**（A1/A2→Default* 依赖，DDL 待加）。`ContactPlanRepository` MyBatis 实现已装配（L3，D14）。
-- [ ] **XXL-Job Handler 注册**：`DpdStageRollHandler.dailyRoll` 注册为 XXL-Job（或 `TriggerScanner` 的 `@Scheduled` 切 XXL-Job）；日切重算逻辑已实现（B2 真实化）。
-- [ ] **Nacos 配置**：配置中心/注册中心连通，DB/PubSub/供应商 key 走 Nacos + 环境变量。
-- [ ] **A1–A6 装配核对**：`/actuator/beans` 确认渠道装配与 L4a 一致；**若 A1/A5 仍 Mock**，按 §L4b.4 标注受影响用例为「薄」；建议 A1/A5 已 `Default*` 再跑 L4b-全。
-- [ ] **数据安全**：测试用户白名单（见 L4b.数据安全）、真实手机号/邮箱脱敏、相邻触发限频 ≥1s。
+#### 联调配置（真实入站 + 沙箱触达）
+
+| 层 | 键 | L4b 取值 |
+|---|---|---|
+| PubSub | `GCP_PUBSUB_SUBSCRIPTION` | **`collection-cases-ai-v1-sub`**（禁止 `collection-cases-sub`） |
+| 接入 | `collection.ingestion.enabled` | **`true`** |
+| 接入（可选） | `collection.ingestion.loan-id-whitelist` | 仅处理名单内 `loan_id`，其余 ack 跳过 |
+| 渠道 | `channel.notification.push-test-token` | Push 强制投测试 app |
+| 渠道 | `channel.notification.sms-test-mode` | **`true`**（testSend） |
+| 渠道 | SendGrid 测试收件人 | 内部邮箱（见 [功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)） |
+| 运维 | `loan_id` 白名单 | 案件级隔离；**不入仓** |
+
+生产接入参数 SSOT → [接入 §2.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)
+
+#### 自动检查
+
+```bash
+./scripts/test/l4b-preflight.sh          # 环境 / 服务 / 新库表 / PubSub 凭证
+./scripts/test/l4b-preflight.sh --strict # 同上；缺 GCP 订阅或 ingestion.enabled 未 true 时非 0 退出
+```
+
+| 检查项 | 自动（preflight） | 人工 |
+|---|---|---|
+| 服务可达 + L4a 门禁 | 提示查 `logs/run/l4a.last.log` | ✓ 确认 L4a 已通过 |
+| `GCP_PUBSUB_*` / 凭证文件 | ✓ | 运维建订阅 `collection-cases-ai-v1-sub` |
+| `collection.ingestion.enabled=true` | 读 Nacos YAML（`--strict`） | L4b 必须 true |
+| 渠道沙箱（push-test-token / sms-test-mode） | 读 Nacos YAML | SendGrid 测试收件人 |
+| 新库 DDL（plan/step/timeline/device_token） | ✓ `SHOW TABLES` | — |
+| 旧库 `t_collection` 只读 | — | ✓ 可选对账账号 |
+| XXL-Job `dailyRoll` | — | ✓ B2 注册 |
+| `loan_id` 白名单 | 环境变量提示 | ✓ 运维清单（不入仓） |
+| A1–A6 薄/全 | — | ✓ `/actuator/beans` |
+
+#### 手动清单
+
+- [ ] **L4a 前置门禁**：§L4a 8 条已通过。
+- [ ] **PubSub**：`GCP_PUBSUB_PROJECT` / 凭证已注入；B1 Consumer 已接入；运维已建订阅 `collection-cases-ai-v1-sub`。
+- [ ] **联调配置**：上表各项已设（`enabled=true` + 渠道沙箱）。
+- [ ] **新库**：`t_contact_plan` / `_step` / `t_contact_timeline` / `t_user_device_token` 已建；MyBatis L3 已装配。
+- [ ] **日切**：XXL-Job `dailyRoll` 已注册（B2）。
+- [ ] **旧库只读**（可选对账）：`t_collection`；主链路不读旧库（决策 B）。
+- [ ] **A1–A6**：与 L4a 一致；Mock 时按 §L4b.4 标「薄」。
+- [ ] **数据安全**：白名单、脱敏、触发间隔 ≥1s。
+- [ ] **方案 A**：全额结清 `repayment_push_and_load` → `DEL ingestion:ingested:{loan_id}`（接入 §2.2.2 / §3.3）。
+
+#### 测试数据落点（无专门「测试表」）
+
+| 数据 | 落点 | 说明 |
+|---|---|---|
+| 案件画像 phone/email | PubSub payload → `t_contact_plan.context_snapshot` JSON | 决策 B 主链路；L4b-5 断言 payload 映射 |
+| 旧库造数 | **`t_collection`**（`db/seed-test-cases.sql`，`loan_id` 9900000x） | 仅 RealCaseService 兜底 / 可选对账；**非** publish 门禁 |
+| Push 测试 token | **Nacos** `channel.notification.push-test-token` | 适配器强制覆盖，**不落库** |
+| SMS 沙箱 | **Nacos** `sms-test-mode=true` | testSend 端点 |
+| jpush enrichment | 新库 **`t_user_device_token`** | 数仓同步或手工 INSERT |
+| 引擎执行结果 | **`t_contact_plan`** / **`_step`** / **`t_contact_timeline`** | L4b 落库断言主表 |
+| L4a 合成案件 | 内存 `*CaseRegistry` | 不经 DB；L4b 换 PubSub 后不用 |
+| `loan_id` 白名单 | 运维清单 / Nacos `loan-id-whitelist` | **不入仓** |
 
 ### L4b.2 真实数据源映射（事件源 + 旧库字段，以代码为准）
 
@@ -1407,10 +1459,10 @@ done
 
 | 真实触发源 | 经过 | 领域事件 |
 |---|---|---|
-| PubSub `case_push` | `IngestionService.ingestCase`（清洗入库+snapshot） | `CASE_INGESTED` |
-| PubSub `repayment` | `IngestionService.repayment` | `REPAYMENT_RECEIVED` |
+| PubSub `case_push` | `IngestionService.ingestCase`（校验清洗入库；snapshot 由引擎建计划时组装） | `CASE_INGESTED` |
+| PubSub `repayment_push_and_load` | `IngestionService.repayment` | `REPAYMENT_RECEIVED` |
 | XXL-Job `dailyRoll`（DPD 1–90 阶段变） | `DpdStageRollHandler` 重算 → `IngestionService.changeStage` | `STAGE_CHANGED` |
-| XXL-Job `dailyRoll`（DPD≥91） | `DpdStageRollHandler` 写 `collection_status=CEASED` → `caseCeased` | `CASE_CEASED` |
+| XXL-Job `dailyRoll`（DPD≥91） | `DpdStageRollHandler` → `caseCeased` | `CASE_CEASED`（**不写**旧库 CEASED 列；停催态由引擎计划取消 + snapshot 表达） |
 | `TriggerScanner.scanDueSteps`（`trigger_time<=now`） | admin 扫表 | `PLAN_STEP_DUE` |
 
 **(2) 旧库 `t_collection` → `ContextSnapshot` 字段映射（`RealCaseService`，L4b-5 断言依据）**
@@ -1423,7 +1475,7 @@ done
 | `penaltyAmount` | `overdue`（罚息） |
 | `primaryPhone` | `phone` 归一化 E.164 `+63`（`09xx/9xx→+639xx`） |
 | `email` | 脏值（空/`"0"`/无 `@`）→ `null`（EMAIL 走 Guard SKIP） |
-| `device.jpushToken` | `t_user_extend.ji_guang_token`（按 `user_id`；null→PushAdapter fallback SMS） |
+| `device.jpushToken` | 上游 `case_push` 或新库 `t_user_device_token`（数仓 ← `t_user_extend.ji_guang_token`）→ payload → 快照；null→PushAdapter fallback SMS |
 | `repaid` | `full_repay_time` 非空 或 `total_not_paid<=0` |
 | `collectionStatus` | `dpd>=91 ? CEASED : ACTIVE` |
 | `strategyTone` | 固定 `"STANDARD"`（Phase 1；真实语气策略待 A1/决策层） |
@@ -1453,10 +1505,10 @@ done
 | 编号 | 场景 | 真实触发源 | 期望事件 | 期望真实触达 | 落库断言 | 引擎终态 | 前置依赖 |
 |---|---|---|---|---|---|---|---|
 | **L4b-1** | 入案→建计划→真投递→timeline 落库 | PubSub `case_push`（白名单 caseId） | `CASE_INGESTED` | 计划首步真实触达（SMS/PUSH/EMAIL，视计划） | `t_contact_plan` 落 PENDING→执行、`context_snapshot` JSON 往返；`t_contact_plan_step` 首步 `trigger_time`；`t_contact_timeline` 发送行 `provider_msg_id`/`result` | PLAN_COMPLETED（A4 mock 末步） | B1 真实 + L3 落库 + A3/A6；**计划结构受 A1 Mock → 薄**（待 `DefaultPlanFactory` 转全） |
-| **L4b-2** | 还款→取消活跃计划落库 | PubSub `repayment`（白名单 userId） | `REPAYMENT_RECEIVED` | 还款后剩余步骤不再发 | `t_contact_plan.status=PLAN_CANCELLED`、`cancel_reason=REPAID`、`completed_at` 写入 | PLAN_CANCELLED(REPAID) | B1 真实 + L3；**全**（引擎语义，不依赖 A1/A4/A5） |
+| **L4b-2** | 还款→取消活跃计划落库 | PubSub `repayment_push_and_load`（白名单 userId） | `REPAYMENT_RECEIVED` | 还款后剩余步骤不再发 | `t_contact_plan.status=PLAN_CANCELLED`、`cancel_reason=REPAID`、`completed_at` 写入 | PLAN_CANCELLED(REPAID) | B1 真实 + L3；**全**（引擎语义，不依赖 A1/A4/A5） |
 | **L4b-3** | DPD 日切 1–90 阶段变→升档建新阶段落库 | XXL-Job `dailyRoll`（DPD 跨 stage 边界） | `STAGE_CHANGED` | 新阶段计划首步真实触达 | 旧 plan `PLAN_CANCELLED/STAGE_UPGRADE`；新 plan `stage`=新阶段、PENDING；两行 `context_snapshot` 对应不同 dpd | 旧 CANCELLED + 新阶段执行 | B2 真实 + 旧库 dpd 重算 + L3；**新计划结构受 A1 Mock → 薄**（待 Default 转全） |
-| **L4b-4** | DPD≥91→CEASED 停催落库 | XXL-Job `dailyRoll`（DPD≥91） | 写 `collection_status=CEASED` + `CASE_CEASED` | 停催后无新触达 | 活跃 plan `PLAN_CANCELLED/CEASED`；旧库 `collection_status=CEASED`；后续 `CASE_INGESTED` 不再建计划（`shouldRejectPlan` 双保险） | PLAN_CANCELLED(CEASED)，不重建 | B2 真实 + 旧库写 CEASED + L3；**全**（引擎+ingestion 语义） |
-| **L4b-5** | 旧库映射正确性（快照字段溯源） | PubSub `case_push` / 直接查 | `CASE_INGESTED` | （可选触达） | `t_contact_plan.context_snapshot` 内 `dpd`/`stage`/`totalOutstanding`/`penaltyAmount`/`primaryPhone(E.164)`/`email(清洗)`/`jpushToken`/`repaid`/`collectionStatus`/`strategyTone` **逐字段 == `t_collection` 行映射**（见 §L4b.2(2)） | 同 L4b-1 | `RealCaseService`(`case-service=real`) + 旧库只读 + L3；**全**（service 映射，不经渠道 SPI） |
+| **L4b-4** | DPD≥91→CEASED 停催落库 | XXL-Job `dailyRoll`（DPD≥91） | `CASE_CEASED` | 停催后无新触达 | 活跃 plan `PLAN_CANCELLED/CEASED`；**不**断言旧库 `colleciton_status` 写入 | PLAN_CANCELLED(CEASED)，不重建 | B2 + L3；**全** |
+| **L4b-5** | 快照字段溯源（**决策 B：payload → 快照**） | PubSub `case_push`（payload 带快照字段） | `CASE_INGESTED` | （可选触达） | `t_contact_plan.context_snapshot` 内 `dpd`/`stage`/`totalOutstanding`/`penaltyAmount`/`primaryPhone(E.164)`/`email(清洗)`/`jpushToken`/`repaid`/`collectionStatus`/`strategyTone` **逐字段 == `CASE_INGESTED` payload 映射**（引擎 `buildSnapshotFromEvent`，**不读旧库**）；旧库 `t_collection` 行映射仅作**可选对账**（`RealCaseService` 兜底路径，payload 缺失时才走） | 同 L4b-1 | B1 真实(payload) + L3；旧库只读降级为对账；**全**（引擎组装，不经渠道 SPI） |
 | **L4b-6** | TriggerScanner 扫描到期→执行落库 | `TriggerScanner.scanDueSteps`（`trigger_time<=now`） | `PLAN_STEP_DUE` | 到期步骤真实触达 | 步 `status` PENDING→EXECUTING→COMPLETED/WAITING、`executed_at`；`t_contact_timeline` 落发送行 | 步推进 / PLAN_COMPLETED | L3（`findDueSteps` 连库）+ admin 调度 + A3/A6；**全**（扫描/执行语义） |
 | **L4b-7** | PubSub 消费失败→NACK 重投（可靠性，L4b 新增变量） | PubSub `case_push`（注入下游异常，如 CaseService 读失败） | 消费 NACK | 重投后成功一次触达（不重复） | 仅一个活跃计划（重投幂等）；失败时 `t_contact_plan` 无脏数据 | 重投成功后 PLAN_COMPLETED | B1 真实 PubSub ack/nack + L3 + 计划幂等键；**全** |
 | **L4b-8** | DPD 日切幂等（重复 `dailyRoll` 不重复建/升档） | XXL-Job `dailyRoll` 同日重复执行 | `STAGE_CHANGED` 仅一次有效 | 不重复触达 | 同 case+stage 仅一个活跃计划（单活跃约束）；重复日切不产生重复 `PLAN_CANCELLED/STAGE_UPGRADE` | 幂等：第二次 noop | B2 真实 + 单活跃计划约束 + L3；**全** |
@@ -1504,7 +1556,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 
 ### L4b.数据安全（强制）
 
-- **旧库只读**：`RealCaseService` 仅 `SELECT t_collection`/`t_user_extend`；**禁止写旧库**（写仅落新库 `ai_collection_db`）。
+- **旧库只读**：`RealCaseService` 兜底路径仅 `SELECT t_collection`（L4b 对账）；**jpushToken 主链路读新库 `t_user_device_token`**，禁止运行时读旧库 `t_user_extend`（写仅落新库 `ai_collection_db`）。
 - **测试用户白名单**：L4b 仅对约定的白名单 caseId/loan_id 子集触达（避免真实催收用户被打扰）；白名单来源 = 旧库内部测试账户或 L4a `*CaseRegistry` 对应的真号画像，**单独清单维护、不入仓**。
 - **脱敏**：日志/SQL 输出对真实手机号/邮箱脱敏（中段掩码）；`provider_callback`/`content_summary` 不落敏感明文。
 - **限频**：相邻真实触发 ≥1s；批量回归对供应商额度限速。
@@ -1671,6 +1723,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | **§11-10** | 建计划阶段 vs 执行阶段守卫边界（已澄清） | §3.1② `PreFlightChecker` 是**执行阶段**（`executeStep`）守卫，读失败→`check=false`→静默退出（fail-close，不 NACK）；**建计划阶段**（`onCaseIngested→createPlanForStage`）的 `CaseService.getCaseInfo/getContextSnapshot` 读失败**无 fail-close**，异常上抛→`@Transactional` 回滚→NACK 重消费 | 链路① 读失败行为与链路②执行守卫不同，易混淆 | **已澄清**：建计划阶段读失败 = NACK 重消费（计划不可丢）；执行阶段守卫 = fail-close 静默跳过。差集 D25 据此补 L0（建计划阶段读失败异常上抛断言） |
 | **§11-9** | 空地址 SKIP 断言归属（方案A，已澄清） | 契约定稿「方案A」：空地址（`NO_PHONE`/`NO_TOKEN`/`NO_EMAIL`）由编排侧 `ExecutionGuard` 返回 `block`，引擎统一 `markSkipped`（SKIPPED+COMPLIANCE_BLOCKED+推进）；`NO_EMAIL` 已由 C3 覆盖，`NO_PHONE`/`NO_TOKEN` 在引擎侧无 L0/L2 断言（D5） | 链路② 空地址 SKIP 语义的引擎↔编排断言边界 | **已澄清**：引擎侧用 L2 替身断言「block→SKIPPED」通用语义（②-S30/S31，可内存补 +2 `@Test`，见 §4.2.6）；rule 码真值（哪种缺失→哪个码）归编排 L4（`TC-PUSH-02`/`TC-EMAIL-02`）。PUSH 空 token 但有 SMS 号→编排 fallback SMS（C2，不进 SKIP） |
 | **§11-11** | 链路③ `PLAN_COMPLETED` 未写 `completed_at`（已拍板） | 定义卡 §5.1「数据落点 `t_contact_plan.completed_at`」；但 `onStepCompleted` 的 `PLAN_COMPLETED` 分支仅 `updatePlanStatus(planId, PLAN_COMPLETED, null)`，**未调用 `markCompleted`**——`markCompleted(setCompletedAt(now))` 仅在内存测试仓储（`FullChainIntegrationTest`/`ChannelContractL2Test`）中定义，**生产 `PlanLifecycleManager` 无任何调用** | `completed_at` 当前不写，与定义卡落点不符；③-S4（#14）仅断言 status | **已拍板（2026-06-21，选 b）：`completed_at` 由 L3 admin/落库侧统一补写，引擎不负责、不补码**（同 §11-8 模式）。定义卡 §5.1 落点已标注「completed_at 归 admin/L3 落库」；引擎 L0/L1 不就此补 `@Test`，D27 转 L3 落库项（归 D14 同环境） |
+| **§11-12** | **决策 B：快照来源 = 事件 payload（2026-06-29 已拍板）** | `PlanLifecycleManager` 建计划/续建/升档优先据 `CASE_INGESTED` payload / carry-forward 组装快照，**运行时不读旧库 `t_collection`**；payload 缺失才降级 `CaseService`。已加 L0 验证 payload 路径 | 快照主链路与旧库解耦 | 已落地 common/engine/ingestion 重载；**jpushToken Phase 1**：数仓日同步 → `t_user_device_token`，ingestion 只读新库 enrichment（[接入 §3.5](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；L4b enrichment 单测 ⬜ 待 B1 |
 
 ---
 

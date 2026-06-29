@@ -1,9 +1,10 @@
 # MOCASA Email 模板设计系统（Phase 1）
 
-> **版本**: v1.5 · **日期**: 2026-06-10 · **文案**: v3 催收心理学优化  
-> **状态**: ✅ Email HTML 17/17 草稿齐全；SendGrid **Phase 1 启用 5 封**  
-> **适用范围**: Phase 1 **实际发信 5 封** + 里程碑 HTML 8 封备用 + 条件 Email 4 封（Phase 2）  
-> **上游**: [渠道模板清单与配置 §3](../MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [渠道编排规格 §7.9](../MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)
+> **版本**: v1.5  
+> **日期**: 2026-06-10  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [渠道模板清单 §3](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[渠道编排规格 §7.9](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)、[SendGrid 对接说明](../channel/MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)
 
 ---
 

@@ -600,6 +600,66 @@ class PlanLifecycleManagerTest {
         verify(planRepository, never()).savePlan(any());
     }
 
+    // ───────────────────────── 决策 B：payload 自带快照（不读旧库） ─────────────────────────
+
+    @Test
+    @DisplayName("①-B 决策B：CASE_INGESTED 带快照字段 → 据 payload 组装，主链路不读旧库(CaseService 不被调用)")
+    void onCaseIngested_payloadSnapshot_noCaseServiceRead() {
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
+        ContactPlan created = newPlan(0L, null, Stage.S2);
+        created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(created);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.STAGE, "S2")
+                        .with(CollectionEvent.DPD, 10)
+                        .with(CollectionEvent.PHONE, "+639171234567")
+                        .with(CollectionEvent.EMAIL, "a@b.com")
+                        .with(CollectionEvent.TOTAL_OUTSTANDING, new java.math.BigDecimal("1500.00"));
+
+        manager.onCaseIngested(event);
+
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        assertThat(captor.getValue().getContextSnapshot()).contains("+639171234567");
+        // 决策 B：快照来自 payload，运行时不读旧库
+        verify(caseService, never()).getContextSnapshot(any());
+        verify(caseService, never()).getCaseInfo(any());
+    }
+
+    @Test
+    @DisplayName("①-B 决策B：payload dpd>=91 → collectionStatus=CEASED → 跳过工厂，不读旧库")
+    void onCaseIngested_payloadCeased_skip() {
+        when(planRepository.findActivePlanByCaseAndStage(any(), any())).thenReturn(null);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.DPD, 95)
+                        .with(CollectionEvent.PHONE, "+639171234567");
+
+        manager.onCaseIngested(event);
+
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+        verify(caseService, never()).getCaseInfo(any());
+    }
+
+    @Test
+    @DisplayName("①-B 决策B：CASE_INGESTED 缺 caseId → 异常上抛(NACK 重消费)")
+    void onCaseIngested_missingCaseId_propagates() {
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED).with(CollectionEvent.STAGE, "S1");
+
+        assertThatThrownBy(() -> manager.onCaseIngested(event))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(planRepository, never()).savePlan(any());
+    }
+
     private CollectionEvent ingestEvent(String stage) {
         return CollectionEvent.of(EventType.CASE_INGESTED)
                 .with(CollectionEvent.CASE_ID, CASE_ID)

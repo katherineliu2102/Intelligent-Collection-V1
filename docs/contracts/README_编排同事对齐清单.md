@@ -1,7 +1,12 @@
 # 与编排同事（collection-channel）对齐清单
 
-> 用途：一页看清**要对齐哪些文件、每个文件对齐什么**。主架构（引擎）维护契约，编排同事实现 5 个 SPI + ChannelGateway。
-> 边界：引擎定义契约与状态机语义；编排同事消费契约产出渠道行为。**契约变更先在 collection-common 对齐，再改两侧。**
+> **版本**: Phase 1  
+> **日期**: 2026-06-11  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-common` / `collection-channel`  
+> **关联文档**: [核心引擎规格 §6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)、[ContextSnapshot 契约对齐](./README_ContextSnapshot契约对齐.md)、[引擎渠道执行契约对齐](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)
+
+---
 
 ## 一、要对齐的文件
 

@@ -20,7 +20,11 @@
 | `smoke-level-a.sh` | Level A 冒烟 |
 | `run-email-e2e.ps1` | Email 5 封联调（见 `docs/email-templates/email-e2e-test-cases.md`） |
 
-## L4b（预留）
+## L4b
+
+| 脚本 | 说明 |
+|------|------|
+| [`test/l4b-preflight.sh`](../scripts/test/l4b-preflight.sh) | 跑前自动检查（§L4b.1）；`l4b-official-test.sh` 待 B1/B2 真实化后补 |
 
 后续在同目录新增 `l4b-official-test.sh`，并在测试主文档增 **§L4b** 章节（不新建子目录）。
 

@@ -2,9 +2,9 @@
 
 > **版本**: V1.4  
 > **日期**: 2026-06-03  
-> **定位**: 本文档即 [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) 中所指的 **渠道编排规格**（PlanFactory / ExecutionGuard / AdvancementPolicy / ExhaustionPolicy / StepResolver 等业务规则来源）  
-> **范围**: 菲律宾市场；Phase 1 **机器轨**（Push / SMS / Email / AI 外呼 / 语音播报）自动化触达升级  
-> **关联文档**: [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[架构设计](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md)、[SendGrid Email](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)、[LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md)、[渠道文档索引](./README_渠道文档索引.md)、代码交接 [HANDOFF.md](../HANDOFF.md)
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`（策略子层）  
+> **关联文档**: [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[渠道文档索引](./README_渠道文档索引.md)、[HANDOFF.md](../HANDOFF.md)
 
 ---
 
@@ -555,7 +555,7 @@ strategyTone =
 
 ### 6.4 与 `context_snapshot` 不可变契约对齐
 
-架构约定：计划创建时由 **数据接入层** 将案件标签序列化写入 `t_contact_plan.context_snapshot`，运行时 SPI **只读快照、不实时查库**（见[架构设计 §1.8.4](../MOCASA催收系统升级_Phase1_架构设计文档.md#184-决策上下文快照化)）。
+架构约定：计划创建时由 **数据接入层** 将案件标签序列化写入 `t_contact_plan.context_snapshot`，运行时 SPI **只读快照、不实时查库**（见[架构设计 §1.7.2](../MOCASA催收系统升级_Phase1_架构设计文档.md#172-决策上下文快照化)）。
 
 | 场景 | 渠道编排侧行为 | 引擎/接入侧动作 |
 |------|----------------|-----------------|
