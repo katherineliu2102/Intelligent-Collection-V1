@@ -18,8 +18,9 @@ import javax.annotation.Resource;
  * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。
  * 不回写旧库；<b>决策 B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push），
  * 引擎据 payload 组装快照，运行时不读旧库 t_collection。CaseService 仅作兜底 / 对账。
- * <p>Phase 1 骨架：提供"发布领域事件"的最小能力，供链路自测注入（不含真实 PubSub 消费）。
- * 真实实现由数据接入负责人补全 PubSub Consumer 与写库。
+ * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub
+ * 消费者 {@link com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、
+ * 不写库；ack/nack/幂等/路由归 Consumer。
  */
 @Service
 public class IngestionService {

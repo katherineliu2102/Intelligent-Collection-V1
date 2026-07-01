@@ -202,9 +202,9 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 #### B1. `IngestionService` → 真实 PubSub 消费
 
 - 接 GCP PubSub，消费上游信贷系统推送（`case_push` / `repayment_push_and_load`；`assign_signal` Phase 1 不路由）
-- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；**入案主链路不读**旧库 `t_collection`、**不回写**任何库（**决策 B**，见 [数据接入 §3.0](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#30-入案快照路径决策-b)）
+- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；**入案主链路不读**旧库 `t_collection`、**不回写**任何库（见 [数据接入 §3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
 - 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load` 仅 publish `REPAYMENT_RECEIVED`
-- `context_snapshot` 由**引擎**据 `CASE_INGESTED` payload 组装并写入 plan（[§3.0 / §3.4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`CaseService` 仅 payload 缺失兜底 / L4b 对账
+- `context_snapshot` 由**引擎**据 `CASE_INGESTED` payload 组装并写入 plan（[§3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`CaseService` 仅 payload 缺失兜底 / L4b 对账
 - 现有 `IngestionService` 骨架方法在此替换为真实 PubSub Consumer
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑

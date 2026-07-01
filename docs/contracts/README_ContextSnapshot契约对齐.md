@@ -4,14 +4,14 @@
 > **日期**: 2026-06-29  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-common`  
-> **关联文档**: [领域模型 §9.2](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)、[ContextSnapshot.sample.json](./ContextSnapshot.sample.json)、[数据接入规格 §3.4](../MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)
+> **关联文档**: [领域模型 §9.2](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)、[ContextSnapshot.sample.json](./ContextSnapshot.sample.json)、[数据接入规格 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)
 
 ---
 
 ## 数据流向
 
 ```
-接入层从 case_push 填充快照字段 → 随 CASE_INGESTED payload 带出（决策 B，不读旧库）
+接入层从 case_push 填充快照字段 → 随 CASE_INGESTED payload 带出（不读旧库）
         → 引擎建计划时据 payload 组装 ContextSnapshot → JSON 落 t_contact_plan.context_snapshot
         → SPI 决策只读快照（零 DB I/O）
         → StepResolver(编排同事) 读快照产出 StepCommand(channelType/targetAddress/templateId)
@@ -41,7 +41,7 @@
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
 | `caseContext.caseId` / `userId` / `stage` | 选模板、定位 | 服务同事映射 |
-| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | **终态**：上游 `case_push` 消息体。**Phase 1（2026-06-29）**：数仓日同步旧库 `t_user_extend.ji_guang_token` → 新库 `t_user_device_token`；ingestion **只读新库** enrichment 进 payload（[接入 §3.5](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。引擎不查库 |
+| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | **终态**：上游 `case_push` 消息体。**Phase 1**：数仓日同步旧库 `t_user_extend.ji_guang_token` → 新库 `t_user_device_token`；ingestion **只读新库** 补全进 payload（[接入 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。引擎不查库 |
 | `caseContext.repaymentUrl` | `data.deep_link` | 接入 / 信贷结账链路 |
 | `userProfile.behavior.appLastActiveTime` | 活跃度判断（可选块） | 服务同事映射 |
 

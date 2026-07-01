@@ -347,7 +347,7 @@ flowchart TD
 
 | 字段 | 类型 | 必填 | 来源 | Phase 1 状态 |
 |---|---|---|---|---|
-| jpushToken | String | 否 | **Phase 1**：上游 `case_push` 或新库 `t_user_device_token`（数仓 ← 旧库 `t_user_extend`）→ ingestion 写入 payload | **Phase 1 实现**：JPush Registration ID；见 [数据接入 §3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)、[Notification §2.2](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md#22-push-渠道) |
+| jpushToken | String | 否 | **Phase 1**：上游 `case_push` 或新库 `t_user_device_token`（数仓 ← 旧库 `t_user_extend`）→ ingestion 写入 payload | JPush Registration ID；见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)、[Notification §2.2](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md#22-push-渠道) |
 | deviceModel | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | osVersion | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | phoneValidity | PhoneValidity | 否 | t_user_profile_ext（Phase 2） | 🅿️2 预留，需号码检测供应商 |
@@ -873,7 +873,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 
 #### 7.2.3 t_user_device_token — Push Token 镜像（Phase 1）
 
-> **用途**：数仓每日将旧库 `t_user_extend.ji_guang_token` 同步至本表；`collection-ingestion` 消费 `case_push` 时**只读新库** enrichment `CASE_INGESTED` payload 的 `jpushToken`（见 [数据接入 §3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。**不由应用写入**；终态上游 `case_push` 自带 token 后可停同步。
+> **用途**：数仓每日将旧库 `t_user_extend.ji_guang_token` 同步至本表；`collection-ingestion` 消费 `case_push` 时**只读新库** enrichment `CASE_INGESTED` payload 的 `jpushToken`（见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。**不由应用写入**；终态上游 `case_push` 自带 token 后可停同步。
 
 ```sql
 CREATE TABLE IF NOT EXISTS t_user_device_token (
@@ -953,7 +953,7 @@ CREATE TABLE IF NOT EXISTS t_user_device_token (
 
 | EventType | 发布者 | payload 字段（key） | 必填 / 缺省 |
 |---|---|---|---|
-| CASE_INGESTED | ingestion | `caseId`、`userId`、`stage` + **快照字段（决策 B，2026-06-29）**：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` Phase 1 由上游消息或新库 `t_user_device_token` enrichment（[§3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；缺失→PUSH fallback SMS |
+| CASE_INGESTED | ingestion | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` 由上游消息或新库 `t_user_device_token` 补全（[§3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；缺失→PUSH fallback SMS |
 | STAGE_CHANGED | ingestion / engine（ESCALATE 续建） | `caseId`、`stage`（=**目标阶段**） | 均必填 |
 | REPAYMENT_RECEIVED | ingestion | `userId`；推荐 `loanId`、`repayTime`、`messageId`（去重 / 全额结清 DEL ingested） | `userId` 必填 |
 | PLAN_STEP_DUE | XXL-Job（`planStepDueHandler`） | `planId`、`stepId` | 均必填 |
