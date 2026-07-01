@@ -549,7 +549,7 @@ public class PlanLifecycleManager {
         info.setTotalOutstanding(ctx.getTotalOutstanding());
         info.setDueDate(ctx.getDueDate());
         info.setFrozen(ctx.isComplaintFrozen());
-        // repaid 由实时守卫 PreFlightChecker 负责（[接入 §3.4]），快照不承载实时态
+        // repaid 由实时守卫 PreFlightChecker 负责（[接入 §3.1]），快照不承载实时态
         info.setRepaid(false);
         return info;
     }

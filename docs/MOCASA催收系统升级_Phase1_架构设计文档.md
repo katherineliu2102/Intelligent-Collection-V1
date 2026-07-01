@@ -171,7 +171,7 @@
 
 #### 1.2.1 上游数据接入
 
-主路径起点（`collection-ingestion`）：消费上游 PubSub → 校验 / 组装 payload（`jpushToken`：优先上游消息；Phase 1 可读新库 `t_user_device_token` enrichment，见 [数据接入规格 §3.5](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）→ 经 `CollectionEventBus` 发布领域事件 + DPD 日切（日切只读旧库扫描在催名单）。`context_snapshot` 由引擎建计划时据 payload 组装（见 [§1.6.2](#162-决策上下文快照化) / [数据接入规格 §1.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#14-前置决策)）。
+主路径起点（`collection-ingestion`）：消费上游 PubSub → 校验 / 组装 payload（`jpushToken`：优先上游消息；缺失时读新库 `t_user_device_token`，见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）→ 经 `CollectionEventBus` 发布领域事件 + DPD 日切（日切只读旧库扫描在催名单）。`context_snapshot` 由引擎建计划时据 payload 组装（见 [§1.6.2](#162-决策上下文快照化) / [数据接入规格 §1.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#13-前置决策)）。
 
 | 边界 | 契约 |
 |---|---|
@@ -326,7 +326,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 - `STAGE_CHANGED` 取消旧阶段计划并重建，新计划绑定新快照（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）
 - 还款 / 冻结等实时状态由 `PreFlightChecker`（骨架②）与 `ExecutionGuard`（骨架③）步骤执行时校验
 
-> 规格：[领域模型 §3.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#34-contextsnapshot决策上下文快照) · [数据接入规格 §3.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
+> 规格：[领域模型 §3.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#34-contextsnapshot决策上下文快照) · [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
 
 #### 1.6.3 幂等键契约
 

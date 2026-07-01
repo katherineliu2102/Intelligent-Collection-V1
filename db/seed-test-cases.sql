@@ -12,14 +12,14 @@
 --      D91+ 完全停催（CASE_CEASED）：PlanFactory.shouldRejectPlan 拦截，不建计划。
 --   3) overdue_days 尽量同时命中 Email 里程碑 DPD（0/1/4/31），使同一份 seed 既能测
 --      SMS/Push 的 stage 文案，又能测 Email 里程碑模板；S3 无 Phase1 Email，仅测 SMS/Push。
---   4) phone/email 统一填测试地址 —— 批量测不同 stage 但只投少量测试收件人。
---      ⚠ 把下面 @TEST_PHONE / @TEST_EMAIL 改成你们的真实测试号码/邮箱（E.164 +63 格式）。
---      Push 走 channel.notification.push-test-token 统一投测试 app，不依赖本脚本。
+--   4) phone/email 与 L4a 联调口径一致（测试文档 §L4a.2：126 邮箱 + 94101/94999 真号）。
+--      Push 实际下发走 channel.notification.push-test-token（与 L4a 94200 同 token）；
+--      payload/快照 jpushToken 见 db/seed-device-token.sql。
 --   5) 幂等：按 id 前缀 'IC_TEST_' 先清理再插入，可反复执行。
 -- =====================================================================
 
-SET @TEST_PHONE = '+639170000001';   -- TODO: 替换为你们的测试手机号（E.164）
-SET @TEST_EMAIL = 'collection.test@mocasa.test';  -- TODO: 替换为你们的测试邮箱
+SET @TEST_PHONE = '+639451374358';   -- L4a 真号（94999/94101，E.164 +63）
+SET @TEST_EMAIL = 'wzynju@126.com'; -- L4a Email 真发优先（126）
 
 -- 幂等清理（仅清理本脚本造的测试行，不影响真实数据）
 DELETE FROM t_collection WHERE id LIKE 'IC_TEST_%';

@@ -24,6 +24,17 @@ collection:
     interval-ms: 5000
   idempotency: memory
   eventbus: memory
+  # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
+  # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
+  ingestion:
+    enabled: ${INGESTION_ENABLED:false}
+    project-id: ${GCP_PUBSUB_PROJECT:}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-cases-ai-v1-sub}
+    ack-deadline-seconds: 60
+    max-concurrency: 4
+    # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
+    # case-push:                                  # 上游 JSON key 与契约不一致时配别名（C-I-01 待信贷联调）
+    #   field-map: { caseId: loan_id, dpd: overdue_days }
 channel:
   callback:
     base-url: http://localhost:8888/webhook

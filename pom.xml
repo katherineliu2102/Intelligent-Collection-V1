@@ -34,6 +34,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-cloud.version>2021.0.9</spring-cloud.version>
         <spring-cloud-alibaba.version>2021.0.6.2</spring-cloud-alibaba.version>
+        <!-- 3.x 是兼容 Spring Boot 2.7 / Java 8 的最后一条线（4.x 起需 Boot 3 / Java 17） -->
+        <spring-cloud-gcp.version>3.4.0</spring-cloud-gcp.version>
         <mybatis.starter.version>2.3.2</mybatis.starter.version>
         <fastjson.version>1.2.83</fastjson.version>
         <lombok.version>1.18.42</lombok.version>
@@ -54,6 +56,14 @@
                 <groupId>com.alibaba.cloud</groupId>
                 <artifactId>spring-cloud-alibaba-dependencies</artifactId>
                 <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- GCP PubSub（B1 数据接入）。BOM 统一管理 google-cloud-pubsub 等版本，Java 8 安全。 -->
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>spring-cloud-gcp-dependencies</artifactId>
+                <version>${spring-cloud-gcp.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
