@@ -4,6 +4,7 @@
 > **日期**: 2026-06-17  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-common`  
+> **SSOT 分工**：本文 **§3 / §6 / §9** 为 `collection-common` **字段、枚举、EventPayload、DDL 的文档 SSOT**。SPI 方法签名与共享 DTO 调用语义见 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)；EventBus / Repository 见 [基础设施 §2/§5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)。索引见 [架构 §1.1](./MOCASA催收系统升级_Phase1_架构设计文档.md#11-架构总览)。  
 > **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)、[权威 DDL `../db/schema.sql`](../db/schema.sql)
 
 ---
@@ -111,7 +112,7 @@ flowchart TD
 | 表名 | 状态 | Owner | 首席写入方 | 核心消费方 | DDL 位置 | 审查方 |
 |---|---|---|---|---|---|---|
 | `t_contact_timeline` | NEW | 跨模块共写 | channel(自动触达), 人工外呼, ingestion(ETL) | 决策引擎(聚合), 合规引擎(频率), 数仓(BI) | §7.2.1 | **全员** |
-| `t_user_device_token` | NEW | 数仓（日同步） | 数仓 ETL（源 = 旧库 `t_user_extend`） | collection-ingestion（enrichment 只读） | §7.2.3 | 主架构 + 数仓 |
+| `t_user_device_token` | NEW | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`） | collection-ingestion（enrichment 只读，**降级**） | §7.2.3 | 主架构 + 数仓 |
 | `t_user_profile_ext` | **NEW（Phase 2 押后）** | service | ProfileService, 坐席后台 | 决策引擎(画像输入) | §7.2.2（Phase 1 不建表） | 主架构 + 数仓 |
 
 #### E. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
@@ -123,7 +124,7 @@ flowchart TD
 | `t_collection` | §3.1 CaseContext | 案件主表，CaseContext 数据来源 |
 | `t_user_repayment_plan` | §3.1 CaseContext | 还款计划，金额/日期来源 |
 | `t_user_basis` | §3.2 UserProfile.BasicInfo | 用户基本信息（name/phone/email/language） |
-| `t_user_equipment` | §3.2 UserProfile.DeviceInfo | 设备信息（jpushToken）；**Phase 1 主读源 = 新库 `t_user_device_token`（数仓同步）**，非运行时直读 |
+| `t_user_equipment` | §3.2 UserProfile.DeviceInfo | 现网设备表（App 上报 RID）；**Phase 1 入案主路径不读**：`jpushToken` 随 `case_push` 消息体携带（2026-07 确认） |
 
 **Phase 2 才引用**（对应 UserProfile 维度 Phase 1 不填充，见 §3.2 🅿️2）：
 
@@ -347,7 +348,7 @@ flowchart TD
 
 | 字段 | 类型 | 必填 | 来源 | Phase 1 状态 |
 |---|---|---|---|---|
-| jpushToken | String | 否 | **Phase 1**：上游 `case_push` 或新库 `t_user_device_token`（数仓 ← 旧库 `t_user_extend`）→ ingestion 写入 payload | JPush Registration ID；见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)、[Notification §2.2](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md#22-push-渠道) |
+| jpushToken | String | 否 | 上游 `case_push` 消息体 → ingestion 写入 payload（**已确认 2026-07**）；缺失且 `enrich-jpush-token=true` 时可读新库 `t_user_device_token` | JPush Registration ID；见 [数据接入 §3.1 读库](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库) |
 | deviceModel | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | osVersion | String | 否 | t_user_equipment | 🅿️2 Phase 2 预留 |
 | phoneValidity | PhoneValidity | 否 | t_user_profile_ext（Phase 2） | 🅿️2 预留，需号码检测供应商 |
@@ -588,7 +589,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 | PUSH | App 推送 | JPush（经内部通知中心；**不使用 FCM token**） | AUTOMATED | 接入 |
 | SMS | 短信 | LTH | AUTOMATED | 升级 |
 | AI_CALL | AI 机器人外呼 | LTH | AUTOMATED | 升级 |
-| TTS | TTS 语音通知 | LTH | AUTOMATED | 升级 |
+| TTS | TTS 语音通知 | LTH | AUTOMATED | **LTH 域外**（独立编排，本系统不生成 plan step） |
 | EMAIL | 邮件 | SendGrid（主；SES 备） | AUTOMATED | 接入 |
 | VIBER | Viber 消息 | Viber Business API（待签约） | AUTOMATED | 接入 |
 | WHATSAPP | WhatsApp 消息 | WSCRM | AUTOMATED | 升级 |
@@ -599,7 +600,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 > | 方法 | 含义 | 成员 |
 > |---|---|---|
 > | `isMessageChannel()` | 消息类：同步返回、有/无观察期 | SMS / PUSH / EMAIL / VIBER / WHATSAPP |
-> | `isAsyncChannel()` | 电话/人工类：发送后保持 STEP_EXECUTING，等待异步回调 | AI_CALL / TTS / HUMAN_CALL |
+> | `isAsyncChannel()` | 电话/人工类：发送后保持 STEP_EXECUTING，等待异步回调 | AI_CALL / HUMAN_CALL |
 
 ### 6.2 ContactResult（触达结果）
 
@@ -612,9 +613,9 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 | READ | 已读 | 是 | PUSH（点击）, VIBER, WHATSAPP |
 | REPLIED | 用户回复了消息 | 是 | VIBER, WHATSAPP |
 | CLICKED | 用户点击了消息中的链接/按钮 | 是 | PUSH, EMAIL, VIBER |
-| ANSWERED | 电话已接通 | 是 | AI_CALL, TTS, HUMAN_CALL |
-| NO_ANSWER | 电话未接听 | 是 | AI_CALL, TTS, HUMAN_CALL |
-| BUSY | 忙线 | 是 | AI_CALL, TTS, HUMAN_CALL |
+| ANSWERED | 电话已接通 | 是 | AI_CALL, HUMAN_CALL |
+| NO_ANSWER | 电话未接听 | 是 | AI_CALL, HUMAN_CALL |
+| BUSY | 忙线 | 是 | AI_CALL, HUMAN_CALL |
 | FAILED | 发送失败（重试耗尽） | 是 | 所有渠道 |
 | REJECTED | 被拒收（用户屏蔽/退订） | 是 | SMS, EMAIL, VIBER, WHATSAPP |
 | SENT_NO_RESPONSE | 已发送，观察期内无响应 | 是 | SMS, PUSH, EMAIL, VIBER, WHATSAPP |
@@ -710,7 +711,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 
 | 枚举值 | 含义 | 适用渠道 |
 |---|---|---|
-| AUTOMATED | 自动触达：系统直接调 API，秒级完成 | PUSH, SMS, AI_CALL, TTS, EMAIL, VIBER, WHATSAPP |
+| AUTOMATED | 自动触达：系统直接调 API，秒级完成 | PUSH, SMS, AI_CALL, EMAIL, VIBER, WHATSAPP |
 | AGENT_ASSISTED | 人工辅助：需要坐席参与，以批量任务为单位 | HUMAN_CALL |
 
 ### 6.9 Stage（催收阶段）
@@ -873,7 +874,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 
 #### 7.2.3 t_user_device_token — Push Token 镜像（Phase 1）
 
-> **用途**：数仓每日将旧库 `t_user_extend.ji_guang_token` 同步至本表；`collection-ingestion` 消费 `case_push` 时**只读新库** enrichment `CASE_INGESTED` payload 的 `jpushToken`（见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。**不由应用写入**；终态上游 `case_push` 自带 token 后可停同步。
+> **用途**：可选 enrichment 降级表（`enrich-jpush-token=true` 且消息缺 token 时只读）。**主路径（2026-07 确认）**：`jpushToken` 随 `case_push` 消息体携带，入案零读库。数仓同步可逐步停用。
 
 ```sql
 CREATE TABLE IF NOT EXISTS t_user_device_token (
@@ -953,7 +954,7 @@ CREATE TABLE IF NOT EXISTS t_user_device_token (
 
 | EventType | 发布者 | payload 字段（key） | 必填 / 缺省 |
 |---|---|---|---|
-| CASE_INGESTED | ingestion | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` 由上游消息或新库 `t_user_device_token` 补全（[§3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；缺失→PUSH fallback SMS |
+| CASE_INGESTED | ingestion | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；**`jpushToken` 由 `case_push` 消息体携带**（2026-07 确认）；缺失时可降级读新库（[§3.1 读库](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库)）；无 token → PUSH fallback SMS |
 | STAGE_CHANGED | ingestion / engine（ESCALATE 续建） | `caseId`、`stage`（=**目标阶段**） | 均必填 |
 | REPAYMENT_RECEIVED | ingestion | `userId`；推荐 `loanId`、`repayTime`、`messageId`（去重 / 全额结清 DEL ingested） | `userId` 必填 |
 | PLAN_STEP_DUE | XXL-Job（`planStepDueHandler`） | `planId`、`stepId` | 均必填 |

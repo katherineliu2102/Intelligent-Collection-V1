@@ -75,4 +75,4 @@ Attributes（可选）：`dataType=case_push`, `messageId=ic-l4b-s0-001`
 }
 ```
 
-（`jpushToken` 可省略 → 读 `t_user_device_token`。）
+（`jpushToken` 随 `case_push` 消息体携带，2026-07 确认；缺 token 且 `enrich-jpush-token=true` 时可读 `t_user_device_token`。）

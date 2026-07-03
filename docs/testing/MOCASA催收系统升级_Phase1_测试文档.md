@@ -645,7 +645,7 @@ void prepareStepDue_waitingCarryOver_noResult_sentNoResponse() {
 | 项 | 内容 |
 |---|---|
 | **触发事件** | `CHANNEL_CALLBACK`（供应商 Webhook 经 admin 鉴权发布）/ `CALLBACK_TIMEOUT`（引擎超时哨兵） |
-| **经过组件（模块/负责人）** | 电话/人工类（AI_CALL/TTS/HUMAN_CALL）发送后保持 `STEP_EXECUTING` + 注册超时 Job（七步⑦）→ admin 收 Webhook（admin/服务同事）→ `PlanLifecycleManager.onChannelCallback`/`onCallbackTimeout`（engine/主架构）→ 发 `STEP_COMPLETED`（链路③） |
+| **经过组件（模块/负责人）** | 电话/人工类（AI_CALL/HUMAN_CALL）发送后保持 `STEP_EXECUTING` + 注册超时 Job（七步⑦）→ admin 收 Webhook（admin/服务同事）→ `PlanLifecycleManager.onChannelCallback`/`onCallbackTimeout`（engine/主架构）→ 发 `STEP_COMPLETED`（链路③） |
 | **关键分支** | 回调：plan 非 STEP_EXECUTING→静默吸收；否则映射 result + 步骤 COMPLETED + 写 timeline + 发 STEP_COMPLETED。超时：plan 非 STEP_EXECUTING→忽略（已正常处理）；否则步骤 FAILED + 写 `CALLBACK_TIMEOUT` timeline + 发 STEP_COMPLETED。超时时长：默认 60min，metadata.timeoutMinutes 覆盖 |
 | **终态/输出** | 步骤 COMPLETED/FAILED → 进入链路③ 推进 |
 | **数据落点** | `t_contact_plan_step`（result/status/timeout_time）、`t_contact_timeline`（回调结果 / 超时记录） |
@@ -659,7 +659,7 @@ void prepareStepDue_waitingCarryOver_noResult_sentNoResponse() {
 
 | # | 步骤 | 组件 / 模块 / 负责人 | 输入 | 输出 | 关键分支 | 代码位置（类#方法） |
 |---|---|---|---|---|---|---|
-| ① | 异步发送收尾（七步⑦电话/人工分支） | `StepExecutionOrchestrator` / engine / 主架构 | `StepCommand`（channelType=AI_CALL/TTS/HUMAN_CALL，可带 `metadata.timeoutMinutes`）+ dispatch 受理成功 `StepResult` | 保持 plan `STEP_EXECUTING`、step `EXECUTING`；写 `timeout_time`；**不**发 STEP_COMPLETED、**不**进 STEP_WAITING | `isMessageChannel()==false` → `resolveTimeoutMinutes`（metadata 覆盖 / 默认 `props.step.callbackTimeoutMinutes`=60） | `StepExecutionOrchestrator#executeStep`（L180–189）、`#resolveTimeoutMinutes`（L241–247） |
+| ① | 异步发送收尾（七步⑦电话/人工分支） | `StepExecutionOrchestrator` / engine / 主架构 | `StepCommand`（channelType=AI_CALL/HUMAN_CALL，可带 `metadata.timeoutMinutes`）+ dispatch 受理成功 `StepResult` | 保持 plan `STEP_EXECUTING`、step `EXECUTING`；写 `timeout_time`；**不**发 STEP_COMPLETED、**不**进 STEP_WAITING | `isMessageChannel()==false` → `resolveTimeoutMinutes`（metadata 覆盖 / 默认 `props.step.callbackTimeoutMinutes`=60） | `StepExecutionOrchestrator#executeStep`（L180–189）、`#resolveTimeoutMinutes`（L241–247） |
 | ② | Webhook 接收 + 鉴权 | admin Webhook / admin / 服务同事 | 供应商回调 HTTP（`result`/`providerMsgId`/签名） | 鉴权通过 → 发布 `CHANNEL_CALLBACK`（携 planId/stepId/`result`） | 鉴权失败→拒收；重复回调→由引擎态拦截兜底 | admin Webhook 控制器（**L3 待建**，外链渠道指南 `TC-VOICE-*`） |
 | ③ | 超时哨兵触发 | `TriggerScanner`（扫 `findTimeoutSteps`）/ admin / 服务同事+主架构 | `timeout_time<=NOW` 且仍 `STEP_EXECUTING` 的步骤 | 发布 `CALLBACK_TIMEOUT`（携 planId/stepId） | 步骤已 COMPLETED（回调先到）→ 不在扫描集 | `ContactPlanRepository#findTimeoutSteps`（接口已声明；扫描器 **L3 待建**） |
 | ④ | 事件路由 | `EventConsumerDispatcher` / engine / 主架构 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 路由到 `onChannelCallback` / `onCallbackTimeout` | 已注册（含 `CASE_CEASED`） | `EventConsumerDispatcher#registerHandlers`（L40–41 已注册） |
@@ -684,7 +684,7 @@ void prepareStepDue_waitingCarryOver_noResult_sentNoResponse() {
 | **④-S9** | ①→⑥ 端到端超时（内存集成） | 同 S8 入案执行 | 执行（保持 EXECUTING）→手动 `bus.publish(CALLBACK_TIMEOUT)`→`drainAll` | step FAILED+plan 推进 | 回调超时后：`step.status==FAILED`、`plan.status∈{PLAN_COMPLETED}`（穷尽 COMPLETE） | L1 | ⬜ 主架构 / 内存（**差集 D3**，预计 +1 `@Test`：`asyncTimeout_failsAndAdvances`，见 §6.2.5 骨架 L1） | ⬜ |
 | **④-S10** | ①→⑤ 回调契约（引擎↔渠道替身） | `SingleStepPlanFactory.channel=AI_CALL`，替身 Gateway 受理成功 | 入案执行→保持 EXECUTING→投 `CHANNEL_CALLBACK(result=ANSWERED)`→`drainAll` | AI_CALL 受理→EXECUTING→回调→COMPLETED（验证回调 payload→ContactResult 映射契约） | 执行后 `plan.status==STEP_EXECUTING`+`step.timeoutTime!=null`；回调后 `step.status==COMPLETED`、`result==ANSWERED`、`plan.status==PLAN_COMPLETED` | L2 | ⬜ 主架构+编排 / 内存（**差集 D4**，预计 +1 `@Test`：`c8_aiCallCallback_completesStep`，见 §6.2.5 骨架 L2） | ⬜ |
 | **④-S11** | ⑤⑥ 回调/超时 timeline 落库 | plan EXECUTING | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 回调结果 / 超时记录写 `t_contact_timeline` | **已拍板（§11-8）：由 L3 admin 落库统一补写**——引擎仅更新 step 状态+发 STEP_COMPLETED，admin Webhook/超时扫描落库时写 timeline；引擎侧不补码 | L3 | ⬜ 服务同事（admin）/ MySQL（归 D14/D19 同环境） | ⬜ |
-| **④-L4** | 真实 Webhook 回调闭环 | 真实供应商 | LTH/AI 供应商回调 | ANSWERED/NO_ANSWER 闭环 | 真实落库 + timeline | L4 | 外链：`TC-VOICE-01`（ANSWERED）/`TC-VOICE-02`（NO_ANSWER 推进）/`TC-VOICE-TTS-01`/`TC-VOICE-03`（LTH 真实 Webhook）；归属：编排同事 | ⬜ |
+| **④-L4** | 真实 Webhook 回调闭环 | 真实供应商 | AI Call 供应商回调 | ANSWERED/NO_ANSWER 闭环 | 真实落库 + timeline | L4 | 外链：`TC-VOICE-01`/`TC-VOICE-02`/`TC-VOICE-03`；归属：编排同事 | ⬜ |
 
 #### 6.2.2 主架构 vs 编排分工 + 协作契约校验点
 
@@ -1162,7 +1162,7 @@ void caseCeasedCancelsActivePlan() {
 | **① 入案建计划** | ✅ #20/#21（`PlanLifecycleManagerTest`）+ 渠道 `MockPlanFactoryGuardTest` | ✅ `FullChainIntegrationTest`（入案建计划） | 🟡 C1–C7 前置（`SingleStepPlanFactory`） | ⬜ ContactPlanMapper 落库+snapshot 往返（admin/MySQL，服务同事） | 🟡 薄：**§L4a-1/7**（`/mock/ingest` 真发+幂等）；全待 A1：`TC-PLAN-STRUCT-S1`/`S0`/`TONE-02`/`COMMON` | ⬜ **§L4b-1/5**（PubSub `case_push`→真实建计划+旧库映射落库；结构待 A1） |
 | **② 调度执行** | ✅ #1–#13/#28–#32/#5a–#5e/#17（`StepExecutionOrchestratorTest`+`MessageChannelHappyPathTest`+`PreFlightCheckerTest`） | ✅ `FullChainIntegrationTest`（三渠道取址执行） | 🟡 C1/C3/C4/C5/C7（`ChannelContractL2Test`） | ⬜ TriggerScanner 扫描+步骤/timeline 落库（admin/MySQL） | 🟡 薄：**§L4a-1/2/6/8**（三渠道/fallback/观察期/scriptSlot 真发）；合规 rule 真值待 A2：`TC-GUARD-*` | ⬜ **§L4b-6**（TriggerScanner 连库扫描→执行→timeline 落库） |
 | **③ 结果回收** | ✅ #14/#15/#16/#18/#25（`PlanLifecycleManagerTest`+`MessageChannelHappyPathTest`） | ✅ `FullChainIntegrationTest`（推进→COMPLETE 闭环） | 🟡 C6/C3/C5（`ChannelContractL2Test`） | ⬜ 状态推进落库（admin/MySQL） | 🟡 薄：**§L4a-6**（观察期结转）；回调闭环 `TC-REG-01`/`TC-VOICE-02` | ⬜ **§L4b-1/6**（推进+timeline 连库回收） |
-| **④ 异步回调** | ✅ #22/#23/#13/#30 + D16/D17/D18（`PlanLifecycleManagerTest`+`StepExecutionOrchestratorTest`） | ✅ `AsyncCallbackChainL1Test`（AI_CALL 回调完成 + 超时兜底，D3） | ⬜ **应补** AI_CALL 回调契约 1 例（主架构+编排） | ⬜ 回调落库+timeout_time 扫描（服务同事） | ⬜ 不在 L4a-薄（无真实电话号源）；`TC-VOICE-01/02/03`/`TTS-01`（真实供应商 Webhook） | ⬜ 真实源同链路回归（Voice 回调落库） |
+| **④ 异步回调** | ✅ #22/#23/#13/#30 + D16/D17/D18（`PlanLifecycleManagerTest`+`StepExecutionOrchestratorTest`） | ✅ `AsyncCallbackChainL1Test`（AI_CALL 回调完成 + 超时兜底，D3） | ⬜ **应补** AI_CALL 回调契约 1 例（主架构+编排） | ⬜ 回调落库+timeout_time 扫描（服务同事） | ⬜ 不在 L4a-薄（无真实电话号源）；`TC-VOICE-01/02/03`（真实供应商 Webhook） | ⬜ 真实源同链路回归（Voice 回调落库） |
 | **⑤ 中断与重建** | ✅ #24/#26/#25/#27/#19/#12/#32（`PlanLifecycleManagerTest`+`StepExecutionOrchestratorTest`） | ✅ `FullChainIntegrationTest`（还款取消 REPAID） | ⬜ 可选（语义已由 L0 #12 覆盖） | ⬜ 取消/续建落库+单活跃 UNIQUE+并发串行化（admin/MySQL） | 🟡 薄：**§L4a-3/4/5**（REPAID/STAGE_UPGRADE/CEASED）；`TC-CANCEL-01`/`TC-CEASED-01/02` | ⬜ **§L4b-2/3/4/8**（真实 PubSub/DPD 日切触发取消·升档·停催·幂等落库） |
 
 **矩阵小结**：
@@ -1448,7 +1448,7 @@ done
 | 旧库造数 | **`t_collection`**（`db/seed-test-cases.sql`，`loan_id` 9900000x） | 仅 RealCaseService 兜底 / 可选对账；**非** publish 门禁 |
 | Push 测试 token | **Nacos** `channel.notification.push-test-token` | 适配器强制覆盖，**不落库** |
 | SMS 沙箱 | **Nacos** `sms-test-mode=true` | testSend 端点 |
-| jpush enrichment | 新库 **`t_user_device_token`** | 数仓同步或手工 INSERT |
+| jpush enrichment（**可选降级**） | 新库 **`t_user_device_token`** | 仅 `enrich-jpush-token=true` 且消息缺 token；**主路径 = `case_push` 消息体**（2026-07） |
 | 引擎执行结果 | **`t_contact_plan`** / **`_step`** / **`t_contact_timeline`** | L4b 落库断言主表 |
 | L4a 合成案件 | 内存 `*CaseRegistry` | 不经 DB；L4b 换 PubSub 后不用 |
 | `loan_id` 白名单 | 运维清单 / Nacos `loan-id-whitelist` | **不入仓** |
@@ -1475,7 +1475,7 @@ done
 | `penaltyAmount` | `overdue`（罚息） |
 | `primaryPhone` | `phone` 归一化 E.164 `+63`（`09xx/9xx→+639xx`） |
 | `email` | 脏值（空/`"0"`/无 `@`）→ `null`（EMAIL 走 Guard SKIP） |
-| `device.jpushToken` | 上游 `case_push` 或新库 `t_user_device_token`（数仓 ← `t_user_extend.ji_guang_token`）→ payload → 快照；null→PushAdapter fallback SMS |
+| `device.jpushToken` | 上游 `case_push` 消息体（2026-07 确认）→ payload → 快照；null→PushAdapter fallback SMS |
 | `repaid` | `full_repay_time` 非空 或 `total_not_paid<=0` |
 | `collectionStatus` | `dpd>=91 ? CEASED : ACTIVE` |
 | `strategyTone` | 固定 `"STANDARD"`（Phase 1；真实语气策略待 A1/决策层） |
@@ -1556,7 +1556,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 
 ### L4b.数据安全（强制）
 
-- **旧库只读**：`RealCaseService` 兜底路径仅 `SELECT t_collection`（L4b 对账）；**jpushToken 主链路读新库 `t_user_device_token`**，禁止运行时读旧库 `t_user_extend`（写仅落新库 `ai_collection_db`）。
+- **旧库只读**：`RealCaseService` 兜底路径仅 `SELECT t_collection`（L4b 对账）；**jpushToken 主路径随 `case_push` 消息体**（2026-07 确认），enrichment 读新库仅降级路径。
 - **测试用户白名单**：L4b 仅对约定的白名单 caseId/loan_id 子集触达（避免真实催收用户被打扰）；白名单来源 = 旧库内部测试账户或 L4a `*CaseRegistry` 对应的真号画像，**单独清单维护、不入仓**。
 - **脱敏**：日志/SQL 输出对真实手机号/邮箱脱敏（中段掩码）；`provider_callback`/`content_summary` 不落敏感明文。
 - **限频**：相邻真实触发 ≥1s；批量回归对供应商额度限速。
@@ -1649,7 +1649,6 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | **VIBER** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **全差集**（规格列入消息类，Phase 1 无实现，❓§11-4） |
 | **WHATSAPP** | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | **全差集**（同上） |
 | **AI_CALL** | ✅ #13 | n/a | ✅（回调/超时 EXECUTING）#22/#23 | ✅ | ✅ 异步保持 EXECUTING+超时（#13/#30） | L0 态拦截/映射差集 D16/D17/D18；L1/L2 集成差集 D3/D4（§6.2、§9 链路④） |
-| **TTS** | ⬜（L0 无独立，与 AI_CALL 同路由） | n/a | — | — | ⬜ | L4 `TC-VOICE-TTS-01` |
 | **HUMAN_CALL** | ⬜ | n/a | — | — | ⬜ | Phase 1 编排禁用（E4：不进 plan），引擎分流入「电话类」；❓§11-5 |
 
 ### 10.6 异常恢复全集（规格 §5）
@@ -1667,7 +1666,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | 并发竞态（还款 vs 执行） | 行锁串行+终态单调+⑤½ 复检 | 🟡 单线程语义（#12/#32） | 真实并发 ⬜（§8 [并发]） |
 | **G1** 续建/升档崩溃搁浅（§4.5 `on_plan_exhausted` REBUILD/ESCALATE 中途崩溃） | 终态写最后+原子事务保证可重入：旧计划 `PLAN_COMPLETED` 置于后继（新计划持久化 / `STAGE_CHANGED` 发布）之后；崩溃→旧计划仍非终态→重投重跑（[核心引擎规格 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)） | ⬜ | **D30**——需注入崩溃点（mock repository 第二次写入抛异常）验证重投幂等不重复建计划。L3 连库（Phase 2 混沌/L5） |
 | **G2** 毒消息无限重投（retryable 但持续失败的事件占满 Consumer 线程池） | 投递次数达 `max_delivery_count`→DLQ+告警（[核心引擎规格 §7.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#73-l1-基础设施异常)、[基础设施交互规范 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)） | ⬜ | **D31**——需真实 Redis Stream（`XPENDING` delivery_count）或集成替身。内存总线无 delivery_count 语义，Phase 1 不可测（Phase 2 / L5） |
-| **G3** step=EXECUTING 滞留无恢复（消息类 §5.1 ⑤ 之后崩溃，无 `timeout_time` 哨兵） | reaper 扫描 step=EXECUTING 超 `executing_reaper_minutes` 且 `timeout_time` 为空→复检+回查供应商→补 timeline 或重置重试（[核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | ⬜ | **D32**——需真实定时扫描器+Redis 幂等锁 TTL 交互。L3 连库（Phase 2 / L5） |
+| **G3** step=EXECUTING 滞留无恢复（⑤ 后 ⑥⑦ 写库/登记 Job 失败或进程崩溃；NACK 重投因幂等锁无效；无 `timeout_time` 哨兵） | reaper 扫描 step=EXECUTING 超 `executing_reaper_minutes` 且 `timeout_time` 为空→复检+回查供应商→补 timeline 或重置重试（[§7.3 Orchestrator ⑥⑦](./MOCASA催收系统升级_Phase1_核心引擎规格.md#orchestrator-层51-七步管线)、[§7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | ⬜ | **D32**——需真实定时扫描器+Redis 幂等锁 TTL 交互。L3 连库（Phase 2 / L5） |
 
 ### 10.7 差集清单（汇总——所有 ⬜/❓）
 
@@ -1680,7 +1679,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | D5 | NO_PHONE / NO_TOKEN 空地址 SKIP 无 L0/L2 断言（②-S30/S31） | 守卫 | 主架构(替身)+编排 / L2（内存可行）；rule 真值 L4 | Phase 1 应补：L2 替身断言「block→SKIPPED」预计 +2 `@Test`（§4.2.6 骨架 C9/C10）；rule 真值 L4 `TC-PUSH-02`/`TC-EMAIL-02`（已澄清 §11-9） |
 | D6 | GuardVerdict 规则类型 TIME_WINDOW/CONNECT_AND_STOP/ABANDONMENT_RATE | 守卫 | 编排 / L4 | L4（`TC-GUARD-*`，引擎侧只读 allowed） |
 | D7 | VIBER / WHATSAPP 全链路无测试 | 渠道 | 编排 / — | ❓ Phase 1 范围待澄清（§11-4） |
-| D8 | TTS 独立用例（L0/L4） | 渠道 | 编排 / L4 | L4（`TC-VOICE-TTS-01`） |
+| D8 | ~~TTS 独立用例~~ | — | — | **取消**（TTS 由 LTH 域外独立编排，本系统不测） |
 | D9 | HUMAN_CALL 引擎分流路径 | 渠道 | 主架构+编排 / — | ❓ E4 禁用，待澄清（§11-5） |
 | D10 | ⑥⑦ DB/register_job 写失败 NACK 路径 | 异常 | 主架构 / L3 | Phase 1 应补（连库注入） |
 | D11 | 真实并发竞态（同计划并发事件 `SELECT FOR UPDATE` 串行化，⑤-L3） | 并发 | 主架构 + 服务同事 / L3 | Phase 1 应补（连库并发，不出骨架） |
@@ -1716,14 +1715,14 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | **§11-2** | `CALLBACK_TIMEOUT` 文档表待补登（已核对修正） | **代码已含**：`collection-common/.../enums/EventType.java` L19 含 `CALLBACK_TIMEOUT`（且 L21 含 `CASE_CEASED`，共 10 值），`EventConsumerDispatcher` L41 已注册 `CALLBACK_TIMEOUT→onCallbackTimeout`；规格 §1.1 称其为「内部超时哨兵」；仅领域模型 §6.6 文档表未列出 | **非「枚举缺失」**，真实漂移仅为文档表滞后 | 状态由「枚举缺失」修正为「**文档表待补登**」：在领域模型 §6.6 表补 `CALLBACK_TIMEOUT`（标注「引擎内部哨兵，不跨模块」）；§11-1 的 `CASE_CEASED` 同理已在 `EventType` 落地（`onCaseCeased`+`CancelReason.CEASED` 均在代码），其待澄清焦点收窄为渠道 `TC-CEASED-*` 口径与 L0 回补 |
 | **§11-8** | 回调/超时路径 timeline 由 L3 admin 落库统一补（已拍板） | §6.1 定义卡「数据落点 = `t_contact_timeline`（回调结果/超时记录）」；`PlanLifecycleManager#onChannelCallback`（L211–225）/`#onCallbackTimeout`（L229–242）**仅更新 step.status + 发 STEP_COMPLETED，引擎侧不写 timeline**；timeline 仅在 `StepExecutionOrchestrator` 发送路径写 | 回调结果/超时记录的 timeline 落点归属明确 | **已拍板（2026-06-21）：回调/超时结果 timeline 由 L3 admin 落库统一补写，引擎侧不补码**。引擎职责保持「更新 step 状态 + 发 STEP_COMPLETED」；admin Webhook/超时扫描落库时同步写 `t_contact_timeline`（回调结果/超时记录）。§6.1 定义卡「数据落点」语义不变（落点真实但落库在 admin/L3），引擎 L0/L1 不再就此补 `@Test`，差集 D19 转 L3 admin 落库项 |
 | **§11-3** | ADVANCE_NEXT 且 delay=0「立即执行」（已核对修正：规格用词↔代码实现） | **代码现状**：`onStepCompleted` 的 ADVANCE_NEXT 分支对**任意 delay（含 0）** 均走 `updateStepTriggerTime(next, now+max(0,delay), PENDING)` + `updateCurrentStep` + `updatePlanStatus(STEP_SCHEDULED)`，**不存在「同步递归 execute_step」代码路径**；delay=0 时 `trigger_time=now`，由 `TriggerScanner`/`findDueSteps` 下一扫描周期即刻发 `PLAN_STEP_DUE` 驱动。**测试现状**：L0 仅测 delay>0（#15）；L1 经 `findDueSteps` 循环驱动覆盖 delay=0 即刻语义，无独立 L0 断言 | M9 无独立断言（D1）；**规格 §2.3.2「立即 execute_step」用词与代码（STEP_SCHEDULED+扫描器驱动）有歧义** | **不臆造同步递归测试**：规格「立即执行」=语义上无人为延时，工程实现 = `STEP_SCHEDULED + trigger=now + 扫描器驱动`。补 L0 据实断言「delay=0 → trigger≈now + STEP_SCHEDULED、返回事件 isEmpty」（`onStepCompleted_advanceNext_delayZero_schedulesWithNowTrigger`，§5.2.6），**闭合 D1/M9**；并建议校正规格 §2.3.2 表述为「trigger=now 即刻调度」 |
-| **§11-4** | VIBER / WHATSAPP Phase 1 范围 | 规格 §3.1⑦ 分流将 VIBER/WHATSAPP 列入「消息类」；领域模型 §6.1 标 VIBER=接入（待签约）、WHATSAPP=升级；当前无任何测试与渠道实现 | 渠道全集 D7 是否计入 Phase 1 测全 | 确认 Phase 1 实测渠道集合（疑似仅 SMS/PUSH/EMAIL + AI_CALL/TTS），VIBER/WHATSAPP 标 ⏭ 或注「接入即补」 |
+| **§11-4** | VIBER / WHATSAPP Phase 1 范围 | 规格 §3.1⑦ 分流将 VIBER/WHATSAPP 列入「消息类」；领域模型 §6.1 标 VIBER=接入（待签约）、WHATSAPP=升级；当前无任何测试与渠道实现 | 渠道全集 D7 是否计入 Phase 1 测全 | 确认 Phase 1 实测渠道集合（疑似仅 SMS/PUSH/EMAIL + AI_CALL），VIBER/WHATSAPP 标 ⏭ 或注「接入即补」 |
 | **§11-5** | HUMAN_CALL 引擎分流 | 规格七步⑦把 HUMAN_CALL 归「电话/人工类」保持 EXECUTING；但对齐清单 **E4** 与渠道 `TC-PLAN-STRUCT-COMMON` 约定「Phase 1 不进 plan / StepResolver 永不输出 HUMAN_CALL」 | D9：引擎是否需测 HUMAN_CALL 分流 | 以 E4 为准：Phase 1 不构造 HUMAN_CALL 步骤；引擎分流逻辑保留但标「Phase 1 不触发」，不强制 L0 |
 | **§11-6** | PUSH 取号口径 `jpushToken` vs `fcmToken` | 契约定稿与领域模型 §3.2 DeviceInfo 以 **`jpushToken`** 为准；但 `FullChainIntegrationTest` 变量名 `FCM` 实际 set 进 `device.jpushToken`（命名误导，语义正确）；`UserProfile.DeviceInfo` 暂留 `fcmToken` 兼容字段 | 测试可读性/收口动作 | 收口：编排切 `jpushToken` 后由主架构在 common 移除 `fcmToken`；同步把 `FullChainIntegrationTest` 变量名 `FCM`→`JPUSH` |
 | **§11-7** | `idempotency_key` 维度 | 领域模型字段注释为 `plan_id:step_order:attempt`；引擎实测 key=`planId:stepOrder:retryCount`（#31）；契约定稿口径 `plan:stepOrder:retryCount` | 术语 attempt vs retryCount | 统一表述为 `retryCount`（与代码一致），更新领域模型注释 |
 | **§11-10** | 建计划阶段 vs 执行阶段守卫边界（已澄清） | §3.1② `PreFlightChecker` 是**执行阶段**（`executeStep`）守卫，读失败→`check=false`→静默退出（fail-close，不 NACK）；**建计划阶段**（`onCaseIngested→createPlanForStage`）的 `CaseService.getCaseInfo/getContextSnapshot` 读失败**无 fail-close**，异常上抛→`@Transactional` 回滚→NACK 重消费 | 链路① 读失败行为与链路②执行守卫不同，易混淆 | **已澄清**：建计划阶段读失败 = NACK 重消费（计划不可丢）；执行阶段守卫 = fail-close 静默跳过。差集 D25 据此补 L0（建计划阶段读失败异常上抛断言） |
 | **§11-9** | 空地址 SKIP 断言归属（方案A，已澄清） | 契约定稿「方案A」：空地址（`NO_PHONE`/`NO_TOKEN`/`NO_EMAIL`）由编排侧 `ExecutionGuard` 返回 `block`，引擎统一 `markSkipped`（SKIPPED+COMPLIANCE_BLOCKED+推进）；`NO_EMAIL` 已由 C3 覆盖，`NO_PHONE`/`NO_TOKEN` 在引擎侧无 L0/L2 断言（D5） | 链路② 空地址 SKIP 语义的引擎↔编排断言边界 | **已澄清**：引擎侧用 L2 替身断言「block→SKIPPED」通用语义（②-S30/S31，可内存补 +2 `@Test`，见 §4.2.6）；rule 码真值（哪种缺失→哪个码）归编排 L4（`TC-PUSH-02`/`TC-EMAIL-02`）。PUSH 空 token 但有 SMS 号→编排 fallback SMS（C2，不进 SKIP） |
 | **§11-11** | 链路③ `PLAN_COMPLETED` 未写 `completed_at`（已拍板） | 定义卡 §5.1「数据落点 `t_contact_plan.completed_at`」；但 `onStepCompleted` 的 `PLAN_COMPLETED` 分支仅 `updatePlanStatus(planId, PLAN_COMPLETED, null)`，**未调用 `markCompleted`**——`markCompleted(setCompletedAt(now))` 仅在内存测试仓储（`FullChainIntegrationTest`/`ChannelContractL2Test`）中定义，**生产 `PlanLifecycleManager` 无任何调用** | `completed_at` 当前不写，与定义卡落点不符；③-S4（#14）仅断言 status | **已拍板（2026-06-21，选 b）：`completed_at` 由 L3 admin/落库侧统一补写，引擎不负责、不补码**（同 §11-8 模式）。定义卡 §5.1 落点已标注「completed_at 归 admin/L3 落库」；引擎 L0/L1 不就此补 `@Test`，D27 转 L3 落库项（归 D14 同环境） |
-| **§11-12** | **决策 B：快照来源 = 事件 payload（2026-06-29 已拍板）** | `PlanLifecycleManager` 建计划/续建/升档优先据 `CASE_INGESTED` payload / carry-forward 组装快照，**运行时不读旧库 `t_collection`**；payload 缺失才降级 `CaseService`。已加 L0 验证 payload 路径 | 快照主链路与旧库解耦 | 已落地 common/engine/ingestion 重载；**jpushToken Phase 1**：数仓日同步 → `t_user_device_token`，ingestion 只读新库补全（[接入 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）；L4b enrichment 单测 ⬜ 待 B1 |
+| **§11-12** | **决策 B：快照来源 = 事件 payload（2026-06-29 已拍板）** | `PlanLifecycleManager` 建计划/续建/升档优先据 `CASE_INGESTED` payload / carry-forward 组装快照，**运行时不读旧库 `t_collection`**；payload 缺失才降级 `CaseService`。已加 L0 验证 payload 路径 | 快照主链路与旧库解耦 | 已落地 common/engine/ingestion 重载；**jpushToken**：`case_push` 消息体携带（2026-07 确认），入案零读库 |
 
 ---
 
@@ -1788,15 +1787,15 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
   - B1 `IngestionService` 接真实 PubSub Consumer、B2 `DpdStageRollHandler` 日切重算逻辑、`RealCaseService`(`case-service=real`) 连旧库、L3 落库。
   - 归属：数据接入 + 服务同事 + 主架构（admin）。环境：GCP PubSub + MySQL + XXL-Job。
 
-- [ ] **⑦ 链路④ 异步回调（AI_CALL/Voice/TTS）L4 真实供应商**（差集 D8 + §6 外链）
-  - 不在 L4a-薄范围（无真实电话号源）；需 LTH Voice 供应商 Webhook，走 `TC-VOICE-01/02/03`/`TC-VOICE-TTS-01`。
+- [ ] **⑦ 链路④ 异步回调（AI_CALL）L4 真实供应商**
+  - 不在 L4a-薄范围（无真实电话号源）；需 AI Call 供应商 Webhook，走 `TC-VOICE-01/02/03`。
   - 归属：编排同事（渠道指南，外链见附录 B）。环境：LTH Voice API + Webhook 回调。
 
 #### 门禁依赖项（1 项，不完成则 L4 链路④ 阻塞）
 
 - [ ] **⑧ `WebhookController` 加鉴权**（HANDOFF.md §E2）
   - 当前 `admin/web/WebhookController.java` 骨架已实现事件发布，**缺供应商签名校验层**。
-  - L4 链路④（AI_CALL/Voice/TTS）真实 Webhook 回调依赖此；L4a/L4b 消息类（SMS/PUSH/EMAIL，无回调）不阻塞。
+  - L4 链路④（AI_CALL）真实 Webhook 回调依赖此；L4a/L4b 消息类（SMS/PUSH/EMAIL，无回调）不阻塞。
   - 归属：admin（主架构 + 服务同事）。
 
 #### 生产就绪项（不计入测试 DoD，单列）
@@ -1812,7 +1811,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 
 #### §11 待澄清收口（2 项，影响范围认定，尽早拍板）
 
-- [ ] **§11-4/§11-5 范围拍板**：VIBER/WHATSAPP 与 HUMAN_CALL 是否计入 Phase 1 测全（若否→ ⏭ Phase 2，D7/D9 即关闭）。当前暂按「Phase 1 仅 SMS/PUSH/EMAIL + AI_CALL/TTS」处理，待正式确认后更新 §10.5 与 §12.3。
+- [ ] **§11-4/§11-5 范围拍板**：VIBER/WHATSAPP 与 HUMAN_CALL 是否计入 Phase 1 测全（若否→ ⏭ Phase 2，D7/D9 即关闭）。当前暂按「Phase 1 仅 SMS/PUSH/EMAIL + AI_CALL」处理，待正式确认后更新 §10.5 与 §12.3。
 - [ ] **§11-2 文档补登**：领域模型 §6.6 补 `CALLBACK_TIMEOUT`（内部哨兵）/ `CASE_CEASED`，§6.7 补 `CancelReason.CEASED`（engineManaged）。不阻塞测试，但影响「文档↔代码一致性」门禁。
 
 #### 全量收口顺序（建议）
@@ -1825,10 +1824,10 @@ L0/L1 全绿（✅ 已达）
   → ③ L3 落库单测（D10/D11/D14/D19/D27）   ← 连库环境
   → ④ 渠道幂等 TC-IDEM-02（D12）            ← Redis 环境
   → ⑥ L4b-全（B1/B2 + 旧库 + L3）          ← 数据接入 + 旧库
-  → ⑦ 链路④ Voice L4（TC-VOICE-*/TTS-01）  ← LTH Voice 供应商
+  → ⑦ 链路④ Voice L4（TC-VOICE-*）  ← AI Call 供应商
   → §11-4/5 范围拍板 + §11-2 文档补登       ← 文档一致性
   ────────────────────────────────────────
-  ✅ Phase 1 端到端测全（SMS/PUSH/EMAIL + AI_CALL/TTS）
+  ✅ Phase 1 端到端测全（SMS/PUSH/EMAIL + AI_CALL）
 ```
 
 ---

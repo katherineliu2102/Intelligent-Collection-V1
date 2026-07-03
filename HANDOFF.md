@@ -153,7 +153,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **方法签名**：`StepCommand resolve(ExecutionContext)`
 - **关键约束**
   - **零 DB I/O**，只读 `ExecutionContext.contextSnapshot`
-  - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL/TTS）必填
+  - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL）必填
   - 硬超时 50ms；返回 `null` = **主动跳过该步**（引擎标 SKIPPED 推进，非失败，用于 EMAIL 非里程碑 DPD / 无邮箱）；异常/超时 = FAILED
 
 #### A4. `MockAdvancementPolicy` → `DefaultAdvancementPolicy`
@@ -183,9 +183,9 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 - **接口**：`com.collection.common.channel.ChannelGateway`
 - **方法签名**：`StepResult dispatch(StepCommand)`
-- **8 渠道**：SMS / PUSH / EMAIL / VIBER / WHATSAPP / AI_CALL / TTS / HUMAN_CALL
+- **机器轨渠道（Phase 1）**：SMS / PUSH / EMAIL / AI_CALL（TTS / HUMAN_CALL 由 LTH 域外独立编排）
 - **关键约束**
-  - 消息类（SMS/PUSH 等）→ `success=true, DELIVERED`；异步类（AI_CALL/TTS）→ `success=true, DELIVERED`（真实结果等 Webhook 回调）
+  - 消息类（SMS/PUSH 等）→ `success=true, DELIVERED`；异步类（AI_CALL）→ `success=true, DELIVERED`（真实结果等 Webhook 回调）
   - 渠道内部熔断/fallback 对引擎完全透明；抛异常引擎一律视为 `retryable`
   - 供应商错误码统一映射为 `StepResult.errorCode`
 

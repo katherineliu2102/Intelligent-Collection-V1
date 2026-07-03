@@ -116,10 +116,6 @@ public class MockPlanFactory implements PlanFactory {
                 type = ChannelType.AI_CALL;
                 templateId = 301L;
                 break;
-            case "TTS":
-                type = ChannelType.TTS;
-                templateId = 302L;
-                break;
             default:
                 log.warn("[MockPlanFactory] unknown single-step={}, use SMS", channelName);
                 type = ChannelType.SMS;

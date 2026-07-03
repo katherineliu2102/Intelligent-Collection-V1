@@ -5,6 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import com.collection.engine.config.EngineProperties;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -81,6 +85,54 @@ class SpiInvokerTest {
             assertThat(seen).isEqualTo("1002");
         } finally {
             org.slf4j.MDC.clear();
+        }
+    }
+
+    @Test
+    @DisplayName("过载即拒：SPI 池占满时溢出调用被 shed 为 SpiTimeoutException（旧 CallerRuns 会内联跑、零异常）")
+    void shedsWhenPoolSaturated() throws Exception {
+        EngineProperties props = new EngineProperties();
+        props.getConsumer().setThreadPoolSize(1); // 尽量小的池，容量 = 1 + poolSize*2
+        EngineProperties.Spi spi = props.getSpi();
+        spi.setTimeoutEnabled(true);
+        spi.setExecutionGuardTimeoutMs(5000); // 放大阈值：占位任务撑住、不因超时提前触发
+        SpiInvoker invoker = new SpiInvoker(props);
+
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger shed = new AtomicInteger();
+        List<Thread> holders = new ArrayList<>();
+        // 大量阻塞占位调用，远超任何合理容量 → 溢出者必被拒。占位任务阻塞到 release。
+        for (int i = 0; i < 64; i++) {
+            Thread h =
+                    new Thread(
+                            () -> {
+                                try {
+                                    invoker.call(
+                                            SpiType.EXECUTION_GUARD,
+                                            () -> {
+                                                try {
+                                                    release.await();
+                                                } catch (InterruptedException e) {
+                                                    Thread.currentThread().interrupt();
+                                                }
+                                                return "held";
+                                            });
+                                } catch (SpiTimeoutException e) {
+                                    shed.incrementAndGet(); // 被拒（或超时）即计入 shed
+                                }
+                            });
+            h.setDaemon(true);
+            h.start();
+            holders.add(h);
+        }
+        Thread.sleep(300); // 让线程完成提交，池饱和后溢出者立即被拒
+
+        // AbortPolicy：溢出者被拒 → 至少一例 SpiTimeoutException；旧 CallerRunsPolicy 会内联跑 → 此处应为 0
+        assertThat(shed.get()).isGreaterThanOrEqualTo(1);
+
+        release.countDown();
+        for (Thread h : holders) {
+            h.join(6000);
         }
     }
 

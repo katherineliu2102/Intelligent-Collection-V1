@@ -85,7 +85,6 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         switch (channel) {
             case SMS:
             case AI_CALL:
-            case TTS:
                 if (basic == null || StringUtils.isBlank(basic.getPrimaryPhone())) {
                     return GuardVerdict.block("NO_PHONE", "NO_PHONE");
                 }

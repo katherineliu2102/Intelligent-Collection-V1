@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
  *   <li>EMAIL：{@link CaseContext#getEmailScriptSlot()} 或 dpd → 里程碑槽；
  *   <li>SMS/PUSH：由 {@code Stage + 渠道 + strategyTone(+dpd)} 推导（见 {@link #deriveMsgScriptSlot}）， S2+
  *       且 {@code strategyTone=FIRM} 选 {@code *_FIRM}；
- *   <li>其余（AI_CALL/TTS）：{@code MOCK_<templateId>} 占位。
+ *   <li>其余（AI_CALL）：{@code MOCK_<templateId>} 占位。
  * </ul>
  *
  * <p>SMS/Push 文案从 {@code channel.scripts}（{@link ScriptLibrary}）读取并注入 {@code
@@ -287,7 +287,6 @@ public class DefaultStepResolver implements StepResolver {
                 return phone != null ? phone : "mock-address";
             case SMS:
             case AI_CALL:
-            case TTS:
                 return phone != null ? phone : "mock-address";
             default:
                 return phone != null ? phone : "mock-address";

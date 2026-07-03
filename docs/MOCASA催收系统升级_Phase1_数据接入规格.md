@@ -75,7 +75,7 @@ DpdStageRollHandler 每日 0:05 PHT
 
 | 项 | 结论 |
 |---|---|
-| 读库 | 入案主链路**不读**旧库 `t_collection`；组装 payload 时按需读新库（仅 `jpushToken` → `t_user_device_token`，见 [§3.1 读库](#读库)）。 |
+| 读库 | 入案主链路**不读**旧库 `t_collection`；`jpushToken` 由上游 `case_push` 消息体携带（**已确认 2026-07**）；缺失时可降级读新库 `t_user_device_token`（见 [§3.1 读库](#读库)）。 |
 | payload | 快照字段随 `CASE_INGESTED` payload 带出（[§3.1](#34-与-caseservice--profileservice-的调用边界)）；冻结写入由引擎完成（[§4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）。 |
 | `CASE_INGESTED` | **本催收周期**内首次 publish；同周期增量 ack 跳过；全额结清后 key 清除（§2.2 / §3.3）。 |
 | `REPAYMENT_RECEIVED` | 校验通过即 publish；**不写**库；全额结清时 DEL `ingestion:ingested:{loan_id}`。 |
@@ -221,7 +221,7 @@ DpdStageRollHandler 每日 0:05 PHT
 | payload 字段清单与类型 | [领域模型 §9.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段) | SSOT；接入按表填 key |
 | PubSub 字段名对齐 | 接入 | 上游 JSON key 与契约不一致时，用 Nacos 别名表 `collection.ingestion.case-push.field-map` 映射到语义字段（联调确认 [A.6 #1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入)） |
 | 语义映射与清洗 | 接入 | PubSub 语义字段 → payload key（清单 [§9.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)）；清洗/推算规则见下表 |
-| 按需读库补字段 | 接入 | 见 [读库](#读库)（Phase 1 仅 `jpushToken`） |
+| 按需读库补字段 | 接入 | 见 [读库](#读库)（**可选**：仅 `jpushToken` 缺失且 `enrich-jpush-token=true`） |
 | payload → 快照 JSON | 引擎 | `buildSnapshotFromEvent`；字段路径见 [contracts](./contracts/README_ContextSnapshot契约对齐.md) |
 
 **语义映射与清洗**（接入组装 payload 时执行；**引擎 payload→快照不做清洗**，原样写入）
@@ -251,11 +251,11 @@ DpdStageRollHandler 每日 0:05 PHT
 
 **读库**
 
-入案主链路的数据来源是 PubSub 消息体；**唯一读库点**是组装 payload 时补全消息未带的字段。其余读库均不在入案主链路上。
+入案主链路的数据来源是 PubSub 消息体；上游 `case_push` **已携带 `jpushToken`**（运维确认 2026-07），与案件/画像字段同源，**主链路零读库**。以下为可选降级读库点：
 
 | 场景 | 数据源 | 读取方 | 链路 | 约定 |
 |---|---|---|---|---|
-| `case_push` 缺 `jpushToken` | 新库 `t_user_device_token` | 接入 | **主链路** | 优先消息（含 `ji_guang_token`）；缺失且 `enrich-jpush-token=true` → 查新库。源表数仓同步 [A.6 #10](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入)。无 token / 查失败：不写 key、warn，仍 publish（PUSH→SMS） |
+| `case_push` 缺 `jpushToken`（**可选降级**） | 新库 `t_user_device_token` | 接入 | 主链路 | 仅当 `enrich-jpush-token=true` 且消息缺失时查新库；正常路径不触发。无 token / 查失败：不写 key、warn，仍 publish（PUSH→SMS） |
 | payload 缺失兜底 | 旧库 `t_collection` | CaseService | 非主链路 | 引擎降级路径；非 publish 前置 |
 | 触达前还款守卫 | 旧库 | 引擎 `PreFlightChecker` | 非主链路 | 见 [核心引擎 §5.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-七步管线) |
 | 在催名单 / bill DPD | 旧库 `t_collection` + `t_user_repayment_plan` | 接入日切 | 非入案 | 见 [§4.2](#42-读库与演进) |
@@ -531,7 +531,7 @@ payload 字段 → [领域 §9.2](./MOCASA催收系统升级_Phase1_领域模型
 | C-I-07 | **`totalOutstanding`** | 无直传时由分项推算（principal/interest/overdue…） | PubSub 直传字段名；**推算公式与分项字段名**未写入接入规格 | 信贷 + 接入 | [contracts §12](./contracts/README_ContextSnapshot契约对齐.md) |
 | C-I-08 | **`penaltyAmount`** | §9.2 可选 | PubSub 源字段（是否 = `overdue` 罚息列） | 信贷 | §9.2 |
 | C-I-09 | **`product` / `dueDate` / `fullRepayTime` / `name`** | §9.2 可选 | 各字段 PubSub 源名与格式（日期 ISO 串） | 信贷 | §9.2 |
-| C-I-10 | **`jpushToken`** | 消息优先；缺则读 `t_user_device_token` | 数仓同步表/列/schedule/SLA（A.6 #10）；上游终态是否自带 token | 数仓 + 信贷 | §3.1 读库、A.6 #10 |
+| C-I-10 | **`jpushToken`** | **`case_push` 消息体**（已确认 2026-07）；缺则可选读 `t_user_device_token` | 联调验证消息体含 token；enrichment 默认关 | 信贷 + 运维 | §3.1 读库 |
 | C-I-11 | **`case_push` 必填集** | §3.2 原则有，**未列字段级必填清单** | 除 `caseId`/`stage` 外哪些缺失 → poison | 接入 + 信贷 | §3.2 |
 | C-I-12 | **`message_id` / 推送频率** | 幂等与乱序依赖 | 上游字段名、格式、单调性、重投是否同 id（A.6 #2） | 信贷 | §3.3、A.6 #2 |
 | C-I-13 | **`REPAYMENT_RECEIVED` 字段** | §9.2 行 | 全额结清判定条件（DEL `ingested` key 触发点）（A.6 #3） | 信贷 | §2.2.2、A.6 #3 |
