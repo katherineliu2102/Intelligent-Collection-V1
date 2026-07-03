@@ -71,7 +71,7 @@ PLAN_STEP_DUE
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| channelType | ChannelType | SMS / PUSH / EMAIL / AI_CALL / TTS |
+| channelType | ChannelType | SMS / PUSH / EMAIL / AI_CALL |
 | targetAddress | String | 手机 / 邮箱 / JPush Registration ID（由 Resolver 按渠道填入） |
 | templateId | String | scriptSlot 或 SendGrid `d-xxx` / 内部模板键 |
 | idempotencyKey | String | 建议 `{planId}:{stepOrder}:{retryCount}` |
@@ -83,8 +83,8 @@ PLAN_STEP_DUE
 |-----|------|----------|------|
 | stage | String | 建议 | `Stage.name()` |
 | language | String | 建议 | `tl` / `en` |
-| callbackUrl | String | AI_CALL / TTS | 供应商回调基址（Adapter 拼 LTH 回调） |
-| timeoutMinutes | Integer | AI_CALL / TTS | 默认 60，覆盖引擎 `callback_timeout_minutes` |
+| callbackUrl | String | AI_CALL | 供应商回调基址 |
+| timeoutMinutes | Integer | AI_CALL | 默认 60，覆盖引擎 `callback_timeout_minutes` |
 | scriptSlot | String | 建议 | 编排话术槽名，如 `S1_SMS_STANDARD` |
 | sms_body | String | SMS / PUSH fallback | **StepResolver 渲染后的正文**（通知中心 `content`） |
 | fallback_sms_body | String | PUSH fallback | 可选；优先于 `sms_body` 作 fallback 正文 |
@@ -163,7 +163,7 @@ collection-channel/
 | SMS | NotificationSmsAdapter | [Notification 对接说明 §1](./MOCASA催收系统升级_Phase1_Notification对接说明.md#1-sms同步) |
 | EMAIL | SendGridEmailAdapter | [SendGrid Email](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) |
 | PUSH | NotificationPushAdapter | [Notification 对接说明 §2](./MOCASA催收系统升级_Phase1_Notification对接说明.md#2-app-push异步入队) |
-| AI_CALL / TTS | LthVoiceAdapter | [LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
+| AI_CALL | AiCallAdapter（或 Mock） | [AI Call / LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
 | HUMAN_CALL | — | **禁止** dispatch（StepResolver 不得输出） |
 
 `ChannelGatewayImpl.dispatch`：
@@ -181,7 +181,7 @@ collection-channel/
 | 分类 | channelType | dispatch 后引擎 | 供应商二次回调 |
 |------|-------------|-----------------|----------------|
 | 消息类（同步） | SMS, PUSH, EMAIL | `STEP_COMPLETED`（无 observation 时） | 仅 timeline enrichment，**不**完成 step |
-| 电话类（异步） | AI_CALL, TTS | `STEP_EXECUTING` + `CALLBACK_TIMEOUT` Job | `CHANNEL_CALLBACK` **必须** |
+| 电话类（异步） | AI_CALL | `STEP_EXECUTING` + `CALLBACK_TIMEOUT` Job | `CHANNEL_CALLBACK` **必须** |
 
 ---
 
@@ -190,7 +190,7 @@ collection-channel/
 | 路径 | 供应商 | 行为 |
 |------|--------|------|
 | `POST /webhook/channel-callback` | 联调 / 骨架 | 已有；扩展支持 `disposition` |
-| `POST /webhook/lth/voice` | LTH AI/TTS | 解析话单 → `CHANNEL_CALLBACK` |
+| `POST /webhook/.../voice` | AI Call 供应商 | 解析话单 → `CHANNEL_CALLBACK` |
 | `POST /webhook/sendgrid` | SendGrid | 验签（TODO）→ 更新 timeline / suppression |
 
 鉴权：Phase 1 可跳过；生产须 SendGrid 签名校验 + LTH IP/签名（TODO 列入运维）。
@@ -263,7 +263,7 @@ PLAN_STEP_DUE → StepCommand{ channelType=AI_CALL, metadata={ callbackUrl, time
 | EMAIL | SendGrid Dynamic Template `d-xxx` | `channel.sendgrid.templates.{scriptSlot}` | [§3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [`email-templates/`](./email-templates/README.md)（含 `email-templates-test/`） |
 | SMS | Resolver → `sms_body` | `channel.notification.*` | [§4](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#4-sms通知中心) |
 | PUSH | title/body + `data` JSON 字符串 | `channel.notification.*` | [§5](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#5-app-push通知中心) |
-| AI_CALL / TTS | LTH voice 脚本 / 参数 | `channel.lth.voice.*` | [§6](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#6-voice--ai_calllth) |
+| AI_CALL | AI Call 脚本 / 参数 | `channel.*.voice.*` | [§6](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#6-voice--ai_calllth) |
 
 **Phase 2 不生成 plan step**：`*_EMAIL_CONDITIONAL`（见模板清单 §2）。
 

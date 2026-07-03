@@ -185,7 +185,7 @@ SMS 为 **同步渠道**：`ChannelGateway.dispatch` 成功 → `STEP_COMPLETED`
 
 | 字段                              | 来源                             | 说明                                     |
 | ------------------------------- | ------------------------------ | -------------------------------------- |
-| `userProfile.device.jpushToken` | ingestion / `t_user_equipment` | **JPush Registration ID**（非 FCM token） |
+| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion → 快照（2026-07 确认） | **JPush Registration ID**（非 FCM token） |
 
 
 `StepResolver` 将 `jpushToken` 填入 `StepCommand.targetAddress`。
@@ -414,7 +414,7 @@ POST {base-url}/v1/sms/send
 
 | 快照字段 | 上游来源 | StepCommand | API 字段 |
 |----------|----------|-------------|----------|
-| `userProfile.device.jpushToken` | App → `t_user_equipment` → ingestion / `ProfileService`（§2.2） | `targetAddress` | `token` |
+| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion（§2.2；可选降级读 `t_user_device_token`） | `targetAddress` | `token` |
 | Resolver 渲染 | — | `metadata.title` | `title` |
 | Resolver 渲染 | — | `metadata.body` | `body` |
 | `caseContext.repaymentUrl` 等 | ingestion / 信贷结账链路 | `metadata.pushData`（JSON 字符串） | `data` |

@@ -58,7 +58,7 @@
 |------|------|
 | [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | **SSOT**：`NotificationSmsAdapter` + `NotificationPushAdapter`（SMS / App Push 均经通知中心） |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `SendGridEmailAdapter` |
-| [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `LthVoiceAdapter`（Phase 1 仅 TTS） |
+| [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | AI Call Adapter（TTS 由 LTH 域外独立编排） |
 
 > 已废止/合并：催收 **SMS、App Push** 统一由 **Notification 对接说明**（§1 / §2）描述；旧 `SMS / App_Push / LTH_SMS / FCM_Push 对接说明` 独立跳转页已删除（不再使用 FCM 直连、LTH 直发短信）。
 

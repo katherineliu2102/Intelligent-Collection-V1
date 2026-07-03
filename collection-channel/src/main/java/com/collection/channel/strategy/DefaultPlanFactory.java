@@ -182,10 +182,6 @@ public class DefaultPlanFactory implements PlanFactory {
                 type = ChannelType.AI_CALL;
                 templateId = 301L;
                 break;
-            case "TTS":
-                type = ChannelType.TTS;
-                templateId = 302L;
-                break;
             default:
                 log.warn("[DefaultPlanFactory] unknown single-step={}, use SMS", channelName);
                 type = ChannelType.SMS;

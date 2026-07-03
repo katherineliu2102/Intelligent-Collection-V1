@@ -41,7 +41,7 @@
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
 | `caseContext.caseId` / `userId` / `stage` | 选模板、定位 | 服务同事映射 |
-| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | **终态**：上游 `case_push` 消息体。**Phase 1**：数仓日同步旧库 `t_user_extend.ji_guang_token` → 新库 `t_user_device_token`；ingestion **只读新库** 补全进 payload（[接入 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#35-jpushtoken-phase-1-数仓同步--接入-enrichment)）。引擎不查库 |
+| `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | 上游 `case_push` 消息体（**已确认 2026-07**）；缺失时可降级读新库，见 [接入 §3.1 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库) |
 | `caseContext.repaymentUrl` | `data.deep_link` | 接入 / 信贷结账链路 |
 | `userProfile.behavior.appLastActiveTime` | 活跃度判断（可选块） | 服务同事映射 |
 
@@ -70,7 +70,7 @@
 
 ## 开放问题（已定稿 2026-06-09，详见 [契约对齐回复](./README_ContextSnapshot契约对齐.md) §6）
 
-1. **PUSH device token 来源**：✅ 字段口径 `device.jpushToken`（JPush RID）已决。**Phase 1（2026-06-29）**：数仓日同步 `t_user_extend` → 新库 `t_user_device_token`；ingestion 只读新库写 payload；**终态**上游 `case_push` 自带。缺失 → fallback SMS。
+1. **PUSH device token 来源**：✅ **`case_push` 消息体携带 `jpushToken`**（运维确认 2026-07）。ingestion 映射进 payload → 快照 `device.jpushToken`；缺失 → 可选 enrichment 读新库或 PUSH fallback SMS。
 2. **`targetAddress` 由谁定**：✅ 已决 → **StepResolver** 从快照填入，Gateway/Adapter 不再取号。
 3. **手机号格式**：✅ 已决 → 快照统一 **E.164 `+63...`**；通知中心 `mobile` 可容错，Adapter 可再归一化。
 4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填。**更新（2026-06-18，编排同事已授权）**：`repayment.*`（金额冗余）与 `risk.*`（编排策略不需要、PTP 履约率暂不计算）**Phase 1 移除**；`work.* / contacts.* / behavior.* / device.{deviceModel,osVersion,phoneValidity,viber/whatsapp}` 及 `basic` 人口属性 **结构保留、Phase 1 不填充（Phase 2 预留）**。
@@ -84,5 +84,5 @@
 
 | 日期 | 变更 | 说明 |
 |---|---|---|
-| 2026-06-18 | **移除 `UserProfile.repayment`（RepaymentInfo）与 `UserProfile.risk`（RiskScore）** | 编排同事已授权。理由：`repayment.*` 与 `caseContext` 金额冗余且禁用于文案；`risk.*` 编排策略不需要、PTP 履约率暂不计算；二者均无代码消费。`work / contacts / behavior / device 扩展维度` 与 `basic` 人口属性结构保留，Phase 1 不填充（Phase 2 预留）。样例 JSON 已同步移除两块。 |
+| 2026-07-02 | **`jpushToken` 主路径 = `case_push` 消息体** | 运维确认上游已携带；入案主链路零读库；`t_user_device_token` 降为可选 enrichment 降级 |
 | 2026-06-18 | **`ContactHistory.ptpCount` / `ptpFulfilledCount` Phase 1 为 null** | 类型 `int`→`Integer`；Phase 1 不计算 PTP，返回 null（非 0），避免与「零承诺」混淆。样例 JSON 已同步为 null。 |

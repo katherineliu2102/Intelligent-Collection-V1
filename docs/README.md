@@ -18,7 +18,17 @@
 | [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis/XXL-Job/Repository、**运行配置附录 A**、可观测性（生产目标） |
 | [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域 §9、配置键见 infra 附录 A |
 
-## 二、契约对齐(🟦 主架构维护 · 跨模块)
+### collection-common 契约查阅
+
+| 关切 | SSOT 文档 |
+|---|---|
+| 字段 / 枚举 / EventPayload / DDL | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §3/§6/§9 |
+| SPI / 共享 DTO / 调用语义 | [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约) |
+| EventBus / Redis 键 / Repository | [基础设施 §2/§3/§5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
+| 跨模块用法对齐（非字段 SSOT） | [contracts/](./contracts/README.md) |
+| 索引与变更规则 | [架构 §1.1](./MOCASA催收系统升级_Phase1_架构设计文档.md#11-架构总览) |
+
+## 二、契约对齐(🟦 主架构维护 · 跨模块 · **用法对齐，非字段 SSOT**)
 
 入口见 [`contracts/README.md`](./contracts/README.md)。要点：
 
