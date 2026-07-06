@@ -1032,7 +1032,7 @@ void c8_aiCallCallback_completesStep() {
 | 穷尽决策 `ExhaustionPolicy.handle` | 声明接口 + 调用（硬超时 50ms）+ 异常/超时→NACK | ✅ 实现规则（依 plan/caseInfo/snapshot） | **ExhaustionResult 三值**：`REBUILD`(同阶段续建)/`ESCALATE`(targetStage 升档)/`COMPLETE`(停止)（#25 三例） |
 | 穷尽落地 | ✅ 旧 PLAN_COMPLETED + 续建/发 STAGE_CHANGED/终态 | targetStage 由 ESCALATE 结果给出 | ESCALATE 的 `result.getTargetStage()` → `STAGE_CHANGED.stage`（#25-E 断言 "S3"） |
 | PTP 续建 | ✅ 无活跃→取末次完成计划+复用穷尽策略 | 同 ExhaustionPolicy（REBUILD 才续建） | `getLastCompletedPlan` + REBUILD 才建（D2/M20） |
-| 外呼名单过滤 | ✅ 调 `filterRepaidUser`，失败→告警+继续 | `PredictiveDialerService`（外呼侧） | **fail-soft**：过滤失败不回滚取消（核心目标=计划已取消，规格 §5.1） |
+| 外呼名单过滤 | ✅ 调 `filterRepaidUser`，失败→告警+继续 | `PredictiveDialerService`（外呼侧） | **fail-soft**：过滤失败不回滚取消（核心目标=计划已取消，规格 §5） |
 
 #### 7.2.3 映射 §10.1（M15–M21）/ §10.3（沿用旧编号，不新造）
 
@@ -1703,7 +1703,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 | D29 | 链路⑤ CASE_CEASED→取消活跃(CEASED)且不再建，L0/L1 无断言（⑤-S9/S13；枚举/handler 已就绪，§11-1） | 状态迁移 | 主架构 / L0+L1 | ✅ 已补 2026-06-22（L0 `onCaseCeased_cancelsActivePlanAndNoRebuild` + L1 `FullChainIntegrationTest#caseCeasedCancelsActivePlan`） |
 | D30 | **G1** 续建/升档崩溃搁浅：`on_plan_exhausted` REBUILD/ESCALATE 中途崩溃→旧计划仍非终态→重投重跑幂等不重复建计划（§10.6 G1） | 崩溃恢复/原子性 | 主架构 / L3 连库（注入崩溃点） | ⏭ Phase 2 / L5 混沌（内存版无法模拟事务半提交；规格 §4.5 已改写为终态写最后+原子事务） |
 | D31 | **G2** 毒消息无限重投：retryable 但持续失败→`max_delivery_count`→DLQ+告警（§10.6 G2） | 基础设施防护 | 主架构 / Redis Stream 真实实现 | ⏭ Phase 2 / L5（内存总线无 delivery_count 语义；规格 §7.3 + 基础设施 §2 已补规范） |
-| D32 | **G3** step=EXECUTING 滞留无恢复：消息类 ⑤ 后崩溃无 `timeout_time` 哨兵→reaper 扫描兜底（§10.6 G3） | 崩溃恢复/定时扫描 | 主架构 / L3 连库+Redis 幂等锁 TTL | ⏭ Phase 2 / L5（需真实扫描器+Redis TTL 交互；规格 §5.1 已补 step→EXECUTING 标记 + §7.4 reaper 行） |
+| D32 | **G3** step=EXECUTING 滞留无恢复：消息类 ⑤ 后崩溃无 `timeout_time` 哨兵→reaper 扫描兜底（§10.6 G3） | 崩溃恢复/定时扫描 | 主架构 / L3 连库+Redis 幂等锁 TTL | ⏭ Phase 2 / L5（需真实扫描器+Redis TTL 交互；规格 §5 已补 step→EXECUTING 标记 + §7.4 reaper 行） |
 
 ---
 
