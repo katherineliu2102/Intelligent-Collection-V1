@@ -132,7 +132,7 @@ public class PlanLifecycleManager {
         try {
             predictiveDialerService.filterRepaidUser(userId);
         } catch (Exception e) {
-            // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5.1）
+            // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5）
             log.warn("[repayment] filterRepaidUser failed for user {}: {}", userId, e.getMessage());
         }
         return noEvents();

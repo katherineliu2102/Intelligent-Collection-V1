@@ -1,10 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 领域模型与数据定义
 
-> **版本**: Phase 1  
-> **日期**: 2026-06-17  
-> **范围**: 仅覆盖菲律宾市场  
-> **模块**: `collection-common`  
-> **SSOT 分工**：本文 **§3 / §6 / §9** 为 `collection-common` **字段、枚举、EventPayload、DDL 的文档 SSOT**。SPI 方法签名与共享 DTO 调用语义见 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)；EventBus / Repository 见 [基础设施 §2/§5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)。索引见 [架构 §1.1](./MOCASA催收系统升级_Phase1_架构设计文档.md#11-架构总览)。  
+> **版本**: Phase 1 · 仅覆盖菲律宾市场  
+> **日期**: 2026-07-01  
 > **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)、[权威 DDL `../db/schema.sql`](../db/schema.sql)
 
 ---
@@ -450,7 +447,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 ### 4.2 GuardVerdict（守卫裁定）
 
 > 用途：`ExecutionGuard.evaluate()` 的输出，决定当前步骤是否允许执行。  
-> 调用位置：[核心引擎规格 §5.1 步骤③](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-七步管线)
+> 调用位置：[核心引擎规格 §5 步骤③](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -461,7 +458,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 ### 4.3 StepCommand（步骤命令）
 
 > 用途：`StepResolver.resolve()` 的输出，同时作为 `ChannelGateway.dispatch()` 的输入。  
-> 调用位置：[核心引擎规格 §5.1 步骤④⑤](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-七步管线)
+> 调用位置：[核心引擎规格 §5 步骤④⑤](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -494,7 +491,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §4](./MOCASA催收系统
 ### 4.4 StepResult（步骤结果）
 
 > 用途：`ChannelGateway.dispatch()` 的输出，同时作为 `AdvancementPolicy.decide()` 的输入之一。  
-> 调用位置：[核心引擎规格 §5.1 步骤⑤](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-七步管线)
+> 调用位置：[核心引擎规格 §5 步骤⑤](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|

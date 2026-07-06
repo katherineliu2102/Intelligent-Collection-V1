@@ -1,10 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 数据接入规格
 
-> **版本**: Phase 1（定稿）  
-> **日期**: 2026-06-29  
-> **范围**: 仅覆盖菲律宾市场  
-> **模块**: `collection-ingestion`  
-> **关联文档**: [架构设计文档 §1.2.1](./MOCASA催收系统升级_Phase1_架构设计文档.md#121-上游数据接入)、[领域模型 §9 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)、[基础设施交互规范 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)（**配置键 SSOT 见基础设施附录 A**）、[核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)、[HANDOFF 模块 B](../HANDOFF.md)
+> **版本**: Phase 1 · 仅覆盖菲律宾市场  
+> **日期**: 2026-07-01  
+> **关联文档**: [架构设计文档 §1.2.1](./MOCASA催收系统升级_Phase1_架构设计文档.md#121-上游数据接入)、[领域模型 §9 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)、[基础设施交互规范 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)、[核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)、[HANDOFF 模块 B](../HANDOFF.md)
 
 ---
 
@@ -257,7 +255,7 @@ DpdStageRollHandler 每日 0:05 PHT
 |---|---|---|---|---|
 | `case_push` 缺 `jpushToken`（**可选降级**） | 新库 `t_user_device_token` | 接入 | 主链路 | 仅当 `enrich-jpush-token=true` 且消息缺失时查新库；正常路径不触发。无 token / 查失败：不写 key、warn，仍 publish（PUSH→SMS） |
 | payload 缺失兜底 | 旧库 `t_collection` | CaseService | 非主链路 | 引擎降级路径；非 publish 前置 |
-| 触达前还款守卫 | 旧库 | 引擎 `PreFlightChecker` | 非主链路 | 见 [核心引擎 §5.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-七步管线) |
+| 触达前还款守卫 | 旧库 | 引擎 `PreFlightChecker` | 非主链路 | 见 [核心引擎 §5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线) |
 | 在催名单 / bill DPD | 旧库 `t_collection` + `t_user_repayment_plan` | 接入日切 | 非入案 | 见 [§4.2](#42-读库与演进) |
 
 - `repaymentUrl`：引擎组装 snapshot 时按 `collection.repayment-url-template` 生成（非接入 payload 字段）。
