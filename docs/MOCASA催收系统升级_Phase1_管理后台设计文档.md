@@ -439,7 +439,13 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 平均延迟 | 高于阈值 |
 | 错误码分布 | 某错误码突增 |
 
-对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；后台嵌入 Grafana 面板或自建简化视图 ⏳ 待确认嵌入 vs 跳转。
+对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；**Phase 1.5 确认采用后台嵌入 Grafana 面板**（优先用户体验一致性）。
+
+嵌入约束（避免后续实现偏离）：
+
+- 后台页面内嵌 dashboard panel（iframe）展示关键图块；保留「在 Grafana 打开」链接用于深度排障。
+- 鉴权先采用简化单租户方案（内部网络 + 统一只读视角），不引入复杂多租户 SSO 编排。
+- 面板访问失败时降级为「监控暂不可用 + 跳转 Grafana」；不阻断后台主流程。
 
 #### 5.4.3 全局切流（Emergency）
 
@@ -502,7 +508,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 渠道 | 场景 |
 |------|------|
 | 后台站内通知 | 新异常簇出现或某簇升级（增速翻倍） |
-| 外部告警 ⏳ | 钉钉 / 邮件；按簇而非逐条推送，对接方式待确认 |
+| 外部告警 | **钉钉机器人（Phase 1.5）**；按簇而非逐条推送，包含 clusterKey、影响条数、最近 5 分钟增量、跳转链接 |
 
 ---
 
@@ -539,11 +545,12 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 #### 5.7.2 holdout 基准对比（Phase 1.5 主口径）
 
-**做法**：分案时按 `userId` hash 留出固定小比例（如 5–10%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
+**做法**：分案时按 `userId` hash 留出**可配置比例** `holdout_ratio`（默认 10%，可调范围建议 1%–20%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
 
 | 要素 | 说明 |
 |------|------|
 | 分流 | 分案阶段按 `userId` hash 稳定分桶，holdout 固定不变 |
+| 比例参数 | `holdout_ratio` 配置化；变更需记录 `change_log` 与生效 `config_version` |
 | 基准组 | 始终走基准策略，作为「同期资产质量」的参照系 |
 | 对比口径 | 实验组指标 − 同期 holdout 指标 = 真实 Lift（剔除质量波动） |
 | cohort 对齐 | 进一步按入催批次 / 起始 DPD 日期分组对比，而非日历日 |
@@ -642,13 +649,25 @@ Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切
 | config_key | 如 scriptSlot、template_id |
 | from_version / to_version | 变更前后配置版本号 |
 | diff_summary | 变更摘要（JSON diff 或文本） |
-| rollback_ref | 可一键回滚至指定版本 ⏳ P1 |
+| rollback_ref | 回滚来源版本引用（**Phase 1.5 必做**） |
 
 **乐观锁（防多人脏写）**✅ P0：
 
 - 每条配置记录带 `version` 字段；保存时 `UPDATE ... WHERE id=? AND version=?`（CAS）
 - 版本不匹配 → 拒绝写入，提示「该配置已被他人修改，请刷新后重试」
 - 与节点数无关，单实例多人编辑也必须有
+
+#### 6.4.1 配置回滚（Phase 1.5 必做，MVP）
+
+目标：在配置误发布后，支持分钟级恢复到历史稳定版本，避免投诉/触达异常持续放大。
+
+MVP 规则（防止实现歧义）：
+
+- 回滚不是把全局版本号减小，而是**基于目标历史版本复制生成新版本**（`new_config_version = current + 1`）。
+- 默认作用域为「全局配置快照回滚」（plan/script/rule/compliance/channel 一致回退），避免局部回滚引入配置组合不一致。
+- 生效范围：**仅影响新建 plan**；已生成且已落快照的运行中步骤不被改写（保持可复盘）。
+- 回滚操作必须写 `t_config_change_log`，记录 `rollback_ref`、operator、reason、from_version、to_version。
+- 回滚后发布 `CONFIG_CHANGED` 事件，触发策略缓存刷新路径（同普通发布）。
 
 ### 6.5 历史快照与可复盘（核心数据约束）
 
@@ -837,13 +856,17 @@ gantt
 | 审批发布流 | **不做** | 内部流程简单、合规要求低；静态校验 + Dry-run 替代 |
 | 重型合规子系统 | **不做** | 引擎 Guard + 基础冻结操作足够；非业务重点 |
 | 策略效果评估 | **holdout 基准 + cohort 对齐（Phase 1.5）** | 避免现金贷 vintage 波动造成 Fake Lift；前后对比仅作辅助 |
+| holdout 比例 | **参数化配置（默认 10%）** | 方便按业务阶段动态调优，不改代码 |
 | risk_tier 风险分层 | **字段预留，Phase 1 不填充** | 金额无区分度；行为粗分不适合对外；Phase 2 接 ML 评分卡 |
 | 配置护栏 | **静态校验 P0 + Dry-run P1** | 无审批流但需防荒谬配置上线 |
 | 历史快照 | **config_version + 关键参数 JSON** | 改配置后旧案可复盘当时真实内容 |
+| 配置回滚 | **Phase 1.5 必做（MVP 全局回滚）** | 配置误发布可分钟级止损，降低投诉与运营风险 |
 | 看板数据源 | **冷热分离** | 热层 MySQL 分钟级支撑 15 分钟闭环；冷层 BigQuery 做趋势 |
+| Grafana 集成 | **后台嵌入 + 跳转兜底** | 优先统一体验，同时保留深度排障入口 |
 | 配置并发 | **乐观锁 P0** | 防多人编辑脏写；与单/多实例无关 |
 | 节点一致性视图 | **多实例演进项** | Phase 1 单实例无脑裂；>1 节点时启用 |
 | 异常队列 | **Phase 1 必做；Phase 1.5 折叠聚合** | 防网关抖动雪崩；批量操作 |
+| 异常外部告警 | **钉钉机器人（Phase 1.5）** | 与现有协作链路一致，闭环更快 |
 | 计费模块 | **Phase 2，预留数据模型** | 商业化时需要，当前无计费需求 |
 | AI 质检 / 多地区 | **Phase 2，提前规划模块** | 依赖 ASR 与新市场拓展 |
 | 配置存储 | **Phase 1.5 迁 DB** | 摆脱 Nacos/代码发布依赖，实现场景 B |
@@ -858,11 +881,11 @@ gantt
 |---|------|------|------|
 | Q1 | 看板冷热分离细节（热层物化视图刷新周期） | §5.1.0 架构已定为 MySQL 热 + BQ 冷；刷新策略待实现 | ⏳ 默认热层 1–5 分钟刷新 |
 | Q2 | 渠道 ROI 成本单价由谁维护、如何录入？ | §5.1.3 渠道 ROI | ❓ 待运营确认 |
-| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ❓ 待运维确认 |
-| Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ⏳ 默认跳转，嵌入成本高 |
-| Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ⏳ 默认 P1，手动回滚可先接受 |
+| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ✅ 已定：钉钉机器人（Phase 1.5） |
+| Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ✅ 已定：后台嵌入（保留跳转链接） |
+| Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ✅ 已定：Phase 1.5 必做（MVP 全局回滚） |
 | Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ⏳ 默认 React + Ant Design Pro |
-| Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ❓ 待策略/业务确认 |
+| Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ✅ 已定：比例参数化（默认 10%，可配置） |
 
 ---
 
@@ -1143,7 +1166,10 @@ Phase 1 只读；Phase 1.5 写接口见 C.4。
 | GET/PUT | /config/strategy-rules/... | 策略矩阵 |
 | GET/PUT | /config/compliance-rules/... | 合规 |
 | GET/PUT | /config/channels/... | 渠道开关 |
+| GET/PUT | /config/evaluation-settings | 策略评估参数（含 `holdout_ratio`） |
 | POST | /config/publish | 递增 config_version + CONFIG_CHANGED 事件 |
+| GET | /config/versions | 配置版本列表（含变更摘要/操作人） |
+| POST | /config/rollback | 回滚到指定历史版本（生成新 config_version） |
 
 #### DashboardController / 策略评估
 
@@ -1177,7 +1203,7 @@ Phase 1 只读；Phase 1.5 写接口见 C.4。
 |---|------|------|
 | I1 | Shiro 登录接旧 console 还是新做最小登录？ | C.2 鉴权 |
 | I3 | plan_json 与 Nacos 迁移脚本谁维护？ | C.4 ConfigController |
-| I4 | holdout 比例与基准策略定义 | §5.7.2 |
+| I4 | holdout 比例参数的运营变更权限（谁可改、何时生效） | §5.7.2 / C.4 |
 
 ---
 
@@ -1198,6 +1224,7 @@ Phase 1 只读；Phase 1.5 写接口见 C.4。
 ---
 
 > **修订历史**  
+> - v1.3 · 2026-07-07 · 明确关键决策：Grafana 后台嵌入、回滚 Phase 1.5 必做（MVP）、holdout 比例参数化、异常外部告警采用钉钉  
 > - v1.2 · 2026-07-07 · 合并原「API 与 DDL 规格」为附录 C；更新 §6.2 表状态；增加与数据接入规格交叉对齐  
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论

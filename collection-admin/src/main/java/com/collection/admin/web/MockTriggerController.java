@@ -25,12 +25,10 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -227,7 +225,7 @@ public class MockTriggerController {
             return fail("NO_PHONE", "caseId=" + caseId + " has no phone in mock profile");
         }
         String phone = snapshot.getUserProfile().getBasic().getPrimaryPhone();
-        ScriptVars vars = buildScriptVars(snapshot);
+        ScriptVars vars = scriptLibrary.buildVars(snapshot);
         List<Map<String, Object>> items = new ArrayList<>();
         int ok = 0;
         for (String scriptSlot : channelProperties.getScripts().getSms().keySet()) {
@@ -273,7 +271,7 @@ public class MockTriggerController {
         if (StringUtils.isBlank(token)) {
             return fail("NO_JPUSH_TOKEN", "caseId=" + caseId + " has no jpushToken");
         }
-        ScriptVars vars = buildScriptVars(snapshot);
+        ScriptVars vars = scriptLibrary.buildVars(snapshot);
         List<Map<String, Object>> items = new ArrayList<>();
         int ok = 0;
         for (String scriptSlot : channelProperties.getScripts().getPush().keySet()) {
@@ -342,24 +340,6 @@ public class MockTriggerController {
         }
         meta.put(StepCommand.META_PUSH_DATA, com.alibaba.fastjson.JSON.toJSONString(data));
         return meta;
-    }
-
-    private static ScriptVars buildScriptVars(ContextSnapshot snapshot) {
-        String name = null;
-        BigDecimal amount = null;
-        int dpd = 0;
-        if (snapshot != null) {
-            if (snapshot.getUserProfile() != null && snapshot.getUserProfile().getBasic() != null) {
-                name = snapshot.getUserProfile().getBasic().getName();
-            }
-            if (snapshot.getCaseContext() != null) {
-                amount = snapshot.getCaseContext().getTotalOutstanding();
-                dpd = snapshot.getCaseContext().getDpd();
-            }
-        }
-        BigDecimal v = amount != null ? amount : BigDecimal.ZERO;
-        String amountStr = String.format(Locale.US, "%,.2f", v);
-        return new ScriptVars(name, amountStr, dpd);
     }
 
     private static Map<String, Object> slotResult(String scriptSlot, String preview, StepResult result) {

@@ -206,7 +206,7 @@ channel:
 | **发送** | `POST /v1/sms/send`（同步），`contentType=collection`；运营商路由在通知中心后台 |
 | **配置** | `channel.notification.base-url`、`app-code`、`app-key`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §1） |
 | **文案存放** | Phase 1：Nacos `channel.scripts.sms`（见 §7，待 `DefaultStepResolver` 读取）；长期：策略后台 |
-| **变量** | `{name}`=borrower_name、`{amount}`=amount_due(PHP)、`{dpd}`=overdue_days；**SMS 不放裸链接**（短链风险；还款渠道多样，文案仅敦促还款、不绑定单一渠道） |
+| **变量** | `{name}`=borrower_name、`{amount}`=amount_due(PHP)、`{dpd}`=overdue_days、`{repaymentUrl}`=App 还款短链（优先 `caseContext.repaymentUrl`，缺失时用 `channel.scripts.sms-default-repayment-link`） |
 
 ### 4.1 SMS 文案（英文初稿）
 
@@ -214,22 +214,23 @@ channel:
 > **Tone**：S0 友好（禁 Collections）；S1+ 允许 Collections；S2+ 加入 **Offer 诱饵**（引导查看专属还款方案，不写固定折扣）；施压一律用**客观账户后果**（reported as delinquent / limit your account / future loan eligibility），**不用**主观威胁词（avoid further action/escalation）。  
 > **排版（保送达）**：**禁用全大写词**（URGENT/PAY NOW/FINAL NOTICE 一律首字母大写），降低运营商 Spam 拦截。  
 > **长度（控成本）**：英文 GSM-7，160 字/段；去寒暄（无 Hi），为 `{name}`/`{amount}` 预留余量；下表 `段` 为典型值预估，>1 段请终审裁剪。  
-> **占位符**：`{name}` `{amount}` `{dpd}` 由 Resolver 注入；`{name}` 缺失时 Resolver 自动省略并清理标点空格。
+> **占位符**：`{name}` `{amount}` `{dpd}` `{repaymentUrl}` 由 Resolver 注入；`{name}` 缺失时 Resolver 自动省略并清理标点空格。  
+> **还款短链**：Phase 1 统一 App 短链 `https://mocasa.com/s/4cTu`（配置项 `channel.scripts.sms-default-repayment-link`）；若案件快照带 per-case `repaymentUrl` 则优先使用。
 
 | scriptSlot | Stage/日块 | Tone | 正文（EN · 专家修订版） | 段 |
 |------------|-----------|------|----------------|----|
-| `S0_REMINDER` | S0 · D-3/D-2 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current.` | 1 |
-| `S0_REMINDER_URGENT` | S0 · D-1 | 友好+提醒 | `MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current.` | 1 |
-| `S0_DUE_TODAY` | S0 · D0 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current.` | 1 |
-| `S1_SMS_STANDARD` | S1 · D+1~3 08:00 | 标准 | `MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly.` | 1 |
-| `S2_SMS_STANDARD` | S2 · 08:00 | 标准+Offer | `MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}.` | 1 |
-| `S2_SMS_FIRM` | S2 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}.` | 1~2 |
-| `S3_SMS_STANDARD` | S3 · 08:00 | Pay+Offer | `MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options.` | 1~2 |
-| `S3_SMS_FIRM` | S3 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options.` | 1~2 |
-| `S4_SMS_STANDARD` | S4 · 08:00 Remedial | Final+Offer | `MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options.` | 1~2 |
-| `S4_SMS_FIRM` | S4 · D+31~60 难催 | Final+Offer | `MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly.` | 1~2 |
+| `S0_REMINDER` | S0 · D-3/D-2 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current. Pay: {repaymentUrl}` | 1~2 |
+| `S0_REMINDER_URGENT` | S0 · D-1 | 友好+提醒 | `MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current. Pay: {repaymentUrl}` | 1~2 |
+| `S0_DUE_TODAY` | S0 · D0 | 友好 | `MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current. Pay: {repaymentUrl}` | 1~2 |
+| `S1_SMS_STANDARD` | S1 · D+1~3 08:00 | 标准 | `MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly. Pay: {repaymentUrl}` | 1~2 |
+| `S2_SMS_STANDARD` | S2 · 08:00 | 标准+Offer | `MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}. Pay: {repaymentUrl}` | 1~2 |
+| `S2_SMS_FIRM` | S2 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}. Pay: {repaymentUrl}` | 1~2 |
+| `S3_SMS_STANDARD` | S3 · 08:00 | Pay+Offer | `MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}` | 2 |
+| `S3_SMS_FIRM` | S3 · 08:00 难催 | FIRM+Offer | `MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}` | 2 |
+| `S4_SMS_STANDARD` | S4 · 08:00 Remedial | Final+Offer | `MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options. Pay: {repaymentUrl}` | 2 |
+| `S4_SMS_FIRM` | S4 · D+31~60 难催 | Final+Offer | `MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly. Pay: {repaymentUrl}` | 2 |
 
-> **合规/送达校验点**：①无委外/legal/third-party；②无裸 URL；③**无全大写词**；④后果用客观描述（delinquency record / limited account / future eligibility），不写主观威胁；⑤Sender ID 统一 `MOCASA`；⑥S0 不含 Collections。
+> **合规/送达校验点**：①无委外/legal/third-party；②短链为官方 App 还款入口（`mocasa.com/s/4cTu`）；③**无全大写词**；④后果用客观描述（delinquency record / limited account / future eligibility），不写主观威胁；⑤Sender ID 统一 `MOCASA`；⑥S0 不含 Collections。
 
 ---
 
@@ -299,18 +300,19 @@ channel:
   callback:
     base-url: https://domain/webhook
   scripts:                        # SMS/Push 文案（§4.1/§5.1），DefaultStepResolver 按 scriptSlot 读取并注入变量
-    push-default-deep-link: "https://app.mocasa.com/repay"   # repaymentUrl 缺失时兜底（到 App 还款页，待 App 确认）
+    push-default-deep-link: "https://app.mocasa.com/repay"   # repaymentUrl 缺失时 Push 兜底（到 App 还款页，待 App 确认）
+    sms-default-repayment-link: "https://mocasa.com/s/4cTu"  # SMS 还款短链兜底（App 官方短链）
     sms:
-      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current."
-      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current."
-      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current."
-      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly."
-      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}."
-      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}."
-      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options."
-      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options."
-      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options."
-      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly."
+      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current. Pay: {repaymentUrl}"
+      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current. Pay: {repaymentUrl}"
+      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current. Pay: {repaymentUrl}"
+      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly. Pay: {repaymentUrl}"
+      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}. Pay: {repaymentUrl}"
+      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}. Pay: {repaymentUrl}"
+      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}"
+      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}"
+      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options. Pay: {repaymentUrl}"
+      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly. Pay: {repaymentUrl}"
     push:                         # 每槽 title + body 两键
       S0_REMINDER: { title: "Payment due soon", body: "{name}, PHP {amount} is due soon. Tap to pay in the SKYPAYLOANS app." }
       S0_REMINDER_URGENT: { title: "Due tomorrow", body: "{name}, PHP {amount} is due tomorrow. Tap to pay in the SKYPAYLOANS app." }
@@ -321,7 +323,7 @@ channel:
       S4_PUSH_STANDARD: { title: "Final notice: {dpd} days overdue", body: "Resolve PHP {amount} now. View your options in the app." }
 ```
 
-> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。
+> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}/{repaymentUrl}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。
 
 ---
 

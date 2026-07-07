@@ -34,7 +34,7 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>SMS/Push 文案从 {@code channel.scripts}（{@link ScriptLibrary}）读取并注入 {@code
- * {name}/{amount}/{dpd}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用 {@code
+ * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用 {@code
  * push-default-deep-link} 兜底。
  */
 @Component
@@ -72,7 +72,7 @@ public class DefaultStepResolver implements StepResolver {
             }
         }
 
-        ScriptVars vars = buildScriptVars(snapshot);
+        ScriptVars vars = scriptLibrary.buildVars(snapshot);
         Map<String, Object> metadata = new HashMap<>();
 
         if (context.getPlan().getStage() != null) {
@@ -133,27 +133,6 @@ public class DefaultStepResolver implements StepResolver {
             }
         }
         return "en";
-    }
-
-    private static ScriptVars buildScriptVars(ContextSnapshot snapshot) {
-        String name = null;
-        BigDecimal amount = null;
-        int dpd = 0;
-        if (snapshot != null) {
-            if (snapshot.getUserProfile() != null && snapshot.getUserProfile().getBasic() != null) {
-                name = snapshot.getUserProfile().getBasic().getName();
-            }
-            if (snapshot.getCaseContext() != null) {
-                amount = snapshot.getCaseContext().getTotalOutstanding();
-                dpd = snapshot.getCaseContext().getDpd();
-            }
-        }
-        return new ScriptVars(name, formatAmount(amount), dpd);
-    }
-
-    private static String formatAmount(BigDecimal amount) {
-        BigDecimal v = amount != null ? amount : BigDecimal.ZERO;
-        return String.format(Locale.US, "%,.2f", v);
     }
 
     private void fillChannelMetadata(

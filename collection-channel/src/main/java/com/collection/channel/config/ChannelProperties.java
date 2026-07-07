@@ -117,6 +117,8 @@ public class ChannelProperties {
         private Map<String, PushScript> push = new HashMap<>();
         /** repaymentUrl 缺失时的兜底深链（到 App 还款页，待 App 确认）。 */
         private String pushDefaultDeepLink = "";
+        /** SMS 还款短链兜底（caseContext.repaymentUrl 缺失时使用）。 */
+        private String smsDefaultRepaymentLink = "";
     }
 
     @Data

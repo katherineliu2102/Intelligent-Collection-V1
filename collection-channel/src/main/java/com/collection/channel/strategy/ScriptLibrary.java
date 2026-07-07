@@ -1,6 +1,9 @@
 package com.collection.channel.strategy;
 
 import com.collection.channel.config.ChannelProperties;
+import com.collection.common.model.CaseContext;
+import com.collection.common.model.ContextSnapshot;
+import java.util.Locale;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
@@ -9,7 +12,7 @@ import javax.annotation.Resource;
 /**
  * SMS/Push 文案库 —— 按 {@code scriptSlot} 读取 {@code channel.scripts}（Nacos）并注入变量。
  *
- * <p>对应 [渠道模板清单 §4.1/§5.1/§7]。占位符 {@code {name}/{amount}/{dpd}}。
+ * <p>对应 [渠道模板清单 §4.1/§5.1/§7]。占位符 {@code {name}/{amount}/{dpd}/{repaymentUrl}}。
  * <p>命中不到 scriptSlot 时返回 {@code null}，由 Resolver 走占位兜底。
  */
 @Component
@@ -17,6 +20,46 @@ public class ScriptLibrary {
 
     @Resource
     private ChannelProperties channelProperties;
+
+    /** 从 ContextSnapshot 构建文案变量；repaymentUrl 优先取 caseContext，缺失时用 sms-default-repayment-link。 */
+    public ScriptVars buildVars(ContextSnapshot snapshot) {
+        String name = null;
+        String amount = "0.00";
+        int dpd = 0;
+        String repaymentUrl = resolveRepaymentUrl(snapshot);
+        if (snapshot != null) {
+            if (snapshot.getUserProfile() != null && snapshot.getUserProfile().getBasic() != null) {
+                name = snapshot.getUserProfile().getBasic().getName();
+            }
+            if (snapshot.getCaseContext() != null) {
+                CaseContext ctx = snapshot.getCaseContext();
+                if (ctx.getTotalOutstanding() != null) {
+                    amount = String.format(Locale.US, "%,.2f", ctx.getTotalOutstanding());
+                }
+                dpd = ctx.getDpd();
+            }
+        }
+        return new ScriptVars(name, amount, dpd, repaymentUrl);
+    }
+
+    /** repaymentUrl 缺失时的 SMS 兜底短链。 */
+    public String defaultSmsRepaymentLink() {
+        String link = channelProperties.getScripts().getSmsDefaultRepaymentLink();
+        if (StringUtils.isNotBlank(link)) {
+            return link;
+        }
+        return channelProperties.getScripts().getPushDefaultDeepLink();
+    }
+
+    private String resolveRepaymentUrl(ContextSnapshot snapshot) {
+        if (snapshot != null && snapshot.getCaseContext() != null) {
+            String url = snapshot.getCaseContext().getRepaymentUrl();
+            if (StringUtils.isNotBlank(url)) {
+                return url;
+            }
+        }
+        return defaultSmsRepaymentLink();
+    }
 
     /** 渲染 SMS 正文；未配置该槽返回 {@code null}。 */
     public String renderSms(String scriptSlot, ScriptVars vars) {
@@ -64,7 +107,8 @@ public class ScriptLibrary {
         String out = template
                 .replace("{name}", name)
                 .replace("{amount}", amount)
-                .replace("{dpd}", dpd);
+                .replace("{dpd}", dpd)
+                .replace("{repaymentUrl}", vars != null && vars.getRepaymentUrl() != null ? vars.getRepaymentUrl() : "");
 
         // name 为空时清理残留标点：": ," → ": "；行首 ", " → ""
         out = out.replace(": ,", ": ");

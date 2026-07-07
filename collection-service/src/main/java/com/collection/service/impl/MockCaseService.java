@@ -76,7 +76,7 @@ public class MockCaseService implements CaseService {
         ctx.setComplaintFrozen(profile.frozen);
         ctx.setFirstLoan(true);
         ctx.setPayCount(0);
-        ctx.setRepaymentUrl("https://app.mocasa.test/repay/" + caseId);
+        ctx.setRepaymentUrl("https://mocasa.com/s/4cTu");
         ctx.setEmailScriptSlot(profile.emailScriptSlot);
         return ctx;
     }
