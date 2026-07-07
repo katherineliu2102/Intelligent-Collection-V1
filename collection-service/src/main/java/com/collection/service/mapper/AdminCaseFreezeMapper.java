@@ -13,4 +13,3 @@ public interface AdminCaseFreezeMapper {
                     + "WHERE case_id = #{caseId} AND status = 'FROZEN'")
     int countFrozenByCaseId(@Param("caseId") Long caseId);
 }
-

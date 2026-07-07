@@ -1,7 +1,6 @@
 package com.collection.service.impl;
 
 import com.collection.common.enums.Stage;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collections;
@@ -12,8 +11,7 @@ import java.util.Optional;
 /**
  * Phase 1 SMS 联调 case 注册表。
  *
- * <p>caseId = userId；手机号见 {@link #primaryPhone}。
- * 联调见功能测试指南 TC-SMS-TEST-* / TC-SMS-PROD-*。
+ * <p>caseId = userId；手机号见 {@link #primaryPhone}。 联调见功能测试指南 TC-SMS-TEST-* / TC-SMS-PROD-*。
  */
 final class SmsCaseRegistry {
 
@@ -40,8 +38,15 @@ final class SmsCaseRegistry {
         BY_CASE_ID = Collections.unmodifiableMap(m);
     }
 
-    private static SmsTestCase c(Long caseId, String alias, String phone, int dpd, Stage stage, String amount) {
-        return new SmsTestCase(caseId, alias, phone, dpd, stage, new BigDecimal(amount),
+    private static SmsTestCase c(
+            Long caseId, String alias, String phone, int dpd, Stage stage, String amount) {
+        return new SmsTestCase(
+                caseId,
+                alias,
+                phone,
+                dpd,
+                stage,
+                new BigDecimal(amount),
                 LocalDate.now().minusDays(Math.max(dpd, 0)));
     }
 
@@ -62,8 +67,14 @@ final class SmsCaseRegistry {
         final BigDecimal totalOutstanding;
         final LocalDate dueDate;
 
-        SmsTestCase(Long caseId, String alias, String primaryPhone, int dpd, Stage stage,
-                    BigDecimal totalOutstanding, LocalDate dueDate) {
+        SmsTestCase(
+                Long caseId,
+                String alias,
+                String primaryPhone,
+                int dpd,
+                Stage stage,
+                BigDecimal totalOutstanding,
+                LocalDate dueDate) {
             this.caseId = caseId;
             this.alias = alias;
             this.primaryPhone = primaryPhone;
@@ -78,6 +89,5 @@ final class SmsCaseRegistry {
         }
     }
 
-    private SmsCaseRegistry() {
-    }
+    private SmsCaseRegistry() {}
 }
