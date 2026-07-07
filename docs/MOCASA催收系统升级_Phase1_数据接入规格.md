@@ -31,6 +31,7 @@
   - [6.0 联调隔离](#60-联调隔离)
   - [6.1 生产迁移：D-3 ~ D0 通知接管](#61-生产迁移d-3--d0-通知接管)
   - [6.2 历史数据与存量 replay](#62-历史数据与存量-replay)
+  - [6.3 投诉跨系统冻结 Runbook](#63-投诉跨系统冻结-runbook)
 - [附录](#附录)
   - [附录 B：可观测与对账](#附录-b可观测与对账)
   - [附录 C：联调与实现跟踪台账](#附录-c联调与实现跟踪台账)
@@ -177,6 +178,20 @@ DpdStageRollHandler 每日 0:05 PHT
 - **处理顺序**：单 `loan_id` 不要求全局有序；乱序收敛见 §3.2。
 - **消息级去重**：见 [§3.3](#33-接入幂等键)（接入层，与引擎 `processed:` / `lock:plan:` 分层）。
 - **毒丸消息**：连续 N 次（建议 N=5）失败 → 写入接入死信表 / DLQ 并告警；重放机制复用 [基础设施 §2.1 DLQ](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#21-dlq-重放redrive)；**不得静默丢弃**。
+- **运维可见性（INGESTION_FAILURE 桥接）**：毒丸 / 不可修复校验失败写入 DLQ **同时**，由 **`collection-ingestion`** 写一行 `t_ops_exception`（`collection-admin` 只读展示，不重写 DLQ）。DLQ 保留消息级重放；ops 队列为运维行动入口，二者不互替。
+
+| `t_ops_exception` 字段 | 接入侧赋值 |
+|---|---|
+| `exception_type` | `INGESTION_FAILURE` |
+| `error_code` | `VALIDATION_ERROR`（必填/格式 poison）/ `POISON_MAX_RETRY`（nack 达 N 次）/ `UNKNOWN_DATATYPE` 等 |
+| `channel` | NULL（PubSub 无渠道维度） |
+| `case_id` | 消息可解析时填 `loan_id`（= payload `caseId`）；否则 NULL |
+| `severity` | `ERROR`（poison）/ `WARN`（可重试后仍失败） |
+| `message` | 截断后的失败原因 + PubSub `message_id` |
+| `cluster_key` | `INGESTION_FAILURE:{error_code}:{dataType}`，如 `INGESTION_FAILURE:VALIDATION_ERROR:case_push` |
+| `status` | `OPEN` |
+
+实现：`IngestionPoisonHandler`（或同等组件）在 DLQ 落库同一处理单元内 upsert；指标 `ingestion_poison_total{reason}` 与 ops 写入同事务。详见 [管理后台设计附录 C.7](./MOCASA催收系统升级_Phase1_管理后台设计文档.md#附录-c7与数据接入规格交叉对齐)。
 
 ---
 
@@ -453,7 +468,26 @@ payload 字段 → [领域 §9.2](./MOCASA催收系统升级_Phase1_领域模型
 | **联调子集** | 可用 `loan-id-whitelist` 限定 `loan_id`；见 [§6.0](#60-联调隔离) |
 | **协调项** | 切换窗口、replay 顺序、与信贷对账口径 → [PRD §10](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) 跨团队跟踪 |
 
-> **上线前待补**：S1+ 触达职责矩阵、切片外 plan 策略、双发告警、投诉跨系统冻结 — 跟踪见 [C-M](#c-m-迁移与灰度) / [C-X](#c-x-phase-2跟踪占位不阻塞)。
+> **上线前待补**：S1+ 触达职责矩阵、切片外 plan 策略、双发告警 — 跟踪见 [C-M](#c-m-迁移与灰度) / [C-X](#c-x-phase-2跟踪占位不阻塞)。投诉跨系统冻结 Runbook 见 [§6.3](#63-投诉跨系统冻结-runbook)。
+
+<a id="63-投诉跨系统冻结-runbook"></a>
+
+### 6.3 投诉跨系统冻结 Runbook
+
+并行期（`LEGACY` / `MIGRATING`）同一 `loan_id` 可能在**旧催收**与**新系统**均有触达职责；投诉冻结须**两侧同步**，否则会出现一侧停触、另一侧仍发。
+
+| 步骤 | 动作 | 责任方 |
+|------|------|--------|
+| 1 | 客诉进线，确认业务主键 **`loan_id`**（= 新系统 `caseId`，非 hex `t_collection.id`） | 催收主管 / LTH |
+| 2 | **旧系统**：按现网流程标记案件冻结 / 停催（legacy 操作界面或工单） | 催收主管 |
+| 3 | **新系统**：调用 `POST /compliance/freeze`（`caseId` = `loan_id`，填写 `reason`）→ upsert `t_admin_case_freeze` status=`FROZEN` | 催收主管 |
+| 4 | **验证**：新系统单案 360° `frozen=true`；旧系统触达已停；新系统 PreFlight 拦截后续 step | 主管 / 运维 |
+| 5 | **解冻**：客诉核实无违规后，旧系统解冻 **且** 新系统 `POST /compliance/unfreeze`；确认违规则新系统 `POST /compliance/escalate`（`COMPLAINT` 终态） | 催收主管 |
+| 6 | **漏同步告警**：仅一侧冻结时，对账/巡检发现后补做缺失侧操作并记录 incident | 运维 |
+
+**切量后（`NEW`）**：旧系统不再触达，步骤 2 可省略；步骤 3–5 仍经新系统后台 API 执行。
+
+**关联**：[管理后台 §5.6](./MOCASA催收系统升级_Phase1_管理后台设计文档.md#56-基础合规操作)、[C-M-05](#c-m-迁移与灰度)。
 
 ---
 
@@ -579,6 +613,7 @@ payload 字段 → [领域 §9.2](./MOCASA催收系统升级_Phase1_领域模型
 | C-M-02 | **存量 replay** | DPD∈[-3,90] 活跃 loan | 名单、批次、与 `ingested` key 关系（A.6 #5） | 产品 + 信贷 | §6.2 |
 | C-M-03 | **MIGRATING 切片停发** | 切片内信贷须停 S0 | 生效时点、Runbook（非 Guard 防双发） | 产品 + 信贷 | §6.1 |
 | C-M-04 | **`notification.owner` 变更** | 三态开关 | 切 `NEW` 审批与回滚 playbook | 产品 + 架构 | §6.1、[基础设施 A.4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a4-迁移与触达) |
+| C-M-05 | **投诉跨系统冻结** | ✅ Runbook 已定 [§6.3](#63-投诉跨系统冻结-runbook) | 并行期两侧同步冻结；切 `NEW` 后仅新系统 | 催收主管 + 运维 | §6.3、[管理后台 §5.6](./MOCASA催收系统升级_Phase1_管理后台设计文档.md#56-基础合规操作) |
 
 <a id="c-b-代码实现"></a>
 

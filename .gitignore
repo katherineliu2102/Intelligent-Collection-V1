@@ -20,3 +20,5 @@ nacos-publish.local.yml
 deploy/secrets/*
 !deploy/secrets/.gitkeep
 deploy/nacos/nacos-publish.local.yml
+node_modules/
+node_modules/

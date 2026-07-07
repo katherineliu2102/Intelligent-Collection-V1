@@ -141,6 +141,7 @@ public interface CollectionEventBus {
 | 自动重放 | 定时任务扫描可重放消息（排除反序列化失败等不可恢复毒消息），重投回原 Stream 消费管线；重放计数独立，二次失败仍达上限 → 标记为"需人工" |
 | 幂等保障 | 重放复用既有事件消费去重（`processed:{event_id}`，[§3](#3-运行时状态redis-kv)），保证重复投递安全 |
 | 人工兜底 | 不可恢复 / 重放仍失败的消息保留待人工处理，并告警（[运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md)，规划中） |
+| 接入 PubSub DLQ → ops 队列 | 接入层毒丸 / 校验 poison 写 DLQ 时，**同步**写 `t_ops_exception`（`INGESTION_FAILURE`）；字段映射与责任方见 [数据接入规格 §2.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#23-消费可靠性) |
 
 ### 2.2 重放前合规时段校验
 

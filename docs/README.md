@@ -17,6 +17,7 @@
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
 | [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis/XXL-Job/Repository、**运行配置附录 A**、可观测性（生产目标） |
 | [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域 §9、配置键见 infra 附录 A |
+| [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) | 🟡 | 后台信息架构、模块设计、REST API / 扩展 DDL 实现规格（附录 C）；Phase 1 只读 + 有限写 |
 
 ### collection-common 契约查阅
 

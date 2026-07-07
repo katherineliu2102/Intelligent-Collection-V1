@@ -1,16 +1,17 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.1  
-> **日期**: 2026-06-30  
-> **状态**: ✅ 设计草案（基于产品讨论与 Intelligent-Collection-V1 方案对齐）  
+> **版本**: v1.2  
+> **日期**: 2026-07-07  
+> **状态**: ✅ 可开发（Phase 1 范围）；配置写接口 Phase 1.5  
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
-> **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
+> **定位**: 管理后台的信息架构、功能模块、交互闭环、技术边界、分阶段交付路线，以及 REST API / 扩展 DDL 实现规格（附录 C）。  
 > **关联文档**:  
 > - [产品需求文档 (PRD)](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
 > - [架构设计文档](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
-> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
+> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2、§7、§8  
+> - [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)（交叉对齐见 [附录 C.7](#附录-c7与数据接入规格交叉对齐)）  
 > - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
-> **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）
+> **权威 DDL**: 引擎表 [`../db/schema.sql`](../db/schema.sql)；后台扩展 [`../db/schema-admin.sql`](../db/schema-admin.sql)
 
 ---
 
@@ -38,6 +39,7 @@
 - [12. 开放问题](#12-开放问题)
 - [附录 A：与 PRD 功能映射](#附录-a与-prd-功能映射)
 - [附录 B：现有代码与页面资产](#附录-b现有代码与页面资产)
+- [附录 C：实现规格（API 契约与 DDL）](#附录-c实现规格api-契约与-ddl)
 
 ---
 
@@ -516,6 +518,8 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 记录：操作人、时间、原因（操作日志）。不建设 Consent 台账、DNC 管理、Dispute 工单流 ✅。
 
+**并行期跨系统冻结**：`LEGACY` / `MIGRATING` 阶段须与旧催收系统**同步**冻结同一 `loan_id`；Runbook 见 [数据接入规格 §6.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#63-投诉跨系统冻结-runbook)。切量至 `NEW` 后仅本系统 API 即可。
+
 ---
 
 ### 5.7 策略评估（holdout 基准对比）
@@ -585,15 +589,23 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | **Phase 1.5 目标** | DB 配置表为主，Nacos 仅渠道密钥 | 后台完整读写 |
 | **Phase 2** | DB + 多租户 scoped 配置 | 同上 |
 
-### 6.2 待建配置表（与领域模型对齐）
+### 6.2 配置表与后台运行表（与领域模型对齐）
 
-| 表 | 用途 | 领域模型状态 |
-|----|------|-------------|
-| `t_contact_plan_template` | 计划模板 JSON | NEW ⚠️ 待 DDL |
-| `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW ⚠️ 待 DDL |
-| `t_compliance_rule` | 合规阈值 | NEW ⚠️ 待 DDL |
-| `t_channel_config` | 渠道路由与开关 | NEW ⚠️ 待 DDL |
-| `t_config_change_log` | 配置变更日志 | 本设计新增建议 |
+权威 DDL 见 [`../db/schema-admin.sql`](../db/schema-admin.sql)；JSON 字段契约见 [附录 C.1](#c1-数据资产与-ddl)。
+
+| 分类 | 表 | 用途 | 领域模型状态 |
+|------|-----|------|-------------|
+| 配置（Phase 1.5 写入） | `t_contact_plan_template` | 计划模板 JSON | NEW（首版 DDL 已落 `schema-admin.sql`） |
+| 配置 | `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW |
+| 配置 | `t_compliance_rule` | 合规阈值 | NEW |
+| 配置 | `t_channel_config` | 渠道路由与开关 | NEW |
+| 配置 | `t_script_template` | 话术 / scriptSlot | 本设计新增 |
+| 配置 | `t_config_change_log` + `t_config_version_seq` | 配置变更日志与全局版本 | 本设计新增 |
+| 后台运行（Phase 1） | `t_admin_case_freeze` | 投诉冻结（不 ALTER 旧库 `t_collection`） | 本设计新增 |
+| 后台运行 | `t_ops_exception` | 异常队列 | 本设计新增 |
+| 引擎运行（ALTER） | `t_contact_plan_step` / `t_contact_timeline` | 增 `config_version`、快照列 | EXISTING |
+
+Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切换在 Phase 1.5 完成（与领域模型 §8 不矛盾）。
 
 **所有配置表的公共列约定**：
 
@@ -651,7 +663,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | `t_contact_timeline` | `config_version` + `rendered_ref` | 实际发送时的配置版本 + 渲染内容引用（变量已填充的话术摘要） |
 
 - **快照粒度**✅：存 `config_version` + 关键参数 JSON 快照（已确认口径）——平衡存储成本与可复盘性；需要完整正文时按 `config_version` 回查配置表。
-- **跨文档影响** ⚠️：此为运行表 schema 变更，需在 [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §7 DDL 配合增列。本设计提出需求，DDL 落地以领域模型文档为准。
+- **跨文档影响** ⚠️：运行表 ALTER 已在 `schema-admin.sql` 定义；领域模型 §7 须同步引用。
 
 ### 6.6 节点配置一致性（多实例演进项）
 
@@ -883,6 +895,309 @@ gantt
 
 ---
 
+## 附录 C：实现规格（API 契约与 DDL）
+
+> 原独立文档「管理后台 API 与 DDL 规格」已并入本附录；字段级 DDL 以 [`../db/schema-admin.sql`](../db/schema-admin.sql) 为权威，本节提供可读副本 + JSON 契约 + REST API 契约。
+
+### C.1 数据资产与 DDL
+
+#### 表分类与 Phase 边界
+
+| 分类 | 表 | Owner / 写入方 | Phase |
+|------|-----|----------------|-------|
+| 已有（引擎） | `t_contact_plan`、`t_contact_plan_step`、`t_contact_timeline`、`t_decision_log` | collection-engine / channel | 仅 ALTER 增快照列 |
+| 新建（配置） | `t_contact_plan_template`、`t_strategy_rule`、`t_compliance_rule`、`t_channel_config` | collection-admin（Phase 1.5） | 表 Phase 1 可落库；读源切换 1.5 |
+| 新建（后台） | `t_script_template`、`t_config_change_log`、`t_config_version_seq`、`t_admin_case_freeze`、`t_ops_exception` | collection-admin | 冻结 / 异常 Phase 1 |
+| 已有（案件） | 旧库 `t_collection` 等 | 只读 | 冻结用 `t_admin_case_freeze`，不 ALTER 旧表 |
+
+变更 `schema-admin.sql` 时须同步：本附录 JSON 契约、领域模型 §1.2 表状态、编排层确认 JSON 与 `ChannelProperties` / Nacos 可迁移。
+
+#### 配置表 JSON 契约（Phase 1.5 写入）
+
+**`t_contact_plan_template.plan_json`**（对齐 Nacos `channel.plan-templates` / `ChannelProperties.PlanStepDef`）：
+
+```json
+{
+  "steps": [
+    { "channel": "SMS", "delayMin": 0, "observeMin": 0, "templateId": 101 },
+    { "channel": "PUSH", "delayMin": 1, "observeMin": 0, "templateId": 102 }
+  ]
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| steps | array | 是 | 按 step_order 顺序执行 |
+| steps[].channel | string | 是 | `ChannelType`（SMS/PUSH/EMAIL/AI_CALL/TTS 等）；`HUMAN_CALL` 当前被 `DefaultPlanFactory` 跳过 |
+| steps[].delayMin | int | 否 | 相对上一步延迟分钟，默认 0 |
+| steps[].observeMin | int | 否 | 观察期分钟，默认 0 |
+| steps[].templateId | long | 否 | 写入 `t_contact_plan_step.template_id`；**非** scriptSlot |
+
+⏳ Phase 1.5 若改为 plan 内显式 `scriptSlot`，须同步改 `DefaultPlanFactory` / `DefaultStepResolver` 及本 Schema。
+
+**`t_script_template.content_json`** 按渠道：
+
+| channel | JSON 结构 | 变量占位符 | Nacos 迁移源 |
+|---------|-----------|-----------|-------------|
+| SMS | `{ "body": "MOCASA: {name}, ..." }` | `{name}` `{amount}` `{dpd}` | `channel.scripts.sms.<scriptSlot>` |
+| PUSH | `{ "title": "...", "body": "..." }` | 同上 | `channel.scripts.push.<scriptSlot>` |
+| EMAIL | `{ "preview": "..." }` 可选 | 动态数据在 SendGrid | `channel.sendgrid.templates.<scriptSlot>` → `external_template_id` |
+
+**`t_compliance_rule`**：一行一条规则；Nacos 扁平 `channel.compliance` 拆为多行 `rule_code`。
+
+| rule_code | rule_json 示例 | Nacos 对应 |
+|-----------|---------------|-----------|
+| TOUCH_WINDOW | `{ "timezone": "Asia/Manila", "start": "06:00", "end": "22:00" }` | 可触达时段（PRD §7.2 默认） |
+| QUIET_HOURS | `{ "timezone": "Asia/Manila", "start": "22:00", "end": "06:00" }` | 禁止触达时段（`TOUCH_WINDOW` 之补集） |
+| DAILY_CAP | `{ "limit": 1 }` | `compliance.daily-limit.<CHANNEL>` |
+
+> **口径 SSOT**：Phase 1 默认触达窗 **06:00–22:00 PHT**（与 §5.2.4、PRD §7.2 一致）。`ExecutionGuard` / Nacos `channel.compliance` / `t_compliance_rule` 落库均用上述 `TOUCH_WINDOW` + `QUIET_HOURS` 成对配置，禁止 08:00–21:00 等偏离 PRD 的示例值。
+
+**`t_channel_config.route_json`** 示例（草案）：
+
+```json
+{ "primary": "notification-center", "fallback": ["mock"], "timeoutSec": 30 }
+```
+
+**配置版本**：每次发布 `t_config_version_seq.current_version++`，各配置表写入同一 `config_version`，并追加 `t_config_change_log`；乐观锁用各表 `version` 字段 CAS。
+
+#### 后台运行表（Phase 1）
+
+**`t_admin_case_freeze`**：
+
+| status | 含义 |
+|--------|------|
+| FROZEN | 投诉冻结，PreFlight 拦截触达 |
+| RELEASED | 解冻 |
+| ESCALATED | 已升级 COMPLAINT 终态 |
+
+Phase 1 必做：`RealCaseService` / `PreFlightChecker` 读此表，`isFrozen(caseId)` 替代硬编码 `false`。
+
+**`t_ops_exception`**：Phase 1 **逐条**写入；Phase 1.5 按 `cluster_key = type:channel:errorCode` 折叠展示（见 §5.5.2）。
+
+#### 运行表扩展（ALTER）
+
+| 表 | 新增列 | 写入时机 |
+|----|--------|----------|
+| `t_contact_plan_step` | `config_version`, `resolved_params` | 引擎生成 step 时 |
+| `t_contact_timeline` | `config_version`, `rendered_ref` | 渠道发送成功后 |
+
+`resolved_params` 示例：
+
+```json
+{ "templateId": 101, "scriptSlot": "S2_SMS_STANDARD", "channel": "SMS", "tone": "STANDARD" }
+```
+
+#### 部署与验证
+
+```powershell
+cd Intelligent-Collection-V1
+$env:DB_PASSWORD='<from Nacos spring.datasource.password>'
+python scripts/dev/apply-schema-admin.py
+```
+
+预期输出：`SCHEMA_ADMIN_OK`；且存在上述全部新表；`t_contact_plan_step.config_version` 列存在。
+
+---
+
+### C.2 API 通用约定
+
+#### Base URL 与鉴权
+
+- 开发：`http://localhost:8888`（local profile）；无全局 `/api/v1`，沿用 `/catalog`、`/plans` 风格
+- 鉴权：Shiro Session（复用旧库 `t_system_role`）；Header `Cookie: JSESSIONID=...` 或后续 Bearer JWT
+- 未登录：`401` `{ "code": "UNAUTHORIZED", "message": "..." }`
+
+#### 响应 envelope
+
+成功：
+
+```json
+{ "success": true, "data": { }, "timestamp": "2026-07-06T12:00:00+08:00" }
+```
+
+错误：
+
+```json
+{
+  "success": false,
+  "code": "VALIDATION_ERROR",
+  "message": "human readable",
+  "details": [ { "field": "quietHoursStart", "reason": "invalid time" } ]
+}
+```
+
+#### 分页
+
+Query：`page=1&pageSize=20`（默认 20，最大 100）。响应 `data.items` + `page` / `pageSize` / `total`。
+
+#### 乐观锁与错误码
+
+配置写接口（Phase 1.5）请求体带 `version`；冲突返回 **409** `VERSION_CONFLICT`。
+
+| code | HTTP | 说明 |
+|------|------|------|
+| UNAUTHORIZED | 401 | 未登录 |
+| FORBIDDEN | 403 | 无权限 |
+| NOT_FOUND | 404 | 资源不存在 |
+| VALIDATION_ERROR | 400 | 静态校验失败 |
+| VERSION_CONFLICT | 409 | 乐观锁冲突 |
+| INTERNAL_ERROR | 500 | 未预期错误 |
+
+---
+
+### C.3 Phase 1 API（P0）
+
+对应 [§10.1 Phase 1 最小可用](#101-phase-1-最小可用p0)。
+
+#### 案件与计划（扩展已有）
+
+**GET `/plans/overview/by-case/{caseId}`** — 单案 360° 聚合；扩展 `caseSummary`：
+
+```json
+{
+  "caseId": 92002,
+  "userId": 90004,
+  "stage": "S2",
+  "dpd": 7,
+  "frozen": false,
+  "plans": [ { "plan": {}, "steps": [] } ],
+  "timeline": []
+}
+```
+
+> `caseId` 为业务 `loan_id`（数字），与 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#31-入案快照主链路与模块职责) 一致，**非**旧库 `t_collection.id`（hex）。
+
+**GET `/cases/search`** — Query：`caseId`, `userId`, `stage`, `planStatus`, `frozen`；列表项脱敏 phone/email。
+
+#### 策略目录（已有 Catalog）
+
+- `GET /catalog/overview`
+- `GET /catalog/template/{slot}`
+- `GET /catalog/template/{slot}/preview`
+
+Phase 1 只读；Phase 1.5 写接口见 C.4。
+
+#### 合规操作 — ComplianceOpsController
+
+**POST `/compliance/freeze`**
+
+```json
+{ "caseId": 92002, "userId": 90004, "reason": "Customer complaint via hotline" }
+```
+
+行为：upsert `t_admin_case_freeze` status=FROZEN；写 change_log。权限：催收主管。
+
+**POST `/compliance/unfreeze`** — `{ "caseId": 92002, "reason": "..." }`
+
+**POST `/compliance/escalate`** — `{ "caseId": 92002, "reason": "..." }`；status=ESCALATED；活跃 plan 写 `cancel_reason=COMPLAINT` 终态。
+
+#### 异常队列 — OpsQueueController
+
+**GET `/ops/exceptions`** — Query：`status`（默认 OPEN）、`type`、`channel`、`page`、`pageSize`。Phase 1 逐条；Phase 1.5 增加 `groupBy=cluster`。
+
+响应 item 示例：
+
+```json
+{
+  "id": 1001,
+  "exceptionType": "CALLBACK_TIMEOUT",
+  "channel": "SMS",
+  "errorCode": "TIMEOUT",
+  "caseId": 92002,
+  "planId": 501,
+  "stepId": 9001,
+  "severity": "WARN",
+  "message": "Callback not received within 300s",
+  "status": "OPEN",
+  "clusterKey": "CALLBACK_TIMEOUT:SMS:TIMEOUT",
+  "createdAt": "2026-07-06T11:00:00+08:00"
+}
+```
+
+- `POST /ops/exceptions/{id}/ack`
+- `POST /ops/exceptions/{id}/resolve` — `{ "action": "RETRY|IGNORE|MANUAL_FIXED", "note": "..." }`
+- `POST /ops/exceptions/batch-resolve`（Phase 1.5）— 按 `clusterKey` 批量处理
+
+**异常写入方**（非 admin API）：引擎 CALLBACK_TIMEOUT、渠道熔断监听器、接入层毒丸/DLQ 告警桥接 → 写 `t_ops_exception`（见 C.5、C.7）。
+
+#### 系统管理（最小）
+
+- `GET /admin/me` — 当前用户与角色
+- `GET /admin/audit-logs` — Query：`configType`、`operator`、`from`、`to`
+
+---
+
+### C.4 Phase 1.5 API（概要）
+
+#### ConfigController — 配置 CRUD + 热加载
+
+| Method | Path | 说明 |
+|--------|------|------|
+| GET | /config/plan-templates | 列表 |
+| GET | /config/plan-templates/{id} | 详情 |
+| PUT | /config/plan-templates/{id} | 更新（带 version） |
+| POST | /config/plan-templates/{id}/validate | 静态校验 |
+| POST | /config/plan-templates/{id}/dry-run | 历史样本预演 |
+| GET/PUT | /config/script-templates/... | 话术 |
+| GET/PUT | /config/strategy-rules/... | 策略矩阵 |
+| GET/PUT | /config/compliance-rules/... | 合规 |
+| GET/PUT | /config/channels/... | 渠道开关 |
+| POST | /config/publish | 递增 config_version + CONFIG_CHANGED 事件 |
+
+#### DashboardController / 策略评估
+
+| Method | Path | 层 / 说明 |
+|--------|------|-----------|
+| GET | /dashboard/outreach/realtime | 热层：触达量/送达率/接通率 |
+| GET | /dashboard/recovery/trend | 冷层：回收漏斗（BigQuery） |
+| GET | /dashboard/evaluation/holdout | 实验组 vs holdout 对比 |
+| GET | /dashboard/evaluation/changelog-markers | 配置变更时间轴 |
+
+---
+
+### C.5 引擎与管理后台对齐清单
+
+| # | 项 | 负责模块 | Phase |
+|---|-----|----------|-------|
+| 1 | PreFlight 读 `t_admin_case_freeze` | collection-service | 1 |
+| 2 | 引擎写 step/timeline 时落 config_version + resolved_params | collection-engine / channel | 1.5 |
+| 3 | CALLBACK_TIMEOUT → 写 t_ops_exception | collection-engine | 1 |
+| 4 | DefaultPlanFactory 改读 t_contact_plan_template | collection-channel | 1.5 |
+| 5 | ComplianceExecutionGuard 改读 t_compliance_rule | collection-channel | 1.5 |
+| 6 | CONFIG_CHANGED 订阅刷新缓存 | engine.strategy | 1.5 |
+| 7 | holdout 分案 hash 逻辑 | collection-channel / engine | 1.5 |
+| 8 | 接入毒丸/DLQ → 写 `t_ops_exception`（INGESTION_FAILURE） | collection-ingestion | 1 |
+
+---
+
+### C.6 实现开放问题
+
+| # | 问题 | 影响 |
+|---|------|------|
+| I1 | Shiro 登录接旧 console 还是新做最小登录？ | C.2 鉴权 |
+| I3 | plan_json 与 Nacos 迁移脚本谁维护？ | C.4 ConfigController |
+| I4 | holdout 比例与基准策略定义 | §5.7.2 |
+
+---
+
+### 附录 C.7：与数据接入规格交叉对齐
+
+两文档分属 **`collection-ingestion`** 与 **`collection-admin`**，主体正交；以下交叉点以 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) 为准。
+
+| 维度 | 数据接入规格（SSOT） | 管理后台 | 对齐结论 |
+|------|---------------------|----------|----------|
+| **业务主键** | PubSub `loan_id` → payload `caseId`；与旧库 `t_collection.loan_id` 同值；**非** hex `t_collection.id` | API / 冻结 / 异常均用 `caseId` | ✅ 一致；后台检索与冻结须用 loan 级 `caseId` |
+| **入案写库** | 接入不写 `t_contact_plan`；引擎消费 `CASE_INGESTED` 后写 plan | 后台只读 plan / timeline | ✅ 职责分离 |
+| **快照冻结** | 「冻结写入由引擎完成」指 `ContextSnapshot` 组装冻结 | `t_admin_case_freeze` 为**投诉运营冻结** | ✅ 不同概念；命名上勿混淆 |
+| **旧库 `t_collection`** | 入案主链路不读；日切 B2 只读扫描在催名单 | 案件检索读新库 plan，不依赖入案读旧库 | ✅ 无冲突 |
+| **INGESTION_FAILURE** | 毒丸 → DLQ + 同步写 `t_ops_exception`（§2.3 字段映射）；`collection-ingestion` 负责写入 | 异常队列类型含 INGESTION_FAILURE | ✅ 已闭合；DLQ 管重放，ops 管运维可见 |
+| **投诉跨系统冻结** | §6.3 Runbook：并行期旧系统 + 新系统 `POST /compliance/freeze` 双侧同步 | `t_admin_case_freeze` + §5.6 | ✅ 已闭合；切 `NEW` 后仅新系统 |
+| **日切 vs 入案 stage** | 同周期增量 `case_push` ack 跳过；阶段靠日切 `STAGE_CHANGED` | 360° 展示引擎 plan 上的 stage | ✅ 后台展示引擎态，不以 PubSub 增量为准 |
+
+---
+
 > **修订历史**  
+> - v1.2 · 2026-07-07 · 合并原「API 与 DDL 规格」为附录 C；更新 §6.2 表状态；增加与数据接入规格交叉对齐  
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论

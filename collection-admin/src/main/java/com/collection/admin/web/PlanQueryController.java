@@ -2,6 +2,7 @@ package com.collection.admin.web;
 
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactRecord;
+import com.collection.common.service.CaseService;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.TimelineRepository;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +25,8 @@ public class PlanQueryController {
     private ContactPlanRepository planRepository;
     @Resource
     private TimelineRepository timelineRepository;
+    @Resource
+    private CaseService caseService;
 
     /** 查询计划详情（含步骤序列）。 */
     @GetMapping("/{planId}")
@@ -76,8 +79,12 @@ public class PlanQueryController {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
+        com.collection.common.model.CaseInfo info = caseService.getCaseInfo(caseId);
         result.put("caseId", caseId);
         result.put("userId", userId);
+        result.put("stage", info == null || info.getStage() == null ? null : info.getStage().name());
+        result.put("dpd", info == null ? null : info.getDpd());
+        result.put("frozen", info != null && info.isFrozen());
         result.put("plans", planViews);
         result.put("timeline", userId != null
                 ? timelineRepository.getContactHistory(userId, timelineLimit)
