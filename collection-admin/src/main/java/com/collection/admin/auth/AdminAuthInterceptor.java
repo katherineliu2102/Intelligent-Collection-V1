@@ -20,8 +20,12 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(
-            HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        Object user = request.getSession(false) != null ? request.getSession(false).getAttribute(SESSION_USER) : null;
+            HttpServletRequest request, HttpServletResponse response, Object handler)
+            throws Exception {
+        Object user =
+                request.getSession(false) != null
+                        ? request.getSession(false).getAttribute(SESSION_USER)
+                        : null;
         if (user != null) {
             return true;
         }
@@ -33,4 +37,3 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
         return false;
     }
 }
-

@@ -14,4 +14,3 @@ public class ExceptionResolveRequest {
 
     private String note;
 }
-

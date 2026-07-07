@@ -21,8 +21,7 @@ class ScriptResolverLogicTest {
 
     @Test
     void inject_repaymentUrl_appendsShortLink() {
-        String tpl =
-                "MOCASA Collections: {name}, please settle PHP {amount}. Pay: {repaymentUrl}";
+        String tpl = "MOCASA Collections: {name}, please settle PHP {amount}. Pay: {repaymentUrl}";
         String out =
                 ScriptLibrary.inject(
                         tpl, new ScriptVars("Juan", "1,500.00", 3, "https://mocasa.com/s/4cTu"));

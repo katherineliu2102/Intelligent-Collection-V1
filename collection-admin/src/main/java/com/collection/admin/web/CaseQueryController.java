@@ -7,11 +7,11 @@ import java.util.Map;
 import javax.validation.constraints.Min;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.validation.annotation.Validated;
 
 /** 案件检索（Phase 1 P0）。 */
 @Validated
@@ -32,15 +32,18 @@ public class CaseQueryController {
             @RequestParam(required = false) String stage,
             @RequestParam(required = false) String planStatus,
             @RequestParam(required = false) Boolean frozen,
-            @RequestParam(defaultValue = "1") @Min(value = 1, message = "page must be >= 1") int page,
-            @RequestParam(defaultValue = "20") @Min(value = 1, message = "pageSize must be >= 1") int pageSize) {
+            @RequestParam(defaultValue = "1") @Min(value = 1, message = "page must be >= 1")
+                    int page,
+            @RequestParam(defaultValue = "20") @Min(value = 1, message = "pageSize must be >= 1")
+                    int pageSize) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(100, pageSize));
         int offset = (p - 1) * size;
 
-        StringBuilder from = new StringBuilder(
-                " FROM t_collection c LEFT JOIN t_contact_plan p ON p.case_id = CAST(c.loan_id AS UNSIGNED) "
-                        + "LEFT JOIN t_admin_case_freeze f ON f.case_id = CAST(c.loan_id AS UNSIGNED) ");
+        StringBuilder from =
+                new StringBuilder(
+                        " FROM t_collection c LEFT JOIN t_contact_plan p ON p.case_id = CAST(c.loan_id AS UNSIGNED) "
+                                + "LEFT JOIN t_admin_case_freeze f ON f.case_id = CAST(c.loan_id AS UNSIGNED) ");
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
 
@@ -71,30 +74,37 @@ public class CaseQueryController {
         String countSql = "SELECT COUNT(DISTINCT c.loan_id) " + from + where;
         Long total = jdbcTemplate.queryForObject(countSql, args.toArray(), Long.class);
 
-        String dataSql = "SELECT CAST(c.loan_id AS UNSIGNED) AS caseId, "
-                + "ANY_VALUE(CAST(c.user_id AS UNSIGNED)) AS userId, "
-                + "ANY_VALUE(c.overdue_days) AS dpd, "
-                + "ANY_VALUE(p.stage) AS stage, ANY_VALUE(p.status) AS planStatus, "
-                + "MAX(CASE WHEN f.status = 'FROZEN' THEN 1 ELSE 0 END) AS frozen, "
-                + "ANY_VALUE(c.phone) AS phone, ANY_VALUE(c.email) AS email "
-                + from + where + " GROUP BY c.loan_id "
-                + " ORDER BY CAST(c.loan_id AS UNSIGNED) DESC LIMIT ? OFFSET ?";
+        String dataSql =
+                "SELECT CAST(c.loan_id AS UNSIGNED) AS caseId, "
+                        + "ANY_VALUE(CAST(c.user_id AS UNSIGNED)) AS userId, "
+                        + "ANY_VALUE(c.overdue_days) AS dpd, "
+                        + "ANY_VALUE(p.stage) AS stage, ANY_VALUE(p.status) AS planStatus, "
+                        + "MAX(CASE WHEN f.status = 'FROZEN' THEN 1 ELSE 0 END) AS frozen, "
+                        + "ANY_VALUE(c.phone) AS phone, ANY_VALUE(c.email) AS email "
+                        + from
+                        + where
+                        + " GROUP BY c.loan_id "
+                        + " ORDER BY CAST(c.loan_id AS UNSIGNED) DESC LIMIT ? OFFSET ?";
         List<Object> dataArgs = new ArrayList<>(args);
         dataArgs.add(size);
         dataArgs.add(offset);
 
-        List<Map<String, Object>> items = jdbcTemplate.query(dataSql, dataArgs.toArray(), (rs, rowNum) -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("caseId", rs.getLong("caseId"));
-            row.put("userId", rs.getLong("userId"));
-            row.put("dpd", rs.getInt("dpd"));
-            row.put("stage", rs.getString("stage"));
-            row.put("planStatus", rs.getString("planStatus"));
-            row.put("frozen", rs.getInt("frozen") == 1);
-            row.put("phone", maskPhone(rs.getString("phone")));
-            row.put("email", maskEmail(rs.getString("email")));
-            return row;
-        });
+        List<Map<String, Object>> items =
+                jdbcTemplate.query(
+                        dataSql,
+                        dataArgs.toArray(),
+                        (rs, rowNum) -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("caseId", rs.getLong("caseId"));
+                            row.put("userId", rs.getLong("userId"));
+                            row.put("dpd", rs.getInt("dpd"));
+                            row.put("stage", rs.getString("stage"));
+                            row.put("planStatus", rs.getString("planStatus"));
+                            row.put("frozen", rs.getInt("frozen") == 1);
+                            row.put("phone", maskPhone(rs.getString("phone")));
+                            row.put("email", maskEmail(rs.getString("email")));
+                            return row;
+                        });
 
         Map<String, Object> pageData = new LinkedHashMap<>();
         pageData.put("items", items);
@@ -122,4 +132,3 @@ public class CaseQueryController {
         return email.substring(0, 1) + "***" + email.substring(at);
     }
 }
-

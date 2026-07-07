@@ -21,4 +21,3 @@ public class AdminWebConfig implements WebMvcConfigurer {
                 .excludePathPatterns("/auth/**");
     }
 }
-

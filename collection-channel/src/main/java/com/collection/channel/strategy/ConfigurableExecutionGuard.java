@@ -27,8 +27,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ConfigurableExecutionGuard implements ExecutionGuard {
 
-    @Resource
-    private ChannelProperties channelProperties;
+    @Resource private ChannelProperties channelProperties;
 
     private final ConcurrentHashMap<String, AtomicInteger> frequencyMap = new ConcurrentHashMap<>();
 
@@ -70,7 +69,12 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
 
         if (inQuiet) {
             return GuardVerdict.block(
-                    "QUIET_HOURS " + comp.getQuietHoursStart() + "-" + comp.getQuietHoursEnd() + " " + tz,
+                    "QUIET_HOURS "
+                            + comp.getQuietHoursStart()
+                            + "-"
+                            + comp.getQuietHoursEnd()
+                            + " "
+                            + tz,
                     "TIME_WINDOW");
         }
         return null;
@@ -128,8 +132,10 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         }
 
         Long userId = context.getPlan().getUserId();
-        String dateKey = ZonedDateTime.now(
-                ZoneId.of(channelProperties.getCompliance().getTimezone())).toLocalDate().toString();
+        String dateKey =
+                ZonedDateTime.now(ZoneId.of(channelProperties.getCompliance().getTimezone()))
+                        .toLocalDate()
+                        .toString();
         String key = userId + ":" + channel.name() + ":" + dateKey;
 
         AtomicInteger counter = frequencyMap.computeIfAbsent(key, k -> new AtomicInteger(0));

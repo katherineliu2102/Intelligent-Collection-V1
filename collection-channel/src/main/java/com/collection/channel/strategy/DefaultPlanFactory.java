@@ -33,8 +33,7 @@ public class DefaultPlanFactory implements PlanFactory {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultPlanFactory.class);
 
-    @Resource
-    private ChannelProperties channelProperties;
+    @Resource private ChannelProperties channelProperties;
 
     @Override
     public ContactPlan create(CaseInfo caseInfo, Stage stage, ContextSnapshot snapshot) {
@@ -42,7 +41,10 @@ public class DefaultPlanFactory implements PlanFactory {
             return null;
         }
 
-        log.info("[DefaultPlanFactory] build plan for case {} stage {}", caseInfo.getCaseId(), stage);
+        log.info(
+                "[DefaultPlanFactory] build plan for case {} stage {}",
+                caseInfo.getCaseId(),
+                stage);
 
         List<ContactPlanStep> steps = buildSteps(stage, caseInfo.getCaseId());
         if (steps.isEmpty()) {
@@ -89,7 +91,8 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     private boolean isGuardFrequencyCase(Long caseId) {
-        return caseId != null && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId());
+        return caseId != null
+                && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId());
     }
 
     private boolean isGuardNoPhoneCase(Long caseId) {
@@ -102,9 +105,7 @@ public class DefaultPlanFactory implements PlanFactory {
 
     private boolean isObservationCase(Long caseId, Stage stage) {
         ChannelProperties.L4a l4a = channelProperties.getL4a();
-        return caseId != null
-                && caseId == l4a.getObservationCaseId()
-                && stage == Stage.S1;
+        return caseId != null && caseId == l4a.getObservationCaseId() && stage == Stage.S1;
     }
 
     private int observationMinutes() {
@@ -113,7 +114,8 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     private List<ContactPlanStep> buildFromTemplate(Stage stage) {
-        Map<String, ChannelProperties.PlanTemplate> templates = channelProperties.getPlanTemplates();
+        Map<String, ChannelProperties.PlanTemplate> templates =
+                channelProperties.getPlanTemplates();
         String key = stage != null ? stage.name() : "S1";
         ChannelProperties.PlanTemplate tpl = templates.get(key);
         if (tpl == null) {
@@ -131,7 +133,13 @@ public class DefaultPlanFactory implements PlanFactory {
             if (channelType == null || channelType == ChannelType.HUMAN_CALL) {
                 continue;
             }
-            steps.add(buildStep(order++, channelType, def.getDelayMin(), def.getObserveMin(), def.getTemplateId()));
+            steps.add(
+                    buildStep(
+                            order++,
+                            channelType,
+                            def.getDelayMin(),
+                            def.getObserveMin(),
+                            def.getTemplateId()));
         }
         return steps;
     }
@@ -192,7 +200,8 @@ public class DefaultPlanFactory implements PlanFactory {
         return steps;
     }
 
-    private ContactPlanStep buildStep(int order, ChannelType channel, int delayMin, int obsMin, long templateId) {
+    private ContactPlanStep buildStep(
+            int order, ChannelType channel, int delayMin, int obsMin, long templateId) {
         ContactPlanStep step = new ContactPlanStep();
         step.setStepOrder(order);
         step.setChannelType(channel);

@@ -34,8 +34,8 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>SMS/Push 文案从 {@code channel.scripts}（{@link ScriptLibrary}）读取并注入 {@code
- * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用 {@code
- * push-default-deep-link} 兜底。
+ * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用
+ * {@code push-default-deep-link} 兜底。
  */
 @Component
 public class DefaultStepResolver implements StepResolver {
@@ -63,7 +63,8 @@ public class DefaultStepResolver implements StepResolver {
         if (step.getChannelType() == ChannelType.EMAIL) {
             if (!EmailMilestoneScriptSlots.isPhase1Active(scriptSlot)) {
                 if ("INVALID_L4A_REBUILD_SLOT".equals(scriptSlot)) {
-                    throw new RuntimeException("L4a REBUILD test: invalid slot forces step failure → ExhaustionPolicy");
+                    throw new RuntimeException(
+                            "L4a REBUILD test: invalid slot forces step failure → ExhaustionPolicy");
                 }
                 return null;
             }

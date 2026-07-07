@@ -14,12 +14,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 把上游 {@code case_push} / {@code repayment_push_and_load} 报文映射为领域事件 payload（语义字段 →
- * {@link CollectionEvent} 常量 key，契约见领域模型 §9.2）。
+ * 把上游 {@code case_push} / {@code repayment_push_and_load} 报文映射为领域事件 payload（语义字段 → {@link
+ * CollectionEvent} 常量 key，契约见领域模型 §9.2）。
  *
- * <p>上游真实 JSON key 名待信贷联调（数据接入规格 C-I-01~16）：本类通过 {@code
- * collection.ingestion.case-push.field-map} 把语义字段映射到上游 key，未配则按契约同名取值，因此
- * <b>自发样例消息（按 §9.2 key）即可直接跑通</b>，待信贷给出样例 JSON 后只改 Nacos 别名表。
+ * <p>上游真实 JSON key 名待信贷联调（数据接入规格 C-I-01~16）：本类通过 {@code collection.ingestion.case-push.field-map}
+ * 把语义字段映射到上游 key，未配则按契约同名取值，因此 <b>自发样例消息（按 §9.2 key）即可直接跑通</b>，待信贷给出样例 JSON 后只改 Nacos 别名表。
  *
  * <p>清洗口径与 {@code RealCaseService} 对齐（C-I-06）：phone 归一化 E.164 {@code +63}；脏 email → 不带出。
  */
@@ -81,7 +80,10 @@ public class CasePayloadMapper {
             try {
                 stage = Stage.valueOf(stageRaw.toUpperCase());
             } catch (IllegalArgumentException e) {
-                log.warn("[Ingestion] case_push 非法 stage='{}' caseId={}，改由 dpd 推导", stageRaw, caseId);
+                log.warn(
+                        "[Ingestion] case_push 非法 stage='{}' caseId={}，改由 dpd 推导",
+                        stageRaw,
+                        caseId);
             }
         }
 
@@ -117,8 +119,8 @@ public class CasePayloadMapper {
     }
 
     /**
-     * 是否全额结清（命中则 DEL ingested key，§2.2.2）。判定条件待信贷联调（C-I-13）：当前取
-     * {@code fullRepay==true} 或 {@code totalOutstanding<=0}。
+     * 是否全额结清（命中则 DEL ingested key，§2.2.2）。判定条件待信贷联调（C-I-13）：当前取 {@code fullRepay==true} 或 {@code
+     * totalOutstanding<=0}。
      */
     public boolean fullySettled(JSONObject json) {
         Boolean flag = json.getBoolean("fullRepay");

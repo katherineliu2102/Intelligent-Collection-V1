@@ -14,4 +14,3 @@ public class ComplianceActionRequest {
     @NotBlank(message = "reason is required")
     private String reason;
 }
-

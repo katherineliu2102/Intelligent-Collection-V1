@@ -60,7 +60,8 @@ public class ComplianceOpsController {
         return ApiResponse.success(statusView(caseId, "ESCALATED"));
     }
 
-    private void upsertFreeze(long caseId, Long userId, String status, String reason, String operator) {
+    private void upsertFreeze(
+            long caseId, Long userId, String status, String reason, String operator) {
         jdbcTemplate.update(
                 "INSERT INTO t_admin_case_freeze(case_id, user_id, freeze_type, status, reason, operator, escalated_at, created_at, updated_at) "
                         + "VALUES(?, ?, 'COMPLAINT', ?, ?, ?, CASE WHEN ?='ESCALATED' THEN NOW() ELSE NULL END, NOW(), NOW()) "
@@ -76,8 +77,10 @@ public class ComplianceOpsController {
     }
 
     private void appendAuditLog(String configType, String key, String reason, String operator) {
-        Long next = jdbcTemplate.queryForObject(
-                "SELECT current_version + 1 FROM t_config_version_seq WHERE id = 1", Long.class);
+        Long next =
+                jdbcTemplate.queryForObject(
+                        "SELECT current_version + 1 FROM t_config_version_seq WHERE id = 1",
+                        Long.class);
         if (next == null) {
             next = 1L;
         }
@@ -96,7 +99,10 @@ public class ComplianceOpsController {
     }
 
     private static String currentUser(HttpServletRequest request) {
-        Object u = request.getSession(false) == null ? null : request.getSession(false).getAttribute("ADMIN_USER");
+        Object u =
+                request.getSession(false) == null
+                        ? null
+                        : request.getSession(false).getAttribute("ADMIN_USER");
         if (u instanceof Map) {
             Object name = ((Map<?, ?>) u).get("username");
             if (name != null) {
@@ -113,4 +119,3 @@ public class ComplianceOpsController {
         return result;
     }
 }
-

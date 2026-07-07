@@ -17,8 +17,12 @@ public class AuthController {
     @PostMapping("/login")
     public Map<String, Object> login(
             HttpServletRequest request, @RequestBody(required = false) Map<String, Object> body) {
-        String username = body == null ? "admin" : String.valueOf(body.getOrDefault("username", "admin"));
-        String role = body == null ? "SYSTEM_ADMIN" : String.valueOf(body.getOrDefault("role", "SYSTEM_ADMIN"));
+        String username =
+                body == null ? "admin" : String.valueOf(body.getOrDefault("username", "admin"));
+        String role =
+                body == null
+                        ? "SYSTEM_ADMIN"
+                        : String.valueOf(body.getOrDefault("role", "SYSTEM_ADMIN"));
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("username", username);
         user.put("role", role);
@@ -34,4 +38,3 @@ public class AuthController {
         return ApiResponse.success("OK");
     }
 }
-

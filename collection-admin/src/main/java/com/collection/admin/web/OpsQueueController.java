@@ -9,6 +9,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.validation.annotation.Validated;
 
 /** 异常队列接口（Phase 1 逐条）。 */
 @Validated
@@ -53,34 +53,38 @@ public class OpsQueueController {
             args.add(channel.trim());
         }
 
-        Long total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(1) FROM t_ops_exception " + where, args.toArray(), Long.class);
+        Long total =
+                jdbcTemplate.queryForObject(
+                        "SELECT COUNT(1) FROM t_ops_exception " + where,
+                        args.toArray(),
+                        Long.class);
         List<Object> dataArgs = new ArrayList<>(args);
         dataArgs.add(size);
         dataArgs.add(offset);
-        List<Map<String, Object>> items = jdbcTemplate.query(
-                "SELECT id, exception_type, channel, error_code, case_id, plan_id, step_id, severity, "
-                        + "message, status, cluster_key, created_at "
-                        + "FROM t_ops_exception "
-                        + where
-                        + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                dataArgs.toArray(),
-                (rs, rowNum) -> {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("id", rs.getLong("id"));
-                    row.put("exceptionType", rs.getString("exception_type"));
-                    row.put("channel", rs.getString("channel"));
-                    row.put("errorCode", rs.getString("error_code"));
-                    row.put("caseId", rs.getObject("case_id"));
-                    row.put("planId", rs.getObject("plan_id"));
-                    row.put("stepId", rs.getObject("step_id"));
-                    row.put("severity", rs.getString("severity"));
-                    row.put("message", rs.getString("message"));
-                    row.put("status", rs.getString("status"));
-                    row.put("clusterKey", rs.getString("cluster_key"));
-                    row.put("createdAt", rs.getTimestamp("created_at"));
-                    return row;
-                });
+        List<Map<String, Object>> items =
+                jdbcTemplate.query(
+                        "SELECT id, exception_type, channel, error_code, case_id, plan_id, step_id, severity, "
+                                + "message, status, cluster_key, created_at "
+                                + "FROM t_ops_exception "
+                                + where
+                                + " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                        dataArgs.toArray(),
+                        (rs, rowNum) -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("id", rs.getLong("id"));
+                            row.put("exceptionType", rs.getString("exception_type"));
+                            row.put("channel", rs.getString("channel"));
+                            row.put("errorCode", rs.getString("error_code"));
+                            row.put("caseId", rs.getObject("case_id"));
+                            row.put("planId", rs.getObject("plan_id"));
+                            row.put("stepId", rs.getObject("step_id"));
+                            row.put("severity", rs.getString("severity"));
+                            row.put("message", rs.getString("message"));
+                            row.put("status", rs.getString("status"));
+                            row.put("clusterKey", rs.getString("cluster_key"));
+                            row.put("createdAt", rs.getTimestamp("created_at"));
+                            return row;
+                        });
 
         Map<String, Object> pageData = new LinkedHashMap<>();
         pageData.put("items", items);
@@ -119,7 +123,10 @@ public class OpsQueueController {
     }
 
     private static String currentUser(HttpServletRequest request) {
-        Object u = request.getSession(false) == null ? null : request.getSession(false).getAttribute("ADMIN_USER");
+        Object u =
+                request.getSession(false) == null
+                        ? null
+                        : request.getSession(false).getAttribute("ADMIN_USER");
         if (u instanceof Map) {
             Object name = ((Map<?, ?>) u).get("username");
             if (name != null) {
@@ -129,4 +136,3 @@ public class OpsQueueController {
         return "system";
     }
 }
-

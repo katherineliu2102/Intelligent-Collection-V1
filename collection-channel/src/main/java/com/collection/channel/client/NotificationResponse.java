@@ -6,8 +6,8 @@ import com.alibaba.fastjson.JSONObject;
 /**
  * 通知中心统一响应（BaseRespDto）解析结果。
  *
- * <p>SMS 同步返回 {@code data.requestSuccess / channel / requestId}；App Push 异步入队仅返回 {@code code}。
- * 见 Notification 对接说明 §1.3 / §2.4。
+ * <p>SMS 同步返回 {@code data.requestSuccess / channel / requestId}；App Push 异步入队仅返回 {@code code}。 见
+ * Notification 对接说明 §1.3 / §2.4。
  */
 public final class NotificationResponse {
 
@@ -17,8 +17,8 @@ public final class NotificationResponse {
     private final String requestId;
     private final String channel;
 
-    private NotificationResponse(Integer code, String msg, Boolean requestSuccess,
-                                 String requestId, String channel) {
+    private NotificationResponse(
+            Integer code, String msg, Boolean requestSuccess, String requestId, String channel) {
         this.code = code;
         this.msg = msg;
         this.requestSuccess = requestSuccess;
