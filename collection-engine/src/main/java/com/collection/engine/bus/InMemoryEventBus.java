@@ -5,6 +5,12 @@ import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
 import com.collection.common.event.EventHandler;
 import com.collection.engine.config.EngineProperties;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -12,18 +18,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
  * 内存事件总线（Phase 1 链路验证默认实现）。对应 {@link CollectionEventBus} 抽象。
  *
- * <p>语义对齐生产 Redis Stream：发布后由 Consumer 线程池异步消费、与发布线程隔离。
- * 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档 §1.7.8）。
+ * <p>语义对齐生产 Redis Stream：发布后由 Consumer 线程池异步消费、与发布线程隔离。 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档
+ * §1.7.8）。
  *
  * <p>激活条件：collection.eventbus=memory（缺省默认）。
  */
@@ -46,17 +45,20 @@ public class InMemoryEventBus implements CollectionEventBus {
     public void init() {
         EngineProperties.Consumer c = props.getConsumer();
         AtomicInteger seq = new AtomicInteger();
-        this.consumerPool = new ThreadPoolExecutor(
-                c.getThreadPoolSize(), c.getThreadPoolSize(),
-                0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(c.getQueueCapacity()),
-                r -> {
-                    Thread t = new Thread(r, "engine-consumer-" + seq.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                },
-                // 背压：队列满则由发布线程自跑（对齐生产 CallerRunsPolicy，基础设施规范 §1）
-                new ThreadPoolExecutor.CallerRunsPolicy());
+        this.consumerPool =
+                new ThreadPoolExecutor(
+                        c.getThreadPoolSize(),
+                        c.getThreadPoolSize(),
+                        0L,
+                        TimeUnit.MILLISECONDS,
+                        new LinkedBlockingQueue<>(c.getQueueCapacity()),
+                        r -> {
+                            Thread t = new Thread(r, "engine-consumer-" + seq.incrementAndGet());
+                            t.setDaemon(true);
+                            return t;
+                        },
+                        // 背压：队列满则由发布线程自跑（对齐生产 CallerRunsPolicy，基础设施规范 §1）
+                        new ThreadPoolExecutor.CallerRunsPolicy());
         log.info("[InMemoryEventBus] started, consumer pool size={}", c.getThreadPoolSize());
     }
 
@@ -91,8 +93,11 @@ public class InMemoryEventBus implements CollectionEventBus {
             handler.handle(event);
         } catch (Exception e) {
             // 生产（Redis Stream）下：不 ACK → 重投递 / DLQ。内存版仅记录告警（基础设施规范 §2）。
-            log.error("[InMemoryEventBus] handler failed for {} eventId={}",
-                    event.getEventType(), event.getEventId(), e);
+            log.error(
+                    "[InMemoryEventBus] handler failed for {} eventId={}",
+                    event.getEventType(),
+                    event.getEventId(),
+                    e);
         } finally {
             MDC.clear();
         }

@@ -31,11 +31,12 @@ import org.springframework.stereotype.Component;
  * 运行时异常原样上抛，二者对调用方表现一致。
  *
  * <p><b>限制（不夸大）</b>：{@code Future.cancel(true)} 是尽力而为， 卡死在不可中断 I/O（如 socket read）的实现不一定能被真正终止。 因此
- * I/O 型 SPI（如 ExecutionGuard 的 Redis Lua）仍须自带 client 级超时（且 &lt; 执行器阈值）作第一道防线， 本调用器是保护 Consumer 线程池不被拖垮的统一兜底。
+ * I/O 型 SPI（如 ExecutionGuard 的 Redis Lua）仍须自带 client 级超时（且 &lt; 执行器阈值）作第一道防线， 本调用器是保护 Consumer
+ * 线程池不被拖垮的统一兜底。
  *
- * <p><b>过载即拒</b>：池满时用 {@link ThreadPoolExecutor.AbortPolicy} 主动 shed（映射为 {@link SpiTimeoutException}），
- * 而非内联执行——不可中断 I/O 泄漏占满池后，内联跑会让 SPI 无界执行在持锁的调用线程上（3 个计划级 SPI 在 {@code @Transactional} 内调用），
- * 引发行锁 / DB 连接堆积雪崩。常态下 submitter 数 ≤ 池大小，不会触发拒绝。
+ * <p><b>过载即拒</b>：池满时用 {@link ThreadPoolExecutor.AbortPolicy} 主动 shed（映射为 {@link
+ * SpiTimeoutException}）， 而非内联执行——不可中断 I/O 泄漏占满池后，内联跑会让 SPI 无界执行在持锁的调用线程上（3 个计划级 SPI 在
+ * {@code @Transactional} 内调用）， 引发行锁 / DB 连接堆积雪崩。常态下 submitter 数 ≤ 池大小，不会触发拒绝。
  *
  * <p>{@code engine.spi.timeout-enabled=false} 时退化为直连（不提交线程池、不强制超时）， 用于本地调试与纯逻辑单测（见 {@link
  * #direct()}）。
@@ -106,7 +107,9 @@ public class SpiInvoker {
         } catch (RejectedExecutionException e) {
             // 池满即拒：SPI 线程被不可中断 I/O（如 Redis socket read）泄漏占满时，主动 shed 而非内联跑。
             // 按超时语义交调用方兜底（计划级 NACK / 步骤级 fail-close），避免拖垮持锁的调用线程。
-            log.warn("[SpiInvoker] {} rejected: spi pool saturated, shedding → timeout semantics", type);
+            log.warn(
+                    "[SpiInvoker] {} rejected: spi pool saturated, shedding → timeout semantics",
+                    type);
             throw new SpiTimeoutException(type.name(), timeoutMs);
         }
         try {

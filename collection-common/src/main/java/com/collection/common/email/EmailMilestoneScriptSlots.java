@@ -1,7 +1,6 @@
 package com.collection.common.email;
 
 import com.collection.common.enums.Stage;
-
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -10,37 +9,37 @@ import java.util.Set;
 /**
  * Email 里程碑 scriptSlot 解析（Phase 1 Mock / DefaultStepResolver 共用）。
  *
- * <p>Phase 1 仅启用 5 个里程碑 Email（降频、控封号风险）；其余 HTML 保留于 {@code docs/email-templates/} 备用。
- * 测试 case 可通过 {@link com.collection.common.model.CaseContext#setEmailScriptSlot} 显式指定。
+ * <p>Phase 1 仅启用 5 个里程碑 Email（降频、控封号风险）；其余 HTML 保留于 {@code docs/email-templates/} 备用。 测试 case 可通过
+ * {@link com.collection.common.model.CaseContext#setEmailScriptSlot} 显式指定。
  */
 public final class EmailMilestoneScriptSlots {
 
     /** Phase 1 实际发信 + Nacos {@code channel.sendgrid.templates} 映射的 scriptSlot。 */
-    public static final Set<String> PHASE1_ACTIVE = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-            "S0_DUE_TODAY_EMAIL",
-            "S1_EMAIL_OVERDUE_NOTICE",
-            "S2_EMAIL_ENTRY",
-            "S4_EMAIL_ENTRY",
-            "S4_EMAIL_PRE_CLOSE"
-    )));
+    public static final Set<String> PHASE1_ACTIVE =
+            Collections.unmodifiableSet(
+                    new HashSet<>(
+                            Arrays.asList(
+                                    "S0_DUE_TODAY_EMAIL",
+                                    "S1_EMAIL_OVERDUE_NOTICE",
+                                    "S2_EMAIL_ENTRY",
+                                    "S4_EMAIL_ENTRY",
+                                    "S4_EMAIL_PRE_CLOSE")));
 
     /** Phase 1 各 Email 触发的精确 DPD（14:00 PHT 里程碑日）。 */
     public static final int DPD_S0_DUE_TODAY = 0;
+
     public static final int DPD_S1_OVERDUE = 1;
     public static final int DPD_S2_ENTRY = 4;
     public static final int DPD_S4_ENTRY = 31;
     public static final int DPD_S4_PRE_CLOSE = 75;
 
-    private EmailMilestoneScriptSlots() {
-    }
+    private EmailMilestoneScriptSlots() {}
 
     public static boolean isPhase1Active(String scriptSlot) {
         return scriptSlot != null && PHASE1_ACTIVE.contains(scriptSlot);
     }
 
-    /**
-     * Phase 1：仅在里程碑触发日返回 scriptSlot；其余 DPD 返回 null（不应发 Email）。
-     */
+    /** Phase 1：仅在里程碑触发日返回 scriptSlot；其余 DPD 返回 null（不应发 Email）。 */
     public static String resolvePhase1ByDpd(int dpd) {
         switch (dpd) {
             case DPD_S0_DUE_TODAY:
