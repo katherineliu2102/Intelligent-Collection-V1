@@ -22,11 +22,11 @@ import org.springframework.stereotype.Component;
  * <p>DB 优先、YAML 兜底：命中 DB(t_script_template / t_contact_plan_template ACTIVE) 时覆盖 {@code
  * ChannelProperties}，未命中返回 {@code null}，由调用方回落到 Nacos/YAML。
  *
- * <p>热更新：管理后台写配置时 bump {@code t_config_version_seq.current_version}，本类按 TTL 轮询版本号失效缓存，
- * 避免在 StepResolver 热路径（零 DB I/O 约定）每次查库。
+ * <p>热更新：管理后台写配置时 bump {@code t_config_version_seq.current_version}，本类按 TTL 轮询版本号失效缓存， 避免在
+ * StepResolver 热路径（零 DB I/O 约定）每次查库。
  *
- * <p>{@link JdbcTemplate} 经 {@link ObjectProvider} 可选注入：宿主应用（collection-admin）存在 DataSource
- * 时启用 DB；渠道模块独立单测无 DataSource 时自动降级为纯 YAML。
+ * <p>{@link JdbcTemplate} 经 {@link ObjectProvider} 可选注入：宿主应用（collection-admin）存在 DataSource 时启用
+ * DB；渠道模块独立单测无 DataSource 时自动降级为纯 YAML。
  */
 @Component
 public class ConfigTemplateProvider {
@@ -43,7 +43,8 @@ public class ConfigTemplateProvider {
     private volatile long loadedVersion = -1L;
     private volatile Map<String, String> smsCache = Collections.emptyMap();
     private volatile Map<String, ChannelProperties.PushScript> pushCache = Collections.emptyMap();
-    private volatile Map<String, List<ChannelProperties.PlanStepDef>> planCache = Collections.emptyMap();
+    private volatile Map<String, List<ChannelProperties.PlanStepDef>> planCache =
+            Collections.emptyMap();
 
     public ConfigTemplateProvider(
             ObjectProvider<JdbcTemplate> jdbcProvider,
@@ -122,7 +123,8 @@ public class ConfigTemplateProvider {
     private long currentVersion() {
         Long v =
                 jdbcTemplate.queryForObject(
-                        "SELECT current_version FROM t_config_version_seq WHERE id = 1", Long.class);
+                        "SELECT current_version FROM t_config_version_seq WHERE id = 1",
+                        Long.class);
         return v == null ? 0L : v;
     }
 
@@ -167,7 +169,8 @@ public class ConfigTemplateProvider {
                 new Object[] {TENANT},
                 rs -> {
                     String stage = rs.getString("stage");
-                    List<ChannelProperties.PlanStepDef> steps = parsePlanSteps(rs.getString("plan_json"));
+                    List<ChannelProperties.PlanStepDef> steps =
+                            parsePlanSteps(rs.getString("plan_json"));
                     if (stage != null && steps != null) {
                         // 同 stage 多模板时，按 config_version/updated_at 升序遍历，后者覆盖 → 取最新 ACTIVE
                         plans.put(stage, steps);

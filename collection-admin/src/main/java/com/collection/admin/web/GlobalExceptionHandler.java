@@ -39,7 +39,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, Object>> handleStatus(ResponseStatusException e) {
-        String code = e.getStatus() == HttpStatus.CONFLICT ? "VERSION_CONFLICT" : e.getStatus().name();
+        String code =
+                e.getStatus() == HttpStatus.CONFLICT ? "VERSION_CONFLICT" : e.getStatus().name();
         Map<String, Object> body = ApiResponse.failure(code, e.getReason());
         return ResponseEntity.status(e.getStatus()).body(body);
     }

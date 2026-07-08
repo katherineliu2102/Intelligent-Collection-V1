@@ -147,7 +147,8 @@ public class DefaultPlanFactory implements PlanFactory {
         if (dbDefs != null && !dbDefs.isEmpty()) {
             return dbDefs;
         }
-        Map<String, ChannelProperties.PlanTemplate> templates = channelProperties.getPlanTemplates();
+        Map<String, ChannelProperties.PlanTemplate> templates =
+                channelProperties.getPlanTemplates();
         ChannelProperties.PlanTemplate tpl = templates.get(stageKey);
         if (tpl == null) {
             tpl = templates.get("S1");

@@ -95,7 +95,8 @@ public class ConfigController {
         }
 
         publishConfigVersion(nextConfigVersion);
-        insertEvaluationHistory(nextConfigVersion, body.getHoldoutRatio(), operator, body.getReason());
+        insertEvaluationHistory(
+                nextConfigVersion, body.getHoldoutRatio(), operator, body.getReason());
         appendChangeLog(
                 "evaluation_setting",
                 HOLDOUT_KEY,
@@ -118,8 +119,7 @@ public class ConfigController {
         int offset = (p - 1) * size;
 
         Long total =
-                jdbcTemplate.queryForObject(
-                        "SELECT COUNT(1) FROM t_config_change_log", Long.class);
+                jdbcTemplate.queryForObject("SELECT COUNT(1) FROM t_config_change_log", Long.class);
         List<Map<String, Object>> items =
                 jdbcTemplate.query(
                         "SELECT id, config_type, config_key, from_version, to_version, diff_summary, rollback_ref, reason, operator, created_at "
@@ -717,7 +717,8 @@ public class ConfigController {
     private long currentConfigVersion() {
         Long current =
                 jdbcTemplate.queryForObject(
-                        "SELECT current_version FROM t_config_version_seq WHERE id = 1", Long.class);
+                        "SELECT current_version FROM t_config_version_seq WHERE id = 1",
+                        Long.class);
         return current == null ? 0L : current.longValue();
     }
 
