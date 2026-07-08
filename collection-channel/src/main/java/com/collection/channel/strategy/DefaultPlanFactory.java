@@ -143,7 +143,8 @@ public class DefaultPlanFactory implements PlanFactory {
 
     /** DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。 */
     private List<ChannelProperties.PlanStepDef> resolveTemplateDefs(String stageKey) {
-        List<ChannelProperties.PlanStepDef> dbDefs = templateProvider.getPlanSteps(stageKey);
+        List<ChannelProperties.PlanStepDef> dbDefs =
+                templateProvider != null ? templateProvider.getPlanSteps(stageKey) : null;
         if (dbDefs != null && !dbDefs.isEmpty()) {
             return dbDefs;
         }

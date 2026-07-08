@@ -67,7 +67,7 @@ public class ScriptLibrary {
         if (StringUtils.isBlank(scriptSlot)) {
             return null;
         }
-        String tpl = templateProvider.getSms(scriptSlot);
+        String tpl = templateProvider != null ? templateProvider.getSms(scriptSlot) : null;
         if (StringUtils.isBlank(tpl)) {
             tpl = channelProperties.getScripts().getSms().get(scriptSlot);
         }
@@ -82,7 +82,8 @@ public class ScriptLibrary {
         if (StringUtils.isBlank(scriptSlot)) {
             return null;
         }
-        ChannelProperties.PushScript ps = templateProvider.getPush(scriptSlot);
+        ChannelProperties.PushScript ps =
+                templateProvider != null ? templateProvider.getPush(scriptSlot) : null;
         if (ps == null) {
             ps = channelProperties.getScripts().getPush().get(scriptSlot);
         }
