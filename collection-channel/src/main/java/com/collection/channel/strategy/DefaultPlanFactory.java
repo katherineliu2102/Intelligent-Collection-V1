@@ -35,6 +35,8 @@ public class DefaultPlanFactory implements PlanFactory {
 
     @Resource private ChannelProperties channelProperties;
 
+    @Resource private ConfigTemplateProvider templateProvider;
+
     @Override
     public ContactPlan create(CaseInfo caseInfo, Stage stage, ContextSnapshot snapshot) {
         if (MockPlanFactory.shouldRejectPlan(caseInfo, snapshot)) {
@@ -114,21 +116,16 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     private List<ContactPlanStep> buildFromTemplate(Stage stage) {
-        Map<String, ChannelProperties.PlanTemplate> templates =
-                channelProperties.getPlanTemplates();
         String key = stage != null ? stage.name() : "S1";
-        ChannelProperties.PlanTemplate tpl = templates.get(key);
-        if (tpl == null) {
-            tpl = templates.get("S1");
-        }
-        if (tpl == null || tpl.getSteps().isEmpty()) {
+        List<ChannelProperties.PlanStepDef> defs = resolveTemplateDefs(key);
+        if (defs == null || defs.isEmpty()) {
             log.info("[DefaultPlanFactory] no template for stage={}, fallback PUSH→EMAIL", key);
             return buildFallbackFlow();
         }
 
         List<ContactPlanStep> steps = new ArrayList<>();
         int order = 1;
-        for (ChannelProperties.PlanStepDef def : tpl.getSteps()) {
+        for (ChannelProperties.PlanStepDef def : defs) {
             ChannelType channelType = parseChannel(def.getChannel());
             if (channelType == null || channelType == ChannelType.HUMAN_CALL) {
                 continue;
@@ -142,6 +139,20 @@ public class DefaultPlanFactory implements PlanFactory {
                             def.getTemplateId()));
         }
         return steps;
+    }
+
+    /** DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。 */
+    private List<ChannelProperties.PlanStepDef> resolveTemplateDefs(String stageKey) {
+        List<ChannelProperties.PlanStepDef> dbDefs = templateProvider.getPlanSteps(stageKey);
+        if (dbDefs != null && !dbDefs.isEmpty()) {
+            return dbDefs;
+        }
+        Map<String, ChannelProperties.PlanTemplate> templates = channelProperties.getPlanTemplates();
+        ChannelProperties.PlanTemplate tpl = templates.get(stageKey);
+        if (tpl == null) {
+            tpl = templates.get("S1");
+        }
+        return tpl == null ? null : tpl.getSteps();
     }
 
     private static ChannelType parseChannel(String name) {

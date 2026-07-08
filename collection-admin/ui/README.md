@@ -28,6 +28,10 @@ npm run dev
 
 3. 浏览器访问：**http://localhost:5173**
 
+Strategy 配置页：**http://localhost:5173/strategy**（holdout 参数、版本列表、回滚）
+
 默认账号：`admin` / 角色 `SYSTEM_ADMIN`（见登录页）。
+
+> 修改 `vite.config.ts` 后需重启 `npm run dev` 才会生效（例如 `/config` 代理）。
 
 > 若当前环境没有 `npm`，请先安装 Node.js（包含 npm）。

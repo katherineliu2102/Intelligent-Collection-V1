@@ -20,6 +20,8 @@ public class ScriptLibrary {
 
     @Resource private ChannelProperties channelProperties;
 
+    @Resource private ConfigTemplateProvider templateProvider;
+
     /** 从 ContextSnapshot 构建文案变量；repaymentUrl 优先取 caseContext，缺失时用 sms-default-repayment-link。 */
     public ScriptVars buildVars(ContextSnapshot snapshot) {
         String name = null;
@@ -65,7 +67,10 @@ public class ScriptLibrary {
         if (StringUtils.isBlank(scriptSlot)) {
             return null;
         }
-        String tpl = channelProperties.getScripts().getSms().get(scriptSlot);
+        String tpl = templateProvider.getSms(scriptSlot);
+        if (StringUtils.isBlank(tpl)) {
+            tpl = channelProperties.getScripts().getSms().get(scriptSlot);
+        }
         if (StringUtils.isBlank(tpl)) {
             return null;
         }
@@ -77,7 +82,10 @@ public class ScriptLibrary {
         if (StringUtils.isBlank(scriptSlot)) {
             return null;
         }
-        ChannelProperties.PushScript ps = channelProperties.getScripts().getPush().get(scriptSlot);
+        ChannelProperties.PushScript ps = templateProvider.getPush(scriptSlot);
+        if (ps == null) {
+            ps = channelProperties.getScripts().getPush().get(scriptSlot);
+        }
         if (ps == null) {
             return null;
         }

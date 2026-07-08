@@ -53,6 +53,32 @@ public class AdminMockDataController {
         return ApiResponse.success(data);
     }
 
+    @PostMapping("/seed-config")
+    public Map<String, Object> seedConfig() {
+        long cfgVer = 1L;
+        jdbcTemplate.update(
+                "INSERT INTO t_script_template(id, tenant_id, script_slot, channel, locale, content_json, status, config_version, version, updated_by) "
+                        + "VALUES (101, 'mocasa-ph', 'S1_SMS_STANDARD', 'SMS', 'en', JSON_OBJECT('body', 'MOCASA Collections: {name}, overdue PHP {amount}. Pay: {repaymentUrl}'), 'ACTIVE', ?, 0, 'seed-config') "
+                        + "ON DUPLICATE KEY UPDATE content_json = VALUES(content_json), config_version = VALUES(config_version), updated_by = VALUES(updated_by)",
+                cfgVer);
+        jdbcTemplate.update(
+                "INSERT INTO t_contact_plan_template(tenant_id, template_code, stage, tone, plan_json, status, config_version, version, created_by, updated_by) "
+                        + "VALUES ('mocasa-ph', 'SEED_S0_STANDARD', 'S0', 'STANDARD', "
+                        + "JSON_OBJECT('steps', JSON_ARRAY(JSON_OBJECT('channel', 'SMS', 'delayMin', 0, 'observeMin', 0, 'templateId', 101))), "
+                        + "'ACTIVE', ?, 0, 'seed-config', 'seed-config') "
+                        + "ON DUPLICATE KEY UPDATE plan_json = VALUES(plan_json), config_version = VALUES(config_version), updated_by = VALUES(updated_by)",
+                cfgVer);
+        jdbcTemplate.update(
+                "UPDATE t_config_version_seq SET current_version = GREATEST(current_version, ?), updated_at = NOW() WHERE id = 1",
+                cfgVer);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("configVersion", cfgVer);
+        data.put("scriptTemplateId", 101);
+        data.put("planTemplateCode", "SEED_S0_STANDARD");
+        data.put("note", "Minimal seed only; run db/seed-admin-config.sql for full import");
+        return ApiResponse.success(data);
+    }
+
     @PostMapping("/seed-exception")
     public Map<String, Object> seedException(
             @RequestBody(required = false) Map<String, Object> body) {

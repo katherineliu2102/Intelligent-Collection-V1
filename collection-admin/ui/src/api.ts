@@ -59,5 +59,90 @@ export const api = {
   },
   auditLogs() {
     return request("/admin/audit-logs?page=1&pageSize=20");
+  },
+  getEvaluationSettings() {
+    return request("/config/evaluation-settings");
+  },
+  updateEvaluationSettings(payload: {
+    holdoutRatio: number;
+    version: number;
+    reason?: string;
+  }) {
+    return request("/config/evaluation-settings", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+  listConfigVersions(page = 1, pageSize = 20) {
+    return request(`/config/versions?page=${page}&pageSize=${pageSize}`);
+  },
+  rollbackConfig(targetVersion: number, reason: string) {
+    return request("/config/rollback", {
+      method: "POST",
+      body: JSON.stringify({ targetVersion, reason })
+    });
+  },
+  catalogOverview() {
+    return request("/catalog/overview");
+  },
+  catalogTemplate(slot: string) {
+    return request(`/catalog/template/${encodeURIComponent(slot)}`);
+  },
+  caseOverview(caseId: string | number, timelineLimit = 50) {
+    return request(`/plans/overview/by-case/${caseId}?timelineLimit=${timelineLimit}`);
+  },
+  planHistoryByCase(caseId: string | number, limit = 10) {
+    return request(`/plans/by-case/${caseId}/history?limit=${limit}`);
+  },
+  planSteps(planId: string | number) {
+    return request(`/plans/${planId}/steps`);
+  },
+  timelineByUser(userId: string | number, limit = 50) {
+    return request(`/plans/timeline/${userId}?limit=${limit}`);
+  },
+  listScriptTemplates(channel?: string) {
+    const q = channel ? `?channel=${encodeURIComponent(channel)}` : "";
+    return request(`/config/script-templates${q}`);
+  },
+  updateScriptTemplate(payload: {
+    scriptSlot: string;
+    channel: string;
+    locale?: string;
+    body?: string;
+    title?: string;
+    externalTemplateId?: string;
+    version: number;
+    reason?: string;
+  }) {
+    return request("/config/script-templates", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+  deactivateScriptTemplate(scriptSlot: string, channel: string, locale = "en") {
+    const q = new URLSearchParams({ scriptSlot, channel, locale }).toString();
+    return request(`/config/script-templates?${q}`, { method: "DELETE" });
+  },
+  listPlanTemplates() {
+    return request("/config/plan-templates");
+  },
+  deactivatePlanTemplate(templateCode: string) {
+    return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {
+      method: "DELETE"
+    });
+  },
+  updatePlanTemplate(payload: {
+    templateCode: string;
+    stage: string;
+    tone?: string;
+    productCode?: string;
+    steps: { channel: string; delayMin: number; observeMin: number; templateId: number }[];
+    version: number;
+    reason?: string;
+  }) {
+    return request("/config/plan-templates", {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
   }
 };

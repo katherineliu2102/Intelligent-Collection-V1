@@ -11,6 +11,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 /** 管理后台 API 统一异常封装。 */
 @RestControllerAdvice
@@ -34,6 +35,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleConstraint(ConstraintViolationException e) {
         Map<String, Object> body = ApiResponse.failure("VALIDATION_ERROR", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleStatus(ResponseStatusException e) {
+        String code = e.getStatus() == HttpStatus.CONFLICT ? "VERSION_CONFLICT" : e.getStatus().name();
+        Map<String, Object> body = ApiResponse.failure(code, e.getReason());
+        return ResponseEntity.status(e.getStatus()).body(body);
     }
 
     @ExceptionHandler(Exception.class)

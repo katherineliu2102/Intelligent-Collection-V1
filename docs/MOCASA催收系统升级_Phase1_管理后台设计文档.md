@@ -606,6 +606,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 配置 | `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW |
 | 配置 | `t_compliance_rule` | 合规阈值 | NEW |
 | 配置 | `t_channel_config` | 渠道路由与开关 | NEW |
+| 配置 | `t_evaluation_setting` + `t_evaluation_setting_history` | 策略评估参数（如 `holdout_ratio`）及历史快照 | NEW |
 | 配置 | `t_script_template` | 话术 / scriptSlot | 本设计新增 |
 | 配置 | `t_config_change_log` + `t_config_version_seq` | 配置变更日志与全局版本 | 本设计新增 |
 | 后台运行（Phase 1） | `t_admin_case_freeze` | 投诉冻结（不 ALTER 旧库 `t_collection`） | 本设计新增 |
@@ -836,6 +837,23 @@ gantt
 | 回收效果看板 | 分 Stage 回收率、漏斗（冷层） |
 | SQL 规则治理 | F12 |
 
+#### 10.2.1 Phase 1.5 实施验收清单
+
+| 模块 | 必须交付 | 验收标准 |
+|------|----------|----------|
+| 配置治理基础 | `evaluation-settings` 参数读写、`config_version` 递增、`change_log` 留痕 | holdout_ratio 可通过后台 API 修改；冲突写返回 409；审计日志可追溯 |
+| 配置回滚 MVP | 版本列表、回滚到历史版本、回滚日志 | 回滚生成新的 `config_version`；不降低版本号；仅影响新建 plan / 后续策略读取 |
+| 配置中心 CRUD | 计划模板、话术、策略规则、合规规则、渠道配置 | 所有写接口带 `version`；保存前静态校验；JSON 字段符合附录 C 契约 |
+| 引擎读源切换 | 从 Nacos/Java 常量切到 DB 配置缓存 | 新建 plan 使用当前 `config_version`；step/timeline 落快照 |
+| Grafana 嵌入 | 后台内嵌渠道健康监控面板 | 面板可在后台展示；失败时显示兜底文案与 Grafana 跳转链接 |
+| 钉钉告警 | 异常簇聚合告警推送 | 新异常簇或增速升级时按 clusterKey 推送；避免逐条告警风暴 |
+| 异常队列增强 | `groupBy=cluster`、批量 ACK/resolve | 同类异常可折叠查看并批量处理 |
+| 策略评估 | holdout + cohort 对齐结果页 | 支持按 stage / scriptSlot / config_version 查看实验组 vs holdout 指标 |
+| UI 产品化 | Dashboard / Strategy / Ops / Compliance / System 页面真实联调 | 不再只展示占位页；核心操作有 loading/error/success 状态 |
+| 回归测试 | Phase 1.5 自测脚本与测试文档 | 覆盖配置保存、回滚、版本列表、holdout 参数、异常聚合 |
+
+首个开发切片（当前优先级）：配置治理基础 + 回滚 MVP 的后端 API，先覆盖 `evaluation-settings.holdout_ratio`，再扩展到计划模板/话术/规则表。
+
 ### 10.3 Phase 2 扩展
 
 | 交付项 | 说明 |
@@ -929,7 +947,7 @@ gantt
 | 分类 | 表 | Owner / 写入方 | Phase |
 |------|-----|----------------|-------|
 | 已有（引擎） | `t_contact_plan`、`t_contact_plan_step`、`t_contact_timeline`、`t_decision_log` | collection-engine / channel | 仅 ALTER 增快照列 |
-| 新建（配置） | `t_contact_plan_template`、`t_strategy_rule`、`t_compliance_rule`、`t_channel_config` | collection-admin（Phase 1.5） | 表 Phase 1 可落库；读源切换 1.5 |
+| 新建（配置） | `t_contact_plan_template`、`t_strategy_rule`、`t_compliance_rule`、`t_channel_config`、`t_evaluation_setting`、`t_evaluation_setting_history` | collection-admin（Phase 1.5） | 表 Phase 1 可落库；读源切换 1.5 |
 | 新建（后台） | `t_script_template`、`t_config_change_log`、`t_config_version_seq`、`t_admin_case_freeze`、`t_ops_exception` | collection-admin | 冻结 / 异常 Phase 1 |
 | 已有（案件） | 旧库 `t_collection` 等 | 只读 | 冻结用 `t_admin_case_freeze`，不 ALTER 旧表 |
 

@@ -1,7 +1,7 @@
 -- =====================================================================
 -- MOCASA 智能催收 Phase 1 — 管理后台扩展 DDL
 -- 目标库：ai_collection_db（与 db/schema.sql 同库）
--- 来源：管理后台设计文档 v1.2 附录 C + §6
+-- 来源：管理后台设计文档 v1.3 附录 C + §6
 -- 依赖：先执行 db/schema.sql（引擎核心表）
 -- 用法：mysql -h<host> -P<port> -u<user> -p ai_collection_db < db/schema-admin.sql
 -- 对齐：领域模型 §1.2 B 区（配置表 NEW ⚠️ → 本文件为首版 DDL，需编排层 review）
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS t_contact_plan_template (
     product_code        VARCHAR(64)     NULL     COMMENT '产品 code；NULL=全产品',
     risk_tier           VARCHAR(16)     NULL     COMMENT '风险分层预留；Phase 1 不填充、不参与匹配',
     tone                VARCHAR(32)     NULL     COMMENT 'STANDARD/FIRM 等',
-    plan_json           JSON            NOT NULL COMMENT '步骤序列：channel/delayMin/observeMin/scriptSlot 等',
+    plan_json           JSON            NOT NULL COMMENT '步骤序列：channel/delayMin/observeMin/templateId 等',
     status              VARCHAR(16)     NOT NULL DEFAULT 'ACTIVE' COMMENT 'ACTIVE/INACTIVE',
     config_version      BIGINT          NOT NULL COMMENT '全局递增配置版本号（发布时写入）',
     version             INT             NOT NULL DEFAULT 0 COMMENT '乐观锁',
@@ -108,6 +108,34 @@ CREATE TABLE IF NOT EXISTS t_channel_config (
     UNIQUE KEY uk_tenant_channel (tenant_id, channel_type),
     INDEX idx_config_version (config_version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='渠道开关与路由';
+
+CREATE TABLE IF NOT EXISTS t_evaluation_setting (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    tenant_id           VARCHAR(32)     NOT NULL DEFAULT 'mocasa-ph',
+    setting_key         VARCHAR(64)     NOT NULL COMMENT '如 HOLDOUT_RATIO',
+    setting_value       JSON            NOT NULL COMMENT '策略评估参数 JSON',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'ACTIVE',
+    config_version      BIGINT          NOT NULL,
+    version             INT             NOT NULL DEFAULT 0,
+    updated_by          VARCHAR(64)     NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_tenant_setting (tenant_id, setting_key),
+    INDEX idx_config_version (config_version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='策略评估参数配置';
+
+CREATE TABLE IF NOT EXISTS t_evaluation_setting_history (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    tenant_id           VARCHAR(32)     NOT NULL DEFAULT 'mocasa-ph',
+    setting_key         VARCHAR(64)     NOT NULL,
+    setting_value       JSON            NOT NULL,
+    config_version      BIGINT          NOT NULL,
+    operator            VARCHAR(64)     NOT NULL,
+    reason              VARCHAR(512)    NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_tenant_setting_version (tenant_id, setting_key, config_version),
+    INDEX idx_setting_version (setting_key, config_version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='策略评估参数历史快照（支持回滚）';
 
 CREATE TABLE IF NOT EXISTS t_config_change_log (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
@@ -205,3 +233,29 @@ DELIMITER ;
 
 CALL sp_admin_add_snapshot_columns();
 DROP PROCEDURE IF EXISTS sp_admin_add_snapshot_columns;
+
+DROP PROCEDURE IF EXISTS sp_admin_add_change_log_columns;
+
+DELIMITER //
+CREATE PROCEDURE sp_admin_add_change_log_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_config_change_log' AND COLUMN_NAME = 'rollback_ref'
+    ) THEN
+        ALTER TABLE t_config_change_log
+            ADD COLUMN rollback_ref BIGINT NULL COMMENT '回滚来源配置版本' AFTER diff_summary;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_config_change_log' AND COLUMN_NAME = 'reason'
+    ) THEN
+        ALTER TABLE t_config_change_log
+            ADD COLUMN reason VARCHAR(512) NULL COMMENT '操作原因' AFTER rollback_ref;
+    END IF;
+END //
+DELIMITER ;
+
+CALL sp_admin_add_change_log_columns();
+DROP PROCEDURE IF EXISTS sp_admin_add_change_log_columns;

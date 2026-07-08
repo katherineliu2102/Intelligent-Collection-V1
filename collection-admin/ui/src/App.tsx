@@ -2,6 +2,7 @@ import {
   AlertOutlined,
   DashboardOutlined,
   FileSearchOutlined,
+  MailOutlined,
   SafetyOutlined,
   SettingOutlined,
   SlidersOutlined
@@ -16,7 +17,9 @@ import { CompliancePage } from "./pages/CompliancePage";
 import { LoginPage } from "./pages/LoginPage";
 import { OpsPage } from "./pages/OpsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { StrategyPage } from "./pages/StrategyPage";
 import { SystemPage } from "./pages/SystemPage";
+import { TemplatesPage } from "./pages/TemplatesPage";
 
 const { Header, Sider, Content } = Layout;
 
@@ -32,6 +35,7 @@ export default function App() {
     () => [
       { key: "/dashboard", icon: <DashboardOutlined />, label: "Data Analysis" },
       { key: "/strategy", icon: <SlidersOutlined />, label: "Strategy Config" },
+      { key: "/templates", icon: <MailOutlined />, label: "Templates" },
       { key: "/cases", icon: <FileSearchOutlined />, label: "Case Monitor" },
       { key: "/ops", icon: <AlertOutlined />, label: "Ops Queue" },
       { key: "/compliance", icon: <SafetyOutlined />, label: "Compliance" },
@@ -96,15 +100,8 @@ export default function App() {
               path="/dashboard"
               element={<PlaceholderPage title="Dashboard" apis={["GET /dashboard/outreach/realtime"]} />}
             />
-            <Route
-              path="/strategy"
-              element={
-                <PlaceholderPage
-                  title="Strategy Configuration"
-                  apis={["GET /catalog/overview", "GET/PUT /config/plan-templates/* (Phase 1.5)"]}
-                />
-              }
-            />
+            <Route path="/strategy" element={<StrategyPage />} />
+            <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/cases" element={<CasesPage />} />
             <Route path="/ops" element={<OpsPage />} />
             <Route path="/compliance" element={<CompliancePage />} />
