@@ -2,6 +2,12 @@ package com.collection.channel.client;
 
 import com.alibaba.fastjson.JSON;
 import com.collection.channel.config.ChannelProperties;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
@@ -15,22 +21,15 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import javax.annotation.Resource;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * 通知中心（common-notification）HTTP 客户端。
  *
- * <p>统一注入鉴权字段 {@code appCode / dateTime / sign}（{@code sign = MD5(appCode+appKey+dateTime)} 小写 hex），
- * POST JSON 并解析 {@link NotificationResponse}。
+ * <p>统一注入鉴权字段 {@code appCode / dateTime / sign}（{@code sign = MD5(appCode+appKey+dateTime)} 小写
+ * hex）， POST JSON 并解析 {@link NotificationResponse}。
  *
- * <p>对「明确未发送」的瞬时故障（连接超时、HTTP 5xx、429）做 <b>渠道侧短重试</b>（默认重试 1 次）；
- * 业务码（HTTP 200 + body code）不在此重试，交由 Adapter 按 §9 映射。重试耗尽后抛出最后一次异常，
- * 由 Adapter 映射为 {@code retryable=true} 的瞬时失败。通知中心无幂等字段，重试存在 SMS 至少一次的残余风险。
+ * <p>对「明确未发送」的瞬时故障（连接超时、HTTP 5xx、429）做 <b>渠道侧短重试</b>（默认重试 1 次）； 业务码（HTTP 200 + body code）不在此重试，交由
+ * Adapter 按 §9 映射。重试耗尽后抛出最后一次异常， 由 Adapter 映射为 {@code retryable=true} 的瞬时失败。通知中心无幂等字段，重试存在 SMS
+ * 至少一次的残余风险。
  */
 @Component
 public class NotificationClient {
@@ -39,13 +38,12 @@ public class NotificationClient {
 
     /** 总尝试次数（1 次正常 + 1 次重试）。 */
     private static final int MAX_ATTEMPTS = 2;
+
     private static final long RETRY_BACKOFF_MS = 500L;
 
-    @Resource
-    private ChannelProperties properties;
+    @Resource private ChannelProperties properties;
 
-    @Resource
-    private RestTemplate channelRestTemplate;
+    @Resource private RestTemplate channelRestTemplate;
 
     public boolean isConfigured() {
         return properties.isNotificationConfigured();
@@ -63,9 +61,7 @@ public class NotificationClient {
         return execute(path, body, true);
     }
 
-    /**
-     * 免签名 POST（仅补 {@code appCode}），用于 {@code @NotAuth} 测试端点 {@code /v1/sms/testSend}。
-     */
+    /** 免签名 POST（仅补 {@code appCode}），用于 {@code @NotAuth} 测试端点 {@code /v1/sms/testSend}。 */
     public NotificationResponse postNoAuth(String path, Map<String, Object> body) {
         return execute(path, body, false);
     }
@@ -75,17 +71,26 @@ public class NotificationClient {
         RestClientException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                ResponseEntity<String> response = channelRestTemplate.postForEntity(
-                        url, buildEntity(body, withAuth), String.class);
+                ResponseEntity<String> response =
+                        channelRestTemplate.postForEntity(
+                                url, buildEntity(body, withAuth), String.class);
                 return NotificationResponse.parse(response.getBody());
             } catch (ResourceAccessException | HttpServerErrorException e) {
                 last = e;
-                log.warn("[NotificationClient] transient failure path={} attempt={}/{}: {}",
-                        path, attempt, MAX_ATTEMPTS, e.getMessage());
+                log.warn(
+                        "[NotificationClient] transient failure path={} attempt={}/{}: {}",
+                        path,
+                        attempt,
+                        MAX_ATTEMPTS,
+                        e.getMessage());
             } catch (HttpClientErrorException e) {
                 if (e.getStatusCode().value() == 429) {
                     last = e;
-                    log.warn("[NotificationClient] rate limited path={} attempt={}/{}", path, attempt, MAX_ATTEMPTS);
+                    log.warn(
+                            "[NotificationClient] rate limited path={} attempt={}/{}",
+                            path,
+                            attempt,
+                            MAX_ATTEMPTS);
                 } else {
                     throw e;
                 }
@@ -114,7 +119,8 @@ public class NotificationClient {
     static String sign(String appCode, String appKey, String dateTime) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest((appCode + appKey + dateTime).getBytes(StandardCharsets.UTF_8));
+            byte[] digest =
+                    md.digest((appCode + appKey + dateTime).getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder(digest.length * 2);
             for (byte b : digest) {
                 hex.append(Character.forDigit((b >> 4) & 0xF, 16));

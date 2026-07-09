@@ -16,7 +16,7 @@
 | 模块 | 内容 | 代码性质 |
 |---|---|---|
 | `collection-common` | 15 枚举、9 领域模型、5 DTO、**5 个 SPI 接口**、`CollectionEventBus`、`ChannelGateway`、Repository/Service 接口 | 跨模块契约（初版，可演进，改前对齐） |
-| `collection-engine` | `EventConsumerDispatcher`（路由）、`PlanLifecycleManager`（6 态状态机）、`StepExecutionOrchestrator`（七步管线）、`PreFlightChecker`、内存事件总线、内存幂等 | ✅ 真实实现（主框架） |
+| `collection-engine` | `EventConsumerDispatcher`（路由）、`PlanLifecycleManager`（6 态状态机）、`StepExecutionOrchestrator`（七步管线）、`PreFlightChecker`、`SpiInvoker`（SPI 硬超时）、内存事件总线、内存幂等 | ✅ 真实实现（主框架） |
 | `collection-service` | 4 张新表 MyBatis Mapper + Repository 实现 + Mock CaseService/ProfileService | 持久化真实，业务数据 Mock |
 | `collection-channel` | 5 个 SPI Mock + Mock ChannelGateway + Mock 外呼过滤 | Mock，待替换 |
 | `collection-ingestion` | 发布领域事件（Mock 入案）、DPD 日切 Job 占位 | Mock，待替换 |
@@ -37,7 +37,7 @@
 | 事件总线 | 内存版 | Redis Stream + Consumer Group + PEL/看门狗/DLQ（基础设施规范 §1-§2） |
 | 幂等锁 | 内存版 | Redis SETNX（基础设施规范 §3） |
 | 调度 | Spring `@Scheduled` | XXL-Job Handler（基础设施规范 §4） |
-| SPI 硬超时 | 仅 try-catch | 线程级强制超时（10–50ms，核心引擎规格 §4.1） |
+| SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | 切 Redis 后 I/O 型 SPI 另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
 | 可观测性 | 无 | Micrometer + MDC 跨线程（基础设施规范 §6） |
 
@@ -153,8 +153,8 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **方法签名**：`StepCommand resolve(ExecutionContext)`
 - **关键约束**
   - **零 DB I/O**，只读 `ExecutionContext.contextSnapshot`
-  - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL/TTS）必填
-  - 硬超时 50ms；不允许返回 `null`（应抛异常触发 FAILED）
+  - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL）必填
+  - 硬超时 50ms；返回 `null` = **主动跳过该步**（引擎标 SKIPPED 推进，非失败，用于 EMAIL 非里程碑 DPD / 无邮箱）；异常/超时 = FAILED
 
 #### A4. `MockAdvancementPolicy` → `DefaultAdvancementPolicy`
 
@@ -183,9 +183,9 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 - **接口**：`com.collection.common.channel.ChannelGateway`
 - **方法签名**：`StepResult dispatch(StepCommand)`
-- **8 渠道**：SMS / PUSH / EMAIL / VIBER / WHATSAPP / AI_CALL / TTS / HUMAN_CALL
+- **机器轨渠道（Phase 1）**：SMS / PUSH / EMAIL / AI_CALL（TTS / HUMAN_CALL 由 LTH 域外独立编排）
 - **关键约束**
-  - 消息类（SMS/PUSH 等）→ `success=true, DELIVERED`；异步类（AI_CALL/TTS）→ `success=true, DELIVERED`（真实结果等 Webhook 回调）
+  - 消息类（SMS/PUSH 等）→ `success=true, DELIVERED`；异步类（AI_CALL）→ `success=true, DELIVERED`（真实结果等 Webhook 回调）
   - 渠道内部熔断/fallback 对引擎完全透明；抛异常引擎一律视为 `retryable`
   - 供应商错误码统一映射为 `StepResult.errorCode`
 
@@ -197,21 +197,21 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 B：数据接入 → `collection-ingestion`
 
-**负责人参考文档：《数据接入与事件规格》**
+**负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §9](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
 
 #### B1. `IngestionService` → 真实 PubSub 消费
 
-- 接 GCP PubSub，消费上游信贷系统推送（case_push / repayment / assign_signal）
-- 清洗数据 → 写 `t_collection`（EXISTING 表，Phase 1 不变更）
-- 生成 `ContextSnapshot`（调 `CaseService.buildContext` + `ProfileService.getFullProfile`），序列化为 JSON
-- 发布 Redis Stream 领域事件（CASE_INGESTED / STAGE_CHANGED / REPAYMENT_RECEIVED）
-- 现有 `IngestionService.ingestCase()` / `repayment()` 等方法是骨架，真实消费在此替换
+- 接 GCP PubSub，消费上游信贷系统推送（`case_push` / `repayment_push_and_load`；`assign_signal` Phase 1 不路由）
+- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；**入案主链路不读**旧库 `t_collection`、**不回写**任何库（见 [数据接入 §3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
+- 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load` 仅 publish `REPAYMENT_RECEIVED`
+- `context_snapshot` 由**引擎**据 `CASE_INGESTED` payload 组装并写入 plan（[§3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`CaseService` 仅 payload 缺失兜底 / L4b 对账
+- 现有 `IngestionService` 骨架方法在此替换为真实 PubSub Consumer
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑
 
-- 每日 0:05 PHT（XXL-Job）重算 Max DPD
-- DPD 1–90 且阶段变化 → 发 `STAGE_CHANGED`
-- DPD ≥ 91 且未停催 → 写 `collection_status=CEASED` + 发 `CASE_CEASED`（对齐待办 E1/E2）
+- 每日 0:05 PHT（XXL-Job）按 [渠道编排 Max DPD 口径](./docs/channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#531-难催子条件计算口径) 重算（读旧库 **只读**）
+- DPD 1–90 且 Stage 变化 → 发 `STAGE_CHANGED`（含 Stage 回退）
+- DPD ≥ 91 → **仅**发 `CASE_CEASED`（不写旧库 CEASED 列）
 - **不改引擎 Consumer，引擎只消费事件**
 
 ---
@@ -251,10 +251,12 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - 配置切换：`collection.idempotency=redis`
 - key 格式：`lock:plan:{step_idempotency_key}`
 
-#### D3. SPI 硬超时强制执行
+#### D3. SPI 硬超时强制执行 ✅ 已完成（2026-06-11）
 
-- 引擎调用 5 个 SPI 时，用 `Future.get(timeoutMs)` 实现强制超时（核心引擎规格 §4.1）
-- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 20ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms
+- 引擎调用 5 个 SPI 经 `SpiInvoker`（`engine.spi`）用 `Future.get(timeoutMs)` 强制超时（核心引擎规格 §4.1）
+- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 20ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms（`engine.spi.*-timeout-ms` 可配）
+- 单个共享有界线程池（大小=Consumer 池，预热）+ `MdcTaskDecorator` 语义跨线程传递 MDC；超时转 `SpiTimeoutException`，失败语义沿用调用方 try-catch（Guard fail-close、Resolver FAILED、其余 NACK）
+- ⚠ 遗留：`Future.cancel` 掐不断卡死 I/O，I/O 型 SPI（ExecutionGuard Redis Lua 等）真实化时须自带 client 级超时
 
 #### D4. 可观测性
 
@@ -265,7 +267,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 E：应用层 → `collection-admin`
 
-**负责人参考文档：《架构设计文档》§1.5**
+**负责人参考文档：《架构设计文档》§1.7**
 
 #### E1. `TriggerScanner` → XXL-Job Handler
 
@@ -312,7 +314,7 @@ collection-common/src/main/java/com/collection/common/enums/      # 所有枚举
 | 4 | 领域模型与数据定义 | 模型字段、枚举值、DDL |
 | 5 | 基础设施交互规范 | Redis / XXL-Job / Repository、配置、可观测性 |
 | 6 | 渠道编排规格 | 计划状态机、决策规则、合规检查、渠道适配器、模板 |
-| 7 | 数据接入与事件规格 | 事件总线契约、PubSub 消费、迁移 |
+| 7 | 数据接入规格 | PubSub 消费、消息路由、清洗写库、DPD 日切、迁移双写（事件 payload→领域 §9；总线运行时→基础设施 §2） |
 | 8 | 运维与协作 | 指标、告警、Grafana Dashboard |
 
 ---

@@ -1,9 +1,10 @@
 # MOCASA Email 模板设计系统（Phase 1）
 
-> **版本**: v1.5 · **日期**: 2026-06-10 · **文案**: v3 催收心理学优化  
-> **状态**: ✅ Email HTML 17/17 草稿齐全；SendGrid **Phase 1 启用 5 封**  
-> **适用范围**: Phase 1 **实际发信 5 封** + 里程碑 HTML 8 封备用 + 条件 Email 4 封（Phase 2）  
-> **上游**: [渠道模板清单与配置 §3](../MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) · [渠道编排规格 §7.9](../MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)
+> **版本**: v1.5  
+> **日期**: 2026-06-10  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [渠道模板清单 §3](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[渠道编排规格 §7.9](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)、[SendGrid 对接说明](../channel/MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)
 
 ---
 
@@ -27,13 +28,14 @@ email-templates/
 ├── README.md                    # 本文件
 ├── subjects.md                  # Subject / Preheader SSOT
 ├── _layouts/                    # friendly / standard / formal / legal-letter / conditional
-├── milestones/                  # 13 个里程碑 HTML ✅
 ├── conditionals/                # 4 个条件 Email HTML ✅（Phase 2）
 └── email-templates-test/        # SendGrid Test Data JSON
     ├── README.md
     ├── test-data-index.json
     └── test-data*.json
 ```
+
+> **HTML 源码 SSOT**：13 个里程碑模板已统一移至 `collection-admin/src/main/resources/catalog/email-templates/`（代码仓 SSOT）。本目录不再保留 `milestones/` 副本，避免漂移。
 
 **关联文档**：[渠道模板清单与配置](../MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) · [E2E 联调案例](./email-e2e-test-cases.md) · [策略迭代手册 §5.2](../MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
 
@@ -129,14 +131,14 @@ email-templates/
 
 ## 5. milestone 文件头规范
 
-每个 `milestones/*.html` 顶部 HTML 注释含：`scriptSlot`、`stage`、`dpd`、`subject`、`variables`、`sendgrid`。
+每个里程碑 HTML（位于 `collection-admin/src/main/resources/catalog/email-templates/`）顶部 HTML 注释含：`scriptSlot`、`stage`、`dpd`、`subject`、`variables`、`sendgrid`。
 
 ---
 
 ## 6. SendGrid 建站 SOP
 
 1. Template Name = `scriptSlot`
-2. Code 粘贴 `milestones/` 或 `conditionals/` HTML
+2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/`（里程碑）或本目录 `conditionals/`（Phase 2）HTML
 3. **Settings** 填 Subject / Preheader（`subjects.md`）
 4. **Test Data** 粘贴 [`email-templates-test/`](./email-templates-test/README.md) 对应 JSON
 5. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
@@ -163,7 +165,8 @@ email-templates/
 
 | 层 | 位置 |
 |----|------|
-| HTML 源码 | `docs/email-templates/` |
+| HTML 源码（里程碑） | `collection-admin/src/main/resources/catalog/email-templates/`（SSOT） |
+| HTML 源码（布局/条件） | `docs/email-templates/_layouts/` · `docs/email-templates/conditionals/` |
 | 线上模板 | SendGrid `d-xxx` |
 | 映射 | Nacos `channel.sendgrid.templates` |
 

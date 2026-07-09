@@ -6,14 +6,10 @@ import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。
- * 实现位于 collection-service（MyBatis）。
- */
+/** 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。 实现位于 collection-service（MyBatis）。 */
 public interface ContactPlanRepository {
 
     // ── 计划读取 ──
@@ -33,6 +29,9 @@ public interface ContactPlanRepository {
 
     /** 最近完成/穷尽的计划。 */
     ContactPlan getLastCompletedPlan(Long caseId);
+
+    /** 案件最近计划（含终态），按 id 降序。供 L4a 断言 cancelReason / 幂等。 */
+    List<ContactPlan> findRecentPlansByCase(Long caseId, int limit);
 
     // ── 计划/步骤写入 ──
     /** 持久化计划 + 步骤序列（事务）。回写生成的 id。 */

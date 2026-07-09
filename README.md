@@ -1,168 +1,124 @@
-# Intelligent Collection V1 — MOCASA 催收系统升级 Phase 1
+# Intelligent-Collection-V1 — MOCASA 智能催收系统（Phase 1）
 
-MOCASA 催收系统升级（Phase 1），当前仅覆盖**菲律宾市场**。本仓库包含 **规格文档** 与 **Phase 1 框架代码骨架**（接口先行 + Mock SPI 全链路跑通）。
+> MOCASA 催收系统升级 **Phase 1**，仅覆盖 **菲律宾市场**。
+> 当前形态：**接口先行 + Mock SPI 全链路跑通**（编译期起点，多模块并行开发）。
 
-| 项 | 说明 |
+| | |
 |---|---|
-| **套件版本** | Phase 1 · v1.0 |
-| **技术栈** | Spring Boot 2.1 · Java 8 · MyBatis · Maven 多模块 |
-| **事件总线** | Phase 1 默认内存版（无需 Redis）；接口抽象，可平滑切换 Redis Stream |
+| **版本** | Phase 1 · v1.0（约 50% 开发进度） |
+| **技术栈** | Spring Boot 2.7.18 · **JDK 8** · MyBatis · Maven 多模块 |
+| **配置中心** | Nacos（测试环境，连接信息由主架构负责人下发，**不入库**） |
+| **数据库** | MySQL 8（Phase 1 新库 `ai_collection_db`） |
+| **事件总线 / 幂等** | Phase 1 内存版（无需 Redis）；接口抽象，后续平滑切 Redis Stream |
+| **文档总索引** | [`docs/README.md`](./docs/README.md) ｜ 进度交接：[`HANDOFF.md`](./HANDOFF.md) |
 
 ---
 
-## 一、规格文档（docs/）
+## 一、项目简介
 
-建议按依赖关系自上而下阅读：
-
-| 顺序 | 文档 |
-|:---:|---|
-| 1 | [产品需求文档 (PRD)](./docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) |
-| 2 | [架构设计文档](./docs/MOCASA催收系统升级_Phase1_架构设计文档.md) |
-| 3 | [核心引擎规格](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md) |
-| 4 | [领域模型与数据定义](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) |
-| 5 | [基础设施交互规范](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
-
-**渠道模块（collection-channel）** 另见 [渠道文档索引](./docs/README_渠道文档索引.md)、[开发执行指南](./docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)、[功能测试指南](./docs/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)。
+催收引擎以「**事件驱动状态机 + 七步执行管线**」为核心：案件入案后，引擎建立联系计划并按节奏调度，经合规预检后调用各渠道 SPI（短信 / 语音 / Push / 邮件）触达，回填结果并推进，直至计划完成或被还款 / 阶段变更中断。Phase 1 用 **Mock SPI** 把全链路跑通，各模块对照 `collection-common` 的编译期契约并行开发，替换 Mock 即接续，主框架零改动。
 
 ---
 
-## 二、代码框架（Phase 1 骨架）
+## 二、模块职责一览表
 
-### 模块结构
+| 模块 | 一句话职责 | Phase 1 状态 | 归属 |
+|---|---|---|---|
+| `collection-common` | 契约层：枚举 / 模型 / DTO / 5 个 SPI / EventBus / Gateway / Repository 接口 | 编译期契约（稳定基线） | 主架构 |
+| `collection-engine` | ★主框架★ 事件分发 · 计划状态机 · 七步管线 · 预检 · 内存总线/幂等 | **真实实现** | 主架构 |
+| `collection-ingestion` | 数据接入：发布领域事件（Mock 入案）+ DPD 日切 Job 占位 | Mock，待接真实 PubSub | 主架构 |
+| `collection-admin` | 启动入口：REST 触发/查询 · Webhook · Trigger→Event 调度 · 装配全部模块 | 骨架 | 主架构 |
+| `collection-channel` | 渠道编排：5 个 SPI + ChannelGateway 的实现 | Mock，待编排同事替换 | 编排同事 |
+| `collection-service` | 持久化 + CaseService / ProfileService（映射旧库） | Mock，待服务同事映射 | 服务同事 |
 
-```text
-collection-parent (pom)
-├── collection-common      契约层：枚举 / 模型 / DTO / 5个SPI接口 / CollectionEventBus / ChannelGateway / Repository接口
-├── collection-engine      ★主框架★ EventConsumerDispatcher · PlanLifecycleManager(状态机) · StepExecutionOrchestrator(七步管线) · PreFlightChecker · 内存事件总线/幂等
-├── collection-service     数据服务层：新表 MyBatis 持久化 + CaseService/ProfileService（Phase 1 Mock）
-├── collection-channel     渠道编排：5个SPI 的 Mock 实现 + Mock ChannelGateway
-├── collection-ingestion   数据接入：发布领域事件（Phase 1 Mock 入案）+ DPD 日切 Job 占位
-└── collection-admin       启动入口：REST 触发/查询 · Webhook · Trigger-to-Event 调度 · 装配全部模块
-```
-
-### 分层与文档映射
-
-| 模块 | 文档归属 | Phase 1 状态 |
-|---|---|---|
-| collection-engine | 核心引擎规格 §1-§5 | **真实实现**（主框架，本仓库负责人维护） |
-| collection-channel | 渠道编排规格 | Mock，待渠道编排负责人替换 |
-| collection-ingestion | 数据接入与事件规格 | Mock，待数据接入负责人替换 |
-| collection-service | 领域模型 §3 | Mock CaseService/ProfileService，待服务层负责人映射旧表 |
-| collection-admin | 架构 §1.5 | REST/Webhook/调度骨架 |
+> 依赖底线：底层 `collection-common` **不得反向依赖**任何上层业务模块（后续阶段将用 ArchUnit 硬卡）。
 
 ---
 
-## 三、环境要求
+## 三、3 分钟本地一键拉起 & 运行
 
-- JDK 8、Maven 3.6+
-- 可连通的 MySQL（Phase 1 新测试库 `ai_collection_db`）
-- **Nacos**（测试环境公共账号，见 [操作说明.md](./操作说明.md)）
-- **Redis**（Phase 1 默认内存事件总线/幂等；实现渠道合规与渠道幂等后需要 Redis，地址由 Nacos 下发）
+> 前置：**JDK 8**、**Maven 3.6+**、**Docker**。
+> Nacos / MySQL 为**共享测试环境**，连接信息向主架构负责人获取（不入库）。
 
----
-
-## 四、快速开始（链路跑通）
-
-### 1. 建表
+### Step 1 — 配置环境变量（30s）
 
 ```bash
-# 连接信息（host/port/user/password）向主架构负责人获取，-p 后不跟值会交互式提示输入密码
-mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/schema.sql
-# 可选 mock 数据
-mysql -h<DB_HOST> -u<DB_USER> -p -P<DB_PORT> <DB_NAME> < db/mock-data.sql
+cp .env.example .env
+# 编辑 .env，填入主架构负责人下发的 Nacos 地址/命名空间/账号口令；
+# 渠道密钥写在 Nacos，不要写进 .env（模板见 deploy/nacos/）。
 ```
 
-> 数据库连接通过环境变量提供，**不写入仓库**：`DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD`。
-> 具体值向主架构负责人获取。
-
-### 2. 编译 & 启动
+### Step 2 — 一键打包 + 起容器（约 2 分钟）
 
 ```bash
-mvn clean package -DskipTests
-java -jar collection-admin/target/collection-admin.jar
-# 或：mvn -pl collection-admin -am spring-boot:run
+# 脚本内部 = mvn -pl collection-admin -am clean package -DskipTests
+#            + docker compose -f deploy/docker-compose.yml up -d --build
+./deploy/start-docker.sh          # Git Bash / macOS / Linux
+deploy\start-docker.cmd           # Windows CMD / PowerShell
+
+# 跟踪日志
+docker compose -f deploy/docker-compose.yml logs -f collection-admin
 ```
 
-### 3. 注入案件，触发全链路
+> 不想用 Docker？本机直接跑：
+> `mvn clean package -DskipTests && java -jar collection-admin/target/collection-admin.jar`
+
+### Step 3 — 冒烟验证全链路（30s）
 
 ```bash
-# 注入新案件（caseId=1001），引擎建计划并开始执行
+# 注入新案件 → 引擎建 3 步计划并开始执行
 curl -X POST "http://localhost:8080/mock/ingest?caseId=1001&userId=1001&stage=S1"
 
-# 查询计划状态（含步骤序列）
+# 查询计划状态（含步骤序列）/ 触达时间线
 curl "http://localhost:8080/plans/1"
-
-# 查询触达时间线
 curl "http://localhost:8080/plans/timeline/1001"
 ```
 
-链路：`CASE_INGESTED → PlanFactory 建 3 步计划(PENDING) → 扫描器发 PLAN_STEP_DUE → 七步管线 → Mock 渠道发送 → STEP_COMPLETED → 推进 → … → PLAN_COMPLETED`。
-扫描间隔默认 5s（`collection.scan.interval-ms`），步骤间有 1 分钟延迟，可改小延迟/间隔加速观测。
+链路：`CASE_INGESTED → 建计划(PENDING) → 扫描发 PLAN_STEP_DUE → 七步管线 → Mock 渠道发送 → STEP_COMPLETED → 推进 → … → PLAN_COMPLETED`。
+扫描间隔默认 5s（`collection.scan.interval-ms`），可调小加速观测。
 
-### 4. 验证中断 / 回调链路
+> 首次建表与中断/回调验证：
 
 ```bash
-# 还款中断：取消该用户活跃计划（plan → PLAN_CANCELLED, REPAID）
+# 建表（连接信息向主架构负责人获取；-p 后留空交互式输入密码）
+mysql -h<HOST> -P<PORT> -u<USER> -p <DB_NAME> < db/schema.sql
+mysql -h<HOST> -P<PORT> -u<USER> -p <DB_NAME> < db/mock-data.sql   # 可选 mock 数据
+
+# 还款中断：取消该用户活跃计划（plan → CANCELLED, REPAID）
 curl -X POST "http://localhost:8080/mock/repayment?userId=1001&caseId=1001"
-
-# 阶段变更：取消旧阶段计划 + 创建新阶段计划
+# 阶段变更：取消旧阶段计划 + 建新阶段计划
 curl -X POST "http://localhost:8080/mock/stage-changed?caseId=1001&stage=S2"
-
-# 异步渠道回调（用于 AI_CALL/TTS 步骤；需计划含异步步骤时）
+# 异步渠道回调（计划含 AI_CALL/TTS 等异步步骤时）
 curl -X POST "http://localhost:8080/webhook/channel-callback?planId=1&stepId=3&result=ANSWERED"
 ```
 
-观测：直接查 `t_contact_plan` / `t_contact_plan_step` / `t_contact_timeline`（见 `db/mock-data.sql` 末尾参考 SQL）。
+常用容器命令：`docker compose -f deploy/docker-compose.yml down`（停） / `... logs -f`（看日志）。
+更细的 Nacos 本地启动见 [`docs/操作说明_Nacos本地启动.md`](./docs/操作说明_Nacos本地启动.md)。
 
 ---
 
-## 附：Docker 启动（本机先打包）
+## 四、目录速览
 
-采用“方案 3”：先用本机 Maven 打包，再构建运行镜像，避免容器内重复下载依赖。
-
-### 一条命令启动
-
-- Git Bash:
-  - `./start-docker.sh`
-- Windows CMD / PowerShell:
-  - `start-docker.cmd`
-
-脚本实际执行：
-
-```bash
-mvn -pl collection-admin -am clean package -DskipTests
-docker compose up -d --build --force-recreate
-```
-
-### 常用命令
-
-```bash
-docker compose logs -f collection-admin
-docker compose down
-```
+| 路径 | 内容 |
+|---|---|
+| `collection-*/` | 6 个业务模块（见 §2） |
+| `deploy/` | Docker / 启动脚本 / Nacos 配置模板（部署相关全在此）；`deploy/secrets/` 放本地密钥（已忽略） |
+| `scripts/` | 本地联调脚本：[`scripts/README.md`](./scripts/README.md)（`dev/` 启停 · `test/` E2E） |
+| `db/` | `schema.sql` / `mock-data.sql` / 测试 seed |
+| `docs/` | 全部规格与协作文档，入口 [`docs/README.md`](./docs/README.md)；测试 SSOT 在 `docs/testing/` |
+| `.github/` | CI 工作流 + PR 模板 |
 
 ---
 
-## 五、各开发者接续指南（契约冻结后并行）
+## 五、协作与契约红线
 
-`collection-common` 的 SPI 接口 + DTO + 枚举为**编译期契约**，替换 Mock 即可接续，主框架零改动。
-
-| 负责人 | 替换目标 | 位置 |
-|---|---|---|
-| 渠道编排 | `MockPlanFactory` / `MockExecutionGuard` / `MockStepResolver` / `MockAdvancementPolicy` / `MockExhaustionPolicy` / `MockChannelGateway` | `collection-channel` |
-| 数据接入 | `IngestionService`（接真实 PubSub + 快照生成）、`DpdStageRollHandler` | `collection-ingestion` |
-| 服务层 | `MockCaseService` / `MockProfileService`（映射 t_collection / t_user_* 等旧表） | `collection-service` |
-| 基础设施 | 新增 `RedisStreamEventBus` / Redis `IdempotencyService`，配置 `collection.eventbus=redis` 切换 | `collection-engine`（或独立模块） |
-| 应用层 | `TriggerScanner` 替换为 XXL-Job Handler、Webhook 加鉴权、补管理后台 API | `collection-admin` |
-
-> 替换方式：实现对应接口并加 `@Component`/`@Primary`，或删除同名 Mock 类。Spring 按接口注入，引擎无需改动。
+- `collection-common` 的 **SPI + DTO + 枚举 = 编译期契约**；任何改动牵一发动全身，须全量 `mvn -q test` 回归并通知 channel / service 同事。
+- `docs/channel/` 由**编排同事**维护，本分支**只读**，勿改勿移（merge 冲突源）。
+- 改动后必须按 [`.cursor/rules/ic-v1-validation.mdc`](./.cursor/rules/ic-v1-validation.mdc) 跑对应模块验证命令并回报结果。
+- 数据库连接信息、渠道密钥**绝不入库**（向主架构负责人获取）。
 
 ---
 
-## 六、Phase 1 骨架的已知简化（非生产实现，待补全）
+## 六、Phase 1 已知简化（非生产实现）
 
-- 事件总线为内存版（生产用 Redis Stream + Consumer Group + PEL/看门狗/DLQ，见基础设施规范 §1-§2）
-- 幂等锁为内存版（生产用 Redis SETNX）
-- SPI 硬超时（10-50ms）未启用线程级强制超时，仅异常捕获（见核心引擎规格 §4.1）
-- 调度用 `@Scheduled` 代替 XXL-Job；MDC 跨线程传递、Micrometer 指标未接入
-- `CaseService`/`ProfileService` 为合成 mock，未映射真实旧表
+内存事件总线 / 内存幂等锁 / SPI 仅异常兜底未启线程级硬超时 / `@Scheduled` 代替 XXL-Job / `CaseService`·`ProfileService` 为合成 Mock。生产化目标见 [`docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md`](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md)。

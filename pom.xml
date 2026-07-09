@@ -34,6 +34,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-cloud.version>2021.0.9</spring-cloud.version>
         <spring-cloud-alibaba.version>2021.0.6.2</spring-cloud-alibaba.version>
+        <!-- 3.x 是兼容 Spring Boot 2.7 / Java 8 的最后一条线（4.x 起需 Boot 3 / Java 17） -->
+        <spring-cloud-gcp.version>3.4.0</spring-cloud-gcp.version>
         <mybatis.starter.version>2.3.2</mybatis.starter.version>
         <fastjson.version>1.2.83</fastjson.version>
         <lombok.version>1.18.42</lombok.version>
@@ -54,6 +56,14 @@
                 <groupId>com.alibaba.cloud</groupId>
                 <artifactId>spring-cloud-alibaba-dependencies</artifactId>
                 <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- GCP PubSub（B1 数据接入）。BOM 统一管理 google-cloud-pubsub 等版本，Java 8 安全。 -->
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>spring-cloud-gcp-dependencies</artifactId>
+                <version>${spring-cloud-gcp.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -145,6 +155,61 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
+        <plugins>
+            <!-- 代码格式化：Spotless + google-java-format(AOSP=4空格)。
+                 2.30.0 是最后支持 JRE 8 运行的版本；GJF 1.7 是最后支持 Java 8 的版本。
+                 ratchetFrom 只处理相对 origin/main 改动过的文件 → 增量采用，避免一次性重排全仓。 -->
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.30.0</version>
+                <configuration>
+                    <ratchetFrom>origin/main</ratchetFrom>
+                    <java>
+                        <includes>
+                            <include>src/main/java/**/*.java</include>
+                            <include>src/test/java/**/*.java</include>
+                        </includes>
+                        <googleJavaFormat>
+                            <version>1.7</version>
+                            <style>AOSP</style>
+                        </googleJavaFormat>
+                        <removeUnusedImports/>
+                        <importOrder/>
+                        <trimTrailingWhitespace/>
+                        <endWithNewline/>
+                    </java>
+                </configuration>
+                <executions>
+                    <!-- check 默认绑定 verify 阶段：构建/CI 时校验，不达标即失败 -->
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- 任何人首次 mvn 即把 git core.hooksPath 指向版本化的 .githooks/，钩子对全员自动生效 -->
+            <plugin>
+                <groupId>com.rudikershaw.gitbuildhook</groupId>
+                <artifactId>git-build-hook-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <gitConfig>
+                        <core.hooksPath>.githooks</core.hooksPath>
+                    </gitConfig>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>configure</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
     </build>
 
 </project>

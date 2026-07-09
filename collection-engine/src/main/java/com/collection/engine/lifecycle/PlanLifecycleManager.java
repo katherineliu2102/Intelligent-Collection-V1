@@ -12,52 +12,61 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.spi.SpiInvoker;
+import com.collection.engine.spi.SpiType;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.annotation.Resource;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-
 /**
  * 计划级生命周期管理。对应核心引擎规格 §2。
  *
  * <p>每个 onXxx 方法即一次"短事务（SELECT FOR UPDATE → 校验终态 → 状态前置 → COMMIT）"。
- * 方法返回需在<b>提交后</b>发布的事件列表（核心引擎规格："事务外发布，保证写入已落盘"），
- * 由 {@link EventConsumerDispatcher} 在方法返回后投递。
+ * 方法返回需在<b>提交后</b>发布的事件列表（核心引擎规格："事务外发布，保证写入已落盘"）， 由 {@link EventConsumerDispatcher} 在方法返回后投递。
  */
 @Component
 public class PlanLifecycleManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlanLifecycleManager.class);
 
-    @Resource
-    private ContactPlanRepository planRepository;
-    @Resource
-    private CaseService caseService;
-    @Resource
-    private PlanFactory planFactory;
-    @Resource
-    private AdvancementPolicy advancementPolicy;
-    @Resource
-    private ExhaustionPolicy exhaustionPolicy;
-    @Resource
-    private PredictiveDialerService predictiveDialerService;
+    @Resource private ContactPlanRepository planRepository;
+    @Resource private CaseService caseService;
+    @Resource private PlanFactory planFactory;
+    @Resource private AdvancementPolicy advancementPolicy;
+    @Resource private ExhaustionPolicy exhaustionPolicy;
+    @Resource private PredictiveDialerService predictiveDialerService;
+    @Resource private SpiInvoker spiInvoker;
 
     // ───────────────────────── 计划创建（§2.2） ─────────────────────────
 
     @Transactional
     public List<CollectionEvent> onCaseIngested(CollectionEvent event) {
         Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        if (caseId == null) {
+            // 关键键缺失：异常上抛 → NACK 重消费（接入侧已强校验，核心引擎规格 §7）
+            throw new IllegalArgumentException("CASE_INGESTED missing caseId");
+        }
         Stage stage = parseStage(event.getString(CollectionEvent.STAGE));
+        Integer dpd = event.getInt(CollectionEvent.DPD);
+        if (stage == null && dpd != null) {
+            stage = Stage.fromDpd(dpd);
+        }
+        // 决策 B：payload 携带快照字段时据此组装，运行时不读旧库 t_collection；
+        // 缺失（如旧调用 / 兜底）时降级 CaseService。
+        ContextSnapshot snapshot =
+                hasSnapshotPayload(event) ? buildSnapshotFromEvent(event, stage) : null;
+        CaseInfo caseInfo = caseInfoFromSnapshot(snapshot);
         if (stage == null) {
-            CaseInfo info = caseService.getCaseInfo(caseId);
+            CaseInfo info = caseInfo != null ? caseInfo : caseService.getCaseInfo(caseId);
             stage = info != null ? info.getStage() : null;
         }
-        createPlanForStage(caseId, stage);
+        createPlanForStage(caseId, stage, caseInfo, snapshot);
         return noEvents();
     }
 
@@ -68,14 +77,29 @@ public class PlanLifecycleManager {
 
         List<ContactPlan> oldPlans = planRepository.findActivePlansByCase(caseId);
         oldPlans.sort((a, b) -> Long.compare(a.getId(), b.getId())); // 按 id 升序加锁防死锁
+        // 决策 B：carry-forward 旧计划已冻结快照（同案件无新 case_push），刷新 stage；
+        // 取消前先取快照。缺失时 createPlanForStage 降级 CaseService。
+        ContextSnapshot carried = null;
+        for (ContactPlan p : oldPlans) {
+            if (carried == null) {
+                carried = snapshotFromPlan(p);
+            }
+        }
+        carried = withStage(carried, newStage);
+        CaseInfo carriedInfo = caseInfoFromSnapshot(carried);
         for (ContactPlan p : oldPlans) {
             if (p.getStage() != newStage) {
                 planRepository.findPlanWithLock(p.getId());
-                planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
-                log.info("[stageChanged] cancelled old plan {} ({}→{})", p.getId(), p.getStage(), newStage);
+                planRepository.updatePlanStatus(
+                        p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
+                log.info(
+                        "[stageChanged] cancelled old plan {} ({}→{})",
+                        p.getId(),
+                        p.getStage(),
+                        newStage);
             }
         }
-        createPlanForStage(caseId, newStage);
+        createPlanForStage(caseId, newStage, carriedInfo, carried);
         return noEvents();
     }
 
@@ -88,7 +112,8 @@ public class PlanLifecycleManager {
         plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
         for (ContactPlan p : plans) {
             planRepository.findPlanWithLock(p.getId());
-            planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+            planRepository.updatePlanStatus(
+                    p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
             log.info("[caseCeased] cancelled plan {} (CEASED)", p.getId());
         }
         return noEvents();
@@ -101,13 +126,14 @@ public class PlanLifecycleManager {
         plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
         for (ContactPlan p : plans) {
             planRepository.findPlanWithLock(p.getId());
-            planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+            planRepository.updatePlanStatus(
+                    p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
             log.info("[repayment] cancelled plan {} (REPAID)", p.getId());
         }
         try {
             predictiveDialerService.filterRepaidUser(userId);
         } catch (Exception e) {
-            // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5.1）
+            // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5）
             log.warn("[repayment] filterRepaidUser failed for user {}: {}", userId, e.getMessage());
         }
         return noEvents();
@@ -129,7 +155,8 @@ public class PlanLifecycleManager {
             return StepDuePreparation.noop();
         }
 
-        if (plan.getStatus() == PlanStatus.PENDING || plan.getStatus() == PlanStatus.STEP_SCHEDULED
+        if (plan.getStatus() == PlanStatus.PENDING
+                || plan.getStatus() == PlanStatus.STEP_SCHEDULED
                 || plan.getStatus() == PlanStatus.STEP_EXECUTING) {
             // 状态前置（PENDING/SCHEDULED 首次执行；EXECUTING 为退避重试再触发）
             planRepository.updatePlanStatus(planId, PlanStatus.STEP_EXECUTING, null);
@@ -142,7 +169,8 @@ public class PlanLifecycleManager {
 
         if (plan.getStatus() == PlanStatus.STEP_WAITING) {
             // 观察期到期结转
-            ContactResult result = step.getResult() != null ? step.getResult() : ContactResult.SENT_NO_RESPONSE;
+            ContactResult result =
+                    step.getResult() != null ? step.getResult() : ContactResult.SENT_NO_RESPONSE;
             planRepository.updateStepStatus(stepId, StepStatus.COMPLETED, result);
             StepDuePreparation prep = StepDuePreparation.noop();
             prep.getEvents().add(stepCompletedEvent(plan, step));
@@ -165,8 +193,12 @@ public class PlanLifecycleManager {
         ContactPlanStep completed = planRepository.findStepById(stepId);
         StepResult stepResult = toStepResult(completed);
 
-        AdvancementDecision decision = advancementPolicy.decide(
-                buildLiteContext(plan, completed), stepResult);
+        // SPI 硬超时 10ms；异常/超时上抛 → 事务回滚 → NACK 延迟重消费（核心引擎规格 §4.1）
+        com.collection.common.dto.ExecutionContext liteCtx = buildLiteContext(plan, completed);
+        AdvancementDecision decision =
+                spiInvoker.call(
+                        SpiType.ADVANCEMENT_POLICY,
+                        () -> advancementPolicy.decide(liteCtx, stepResult));
 
         switch (decision) {
             case ADVANCE_NEXT:
@@ -175,11 +207,16 @@ public class PlanLifecycleManager {
                     log.info("[advance] plan {} no next step → PLAN_EXHAUSTED", planId);
                     return single(planExhaustedEvent(plan));
                 }
-                LocalDateTime triggerTime = LocalDateTime.now().plusMinutes(Math.max(0, next.getDelayMinutes()));
+                LocalDateTime triggerTime =
+                        LocalDateTime.now().plusMinutes(Math.max(0, next.getDelayMinutes()));
                 planRepository.updateStepTriggerTime(next.getId(), triggerTime, StepStatus.PENDING);
                 planRepository.updateCurrentStep(planId, next.getStepOrder());
                 planRepository.updatePlanStatus(planId, PlanStatus.STEP_SCHEDULED, null);
-                log.info("[advance] plan {} → STEP_SCHEDULED, next step {} at {}", planId, next.getId(), triggerTime);
+                log.info(
+                        "[advance] plan {} → STEP_SCHEDULED, next step {} at {}",
+                        planId,
+                        next.getId(),
+                        triggerTime);
                 return noEvents();
 
             case PLAN_COMPLETED:
@@ -237,22 +274,32 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
-        CaseInfo caseInfo = caseService.getCaseInfo(plan.getCaseId());
-        ContextSnapshot snapshot = caseService.getContextSnapshot(plan.getCaseId());
+        // 决策 B：carry-forward 旧计划已冻结快照（续建非外部 case_push，无新 payload）；
+        // 缺失时降级 CaseService（兜底）。
+        ContextSnapshot carried = snapshotFromPlan(plan);
+        final ContextSnapshot snapshot =
+                carried != null ? carried : caseService.getContextSnapshot(plan.getCaseId());
+        CaseInfo ci = caseInfoFromSnapshot(snapshot);
+        final CaseInfo caseInfo = ci != null ? ci : caseService.getCaseInfo(plan.getCaseId());
 
-        ExhaustionResult result = exhaustionPolicy.handle(plan, caseInfo, snapshot);
+        // SPI 硬超时 50ms；异常/超时上抛 → NACK（穷尽是生命周期关键节点，不可丢）
+        ExhaustionResult result =
+                spiInvoker.call(
+                        SpiType.EXHAUSTION_POLICY,
+                        () -> exhaustionPolicy.handle(plan, caseInfo, snapshot));
         switch (result.getAction()) {
             case REBUILD:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null); // 旧计划正常完成
-                createPlanForStage(plan.getCaseId(), plan.getStage());
+                createPlanForStage(plan.getCaseId(), plan.getStage(), caseInfo, snapshot);
                 log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
                 return noEvents();
             case ESCALATE:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
                 log.info("[exhausted] plan {} ESCALATE → {}", planId, result.getTargetStage());
-                return single(CollectionEvent.of(EventType.STAGE_CHANGED)
-                        .with(CollectionEvent.CASE_ID, plan.getCaseId())
-                        .with(CollectionEvent.STAGE, result.getTargetStage().name()));
+                return single(
+                        CollectionEvent.of(EventType.STAGE_CHANGED)
+                                .with(CollectionEvent.CASE_ID, plan.getCaseId())
+                                .with(CollectionEvent.STAGE, result.getTargetStage().name()));
             case COMPLETE:
             default:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
@@ -261,8 +308,12 @@ public class PlanLifecycleManager {
         }
     }
 
-    // ───────────────────────── PTP 到期（§2.6） ─────────────────────────
+    // ───────────────────────── PTP 到期（§2.6，Phase 2 预留） ─────────────────────────
 
+    /**
+     * Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED（Dispatcher 未订阅，核心引擎规格 §2.6）。 方法体保留作 Phase 2 前向兼容，Phase 1
+     * 不会被事件总线触发。
+     */
     @Transactional
     public List<CollectionEvent> onPtpExpired(CollectionEvent event) {
         Long caseId = event.getLong(CollectionEvent.CASE_ID);
@@ -271,7 +322,8 @@ public class PlanLifecycleManager {
             List<ContactPlan> active = planRepository.findActivePlansByCase(caseId);
             for (ContactPlan p : active) {
                 planRepository.findPlanWithLock(p.getId());
-                planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                planRepository.updatePlanStatus(
+                        p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
             }
             log.info("[ptpExpired] case {} repaid → compensating cancel", caseId);
             return noEvents();
@@ -285,11 +337,18 @@ public class PlanLifecycleManager {
         if (last == null) {
             return noEvents();
         }
-        CaseInfo caseInfo = caseService.getCaseInfo(caseId);
-        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
-        ExhaustionResult result = exhaustionPolicy.handle(last, caseInfo, snapshot);
+        // 决策 B：carry-forward last 计划快照，缺失降级 CaseService。
+        ContextSnapshot carried = snapshotFromPlan(last);
+        final ContextSnapshot snapshot =
+                carried != null ? carried : caseService.getContextSnapshot(caseId);
+        CaseInfo ci = caseInfoFromSnapshot(snapshot);
+        final CaseInfo caseInfo = ci != null ? ci : caseService.getCaseInfo(caseId);
+        ExhaustionResult result =
+                spiInvoker.call(
+                        SpiType.EXHAUSTION_POLICY,
+                        () -> exhaustionPolicy.handle(last, caseInfo, snapshot));
         if (result.getAction() == ExhaustionAction.REBUILD) {
-            createPlanForStage(caseId, last.getStage());
+            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot);
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
         }
         return noEvents();
@@ -297,30 +356,47 @@ public class PlanLifecycleManager {
 
     // ───────────────────────── 私有：计划创建复用（§2.2） ─────────────────────────
 
-    private void createPlanForStage(Long caseId, Stage stage) {
+    private void createPlanForStage(
+            Long caseId, Stage stage, CaseInfo providedCaseInfo, ContextSnapshot providedSnapshot) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
             return;
         }
         if (planRepository.findActivePlanByCaseAndStage(caseId, stage) != null) {
-            log.info("[create] caseId={} stage={} already has active plan, idempotent skip", caseId, stage);
+            log.info(
+                    "[create] caseId={} stage={} already has active plan, idempotent skip",
+                    caseId,
+                    stage);
             return; // 单活跃计划约束 / 幂等
         }
-        CaseInfo caseInfo = caseService.getCaseInfo(caseId);
+        // 决策 B：优先用传入的 caseInfo / snapshot（事件 payload / carry-forward）；
+        // 缺失时降级 CaseService（仅兜底 / 对账，非主链路）。
+        CaseInfo caseInfo =
+                providedCaseInfo != null ? providedCaseInfo : caseService.getCaseInfo(caseId);
         if (caseInfo != null && isCeased(caseInfo)) {
             log.info("[create] caseId={} is CEASED, skip PlanFactory.create", caseId);
             return;
         }
-        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
-        if (snapshot != null && snapshot.getCaseContext() != null
+        ContextSnapshot snapshot =
+                providedSnapshot != null
+                        ? providedSnapshot
+                        : caseService.getContextSnapshot(caseId);
+        if (snapshot != null
+                && snapshot.getCaseContext() != null
                 && "CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
             log.info("[create] caseId={} snapshot collectionStatus=CEASED, skip", caseId);
             return;
         }
 
-        ContactPlan plan = planFactory.create(caseInfo, stage, snapshot); // SPI：异常→NACK
+        // SPI 硬超时 50ms；异常/超时上抛 → NACK 延迟重消费（丢失整个计划 = 案件完全无触达，核心引擎规格 §4.1）
+        ContactPlan plan =
+                spiInvoker.call(
+                        SpiType.PLAN_FACTORY, () -> planFactory.create(caseInfo, stage, snapshot));
         if (plan == null) {
-            log.info("[create] PlanFactory returned null for case {} stage {}, no plan", caseId, stage);
+            log.info(
+                    "[create] PlanFactory returned null for case {} stage {}, no plan",
+                    caseId,
+                    stage);
             return;
         }
         plan.setCaseId(caseId);
@@ -338,27 +414,35 @@ public class PlanLifecycleManager {
         if (!plan.getSteps().isEmpty()) {
             ContactPlanStep first = plan.getSteps().get(0);
             first.setStepOrder(1);
-            first.setTriggerTime(LocalDateTime.now().plusMinutes(Math.max(0, first.getDelayMinutes())));
+            first.setTriggerTime(
+                    LocalDateTime.now().plusMinutes(Math.max(0, first.getDelayMinutes())));
             first.setStatus(StepStatus.PENDING);
         }
         planRepository.savePlan(plan);
-        log.info("[create] plan {} created for case {} stage {} ({} steps)",
-                plan.getId(), caseId, stage, plan.getTotalSteps());
+        log.info(
+                "[create] plan {} created for case {} stage {} ({} steps)",
+                plan.getId(),
+                caseId,
+                stage,
+                plan.getTotalSteps());
     }
 
     // ───────────────────────── 辅助 ─────────────────────────
 
-    private com.collection.common.dto.ExecutionContext buildLiteContext(ContactPlan plan, ContactPlanStep step) {
+    private com.collection.common.dto.ExecutionContext buildLiteContext(
+            ContactPlan plan, ContactPlanStep step) {
         return com.collection.common.dto.ExecutionContext.builder()
                 .plan(plan)
                 .currentStep(step)
-                .contextSnapshot(JsonUtil.fromJson(plan.getContextSnapshot(), ContextSnapshot.class))
+                .contextSnapshot(
+                        JsonUtil.fromJson(plan.getContextSnapshot(), ContextSnapshot.class))
                 .recentTimeline(new ArrayList<>())
                 .build();
     }
 
     private StepResult toStepResult(ContactPlanStep step) {
-        ContactResult cr = step.getResult() != null ? step.getResult() : ContactResult.SENT_NO_RESPONSE;
+        ContactResult cr =
+                step.getResult() != null ? step.getResult() : ContactResult.SENT_NO_RESPONSE;
         boolean success = cr != ContactResult.FAILED;
         return StepResult.builder().success(success).contactResult(cr).build();
     }
@@ -390,6 +474,122 @@ public class PlanLifecycleManager {
 
     private boolean isCeased(CaseInfo caseInfo) {
         return "CEASED".equalsIgnoreCase(caseInfo.getCaseStatus());
+    }
+
+    // ───────────── 决策 B：快照来源 = 事件 payload / carry-forward（不读旧库） ─────────────
+
+    /** 事件是否携带快照字段（决策 B）。以 dpd / phone / 余额 任一存在为标记。 */
+    private boolean hasSnapshotPayload(CollectionEvent event) {
+        return event.has(CollectionEvent.DPD)
+                || event.has(CollectionEvent.PHONE)
+                || event.has(CollectionEvent.EMAIL)
+                || event.has(CollectionEvent.TOTAL_OUTSTANDING);
+    }
+
+    /** 据 CASE_INGESTED payload 组装 ContextSnapshot（决策 B；映射对齐 RealCaseService 口径）。 */
+    private ContextSnapshot buildSnapshotFromEvent(CollectionEvent event, Stage stage) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        Long userId = event.getLong(CollectionEvent.USER_ID);
+        if (userId == null) {
+            userId = caseId;
+        }
+        Integer dpdObj = event.getInt(CollectionEvent.DPD);
+        int dpd = dpdObj == null ? 0 : dpdObj;
+
+        CaseContext ctx = new CaseContext();
+        ctx.setCaseId(caseId);
+        ctx.setUserId(userId);
+        ctx.setDpd(dpd);
+        ctx.setStage(stage != null ? stage : Stage.fromDpd(dpd));
+        ctx.setProduct(event.getString(CollectionEvent.PRODUCT));
+        ctx.setTotalOutstanding(event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
+        ctx.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
+        ctx.setDueDate(parseDate(event.getString(CollectionEvent.DUE_DATE)));
+        ctx.setStrategyTone("STANDARD");
+        ctx.setComplaintFrozen(false);
+        // D+91 完全停催：collectionStatus=CEASED；createPlanForStage / PlanFactory 据此拒建。
+        ctx.setCollectionStatus(dpd >= 91 ? "CEASED" : "ACTIVE");
+
+        UserProfile profile = new UserProfile();
+        profile.setUserId(userId);
+        UserProfile.BasicInfo basic = new UserProfile.BasicInfo();
+        basic.setName(event.getString(CollectionEvent.NAME));
+        basic.setPrimaryPhone(event.getString(CollectionEvent.PHONE));
+        basic.setEmail(event.getString(CollectionEvent.EMAIL));
+        basic.setLanguage("en");
+        profile.setBasic(basic);
+        UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
+        device.setJpushToken(event.getString(CollectionEvent.JPUSH_TOKEN));
+        profile.setDevice(device);
+
+        ContactHistory history = new ContactHistory();
+        history.setStageEntryDate(LocalDate.now());
+
+        ContextSnapshot snap = new ContextSnapshot();
+        snap.setCaseContext(ctx);
+        snap.setUserProfile(profile);
+        snap.setContactHistory(history);
+        snap.setSnapshotTime(LocalDateTime.now());
+        snap.setSnapshotVersion("event-v1");
+        return snap;
+    }
+
+    /** 由快照派生 CaseInfo（CEASED 判定走 caseStatus=collectionStatus）。 */
+    private CaseInfo caseInfoFromSnapshot(ContextSnapshot snapshot) {
+        if (snapshot == null || snapshot.getCaseContext() == null) {
+            return null;
+        }
+        CaseContext ctx = snapshot.getCaseContext();
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(ctx.getCaseId());
+        info.setUserId(ctx.getUserId());
+        info.setDpd(ctx.getDpd());
+        info.setStage(ctx.getStage());
+        info.setProduct(ctx.getProduct());
+        info.setCaseStatus(ctx.getCollectionStatus());
+        info.setTotalOutstanding(ctx.getTotalOutstanding());
+        info.setDueDate(ctx.getDueDate());
+        info.setFrozen(ctx.isComplaintFrozen());
+        // repaid 由实时守卫 PreFlightChecker 负责（[接入 §3.1]），快照不承载实时态
+        info.setRepaid(false);
+        return info;
+    }
+
+    /** carry-forward：从计划行反序列化已冻结快照（续建 / 升档复用，不回读旧库）。 */
+    private ContextSnapshot snapshotFromPlan(ContactPlan plan) {
+        if (plan == null || plan.getContextSnapshot() == null) {
+            return null;
+        }
+        try {
+            return JsonUtil.fromJson(plan.getContextSnapshot(), ContextSnapshot.class);
+        } catch (Exception e) {
+            log.warn(
+                    "[carry-forward] deserialize plan {} snapshot failed: {}",
+                    plan.getId(),
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    /** carry-forward 时按事件刷新目标 stage（§4.4 升档）。 */
+    private ContextSnapshot withStage(ContextSnapshot snap, Stage stage) {
+        if (snap != null && snap.getCaseContext() != null && stage != null) {
+            snap.getCaseContext().setStage(stage);
+        }
+        return snap;
+    }
+
+    private LocalDate parseDate(String s) {
+        if (s == null || s.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            String t = s.trim();
+            return LocalDate.parse(t.length() >= 10 ? t.substring(0, 10) : t);
+        } catch (Exception e) {
+            log.warn("[ingest] unparseable date '{}': {}", s, e.getMessage());
+            return null;
+        }
     }
 
     private Stage parseStage(String s) {

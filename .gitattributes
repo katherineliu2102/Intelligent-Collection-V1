@@ -1,0 +1,7 @@
+# 仓库内统一 LF：自动识别文本，签入一律规整为 LF（涵盖 .sh/.cmd/.bat/.java 等脚本与源码）
+* text=auto eol=lf
+
+# 二进制：禁止任何 EOL / 文本化处理，避免被破坏
+*.jar  binary
+*.png  binary
+*.docx binary

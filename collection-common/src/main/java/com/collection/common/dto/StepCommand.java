@@ -1,19 +1,17 @@
 package com.collection.common.dto;
 
 import com.collection.common.enums.ChannelType;
+import java.util.HashMap;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
- * 步骤命令。StepResolver.resolve() 的输出，同时作为 ChannelGateway.dispatch() 的输入。
- * 对应领域模型 §4.3。
+ * 步骤命令。StepResolver.resolve() 的输出，同时作为 ChannelGateway.dispatch() 的输入。 对应领域模型 §4.3。
  *
- * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes /
- * scriptSlot / sms_body / title / body / pushData / dynamicTemplateData / case_id / fallback_sms。
+ * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes / scriptSlot /
+ * sms_body / title / body / pushData / dynamicTemplateData / case_id / fallback_sms。
  */
 @Getter
 @Builder
@@ -38,6 +36,5 @@ public class StepCommand {
     private final String targetAddress;
     private final String templateId;
     private final String idempotencyKey;
-    @Builder.Default
-    private final Map<String, Object> metadata = new HashMap<>();
+    @Builder.Default private final Map<String, Object> metadata = new HashMap<>();
 }

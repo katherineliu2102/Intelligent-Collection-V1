@@ -10,6 +10,10 @@ spring:
         password: ${NACOS_PASSWORD}
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      data-source-properties:
+        allowPublicKeyRetrieval: "true"
+        useSSL: "false"
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
@@ -20,32 +24,84 @@ collection:
     interval-ms: 5000
   idempotency: memory
   eventbus: memory
+  # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
+  # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
+  ingestion:
+    enabled: ${INGESTION_ENABLED:false}
+    project-id: ${GCP_PUBSUB_PROJECT:}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-cases-ai-v1-sub}
+    ack-deadline-seconds: 60
+    max-concurrency: 4
+    # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
+    # case-push:                                  # 上游 JSON key 与契约不一致时配别名（C-I-01 待信贷联调）
+    #   field-map: { caseId: loan_id, dpd: overdue_days }
 channel:
   callback:
     base-url: http://localhost:8888/webhook
+  # Level A 联调：未配密钥时不回退 Mock 伪装成功（Bugbot #3）
+  fallback-to-mock: false
   notification:
     base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
     app-code: mocasa
     # app-key 由 Nacos channel.notification.app-key 下发（intelligent-collection-local.yml）
     sms-content-type: collection
-    sms-test-mode: false  # 真号生产：走 /v1/sms/send（签名，内部路由 QH/Hiway/BORI）；改 true 走 testSend Virtual 免签名
+    sms-test-mode: true   # Level A 冒烟：走 /v1/sms/testSend 免 appKey；生产联调改 false + 配 NOTIFICATION_APP_KEY
     push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
+    push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
   debug:
     legacy-three-step: false
-    single-step: SMS
+    single-step: ""
+  l4a:
+    three-channel-case-id: 94999
+    observation-case-id: 94102
+    observation-minutes: 1
+    guard-no-phone-case-id: 94801
+    rebuild-fail-case-id: 94804
+    guard-frequency-case-id: 94805
+    guard-frequency-daily-limit: 1
+  plan-templates:
+    S0:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+    S1:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 201 }
+    S2:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: SMS, delayMin: 1, observeMin: 0, templateId: 103 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 202 }
+    S3:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: PUSH, delayMin: 1, observeMin: 0, templateId: 102 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 203 }
+    S4:
+      steps:
+        - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
+        - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 204 }
+  compliance:
+    timezone: Asia/Manila
+    quiet-hours-start: "21:00"
+    quiet-hours-end: "08:00"
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
+    sms-default-repayment-link: https://mocasa.com/s/4cTu
+    # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。
     sms:
-      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current."
-      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current."
-      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current."
-      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly."
-      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}."
-      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}."
-      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options."
-      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options."
-      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options."
-      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly."
+      S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current. Pay: {repaymentUrl}"
+      S0_REMINDER_URGENT: "MOCASA: {name}, your PHP {amount} payment is due tomorrow. Please pay today to keep your account current. Pay: {repaymentUrl}"
+      S0_DUE_TODAY: "MOCASA: {name}, your PHP {amount} payment is due today. Please pay now to stay current. Pay: {repaymentUrl}"
+      S1_SMS_STANDARD: "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly. Pay: {repaymentUrl}"
+      S2_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. See your personalized payment options for PHP {amount}. Pay: {repaymentUrl}"
+      S2_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue; your account may be reported as delinquent. See your options for PHP {amount}. Pay: {repaymentUrl}"
+      S3_SMS_STANDARD: "MOCASA Collections: {name}, {dpd} days overdue. Delay may limit your account and future loan eligibility. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}"
+      S3_SMS_FIRM: "MOCASA Collections: {name}, {dpd} days overdue and may be recorded as delinquent. Please settle PHP {amount} or view your payment options. Pay: {repaymentUrl}"
+      S4_SMS_STANDARD: "MOCASA Collections: {name}, final notice. {dpd} days overdue and at risk of a delinquency record. Please resolve PHP {amount} using your payment options. Pay: {repaymentUrl}"
+      S4_SMS_FIRM: "MOCASA Collections: {name}, severely overdue ({dpd} days) and may be recorded as delinquent. Please resolve PHP {amount} promptly. Pay: {repaymentUrl}"
     push:
       S0_REMINDER:
         title: "Payment due soon"

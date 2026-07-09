@@ -6,20 +6,17 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
-import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
-
-import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import javax.annotation.Resource;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class ContactPlanRepositoryImpl implements ContactPlanRepository {
 
-    @Resource
-    private ContactPlanMapper planMapper;
-    @Resource
-    private ContactPlanStepMapper stepMapper;
+    @Resource private ContactPlanMapper planMapper;
+    @Resource private ContactPlanStepMapper stepMapper;
 
     @Override
     public ContactPlan findById(Long planId) {
@@ -50,6 +47,11 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     @Override
     public ContactPlan getLastCompletedPlan(Long caseId) {
         return planMapper.selectLastCompleted(caseId);
+    }
+
+    @Override
+    public List<ContactPlan> findRecentPlansByCase(Long caseId, int limit) {
+        return planMapper.selectRecentByCase(caseId, Math.max(1, Math.min(limit, 50)));
     }
 
     @Override

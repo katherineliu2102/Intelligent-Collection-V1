@@ -2,18 +2,14 @@ package com.collection.common.model;
 
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.PhoneValidity;
-import com.collection.common.enums.SensitivityTag;
-import lombok.Data;
-
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import lombok.Data;
 
 /**
- * 用户画像。ContextSnapshot 组成部分。对应领域模型 §3.2。
- * 由 ProfileService.getFullProfile(userId) 构建；Phase 1 部分维度渐进填充（可能为 null）。
+ * 用户画像。ContextSnapshot 组成部分。对应领域模型 §3.2。 由 ProfileService.getFullProfile(userId) 构建；Phase 1
+ * 部分维度渐进填充（可能为 null）。
  */
 @Data
 public class UserProfile {
@@ -22,10 +18,8 @@ public class UserProfile {
     private BasicInfo basic;
     private WorkInfo work;
     private List<ContactInfo> contacts;
-    private RepaymentInfo repayment;
     private BehaviorProfile behavior;
     private DeviceInfo device;
-    private RiskScore risk;
     /** 画像完整度 0.0-1.0（非空字段数 / 总字段数）。 */
     private double profileCompleteness;
 
@@ -39,9 +33,11 @@ public class UserProfile {
         private String idNumber;
         private String address;
         private String primaryPhone;
+        /** 邮箱地址，EMAIL 渠道 targetAddress 来源。来源 t_user_basis / 信贷用户表。 */
         private String email;
-        /** 用户语言偏好 ISO 639-1（`tl` / `en`）；默认 `en`。 */
+        /** 用户语言偏好 ISO 639-1（tl/en）；StepResolver → metadata.language；默认 en。 */
         private String language;
+
         private List<String> alternatePhones;
     }
 
@@ -62,18 +58,6 @@ public class UserProfile {
     }
 
     @Data
-    public static class RepaymentInfo {
-        private int totalLoans;
-        private BigDecimal paidAmount;
-        private BigDecimal remainingAmount;
-        private BigDecimal overdueFee;
-        private BigDecimal penaltyFee;
-        private LocalDate lastRepaymentDate;
-        private BigDecimal lastRepaymentAmount;
-        private int payCount;
-    }
-
-    @Data
     public static class BehaviorProfile {
         private Integer bestContactHour;
         private ChannelType preferredChannel;
@@ -90,17 +74,10 @@ public class UserProfile {
         private PhoneValidity phoneValidity;
         private Boolean viberRegistered;
         private Boolean whatsappRegistered;
-        /** JPush Registration ID（非 FCM token）。 */
+        /**
+         * JPush Registration ID，PUSH 渠道 targetAddress 来源（经通知中心 → JPush）。 来源：App 登录/启动上报 → 信贷/App 后端
+         * → t_user_equipment → ProfileService。 契约已拍板（2026-06-09）：以 jpushToken 为准，fcmToken 已移除。
+         */
         private String jpushToken;
-    }
-
-    @Data
-    public static class RiskScore {
-        private Double repaymentAbilityScore;
-        private Double collectionDifficultyScore;
-        private Double collectionPriority;
-        private SensitivityTag sensitivityTag;
-        private Double ptpFulfillRate;
-        private int complaintCount;
     }
 }

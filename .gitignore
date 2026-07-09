@@ -9,7 +9,16 @@ target/
 .classpath
 .project
 .vscode/
+.obsidian/
 logs/
 *.log
 .env
+notification配置
 nacos-publish.local.yml
+
+# deploy: 本地密钥与填充后的配置（仅保留 .example / .gitkeep）
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+deploy/nacos/nacos-publish.local.yml
+node_modules/
+node_modules/

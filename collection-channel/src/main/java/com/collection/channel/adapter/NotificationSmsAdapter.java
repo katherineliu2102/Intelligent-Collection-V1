@@ -6,22 +6,21 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
 import com.collection.common.enums.ChannelType;
+import java.util.HashMap;
+import java.util.Map;
+import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
 
-import javax.annotation.Resource;
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * 通知中心 SMS 同步渠道 Adapter（{@code POST /v1/sms/send}，{@code contentType=collection}）。
  *
- * <p>结果映射见 Notification 对接说明 §1.3 / §9.1：
- * {@code code=0 && requestSuccess=true} → DELIVERED（providerMsgId=requestId）；
- * 业务码失败 → FAILED 非 retryable；连接超时/5xx → retryable（{@link NotificationClient} 已短重试）。
+ * <p>结果映射见 Notification 对接说明 §1.3 / §9.1： {@code code=0 && requestSuccess=true} →
+ * DELIVERED（providerMsgId=requestId）； 业务码失败 → FAILED 非 retryable；连接超时/5xx → retryable（{@link
+ * NotificationClient} 已短重试）。
  *
  * @see docs/channel/MOCASA催收系统升级_Phase1_Notification对接说明.md
  */
@@ -32,11 +31,9 @@ public class NotificationSmsAdapter implements ChannelAdapter {
     private static final String SMS_PATH = "/v1/sms/send";
     private static final String SMS_TEST_PATH = "/v1/sms/testSend";
 
-    @Resource
-    private ChannelProperties properties;
+    @Resource private ChannelProperties properties;
 
-    @Resource
-    private NotificationClient notificationClient;
+    @Resource private NotificationClient notificationClient;
 
     @Override
     public ChannelType channelType() {
@@ -47,11 +44,14 @@ public class NotificationSmsAdapter implements ChannelAdapter {
     public StepResult send(StepCommand command) {
         ChannelProperties.Notification cfg = properties.getNotification();
         boolean testMode = cfg.isSmsTestMode();
-        boolean configured = testMode
-                ? properties.isNotificationTestConfigured()
-                : notificationClient.isConfigured();
+        boolean configured =
+                testMode
+                        ? properties.isNotificationTestConfigured()
+                        : notificationClient.isConfigured();
         if (!configured) {
-            log.error("[NotificationSmsAdapter] channel.notification not configured (testMode={})", testMode);
+            log.error(
+                    "[NotificationSmsAdapter] channel.notification not configured (testMode={})",
+                    testMode);
             return AdapterSupport.notConfigured("NOTIFICATION");
         }
 
@@ -70,41 +70,62 @@ public class NotificationSmsAdapter implements ChannelAdapter {
         payload.put("content", content);
         payload.put("contentType", cfg.getSmsContentType());
 
-        boolean fallback = Boolean.TRUE.equals(command.getMetadata().get(StepCommand.META_FALLBACK_SMS));
+        boolean fallback =
+                Boolean.TRUE.equals(command.getMetadata().get(StepCommand.META_FALLBACK_SMS));
         try {
             NotificationResponse resp;
             if (testMode) {
                 if (StringUtils.isNotBlank(cfg.getSmsTestAccountName())) {
                     payload.put("accountName", cfg.getSmsTestAccountName());
                 }
-                log.info("[NotificationSmsAdapter] TEST mode → {} mobile={}", SMS_TEST_PATH, maskPhone(mobile));
+                log.info(
+                        "[NotificationSmsAdapter] TEST mode → {} mobile={}",
+                        SMS_TEST_PATH,
+                        maskPhone(mobile));
                 resp = notificationClient.postNoAuth(SMS_TEST_PATH, payload);
             } else {
                 resp = notificationClient.post(SMS_PATH, payload);
             }
             return mapResult(command, mobile, fallback, resp);
         } catch (RestClientException e) {
-            log.warn("[NotificationSmsAdapter] transient failure mobile={} fallback={}: {}",
-                    maskPhone(mobile), fallback, e.getMessage());
+            log.warn(
+                    "[NotificationSmsAdapter] transient failure mobile={} fallback={}: {}",
+                    maskPhone(mobile),
+                    fallback,
+                    e.getMessage());
             return AdapterSupport.notificationTimeout();
         }
     }
 
-    private StepResult mapResult(StepCommand command, String mobile, boolean fallback, NotificationResponse resp) {
+    private StepResult mapResult(
+            StepCommand command, String mobile, boolean fallback, NotificationResponse resp) {
         Object caseId = command.getMetadata().get(StepCommand.META_CASE_ID);
         if (resp.isCodeSuccess() && resp.isRequestSuccess()) {
-            log.info("[NotificationSmsAdapter] accepted caseId={} mobile={} requestId={} channel={} fallback={}",
-                    caseId, maskPhone(mobile), resp.getRequestId(), resp.getChannel(), fallback);
+            log.info(
+                    "[NotificationSmsAdapter] accepted caseId={} mobile={} requestId={} channel={} fallback={}",
+                    caseId,
+                    maskPhone(mobile),
+                    resp.getRequestId(),
+                    resp.getChannel(),
+                    fallback);
             return AdapterSupport.delivered(resp.getRequestId());
         }
         if (resp.isCodeSuccess()) {
-            log.warn("[NotificationSmsAdapter] rejected caseId={} mobile={} channel={}",
-                    caseId, maskPhone(mobile), resp.getChannel());
+            log.warn(
+                    "[NotificationSmsAdapter] rejected caseId={} mobile={} channel={}",
+                    caseId,
+                    maskPhone(mobile),
+                    resp.getChannel());
             return AdapterSupport.permanentFailure("NOTIFICATION_SMS_REJECTED");
         }
         String errorCode = AdapterSupport.notificationErrorCode(resp.getCode());
-        log.warn("[NotificationSmsAdapter] failed caseId={} mobile={} code={} msg={} errorCode={}",
-                caseId, maskPhone(mobile), resp.getCode(), resp.getMsg(), errorCode);
+        log.warn(
+                "[NotificationSmsAdapter] failed caseId={} mobile={} code={} msg={} errorCode={}",
+                caseId,
+                maskPhone(mobile),
+                resp.getCode(),
+                resp.getMsg(),
+                errorCode);
         return AdapterSupport.permanentFailure(errorCode);
     }
 
@@ -114,9 +135,13 @@ public class NotificationSmsAdapter implements ChannelAdapter {
         meta.put(StepCommand.META_FALLBACK_SMS, true);
         if (!meta.containsKey(StepCommand.META_SMS_BODY)) {
             Object fallbackBody = meta.get(StepCommand.META_FALLBACK_SMS_BODY);
-            meta.put(StepCommand.META_SMS_BODY, fallbackBody != null
-                    ? fallbackBody
-                    : "[Fallback SMS] " + meta.getOrDefault(StepCommand.META_SCRIPT_SLOT, "PUSH_FALLBACK"));
+            meta.put(
+                    StepCommand.META_SMS_BODY,
+                    fallbackBody != null
+                            ? fallbackBody
+                            : "[Fallback SMS] "
+                                    + meta.getOrDefault(
+                                            StepCommand.META_SCRIPT_SLOT, "PUSH_FALLBACK"));
         }
         String fallbackKey = pushCommand.getIdempotencyKey() + ":sms_fallback";
         return StepCommand.builder()

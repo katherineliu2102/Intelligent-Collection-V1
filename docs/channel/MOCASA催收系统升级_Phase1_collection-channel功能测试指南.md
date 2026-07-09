@@ -1,8 +1,10 @@
 # MOCASA Phase 1 — collection-channel 功能测试指南
 
-> **版本**: v1.2 · **日期**: 2026-06-12  
-> **前置**: 应用已启动（见 [操作说明.md](../操作说明.md)）；Nacos 已配置渠道密钥（见 [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单)）。  
-> **原则**: 先 Mock 回归 → 单渠道冒烟 → 合规/引擎 → **计划结构验证**（不依赖真实时刻触发多槽位）。
+> **版本**: v1.2  
+> **日期**: 2026-06-12  
+> **范围**: 仅覆盖菲律宾市场  
+> **模块**: `collection-channel`  
+> **关联文档**: [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单)、[操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)、[测试主文档](../testing/MOCASA催收系统升级_Phase1_测试文档.md)
 
 ---
 
@@ -578,4 +580,4 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | [开发执行指南 v1.1](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | 阶段顺序、Checklist |
 | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) | 结构验证依据 |
 | [collection-channel 总规格 §6](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#6-同步渠道-vs-异步渠道) | 同步/异步完成时机 |
-| [操作说明.md](../操作说明.md) | 本地启动 |
+| [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md) | 本地启动 |

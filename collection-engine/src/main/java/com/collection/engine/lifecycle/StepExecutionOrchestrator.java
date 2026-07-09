@@ -16,50 +16,43 @@ import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
+import com.collection.engine.spi.SpiInvoker;
+import com.collection.engine.spi.SpiType;
+import java.time.LocalDateTime;
+import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
-import java.time.LocalDateTime;
-
 /**
  * 步骤执行骨架。对应核心引擎规格 §3.1 七步管线。
  *
- * <p>运行在<b>非事务上下文</b>（行锁已由 PlanLifecycleManager 短事务释放）。
- * 七步：幂等 → 系统守卫 → 业务守卫 → 解析 → 渠道调度 → 取消复检+故障降级 → 渠道分流。
+ * <p>运行在<b>非事务上下文</b>（行锁已由 PlanLifecycleManager 短事务释放）。 七步：幂等 → 系统守卫 → 业务守卫 → 解析 → 渠道调度 → 取消复检+故障降级
+ * → 渠道分流。
  */
 @Component
 public class StepExecutionOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutionOrchestrator.class);
 
-    @Resource
-    private IdempotencyService idempotencyService;
-    @Resource
-    private PreFlightChecker preFlightChecker;
-    @Resource
-    private ExecutionGuard executionGuard;
-    @Resource
-    private StepResolver stepResolver;
-    @Resource
-    private ChannelGateway channelGateway;
-    @Resource
-    private ContextAssembler contextAssembler;
-    @Resource
-    private ContactPlanRepository planRepository;
-    @Resource
-    private TimelineRepository timelineRepository;
-    @Resource
-    private CollectionEventBus eventBus;
-    @Resource
-    private com.collection.engine.config.EngineProperties props;
+    @Resource private IdempotencyService idempotencyService;
+    @Resource private PreFlightChecker preFlightChecker;
+    @Resource private ExecutionGuard executionGuard;
+    @Resource private StepResolver stepResolver;
+    @Resource private ChannelGateway channelGateway;
+    @Resource private ContextAssembler contextAssembler;
+    @Resource private ContactPlanRepository planRepository;
+    @Resource private TimelineRepository timelineRepository;
+    @Resource private CollectionEventBus eventBus;
+    @Resource private SpiInvoker spiInvoker;
+    @Resource private com.collection.engine.config.EngineProperties props;
 
     public void executeStep(ContactPlan plan, ContactPlanStep step) {
         String idempotencyKey = buildIdempotencyKey(plan, step);
 
         // ── ① 幂等锁 ──
-        if (!idempotencyService.acquire(idempotencyKey, props.getStep().getIdempotencyTtlMinutes())) {
+        if (!idempotencyService.acquire(
+                idempotencyKey, props.getStep().getIdempotencyTtlMinutes())) {
             log.info("[execStep] duplicate event, key={} skipped", idempotencyKey);
             return;
         }
@@ -72,32 +65,43 @@ public class StepExecutionOrchestrator {
         planRepository.updateStepStatus(step.getId(), StepStatus.EXECUTING, null);
         ExecutionContext context = contextAssembler.assemble(plan, step);
 
-        // ── ③ 业务级守卫（合规） ──
+        // ── ③ 业务级守卫（合规，硬超时 20ms） ──
         GuardVerdict verdict;
         try {
-            verdict = executionGuard.evaluate(context);
+            verdict =
+                    spiInvoker.call(
+                            SpiType.EXECUTION_GUARD, () -> executionGuard.evaluate(context));
         } catch (Exception e) {
-            // fail-close：标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
+            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
             log.warn("[execStep] ExecutionGuard failed (fail-close → SKIPPED): {}", e.getMessage());
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
             return;
         }
         if (!verdict.isAllowed()) {
-            log.info("[execStep] blocked by guard: {} / {}", verdict.getBlockedRuleType(), verdict.getBlockedReason());
+            log.info(
+                    "[execStep] blocked by guard: {} / {}",
+                    verdict.getBlockedRuleType(),
+                    verdict.getBlockedReason());
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, verdict.getBlockedRuleType());
             return;
         }
 
-        // ── ④ 步骤解析（零 DB I/O） ──
+        // ── ④ 步骤解析（零 DB I/O，硬超时 50ms） ──
         StepCommand command;
         try {
-            command = stepResolver.resolve(context);
-            if (command == null) {
-                throw new IllegalStateException("StepResolver returned null");
-            }
+            command = spiInvoker.call(SpiType.STEP_RESOLVER, () -> stepResolver.resolve(context));
         } catch (Exception e) {
+            // 异常 / 超时 → FAILED → 推进（核心引擎规格 §4.1）
             log.warn("[execStep] StepResolver failed → FAILED: {}", e.getMessage());
             markFailed(plan, step, "RESOLVER_ERROR");
+            return;
+        }
+        // 返回 null = Resolver 主动跳过该步（如 EMAIL 非里程碑 DPD / 无邮箱）→ SKIPPED 推进，不算失败
+        if (command == null) {
+            log.info(
+                    "[execStep] StepResolver returned null → SKIPPED (no-op) step {}",
+                    step.getId());
+            markSkipped(plan, step, ContactResult.SKIPPED, "RESOLVER_SKIP");
             return;
         }
 
@@ -107,16 +111,25 @@ public class StepExecutionOrchestrator {
             result = channelGateway.dispatch(command);
         } catch (RuntimeException e) {
             log.warn("[execStep] ChannelGateway threw, treated as retryable: {}", e.getMessage());
-            result = StepResult.builder()
-                    .success(false).contactResult(ContactResult.FAILED)
-                    .errorCode("CHANNEL_EXCEPTION").retryable(true).build();
+            result =
+                    StepResult.builder()
+                            .success(false)
+                            .contactResult(ContactResult.FAILED)
+                            .errorCode("CHANNEL_EXCEPTION")
+                            .retryable(true)
+                            .build();
         }
 
         // ── ⑤½ 回写前取消检测 ──
         ContactPlan reloaded = planRepository.findById(plan.getId());
         if (reloaded == null || reloaded.isTerminal()) {
             log.info("[execStep] plan {} cancelled during dispatch, record only", plan.getId());
-            writeTimeline(plan, step, command.getChannelType(), result.getContactResult(), result.getProviderMsgId());
+            writeTimeline(
+                    plan,
+                    step,
+                    command.getChannelType(),
+                    result.getContactResult(),
+                    result.getProviderMsgId());
             return; // 记录已发出触达，但不推进状态机
         }
 
@@ -127,8 +140,14 @@ public class StepExecutionOrchestrator {
                 int newCount = step.getRetryCount() + 1;
                 long delaySec = computeBackoffSeconds(newCount);
                 planRepository.updateStepTriggerTime(
-                        step.getId(), LocalDateTime.now().plusSeconds(delaySec), StepStatus.PENDING);
-                log.info("[execStep] retry step {} in {}s (attempt {})", step.getId(), delaySec, newCount);
+                        step.getId(),
+                        LocalDateTime.now().plusSeconds(delaySec),
+                        StepStatus.PENDING);
+                log.info(
+                        "[execStep] retry step {} in {}s (attempt {})",
+                        step.getId(),
+                        delaySec,
+                        newCount);
                 return; // plan 保持 STEP_EXECUTING
             }
             markFailed(plan, step, result.getErrorCode());
@@ -136,26 +155,42 @@ public class StepExecutionOrchestrator {
         }
 
         // ── ⑦ 渠道分流 ──
-        writeTimeline(plan, step, command.getChannelType(), result.getContactResult(), result.getProviderMsgId());
+        writeTimeline(
+                plan,
+                step,
+                command.getChannelType(),
+                result.getContactResult(),
+                result.getProviderMsgId());
         if (command.getChannelType().isMessageChannel()) {
             if (step.getObservationMinutes() > 0) {
                 planRepository.updateStepTriggerTime(
-                        step.getId(), LocalDateTime.now().plusMinutes(step.getObservationMinutes()), StepStatus.EXECUTING);
+                        step.getId(),
+                        LocalDateTime.now().plusMinutes(step.getObservationMinutes()),
+                        StepStatus.EXECUTING);
                 planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_WAITING, null);
-                log.info("[execStep] step {} → STEP_WAITING ({}min)", step.getId(), step.getObservationMinutes());
+                log.info(
+                        "[execStep] step {} → STEP_WAITING ({}min)",
+                        step.getId(),
+                        step.getObservationMinutes());
             } else {
-                planRepository.updateStepStatus(step.getId(), StepStatus.COMPLETED, result.getContactResult());
+                planRepository.updateStepStatus(
+                        step.getId(), StepStatus.COMPLETED, result.getContactResult());
                 publishStepCompleted(plan, step);
             }
         } else {
             // 电话/人工类：保持 STEP_EXECUTING，注册回调超时哨兵，等异步回调
             int timeout = resolveTimeoutMinutes(command);
-            planRepository.updateStepTimeoutTime(step.getId(), LocalDateTime.now().plusMinutes(timeout));
-            log.info("[execStep] async step {} → STEP_EXECUTING, callback timeout {}min", step.getId(), timeout);
+            planRepository.updateStepTimeoutTime(
+                    step.getId(), LocalDateTime.now().plusMinutes(timeout));
+            log.info(
+                    "[execStep] async step {} → STEP_EXECUTING, callback timeout {}min",
+                    step.getId(),
+                    timeout);
         }
     }
 
-    private void markSkipped(ContactPlan plan, ContactPlanStep step, ContactResult result, String rule) {
+    private void markSkipped(
+            ContactPlan plan, ContactPlanStep step, ContactResult result, String rule) {
         planRepository.updateStepStatus(step.getId(), StepStatus.SKIPPED, result);
         writeTimeline(plan, step, step.getChannelType(), result, null);
         publishStepCompleted(plan, step);
@@ -168,15 +203,20 @@ public class StepExecutionOrchestrator {
     }
 
     private void publishStepCompleted(ContactPlan plan, ContactPlanStep step) {
-        eventBus.publish(CollectionEvent.of(EventType.STEP_COMPLETED)
-                .with(CollectionEvent.CASE_ID, plan.getCaseId())
-                .with(CollectionEvent.USER_ID, plan.getUserId())
-                .with(CollectionEvent.PLAN_ID, plan.getId())
-                .with(CollectionEvent.STEP_ID, step.getId()));
+        eventBus.publish(
+                CollectionEvent.of(EventType.STEP_COMPLETED)
+                        .with(CollectionEvent.CASE_ID, plan.getCaseId())
+                        .with(CollectionEvent.USER_ID, plan.getUserId())
+                        .with(CollectionEvent.PLAN_ID, plan.getId())
+                        .with(CollectionEvent.STEP_ID, step.getId()));
     }
 
-    private void writeTimeline(ContactPlan plan, ContactPlanStep step, ChannelType channel,
-                               ContactResult result, String providerMsgId) {
+    private void writeTimeline(
+            ContactPlan plan,
+            ContactPlanStep step,
+            ChannelType channel,
+            ContactResult result,
+            String providerMsgId) {
         ContactRecord r = new ContactRecord();
         r.setCaseId(plan.getCaseId());
         r.setUserId(plan.getUserId());
@@ -193,7 +233,8 @@ public class StepExecutionOrchestrator {
 
     private long computeBackoffSeconds(int attempt) {
         com.collection.engine.config.EngineProperties.Step s = props.getStep();
-        double delay = s.getRetryBaseIntervalSeconds() * Math.pow(s.getRetryBackoffFactor(), attempt);
+        double delay =
+                s.getRetryBaseIntervalSeconds() * Math.pow(s.getRetryBackoffFactor(), attempt);
         return (long) Math.min(delay, s.getRetryMaxIntervalSeconds());
     }
 

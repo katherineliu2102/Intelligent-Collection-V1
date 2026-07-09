@@ -1,0 +1,86 @@
+{
+  "caseContext": {
+    "caseId": 1002,
+    "userId": 9001,
+    "dpd": 5,
+    "stage": "S2",
+    "product": "BNPL",
+    "loanAmount": 5000.00,
+    "overdueAmount": 1200.00,
+    "penaltyAmount": 80.00,
+    "totalOutstanding": 1280.00,
+    "loanTerms": 3,
+    "disbursementDate": "2026-04-20",
+    "dueDate": "2026-06-01",
+    "caseStatus": "IN_COLLECTION",
+    "assignedAgentId": null,
+    "firstLoan": false,
+    "payCount": 2,
+    "activePlanId": null,
+    "repaymentUrl": "https://app.mocasa.test/repay/1002",
+    "strategyTone": "STANDARD",
+    "complaintFrozen": false,
+    "collectionStatus": "ACTIVE"
+  },
+  "userProfile": {
+    "userId": 9001,
+    "basic": {
+      "name": "Juan Dela Cruz",
+      "gender": "M",
+      "age": 32,
+      "education": null,
+      "maritalStatus": null,
+      "idNumber": null,
+      "address": "Quezon City, Metro Manila",
+      "primaryPhone": "+639170000001",
+      "alternatePhones": ["+639180000002"],
+      "email": "juan.delacruz@example.com",
+      "language": "en"
+    },
+    "work": {
+      "occupation": null,
+      "companyName": null,
+      "workPhone": null,
+      "monthlyIncomeRange": null
+    },
+    "contacts": [
+      { "name": "Maria Dela Cruz", "phone": "+639190000003", "relationship": "SPOUSE", "source": "APP_FORM" }
+    ],
+    "behavior": {
+      "bestContactHour": 19,
+      "preferredChannel": "SMS",
+      "channelReachability": {
+        "SMS": true,
+        "PUSH": true,
+        "AI_CALL": false
+      },
+      "lastEffectiveContactTime": "2026-06-05T19:12:00",
+      "lastEffectiveChannel": "SMS",
+      "appLastActiveTime": "2026-06-07T21:03:00"
+    },
+    "device": {
+      "deviceModel": "Samsung A14",
+      "osVersion": "Android 14",
+      "phoneValidity": "VALID",
+      "viberRegistered": true,
+      "whatsappRegistered": false,
+      "jpushToken": "190e35f7e01a1b2c3d4e5f6"
+    },
+    "profileCompleteness": 0.65
+  },
+  "contactHistory": {
+    "totalTouchCount": 4,
+    "channelTouchCounts": { "SMS": 3, "PUSH": 1 },
+    "todayTouchCount": 1,
+    "todayPhoneAnswered": false,
+    "lastTouchTime": "2026-06-07T19:30:00",
+    "lastTouchChannel": "SMS",
+    "lastTouchResult": "DELIVERED",
+    "currentPlanAiBotFailCount": 0,
+    "ptpCount": null,
+    "ptpFulfilledCount": null,
+    "stageEntryDate": "2026-06-04"
+  },
+  "snapshotTime": "2026-06-08T09:00:00",
+  "snapshotVersion": "v1"
+}
