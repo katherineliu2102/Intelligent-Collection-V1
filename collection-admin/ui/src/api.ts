@@ -126,6 +126,9 @@ export const api = {
   listPlanTemplates() {
     return request("/config/plan-templates");
   },
+  dashboardOutreachRealtime(days = 7) {
+    return request(`/dashboard/outreach/realtime?days=${days}`);
+  },
   deactivatePlanTemplate(templateCode: string) {
     return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {
       method: "DELETE"

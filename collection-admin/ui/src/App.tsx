@@ -16,7 +16,7 @@ import { CasesPage } from "./pages/CasesPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { LoginPage } from "./pages/LoginPage";
 import { OpsPage } from "./pages/OpsPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { StrategyPage } from "./pages/StrategyPage";
 import { SystemPage } from "./pages/SystemPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
@@ -93,13 +93,10 @@ export default function App() {
         >
           <Typography.Text strong>Collection Admin UI (React + Ant Design)</Typography.Text>
         </Header>
-        <Content style={{ padding: 24 }}>
+        <Content style={{ padding: 24, overflow: "auto", minWidth: 0 }}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route
-              path="/dashboard"
-              element={<PlaceholderPage title="Dashboard" apis={["GET /dashboard/outreach/realtime"]} />}
-            />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/strategy" element={<StrategyPage />} />
             <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/cases" element={<CasesPage />} />
