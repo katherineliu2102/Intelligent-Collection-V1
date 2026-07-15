@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code collection-cases-ai-v1-sub}（topic {@code
+<<<<<<< HEAD
  * collection-cases}），按 {@code dataType} 路由 {@code case_push} / {@code repayment_push_and_load}， 经
  * {@link CasePayloadMapper} 映射后调 {@link IngestionService} publish 领域事件。
  *
@@ -32,6 +33,17 @@ import org.springframework.stereotype.Component;
  * <p><b>ACK 语义（§2.3）</b>：处理成功（含按幂等 / 白名单 / 乱序<i>跳过</i>）→ ack；不可修复消息 （{@link
  * PoisonMessageException}）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如下游 publish 失败）→ nack 重投（支撑 L4b-7）。幂等键仅在
  * publish 成功后标记（{@link IngestionDedupStore}）。
+=======
+ * collection-cases}），按 {@code dataType} 路由 {@code case_push} / {@code repayment_push_and_load}，
+ * 经 {@link CasePayloadMapper} 映射后调 {@link IngestionService} publish 领域事件。
+ *
+ * <p><b>门控</b>：{@code @ConditionalOnProperty(collection.ingestion.enabled=true)} —— 本地 / CI
+ * （默认 false）不实例化本 bean，启动完全不依赖 GCP 凭证 / 网络。
+ *
+ * <p><b>ACK 语义（§2.3）</b>：处理成功（含按幂等 / 白名单 / 乱序<i>跳过</i>）→ ack；不可修复消息
+ * （{@link PoisonMessageException}）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如下游
+ * publish 失败）→ nack 重投（支撑 L4b-7）。幂等键仅在 publish 成功后标记（{@link IngestionDedupStore}）。
+>>>>>>> origin/ca_branch
  *
  * <p>未启用 spring-cloud-gcp 自动装配：直接用 {@link Subscriber} 自建，凭证经 {@code
  * GOOGLE_APPLICATION_CREDENTIALS}（ADC）加载。
@@ -58,8 +70,12 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         if (running) {
             return;
         }
+<<<<<<< HEAD
         if (StringUtils.isBlank(props.getProjectId())
                 || StringUtils.isBlank(props.getSubscription())) {
+=======
+        if (StringUtils.isBlank(props.getProjectId()) || StringUtils.isBlank(props.getSubscription())) {
+>>>>>>> origin/ca_branch
             throw new IllegalStateException(
                     "collection.ingestion.enabled=true 但 projectId/subscription 未配置"
                             + "（映射 GCP_PUBSUB_PROJECT / GCP_PUBSUB_SUBSCRIPTION）");
@@ -76,8 +92,12 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
                         .setFlowControlSettings(flowControl)
                         .setExecutorProvider(
                                 InstantiatingExecutorProvider.newBuilder()
+<<<<<<< HEAD
                                         .setExecutorThreadCount(
                                                 Math.max(1, props.getMaxConcurrency()))
+=======
+                                        .setExecutorThreadCount(Math.max(1, props.getMaxConcurrency()))
+>>>>>>> origin/ca_branch
                                         .build())
                         .build();
         subscriber.startAsync().awaitRunning();
@@ -119,10 +139,14 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
             route(dataType, json, bizMsgId, publishMillis);
             reply.ack();
         } catch (PoisonMessageException e) {
+<<<<<<< HEAD
             log.warn(
                     "[Ingestion] poison message ack+skip msgId={}: {}",
                     pubsubMsgId,
                     e.getMessage());
+=======
+            log.warn("[Ingestion] poison message ack+skip msgId={}: {}", pubsubMsgId, e.getMessage());
+>>>>>>> origin/ca_branch
             reply.ack();
         } catch (Exception e) {
             log.error("[Ingestion] 处理失败 nack 重投 msgId={}: {}", pubsubMsgId, e.toString());
@@ -173,7 +197,11 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         Long userId = mapper.repaymentUserId(json);
         ingestionService.repayment(userId);
         if (mapper.fullySettled(json)) {
+<<<<<<< HEAD
             Long loanId = mapper.loanId(json);
+=======
+            Long loanId = mapper.repaymentLoanId(json);
+>>>>>>> origin/ca_branch
             if (loanId != null) {
                 dedup.clearIngested(loanId);
                 log.info("[Ingestion] 全额结清 DEL ingested loanId={}", loanId);

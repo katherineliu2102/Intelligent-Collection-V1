@@ -1,0 +1,25 @@
+# =====================================================================
+# L4b 联调：追加到 Nacos Data ID `intelligent-collection-local.yml`
+# 用途：仅覆盖 application-local.yml（jar 内）未提供 / 注释掉的三项 L4b 参数。
+#   1) collection.case-service=real           —— 金融字段读旧库（混合方案），yml 无此键
+#   2) collection.ingestion.loan-id-whitelist —— 联调白名单，yml 中被注释
+#   3) collection.ingestion.case-push.field-map —— case_push key 映射，yml 中被注释
+# enabled/project-id/subscription 亦一并显式写死，避免依赖 env（credentials 路径仍走 env）。
+# 说明：Spring Cloud Nacos 按 key 路径与 jar 内 application-local.yml 合并，本块不覆盖
+#       plan-templates / scripts / compliance 等其它 collection.* 子键。
+# 无密钥；密钥（channel.notification.app-key / channel.sendgrid.api-key）另由 secrets 脚本下发。
+# =====================================================================
+collection:
+  case-service: real
+  ingestion:
+    enabled: true
+    project-id: fintech-all
+    # L4b 联调指向测试订阅（见 L4b 交接清单 O7）；上线改回 collection-cases-ai-v1-sub
+    subscription: collection-cases-test1-sub
+    loan-id-whitelist: [99000000, 99000001, 99000002, 99000003, 99000004, 99000005]
+    case-push:
+      field-map:
+        caseId: loanID
+        userId: userID
+        name: realName
+        product: appName

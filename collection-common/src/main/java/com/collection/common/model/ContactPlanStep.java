@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 触达计划步骤。对应领域模型 §2.2 / 表 t_contact_plan_step。
+ * 触达计划步骤。对应领域模型 §3.2 / 表 t_contact_plan_step。
  */
 @Data
 public class ContactPlanStep {

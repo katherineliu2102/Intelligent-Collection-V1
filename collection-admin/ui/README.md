@@ -8,7 +8,16 @@
 - `src/api.ts`：后端 API 封装（`/auth`、`/cases`、`/ops`、`/compliance`、`/admin`）
 - `src/pages/`：页面组件（按业务模块分类）
 
-## 本地运行
+## 本地运行（推荐一键脚本）
+
+```powershell
+# 项目根目录 — 自动起后端+前端并打开浏览器
+powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
+```
+
+详细说明与排错见：**[`docs/MOCASA催收系统升级_Phase1_管理后台操作手册.md`](../../docs/MOCASA催收系统升级_Phase1_管理后台操作手册.md)** §2
+
+## 本地运行（手动两步）
 
 **不要直接双击或用浏览器打开 `index.html`**。这是 Vite + React 工程，`<script type="module" src="/src/main.tsx">` 必须通过开发服务器加载，直接打开会空白或报错。
 

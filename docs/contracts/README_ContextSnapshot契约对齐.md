@@ -4,7 +4,11 @@
 > **日期**: 2026-06-29  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-common`  
+<<<<<<< HEAD
 > **关联文档**: [领域模型 §9.2](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)、[ContextSnapshot.sample.json](./ContextSnapshot.sample.json)、[数据接入规格 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)
+=======
+> **关联文档**: [领域模型 §6.2](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)、[ContextSnapshot.sample.json](./ContextSnapshot.sample.json)、[数据接入规格 §3.1](../MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)
+>>>>>>> origin/ca_branch
 
 ---
 

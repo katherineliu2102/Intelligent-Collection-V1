@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 
 /**
  * 统一触达记录。写入 t_contact_timeline 的标准模型，所有渠道/来源统一使用。
- * 对应领域模型 §5.1。
+ * 对应领域模型 §3.4。
  */
 @Data
 public class ContactRecord {

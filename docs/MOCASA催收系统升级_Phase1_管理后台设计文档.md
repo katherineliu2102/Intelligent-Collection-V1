@@ -1,5 +1,6 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
+<<<<<<< HEAD
 > **版本**: v1.2  
 > **日期**: 2026-07-07  
 > **状态**: ✅ 可开发（Phase 1 范围）；配置写接口 Phase 1.5  
@@ -12,6 +13,19 @@
 > - [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)（交叉对齐见 [附录 C.7](#附录-c7与数据接入规格交叉对齐)）  
 > - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
 > **权威 DDL**: 引擎表 [`../db/schema.sql`](../db/schema.sql)；后台扩展 [`../db/schema-admin.sql`](../db/schema-admin.sql)
+=======
+> **版本**: v1.1  
+> **日期**: 2026-06-30  
+> **状态**: ✅ 设计草案（基于产品讨论与 Intelligent-Collection-V1 方案对齐）  
+> **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
+> **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
+> **关联文档**:  
+> - [产品需求文档 (PRD)](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
+> - [架构设计文档](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
+> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
+> - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
+> **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）
+>>>>>>> origin/ca_branch
 
 ---
 
@@ -39,7 +53,10 @@
 - [12. 开放问题](#12-开放问题)
 - [附录 A：与 PRD 功能映射](#附录-a与-prd-功能映射)
 - [附录 B：现有代码与页面资产](#附录-b现有代码与页面资产)
+<<<<<<< HEAD
 - [附录 C：实现规格（API 契约与 DDL）](#附录-c实现规格api-契约与-ddl)
+=======
+>>>>>>> origin/ca_branch
 
 ---
 
@@ -439,6 +456,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 平均延迟 | 高于阈值 |
 | 错误码分布 | 某错误码突增 |
 
+<<<<<<< HEAD
 对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；**Phase 1.5 确认采用后台嵌入 Grafana 面板**（优先用户体验一致性）。
 
 嵌入约束（避免后续实现偏离）：
@@ -446,6 +464,9 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 - 后台页面内嵌 dashboard panel（iframe）展示关键图块；保留「在 Grafana 打开」链接用于深度排障。
 - 鉴权先采用简化单租户方案（内部网络 + 统一只读视角），不引入复杂多租户 SSO 编排。
 - 面板访问失败时降级为「监控暂不可用 + 跳转 Grafana」；不阻断后台主流程。
+=======
+对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；后台嵌入 Grafana 面板或自建简化视图 ⏳ 待确认嵌入 vs 跳转。
+>>>>>>> origin/ca_branch
 
 #### 5.4.3 全局切流（Emergency）
 
@@ -508,7 +529,11 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 渠道 | 场景 |
 |------|------|
 | 后台站内通知 | 新异常簇出现或某簇升级（增速翻倍） |
+<<<<<<< HEAD
 | 外部告警 | **钉钉机器人（Phase 1.5）**；按簇而非逐条推送，包含 clusterKey、影响条数、最近 5 分钟增量、跳转链接 |
+=======
+| 外部告警 ⏳ | 钉钉 / 邮件；按簇而非逐条推送，对接方式待确认 |
+>>>>>>> origin/ca_branch
 
 ---
 
@@ -524,8 +549,11 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 记录：操作人、时间、原因（操作日志）。不建设 Consent 台账、DNC 管理、Dispute 工单流 ✅。
 
+<<<<<<< HEAD
 **并行期跨系统冻结**：`LEGACY` / `MIGRATING` 阶段须与旧催收系统**同步**冻结同一 `loan_id`；Runbook 见 [数据接入规格 §6.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#63-投诉跨系统冻结-runbook)。切量至 `NEW` 后仅本系统 API 即可。
 
+=======
+>>>>>>> origin/ca_branch
 ---
 
 ### 5.7 策略评估（holdout 基准对比）
@@ -545,12 +573,19 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 #### 5.7.2 holdout 基准对比（Phase 1.5 主口径）
 
+<<<<<<< HEAD
 **做法**：分案时按 `userId` hash 留出**可配置比例** `holdout_ratio`（默认 10%，可调范围建议 1%–20%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
+=======
+**做法**：分案时按 `userId` hash 留出固定小比例（如 5–10%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
+>>>>>>> origin/ca_branch
 
 | 要素 | 说明 |
 |------|------|
 | 分流 | 分案阶段按 `userId` hash 稳定分桶，holdout 固定不变 |
+<<<<<<< HEAD
 | 比例参数 | `holdout_ratio` 配置化；变更需记录 `change_log` 与生效 `config_version` |
+=======
+>>>>>>> origin/ca_branch
 | 基准组 | 始终走基准策略，作为「同期资产质量」的参照系 |
 | 对比口径 | 实验组指标 − 同期 holdout 指标 = 真实 Lift（剔除质量波动） |
 | cohort 对齐 | 进一步按入催批次 / 起始 DPD 日期分组对比，而非日历日 |
@@ -596,6 +631,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | **Phase 1.5 目标** | DB 配置表为主，Nacos 仅渠道密钥 | 后台完整读写 |
 | **Phase 2** | DB + 多租户 scoped 配置 | 同上 |
 
+<<<<<<< HEAD
 ### 6.2 配置表与后台运行表（与领域模型对齐）
 
 权威 DDL 见 [`../db/schema-admin.sql`](../db/schema-admin.sql)；JSON 字段契约见 [附录 C.1](#c1-数据资产与-ddl)。
@@ -614,6 +650,17 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 引擎运行（ALTER） | `t_contact_plan_step` / `t_contact_timeline` | 增 `config_version`、快照列 | EXISTING |
 
 Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切换在 Phase 1.5 完成（与领域模型 §8 不矛盾）。
+=======
+### 6.2 待建配置表（与领域模型对齐）
+
+| 表 | 用途 | 领域模型状态 |
+|----|------|-------------|
+| `t_contact_plan_template` | 计划模板 JSON | NEW ⚠️ 待 DDL |
+| `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW ⚠️ 待 DDL |
+| `t_compliance_rule` | 合规阈值 | NEW ⚠️ 待 DDL |
+| `t_channel_config` | 渠道路由与开关 | NEW ⚠️ 待 DDL |
+| `t_config_change_log` | 配置变更日志 | 本设计新增建议 |
+>>>>>>> origin/ca_branch
 
 **所有配置表的公共列约定**：
 
@@ -650,7 +697,11 @@ Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切
 | config_key | 如 scriptSlot、template_id |
 | from_version / to_version | 变更前后配置版本号 |
 | diff_summary | 变更摘要（JSON diff 或文本） |
+<<<<<<< HEAD
 | rollback_ref | 回滚来源版本引用（**Phase 1.5 必做**） |
+=======
+| rollback_ref | 可一键回滚至指定版本 ⏳ P1 |
+>>>>>>> origin/ca_branch
 
 **乐观锁（防多人脏写）**✅ P0：
 
@@ -658,6 +709,7 @@ Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切
 - 版本不匹配 → 拒绝写入，提示「该配置已被他人修改，请刷新后重试」
 - 与节点数无关，单实例多人编辑也必须有
 
+<<<<<<< HEAD
 #### 6.4.1 配置回滚（Phase 1.5 必做，MVP）
 
 目标：在配置误发布后，支持分钟级恢复到历史稳定版本，避免投诉/触达异常持续放大。
@@ -670,6 +722,8 @@ MVP 规则（防止实现歧义）：
 - 回滚操作必须写 `t_config_change_log`，记录 `rollback_ref`、operator、reason、from_version、to_version。
 - 回滚后发布 `CONFIG_CHANGED` 事件，触发策略缓存刷新路径（同普通发布）。
 
+=======
+>>>>>>> origin/ca_branch
 ### 6.5 历史快照与可复盘（核心数据约束）
 
 **问题**：运行表（`t_contact_plan_step` / `t_contact_timeline`）若只存 `template_id`，一旦话术/模板被修改，旧案溯源时拉取到的全是**新内容**——无法还原「当时实际发给用户的是什么」，客诉举证、质检复盘、合规追溯全部失真。
@@ -683,7 +737,11 @@ MVP 规则（防止实现歧义）：
 | `t_contact_timeline` | `config_version` + `rendered_ref` | 实际发送时的配置版本 + 渲染内容引用（变量已填充的话术摘要） |
 
 - **快照粒度**✅：存 `config_version` + 关键参数 JSON 快照（已确认口径）——平衡存储成本与可复盘性；需要完整正文时按 `config_version` 回查配置表。
+<<<<<<< HEAD
 - **跨文档影响** ⚠️：运行表 ALTER 已在 `schema-admin.sql` 定义；领域模型 §7 须同步引用。
+=======
+- **跨文档影响** ⚠️：此为运行表 schema 变更，需在 [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §7 DDL 配合增列。本设计提出需求，DDL 落地以领域模型文档为准。
+>>>>>>> origin/ca_branch
 
 ### 6.6 节点配置一致性（多实例演进项）
 
@@ -837,6 +895,7 @@ gantt
 | 回收效果看板 | 分 Stage 回收率、漏斗（冷层） |
 | SQL 规则治理 | F12 |
 
+<<<<<<< HEAD
 #### 10.2.1 Phase 1.5 实施验收清单
 
 | 模块 | 必须交付 | 验收标准 |
@@ -854,6 +913,8 @@ gantt
 
 首个开发切片（当前优先级）：配置治理基础 + 回滚 MVP 的后端 API，先覆盖 `evaluation-settings.holdout_ratio`，再扩展到计划模板/话术/规则表。
 
+=======
+>>>>>>> origin/ca_branch
 ### 10.3 Phase 2 扩展
 
 | 交付项 | 说明 |
@@ -874,6 +935,7 @@ gantt
 | 审批发布流 | **不做** | 内部流程简单、合规要求低；静态校验 + Dry-run 替代 |
 | 重型合规子系统 | **不做** | 引擎 Guard + 基础冻结操作足够；非业务重点 |
 | 策略效果评估 | **holdout 基准 + cohort 对齐（Phase 1.5）** | 避免现金贷 vintage 波动造成 Fake Lift；前后对比仅作辅助 |
+<<<<<<< HEAD
 | holdout 比例 | **参数化配置（默认 10%）** | 方便按业务阶段动态调优，不改代码 |
 | risk_tier 风险分层 | **字段预留，Phase 1 不填充** | 金额无区分度；行为粗分不适合对外；Phase 2 接 ML 评分卡 |
 | 配置护栏 | **静态校验 P0 + Dry-run P1** | 无审批流但需防荒谬配置上线 |
@@ -885,6 +947,15 @@ gantt
 | 节点一致性视图 | **多实例演进项** | Phase 1 单实例无脑裂；>1 节点时启用 |
 | 异常队列 | **Phase 1 必做；Phase 1.5 折叠聚合** | 防网关抖动雪崩；批量操作 |
 | 异常外部告警 | **钉钉机器人（Phase 1.5）** | 与现有协作链路一致，闭环更快 |
+=======
+| risk_tier 风险分层 | **字段预留，Phase 1 不填充** | 金额无区分度；行为粗分不适合对外；Phase 2 接 ML 评分卡 |
+| 配置护栏 | **静态校验 P0 + Dry-run P1** | 无审批流但需防荒谬配置上线 |
+| 历史快照 | **config_version + 关键参数 JSON** | 改配置后旧案可复盘当时真实内容 |
+| 看板数据源 | **冷热分离** | 热层 MySQL 分钟级支撑 15 分钟闭环；冷层 BigQuery 做趋势 |
+| 配置并发 | **乐观锁 P0** | 防多人编辑脏写；与单/多实例无关 |
+| 节点一致性视图 | **多实例演进项** | Phase 1 单实例无脑裂；>1 节点时启用 |
+| 异常队列 | **Phase 1 必做；Phase 1.5 折叠聚合** | 防网关抖动雪崩；批量操作 |
+>>>>>>> origin/ca_branch
 | 计费模块 | **Phase 2，预留数据模型** | 商业化时需要，当前无计费需求 |
 | AI 质检 / 多地区 | **Phase 2，提前规划模块** | 依赖 ASR 与新市场拓展 |
 | 配置存储 | **Phase 1.5 迁 DB** | 摆脱 Nacos/代码发布依赖，实现场景 B |
@@ -899,11 +970,19 @@ gantt
 |---|------|------|------|
 | Q1 | 看板冷热分离细节（热层物化视图刷新周期） | §5.1.0 架构已定为 MySQL 热 + BQ 冷；刷新策略待实现 | ⏳ 默认热层 1–5 分钟刷新 |
 | Q2 | 渠道 ROI 成本单价由谁维护、如何录入？ | §5.1.3 渠道 ROI | ❓ 待运营确认 |
+<<<<<<< HEAD
 | Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ✅ 已定：钉钉机器人（Phase 1.5） |
 | Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ✅ 已定：后台嵌入（保留跳转链接） |
 | Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ✅ 已定：Phase 1.5 必做（MVP 全局回滚） |
 | Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ⏳ 默认 React + Ant Design Pro |
 | Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ✅ 已定：比例参数化（默认 10%，可配置） |
+=======
+| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ❓ 待运维确认 |
+| Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ⏳ 默认跳转，嵌入成本高 |
+| Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ⏳ 默认 P1，手动回滚可先接受 |
+| Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ⏳ 默认 React + Ant Design Pro |
+| Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ❓ 待策略/业务确认 |
+>>>>>>> origin/ca_branch
 
 ---
 
@@ -936,6 +1015,7 @@ gantt
 
 ---
 
+<<<<<<< HEAD
 ## 附录 C：实现规格（API 契约与 DDL）
 
 > 原独立文档「管理后台 API 与 DDL 规格」已并入本附录；字段级 DDL 以 [`../db/schema-admin.sql`](../db/schema-admin.sql) 为权威，本节提供可读副本 + JSON 契约 + REST API 契约。
@@ -1244,5 +1324,8 @@ Phase 1 只读；Phase 1.5 写接口见 C.4。
 > **修订历史**  
 > - v1.3 · 2026-07-07 · 明确关键决策：Grafana 后台嵌入、回滚 Phase 1.5 必做（MVP）、holdout 比例参数化、异常外部告警采用钉钉  
 > - v1.2 · 2026-07-07 · 合并原「API 与 DDL 规格」为附录 C；更新 §6.2 表状态；增加与数据接入规格交叉对齐  
+=======
+> **修订历史**  
+>>>>>>> origin/ca_branch
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论

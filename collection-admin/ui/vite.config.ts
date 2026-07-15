@@ -12,7 +12,10 @@ export default defineConfig({
       "/ops": "http://localhost:8888",
       "/admin": "http://localhost:8888",
       "/config": "http://localhost:8888",
-      "/dashboard": "http://localhost:8888",
+      // 只代理 API 子路径；勿代理 /dashboard 页面路由（否则会返回 JSON Login required）
+      "/dashboard/outreach": "http://localhost:8888",
+      "/dashboard/recovery": "http://localhost:8888",
+      "/dashboard/evaluation": "http://localhost:8888",
       "/catalog": "http://localhost:8888",
       "/plans": "http://localhost:8888",
       "/mock": "http://localhost:8888"

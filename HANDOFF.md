@@ -189,7 +189,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
   - 渠道内部熔断/fallback 对引擎完全透明；抛异常引擎一律视为 `retryable`
   - 供应商错误码统一映射为 `StepResult.errorCode`
 
-#### 需新建的渠道编排表（领域模型 §8，DDL 待补充到 `db/schema.sql`）
+#### 需新建的渠道编排表（领域模型附录 B，DDL 待补充到 `db/schema.sql`）
 
 `t_contact_plan_template` / `t_strategy_rule` / `t_compliance_rule` / `t_compliance_violation` / `t_channel_config` / `t_call_task` / `t_call_task_number` / `t_agent_status`
 
@@ -197,7 +197,11 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 B：数据接入 → `collection-ingestion`
 
+<<<<<<< HEAD
 **负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §9](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
+=======
+**负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §6](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
+>>>>>>> origin/ca_branch
 
 #### B1. `IngestionService` → 真实 PubSub 消费
 

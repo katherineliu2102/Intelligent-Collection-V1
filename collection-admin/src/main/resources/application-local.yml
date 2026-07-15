@@ -33,8 +33,14 @@ collection:
     ack-deadline-seconds: 60
     max-concurrency: 4
     # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
+<<<<<<< HEAD
     # case-push:                                  # 上游 JSON key 与契约不一致时配别名（C-I-01 待信贷联调）
     #   field-map: { caseId: loan_id, dpd: overdue_days }
+=======
+    # case-push:                                  # 真实 case_push key（2026-07-06 信贷确认）；生产在 Nacos 维护
+    #   field-map: { caseId: loanID, userId: userID, name: realName, product: appName }
+    #   # phone/email/jpushToken 同名无需映射；dpd/stage/金额 不在 case_push → 读旧库补（case-service=real）
+>>>>>>> origin/ca_branch
 channel:
   callback:
     base-url: http://localhost:8888/webhook
@@ -89,7 +95,10 @@ channel:
     quiet-hours-end: "08:00"
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
+<<<<<<< HEAD
     sms-default-repayment-link: https://mocasa.com/s/4cTu
+=======
+>>>>>>> origin/ca_branch
     # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。
     sms:
       S0_REMINDER: "MOCASA: {name}, your PHP {amount} payment is due soon. Please pay on time to keep your account current. Pay: {repaymentUrl}"

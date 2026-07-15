@@ -71,7 +71,11 @@ App(JPush SDK) → 信贷后端 → case_push.jpushToken → ingestion → Conte
 | 空 / null | 无 token | **PushAdapter 同槽 fallback SMS**（仍计一次 Push 槽位）；不是 Push 成功 |
 | 多设备 | 以最新登录设备为准，单 token | 见 §4.2；已与 App / 通知中心确认 |
 
+<<<<<<< HEAD
 > 领域模型 §3.2 DeviceInfo、[数据接入 C-I-10](../MOCASA催收系统升级_Phase1_数据接入规格.md#c-i-入案字段与-pubsub-映射) 与本文一致。联调账号见功能测试指南 userId **90002**（有 token）、**90003**（无 token → fallback）。
+=======
+> 领域模型 §4.2 UserProfile.DeviceInfo、[数据接入 C-I-10](../MOCASA催收系统升级_Phase1_数据接入规格.md#c-i-入案字段与-pubsub-映射) 与本文一致。联调账号见功能测试指南 userId **90002**（有 token）、**90003**（无 token → fallback）。
+>>>>>>> origin/ca_branch
 
 ---
 

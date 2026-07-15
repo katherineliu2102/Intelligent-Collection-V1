@@ -1,7 +1,7 @@
 package com.collection.common.enums;
 
 /**
- * 推进决策。AdvancementPolicy.decide() 的输出。对应领域模型 §4.5、核心引擎规格 §2.3.2。
+ * 推进决策。AdvancementPolicy.decide() 的输出。对应领域模型 §5.6、核心引擎规格 §2.3.2。
  */
 public enum AdvancementDecision {
     /** 推进到下一步：注册下一步 Job 或立即执行。 */

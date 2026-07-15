@@ -16,9 +16,24 @@ logs/
 notification配置
 nacos-publish.local.yml
 
+<<<<<<< HEAD
+=======
+# GCP 服务账号私钥（运维下发，绝不入仓）
+credentials.json
+*credentials*.json
+*-sa.json
+gcp-*.json
+
+# L4b 本地环境脚本（真值不入仓；保留 .example 模板）
+scripts/test/l4b-env.local.sh
+
+>>>>>>> origin/ca_branch
 # deploy: 本地密钥与填充后的配置（仅保留 .example / .gitkeep）
 deploy/secrets/*
 !deploy/secrets/.gitkeep
 deploy/nacos/nacos-publish.local.yml
+<<<<<<< HEAD
 node_modules/
 node_modules/
+=======
+>>>>>>> origin/ca_branch

@@ -21,8 +21,13 @@ import org.springframework.stereotype.Component;
 /**
  * 内存事件总线（Phase 1 链路验证默认实现）。对应 {@link CollectionEventBus} 抽象。
  *
+<<<<<<< HEAD
  * <p>语义对齐生产 Redis Stream：发布后由 Consumer 线程池异步消费、与发布线程隔离。 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档
  * §1.7.8）。
+=======
+ * <p>语义对齐生产 Redis Stream：发布后由 Consumer 线程池异步消费、与发布线程隔离。
+ * 替换为 RedisStreamEventBus 时业务代码零改动（架构设计文档 §1.7.8）。
+>>>>>>> origin/ca_branch
  *
  * <p>激活条件：collection.eventbus=memory（缺省默认）。
  */

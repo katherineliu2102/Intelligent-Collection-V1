@@ -89,5 +89,10 @@ final class SmsCaseRegistry {
         }
     }
 
+<<<<<<< HEAD
     private SmsCaseRegistry() {}
+=======
+    private SmsCaseRegistry() {
+    }
+>>>>>>> origin/ca_branch
 }

@@ -7,7 +7,10 @@ import com.collection.common.model.ContactHistory;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
+<<<<<<< HEAD
 import com.collection.service.mapper.AdminCaseFreezeMapper;
+=======
+>>>>>>> origin/ca_branch
 import com.collection.service.mapper.CollectionCaseMapper;
 import com.collection.service.mapper.CollectionCaseRow;
 import java.math.BigDecimal;
@@ -27,10 +30,17 @@ import org.springframework.stereotype.Service;
  * <p>仅在配置 {@code collection.case-service=real} 时生效（{@code @Primary} 顶掉 {@link MockCaseService}），
  * 默认关闭，保证纯 Mock 单测 / CI 不受影响。用于 Phase 1 真实数据链路测试（SMS / EMAIL）。
  *
+<<<<<<< HEAD
  * <p><b>决策 B（2026-06-29）降级</b>：快照主链路已改为 {@code CASE_INGESTED} 事件 payload 自带 （引擎 {@code
  * PlanLifecycleManager} 据 payload 组装，运行时不读旧库 {@code t_collection}）。本类 {@link #getContextSnapshot} /
  * {@link #getCaseInfo} 仅作<b>可选对账 / 兜底</b>（payload 缺失时引擎才降级调用）， <b>不再是主快照来源</b>。{@link #isRepaid} 仍为
  * {@code PreFlightChecker} 的实时还款守卫，属可接受的运行时只读耦合。
+=======
+ * <p><b>决策 B（2026-06-29）降级</b>：快照主链路已改为 {@code CASE_INGESTED} 事件 payload 自带
+ * （引擎 {@code PlanLifecycleManager} 据 payload 组装，运行时不读旧库 {@code t_collection}）。本类
+ * {@link #getContextSnapshot} / {@link #getCaseInfo} 仅作<b>可选对账 / 兜底</b>（payload 缺失时引擎才降级调用），
+ * <b>不再是主快照来源</b>。{@link #isRepaid} 仍为 {@code PreFlightChecker} 的实时还款守卫，属可接受的运行时只读耦合。
+>>>>>>> origin/ca_branch
  *
  * <p>映射约定：
  *
@@ -53,7 +63,10 @@ public class RealCaseService implements CaseService {
     private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
     @Resource private CollectionCaseMapper caseMapper;
+<<<<<<< HEAD
     @Resource private AdminCaseFreezeMapper freezeMapper;
+=======
+>>>>>>> origin/ca_branch
 
     /** 还款深链模板，{caseId} 占位。 */
     @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
@@ -73,7 +86,11 @@ public class RealCaseService implements CaseService {
         info.setTotalOutstanding(row.getTotalNotPaid());
         info.setDueDate(row.getRepaymentDate());
         info.setRepaid(isRepaidRow(row));
+<<<<<<< HEAD
         info.setFrozen(isFrozen(caseId));
+=======
+        info.setFrozen(false);
+>>>>>>> origin/ca_branch
         return info;
     }
 
@@ -163,6 +180,7 @@ public class RealCaseService implements CaseService {
         return row;
     }
 
+<<<<<<< HEAD
     private boolean isFrozen(Long caseId) {
         try {
             return freezeMapper.countFrozenByCaseId(caseId) > 0;
@@ -173,6 +191,8 @@ public class RealCaseService implements CaseService {
         }
     }
 
+=======
+>>>>>>> origin/ca_branch
     private boolean isRepaidRow(CollectionCaseRow row) {
         if (row.getFullRepayTime() != null) {
             return true;

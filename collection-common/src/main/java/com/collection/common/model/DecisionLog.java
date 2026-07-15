@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 
 /**
  * 决策日志。每次 SPI 调用后写入，供数仓分析与 Phase 2 模型训练。
- * 引擎只写不读。对应领域模型 §2.3 / 表 t_decision_log。
+ * 引擎只写不读。对应领域模型 §3.3 / 表 t_decision_log。
  */
 @Data
 public class DecisionLog {

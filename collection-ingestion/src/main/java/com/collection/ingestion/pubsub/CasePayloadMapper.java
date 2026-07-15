@@ -14,11 +14,20 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
+<<<<<<< HEAD
  * 把上游 {@code case_push} / {@code repayment_push_and_load} 报文映射为领域事件 payload（语义字段 → {@link
  * CollectionEvent} 常量 key，契约见领域模型 §9.2）。
  *
  * <p>上游真实 JSON key 名待信贷联调（数据接入规格 C-I-01~16）：本类通过 {@code collection.ingestion.case-push.field-map}
  * 把语义字段映射到上游 key，未配则按契约同名取值，因此 <b>自发样例消息（按 §9.2 key）即可直接跑通</b>，待信贷给出样例 JSON 后只改 Nacos 别名表。
+=======
+ * 把上游 {@code case_push} / {@code repayment_push_and_load} 报文映射为领域事件 payload（语义字段 →
+ * {@link CollectionEvent} 常量 key，契约见领域模型 §6.2）。
+ *
+ * <p>上游真实 JSON key 名待信贷联调（数据接入规格 C-I-01~16）：本类通过 {@code
+ * collection.ingestion.case-push.field-map} 把语义字段映射到上游 key，未配则按契约同名取值，因此
+ * <b>自发样例消息（按 §6.2 key）即可直接跑通</b>，待信贷给出样例 JSON 后只改 Nacos 别名表。
+>>>>>>> origin/ca_branch
  *
  * <p>清洗口径与 {@code RealCaseService} 对齐（C-I-06）：phone 归一化 E.164 {@code +63}；脏 email → 不带出。
  */
@@ -27,6 +36,18 @@ public class CasePayloadMapper {
 
     private static final Logger log = LoggerFactory.getLogger(CasePayloadMapper.class);
 
+<<<<<<< HEAD
+=======
+    // repayment_push_and_load 真实键（契约同名，<b>不经</b> case_push field-map；P0-1 2026-07-06）：
+    // case_push 用 loanID/userID（大写 D），repayment 用 loanId/userId（小写 d），共享 field-map 会带偏。
+    private static final String REPAY_USER_ID = "userId";
+    private static final String REPAY_LOAN_ID = "loanId";
+    private static final String REPAY_FULL_REPAY_TIME = "fullRepayTime";
+    private static final String REPAY_STATUS = "STATUS";
+    /** repayment STATUS / t_user_repayment_plan.status 码值：4 = 结清（1待还/2逾期/3已分期/4结清/5已结转）。 */
+    private static final int REPAY_STATUS_SETTLED = 4;
+
+>>>>>>> origin/ca_branch
     @Resource private IngestionProperties props;
 
     /** 入案映射结果。{@code stage} 可为 null（交由 IngestionService 据 dpd 推导）。 */
@@ -58,9 +79,15 @@ public class CasePayloadMapper {
         return biz != null ? biz : pubsubMessageId;
     }
 
+<<<<<<< HEAD
     /** case_push 的业务主键 loan_id（= payload caseId）。 */
     public Long loanId(JSONObject json) {
         return getLong(json, key(CollectionEvent.CASE_ID));
+=======
+    /** repayment_push_and_load 的 loan_id（真实键 {@code loanId}，不经 field-map；供全额结清 DEL）。 */
+    public Long repaymentLoanId(JSONObject json) {
+        return getLong(json, REPAY_LOAN_ID);
+>>>>>>> origin/ca_branch
     }
 
     /**
@@ -80,10 +107,14 @@ public class CasePayloadMapper {
             try {
                 stage = Stage.valueOf(stageRaw.toUpperCase());
             } catch (IllegalArgumentException e) {
+<<<<<<< HEAD
                 log.warn(
                         "[Ingestion] case_push 非法 stage='{}' caseId={}，改由 dpd 推导",
                         stageRaw,
                         caseId);
+=======
+                log.warn("[Ingestion] case_push 非法 stage='{}' caseId={}，改由 dpd 推导", stageRaw, caseId);
+>>>>>>> origin/ca_branch
             }
         }
 
@@ -109,9 +140,15 @@ public class CasePayloadMapper {
         return new CaseIngest(caseId, userId, stage, fields);
     }
 
+<<<<<<< HEAD
     /** repayment 的 userId（必填，缺失抛 poison）。 */
     public Long repaymentUserId(JSONObject json) {
         Long userId = getLong(json, key(CollectionEvent.USER_ID));
+=======
+    /** repayment 的 userId（真实键 {@code userId}，不经 field-map；必填，缺失抛 poison）。 */
+    public Long repaymentUserId(JSONObject json) {
+        Long userId = getLong(json, REPAY_USER_ID);
+>>>>>>> origin/ca_branch
         if (userId == null) {
             throw new PoisonMessageException("repayment_push_and_load 缺必填 userId");
         }
@@ -119,6 +156,7 @@ public class CasePayloadMapper {
     }
 
     /**
+<<<<<<< HEAD
      * 是否全额结清（命中则 DEL ingested key，§2.2.2）。判定条件待信贷联调（C-I-13）：当前取 {@code fullRepay==true} 或 {@code
      * totalOutstanding<=0}。
      */
@@ -129,6 +167,17 @@ public class CasePayloadMapper {
         }
         BigDecimal out = getDecimal(json, key(CollectionEvent.TOTAL_OUTSTANDING));
         return out != null && out.compareTo(BigDecimal.ZERO) <= 0;
+=======
+     * 是否全额结清（命中则 DEL ingested key，§2.2.2）。口径确认（C-I-13，2026-07-06）：
+     * {@code fullRepayTime} 非空 <b>或</b> {@code STATUS==4}（4=结清）。
+     */
+    public boolean fullySettled(JSONObject json) {
+        if (trimToNull(json.getString(REPAY_FULL_REPAY_TIME)) != null) {
+            return true;
+        }
+        Integer status = json.getInteger(REPAY_STATUS);
+        return status != null && status == REPAY_STATUS_SETTLED;
+>>>>>>> origin/ca_branch
     }
 
     // ───────────────────────── helpers ─────────────────────────

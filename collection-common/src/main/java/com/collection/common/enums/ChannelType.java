@@ -1,6 +1,12 @@
 package com.collection.common.enums;
 
+<<<<<<< HEAD
 /** 渠道类型。对应领域模型 §6.1。 */
+=======
+/**
+ * 渠道类型。对应领域模型 §2.1。
+ */
+>>>>>>> origin/ca_branch
 public enum ChannelType {
     PUSH("App 推送", ChannelMode.AUTOMATED),
     SMS("短信", ChannelMode.AUTOMATED),

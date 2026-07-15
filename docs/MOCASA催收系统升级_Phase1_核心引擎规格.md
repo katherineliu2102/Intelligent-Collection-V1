@@ -2,7 +2,11 @@
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
 > **日期**: 2026-07-01  
+<<<<<<< HEAD
 > **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型 §6.6 / §9](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)、[渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)
+=======
+> **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型 §2.6 / §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)、[渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)
+>>>>>>> origin/ca_branch
 
 ---
 
@@ -105,7 +109,11 @@ flowchart LR
 | `PLAN_EXHAUSTED` | 穷尽策略：续建新计划 / 升档 / 标记完成 | [§4.5](#45-穷尽续建) |
 | `CASE_CEASED` | D+91 完全停催：取消该案件活跃计划，**不再续建**（停催终态） | [§4.4](#44-中断处理) |
 
+<<<<<<< HEAD
 所有事件经 Dispatcher 消费后遵循**统一的并发前置流程**（行锁 → 终态拦截 → 事务边界），该契约见 [§3.2](#32-并发与一致性模型)，本节不重复。事件的产生来源（外部上游 / 引擎链式 / 定时 Job）与 `EventType` 完整清单见 [领域模型 §6.6 EventType](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型)；链式发布的触发条件以 [§4.3](#43-步骤执行循环) / [§4.5](#45-穷尽续建) / [§5](#5-步骤执行管线) 伪代码为 SSOT。
+=======
+所有事件经 Dispatcher 消费后遵循**统一的并发前置流程**（行锁 → 终态拦截 → 事务边界），该契约见 [§3.2](#32-并发与一致性模型)，本节不重复。事件的产生来源（外部上游 / 引擎链式 / 定时 Job）见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)（发布者列）；链式发布的触发条件以 [§4.3](#43-步骤执行循环) / [§4.5](#45-穷尽续建) / [§5](#5-步骤执行管线) 伪代码为 SSOT。
+>>>>>>> origin/ca_branch
 
 ### 2.2 生命周期派生总览
 
@@ -240,9 +248,15 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 | `STEP_EXECUTING` | 非终态 | 当前步骤执行中（渠道发送 / 等待异步回调） |
 | `STEP_WAITING` | 非终态 | 消息类渠道已发出，观察期内等待用户响应 |
 | **`PLAN_COMPLETED`** | **终态** | 正常结束（还款确认或步骤全部走完） |
+<<<<<<< HEAD
 | **`PLAN_CANCELLED`** | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §6.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#67-cancelreason计划取消原因)（含 engineManaged 列） |
 
 > **带外取消（Phase 1）**：`COMPLAINT`/`MANUAL` 不经事件总线、由管理后台写终态；Phase 1 REST 只读、无写入接口。一般投诉走 [§5 ②](#5-步骤执行管线) 可恢复冻结（非终态），见 [PRD 场景 C](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)。
+=======
+| **`PLAN_CANCELLED`** | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因) |
+
+> **带外取消（Phase 2）**：`COMPLAINT` / `MANUAL` 不经事件总线、由管理后台写 `PLAN_CANCELLED` 终态；枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)（Phase 2 预留）。Phase 1 引擎仅写入 `REPAID` / `STAGE_UPGRADE` / `CEASED`；投诉相关可恢复冻结（非终态）见 [§5 ②](#5-步骤执行管线)，产品场景见 [PRD 场景 C](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)。
+>>>>>>> origin/ca_branch
 >
 > **不含 `PLAN_PAUSED`**：人工外呼等待坐席等暂停态归渠道编排层，非引擎状态机。
 
@@ -256,7 +270,11 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 
 ```python
 def on_case_ingested(event):
+<<<<<<< HEAD
     # 快照由 payload 组装，不读旧库（决策 B，见领域 §3.4）
+=======
+    # 快照由 payload 组装，不读旧库（决策 B，见领域 §4.4）
+>>>>>>> origin/ca_branch
     case_info = build_case_info_from_payload(event)
     snapshot  = build_snapshot_from_payload(event)
 
@@ -417,7 +435,11 @@ def on_callback_timeout(event):
 ### 4.4 中断处理
 
 **入/出态**：入态 任意非终态 / 出态 `PLAN_CANCELLED`（`REPAID` / `STAGE_UPGRADE` / `CEASED`）。
+<<<<<<< HEAD
 **触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）；`COMPLAINT`/`MANUAL` 为带外取消，见 [§4.1](#41-状态定义)。
+=======
+**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
+>>>>>>> origin/ca_branch
 **关联 SPI**：—（纯引擎状态机；`PredictiveDialerService` 为 common 服务，见 [§7.3](#73-l1-基础设施异常)）。
 
 中断事件可在计划生命周期的**任意非终态**到达。`CASE_CEASED` 由 ingestion 日切发布，适用边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)；新案 DPD≥91 入口拒建见 §4.2 `PlanFactory.create()`。状态机通过行级排他锁与终态单调（[§3.2](#32-并发与一致性模型)）确保并发安全。
@@ -512,7 +534,11 @@ def on_plan_exhausted(event):
 **触发事件**：—（`PTP_EXPIRED` Phase 2 预留，Phase 1 不消费）。
 **关联 SPI**：—。
 
+<<<<<<< HEAD
 > **Phase 2 预留，Phase 1 不启用。** 不做 PTP（承诺还款）记录，不生产/不消费 `PTP_EXPIRED`（枚举仅前向兼容，见 [领域模型 §6.6/§6.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型)）。实时还款判断见 [§5 ②](#5-步骤执行管线) / [§4.4](#44-中断处理)。
+=======
+> **Phase 2 预留，Phase 1 不启用。** 不做 PTP（承诺还款）记录，不生产/不消费 `PTP_EXPIRED`（枚举仅前向兼容，见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)）。实时还款判断见 [§5 ②](#5-步骤执行管线) / [§4.4](#44-中断处理)。
+>>>>>>> origin/ca_branch
 
 ### 4.7 状态转换
 
@@ -652,7 +678,11 @@ def execute_step(plan, step):
 
 ## 6. SPI 接口契约
 
+<<<<<<< HEAD
 5 个策略 SPI（`engine.spi`，渠道编排实现）+ 技术管道 `ChannelGateway`（`collection-common`）。模块边界见 [§1.2](#12-模块边界与调用全景)；DTO 字段 SSOT 见 [领域模型 §4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-spi-契约-dto)。
+=======
+5 个策略 SPI（`engine.spi`，渠道编排实现）+ 技术管道 `ChannelGateway`（`collection-common`）。模块边界见 [§1.2](#12-模块边界与调用全景)；DTO 字段 SSOT 见 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。
+>>>>>>> origin/ca_branch
 
 > **边界澄清**：`PreFlightChecker`（[§5 ②](#5-步骤执行管线)）为引擎内置系统守卫，**不属于**下表 6 个契约接口，勿与 `ExecutionGuard`（③）混淆。
 
@@ -738,7 +768,11 @@ SPI 抛错或超时时，引擎按**失败影响域**分三类应对（与上图
 | **硬超时** | `SpiInvoker` 统一 `Future.get(timeout_ms)`；超时或池满 → `SpiTimeoutException` → 上表应对 · 配置键与默认值 → [基础设施附录 A.2～A.4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境) |
 | **I/O** | 含 I/O 的 SPI（Guard）：**client 命令超时 < 执行器阈值**（client 第一道防线，执行器仅兜底线程池） |
 | **锁内 SPI** | `AdvancementPolicy` / `ExhaustionPolicy` 在行锁事务内调用：**纯内存、≤10ms** |
+<<<<<<< HEAD
 | **快照** | 存活期 `context_snapshot` 不变（[领域 §3.4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#34-contextsnapshot决策上下文快照)） · 实时判断（还款/冻结）→ [§5 ②](#5-步骤执行管线) · 步骤决策读 `ExecutionContext.recentTimeline`，**不读**快照内 `contactHistory` · 字段 → [ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md) |
+=======
+| **快照** | 存活期 `context_snapshot` 不变（[领域 §4.4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照)） · 实时判断（还款/冻结）→ [§5 ②](#5-步骤执行管线) · 步骤决策读 `ExecutionContext.recentTimeline`，**不读**快照内 `contactHistory` · 字段 → [ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md) |
+>>>>>>> origin/ca_branch
 
 > Phase 1 超时阈值为暂定值，联调后按 SPI p99 回采校准。
 
@@ -757,7 +791,11 @@ SPI 抛错或超时时，引擎按**失败影响域**分三类应对（与上图
 | `AdvancementDecision` | AdvancementPolicy | 渠道编排（策略子层） → 引擎 |
 | `ExhaustionResult` | ExhaustionPolicy | 渠道编排（策略子层） → 引擎 |
 
+<<<<<<< HEAD
 > 字段定义 → [领域模型 §4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-spi-契约-dto)。
+=======
+> 字段定义 → [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。
+>>>>>>> origin/ca_branch
 
 ---
 

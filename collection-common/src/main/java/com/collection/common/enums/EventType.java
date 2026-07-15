@@ -1,12 +1,20 @@
 package com.collection.common.enums;
 
 /**
- * 内部领域事件类型。对应领域模型 §6.6、核心引擎规格 §1.1。
+ * 内部领域事件类型。对应领域模型 §2.6、核心引擎规格 §1.1。
  *
+ * <p>Phase 1 引擎实际消费的事件为 §1.1 路由表 8 行 + 内部哨兵 CALLBACK_TIMEOUT = 9 种；
+ * PTP_EXPIRED 为 Phase 2 预留，枚举值保留作前向兼容，Phase 1 不生产/不消费。
+ *
+<<<<<<< HEAD
  * <p>Phase 1 引擎实际消费的事件为 §1.1 路由表 8 行 + 内部哨兵 CALLBACK_TIMEOUT = 9 种； PTP_EXPIRED 为 Phase 2
  * 预留，枚举值保留作前向兼容，Phase 1 不生产/不消费。
  *
  * <p>注：CALLBACK_TIMEOUT 为引擎内部超时哨兵事件（基础设施规范 §4 callbackTimeoutHandler）， 用于异步回调超时兜底（核心引擎规格 §2.3.4）。
+=======
+ * <p>注：CALLBACK_TIMEOUT 为引擎内部超时哨兵事件（基础设施规范 §4 callbackTimeoutHandler），
+ * 用于异步回调超时兜底（核心引擎规格 §2.3.4）。
+>>>>>>> origin/ca_branch
  */
 public enum EventType {
     CASE_INGESTED,

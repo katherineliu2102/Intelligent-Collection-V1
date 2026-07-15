@@ -11,12 +11,22 @@ import org.springframework.stereotype.Component;
 /**
  * 数据接入（B1）配置绑定，prefix = {@code collection.ingestion}（数据接入规格 §2.1）。
  *
+<<<<<<< HEAD
  * <p>GCP 连接信息（project / subscription / 凭证）走环境变量，<b>不入仓</b>：YAML 中以 {@code ${GCP_PUBSUB_PROJECT:}} /
  * {@code ${GCP_PUBSUB_SUBSCRIPTION:}} 映射；凭证由 {@code GOOGLE_APPLICATION_CREDENTIALS} 经 ADC 自动加载。
  *
  * <p>{@link #enabled} 默认 {@code false}：本地 / CI 不启动 PubSub 消费（{@link
  * com.collection.ingestion.pubsub.PubSubCaseConsumer} 受 {@code @ConditionalOnProperty} 门控）， 联调 /
  * 生产置 {@code true}。
+=======
+ * <p>GCP 连接信息（project / subscription / 凭证）走环境变量，<b>不入仓</b>：YAML 中以
+ * {@code ${GCP_PUBSUB_PROJECT:}} / {@code ${GCP_PUBSUB_SUBSCRIPTION:}} 映射；凭证由
+ * {@code GOOGLE_APPLICATION_CREDENTIALS} 经 ADC 自动加载。
+ *
+ * <p>{@link #enabled} 默认 {@code false}：本地 / CI 不启动 PubSub 消费（{@link
+ * com.collection.ingestion.pubsub.PubSubCaseConsumer} 受 {@code @ConditionalOnProperty} 门控），
+ * 联调 / 生产置 {@code true}。
+>>>>>>> origin/ca_branch
  */
 @Data
 @Component
@@ -54,8 +64,13 @@ public class IngestionProperties {
     }
 
     /**
+<<<<<<< HEAD
      * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §9.2）不一致时，用 {@link #fieldMap} 把<b>语义字段</b>映射到上游实际
      * key；未配置则按同名取值（C-I-01 待信贷联调）。
+=======
+     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §6.2）不一致时，用 {@link #fieldMap}
+     * 把<b>语义字段</b>映射到上游实际 key；未配置则按同名取值（C-I-01 待信贷联调）。
+>>>>>>> origin/ca_branch
      */
     @Data
     public static class CasePush {
@@ -65,7 +80,11 @@ public class IngestionProperties {
         /** 业务 message_id 字段（缺失则回退 PubSub messageId，用于去重）。 */
         private String messageIdField = "messageId";
 
+<<<<<<< HEAD
         /** 语义字段 → 上游 JSON key 的别名表；缺省同名（契约 §9.2 key）。 */
+=======
+        /** 语义字段 → 上游 JSON key 的别名表；缺省同名（契约 §6.2 key）。 */
+>>>>>>> origin/ca_branch
         private Map<String, String> fieldMap = new HashMap<>();
     }
 }

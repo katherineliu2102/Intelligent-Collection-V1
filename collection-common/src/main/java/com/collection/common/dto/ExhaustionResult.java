@@ -7,7 +7,7 @@ import lombok.Builder;
 import lombok.Getter;
 
 /**
- * 穷尽结果。ExhaustionPolicy.handle() 的输出。对应领域模型 §4.6。
+ * 穷尽结果。ExhaustionPolicy.handle() 的输出。对应领域模型 §5.7。
  *
  * <p>字段约束：
  * REBUILD → templateId 必填, targetStage=null；

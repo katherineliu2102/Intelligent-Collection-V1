@@ -21,8 +21,12 @@ import org.springframework.stereotype.Component;
 /**
  * Phase 1 Mock 实现 —— DefaultPlanFactory 的占位。
  *
+<<<<<<< HEAD
  * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→EMAIL（L4a-1 /
  * TC-REG-01）。
+=======
+ * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→EMAIL（L4a-1 / TC-REG-01）。
+>>>>>>> origin/ca_branch
  */
 @Component
 public class MockPlanFactory implements PlanFactory {

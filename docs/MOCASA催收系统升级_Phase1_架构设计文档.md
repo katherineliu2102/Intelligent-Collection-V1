@@ -178,17 +178,28 @@
 
 #### 1.2.1 上游数据接入
 
+<<<<<<< HEAD
 主路径起点（`collection-ingestion`）：消费上游 PubSub → 校验 / 组装 `CASE_INGESTED` payload（PubSub 字段映射与清洗；完整字段清单见 [领域模型 §9.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)、组装规则见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）→ 经 `CollectionEventBus` 发布领域事件 + DPD 日切（日切只读旧库扫描在催名单）。引擎消费 `CASE_INGESTED` 时将 payload 组装为 `context_snapshot` 并冻结写入 plan（见 [§1.6.2](#162-决策上下文快照化)）。
+=======
+主路径起点（`collection-ingestion`）：消费上游 PubSub → 校验 / 组装 `CASE_INGESTED` payload（PubSub 字段映射与清洗；完整字段清单见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)、组装规则见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）→ 经 `CollectionEventBus` 发布领域事件 + DPD 日切（日切只读旧库扫描在催名单）。引擎消费 `CASE_INGESTED` 时将 payload 组装为 `context_snapshot` 并冻结写入 plan（见 [§1.6.2](#162-决策上下文快照化)）。
+>>>>>>> origin/ca_branch
 
 > **`jpushToken` 由上游 `case_push` 消息体直接携带**（与 `phone`/`email` 等同源，**已确认 2026-07**）。入案主链路零读库。若个别消息缺失，可开 `collection.ingestion.enrich-jpush-token=true` 降级读新库 `t_user_device_token`（见 [数据接入 §3.1 读库](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库)）。
 
 | 边界 | 契约 |
 |---|---|
 | 北向输入 | 上游 PubSub 消息：`case_push`（案件推送，D-3 起）/ `repayment`（还款） |
+<<<<<<< HEAD
 | 南向产出 | 发布领域事件（EventType 见 [领域模型 §6.6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型)）；接入 **不回写** 旧库。`CASE_INGESTED` payload 字段见 [领域模型 §9.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#92-逐事件-payload-字段)；引擎建计划时将 payload 组装为 `context_snapshot`（[§1.6.2](#162-决策上下文快照化)） |
 | 边界约束 | 不做业务决策、不直接调用渠道；阶段变更检测在接入侧完成，引擎只消费事件（见 [§1.1 分层契约](#分层契约)） |
 
 > PubSub 消费、消息路由、阶段变更检测与**到期前通知迁移**（D-3 ~ D0 的 Push/SMS 职责完整接管至新系统）见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。EventType payload 字段 SSOT 见 [领域模型 §9 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)。
+=======
+| 南向产出 | 发布领域事件（EventType 路由见 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)）；接入 **不回写** 旧库。`CASE_INGESTED` payload 字段见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)；引擎建计划时将 payload 组装为 `context_snapshot`（[§1.6.2](#162-决策上下文快照化)） |
+| 边界约束 | 不做业务决策、不直接调用渠道；阶段变更检测在接入侧完成，引擎只消费事件（见 [§1.1 分层契约](#分层契约)） |
+
+> PubSub 消费、消息路由、阶段变更检测与**到期前通知迁移**（D-3 ~ D0 的 Push/SMS 职责完整接管至新系统）见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。EventType payload 字段 SSOT 见 [领域模型 §6 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)。
+>>>>>>> origin/ca_branch
 
 #### 1.2.2 应用入站
 
@@ -340,10 +351,17 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 **约束**：
 - 调度线程与 Consumer 线程严格隔离
+<<<<<<< HEAD
 - 核心业务事件 + `CALLBACK_TIMEOUT` 哨兵 + `CASE_CEASED` 停催经 Redis Stream 流转（Phase 1 有效事件清单以 [领域模型 §6.6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型) 为 SSOT；`PTP_EXPIRED` 为 Phase 2 预留，Phase 1 不生产、不流转）
 - XXL-Job 采用 Trigger-to-Event：毫秒级返回，不执行业务
 
 > 规格：[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) · [领域模型 §6.6 EventType](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#66-eventtype内部事件类型) · [领域模型 §9 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义) · [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)
+=======
+- 核心业务事件 + `CALLBACK_TIMEOUT` 哨兵 + `CASE_CEASED` 停催经 Redis Stream 流转（Phase 1 有效事件清单以 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 为 SSOT；`PTP_EXPIRED` 为 Phase 2 预留，Phase 1 不生产、不流转）
+- XXL-Job 采用 Trigger-to-Event：毫秒级返回，不执行业务
+
+> 规格：[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) · [核心引擎规格 §2.1 EventType 路由](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) · [领域模型 §6 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义) · [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)
+>>>>>>> origin/ca_branch
 
 **执行正确性**
 
@@ -356,7 +374,11 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 - `STAGE_CHANGED` 取消旧阶段计划并重建，新计划 carry-forward 旧快照并刷新 `stage`（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）
 - 实时读取例外：还款 / 冻结等存活状态由 `PreFlightChecker`（骨架②）实时校验；合规频次 / 时段计数由 `ExecutionGuard`（骨架③）读实时计数器——二者均不走快照
 
+<<<<<<< HEAD
 > 规格：[领域模型 §3.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#34-contextsnapshot决策上下文快照) · [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
+=======
+> 规格：[领域模型 §4.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照) · [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
+>>>>>>> origin/ca_branch
 
 #### 1.6.3 幂等键契约
 

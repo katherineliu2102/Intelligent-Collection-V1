@@ -30,13 +30,21 @@ type DbScript = {
   updatedBy?: string;
 };
 
+type EffectiveSource = "EDITED" | "DEFAULT" | "UNCONFIGURED";
+
+const EFFECTIVE_LABEL: Record<EffectiveSource, string> = {
+  EDITED: "已编辑",
+  DEFAULT: "系统默认",
+  UNCONFIGURED: "未配置"
+};
+
 type MergedRow = CatalogRow & {
   channel: string;
   inDb: boolean;
   dbBody?: string;
   dbTitle?: string;
   dbVersion: number;
-  effectiveSource: "DB" | "YAML" | "NONE";
+  effectiveSource: EffectiveSource;
 };
 
 type EditState = {
@@ -63,15 +71,19 @@ const emptyEdit: EditState = {
   saving: false
 };
 
-function sourceColor(src: string): string {
+function sourceColor(src: EffectiveSource): string {
   switch (src) {
-    case "DB":
+    case "EDITED":
       return "green";
-    case "YAML":
+    case "DEFAULT":
       return "blue";
     default:
       return "default";
   }
+}
+
+function effectiveLabel(src: EffectiveSource): string {
+  return EFFECTIVE_LABEL[src];
 }
 
 export function TemplatesPage() {
@@ -97,11 +109,11 @@ export function TemplatesPage() {
         (rows || []).map((r) => {
           const db = dbMap.get(`${channel}/${r.slot}`);
           const inDb = !!db;
-          const effectiveSource: MergedRow["effectiveSource"] = inDb
-            ? "DB"
+          const effectiveSource: EffectiveSource = inDb
+            ? "EDITED"
             : r.body || r.title
-              ? "YAML"
-              : "NONE";
+              ? "DEFAULT"
+              : "UNCONFIGURED";
           return {
             ...r,
             channel,
@@ -164,7 +176,7 @@ export function TemplatesPage() {
   const resetToYaml = async (row: MergedRow) => {
     try {
       await api.deactivateScriptTemplate(row.slot, row.channel);
-      message.success(`Reset ${row.channel}/${row.slot} to YAML. Engine reloads within ~10s.`);
+      message.success(`已恢复 ${row.channel}/${row.slot} 为系统默认，约 10 秒内生效。`);
       await load();
     } catch (e: any) {
       message.error(e.message);
@@ -176,21 +188,21 @@ export function TemplatesPage() {
       {row.inDb ? (
         <>
           <Typography.Text>
-            <b>DB body:</b> {row.dbBody || "—"}
+            <b>已编辑正文：</b> {row.dbBody || "—"}
           </Typography.Text>
           {row.channel === "PUSH" && (
             <Typography.Text>
-              <b>DB title:</b> {row.dbTitle || "—"}
+              <b>已编辑标题：</b> {row.dbTitle || "—"}
             </Typography.Text>
           )}
         </>
       ) : (
         <Typography.Text type="secondary">
-          Not overridden in DB yet — engine uses YAML. Click Edit to create a DB override.
+          尚未在后台编辑 — 引擎使用系统默认配置。点击 Edit 保存后将变为「已编辑」。
         </Typography.Text>
       )}
       <Typography.Text type="secondary">
-        <b>YAML body:</b> {row.body || "—"}
+        <b>系统默认正文：</b> {row.body || "—"}
       </Typography.Text>
       {row.bodyRendered && (
         <Typography.Text type="secondary">
@@ -204,10 +216,10 @@ export function TemplatesPage() {
     { title: "Slot", dataIndex: "slot", width: 210 },
     { title: "Stage", dataIndex: "stage", width: 70 },
     {
-      title: "Effective",
+      title: "生效状态",
       dataIndex: "effectiveSource",
       width: 110,
-      render: (v: string) => <Tag color={sourceColor(v)}>{v}</Tag>
+      render: (v: EffectiveSource) => <Tag color={sourceColor(v)}>{effectiveLabel(v)}</Tag>
     },
     ...(channel === "PUSH"
       ? [{ title: "Title", dataIndex: "title", ellipsis: true }]
@@ -228,7 +240,7 @@ export function TemplatesPage() {
           </Button>
           {r.inDb && (
             <Button size="small" danger onClick={() => resetToYaml(r)}>
-              Reset
+              恢复默认
             </Button>
           )}
         </Space>
@@ -243,10 +255,9 @@ export function TemplatesPage() {
       extra={<Button onClick={load}>Refresh</Button>}
     >
       <Typography.Paragraph type="secondary">
-        SMS / Push content is editable and persisted to DB (<code>t_script_template</code>). Effective
-        source: <Tag color="green">DB</Tag> override &gt; <Tag color="blue">YAML</Tag> fallback. After
-        saving, the engine reloads within ~10s (no restart). Email is managed in SendGrid (read-only
-        here).
+        SMS / Push 支持按需编辑并保存到后台（<code>t_script_template</code>）。生效优先级：
+        <Tag color="green">已编辑</Tag> &gt; <Tag color="blue">系统默认</Tag>；未配置 slot 显示
+        <Tag>未配置</Tag>。保存后约 10 秒引擎热更新，无需重启。Email 由 SendGrid 托管（本页只读）。
       </Typography.Paragraph>
       <Tabs
         items={[
@@ -336,7 +347,7 @@ export function TemplatesPage() {
             />
           </Form.Item>
           <Typography.Text type="secondary">
-            Optimistic lock version: {edit.version} {edit.version === 0 ? "(new DB row)" : ""}
+            版本号（乐观锁）：{edit.version} {edit.version === 0 ? "（首次编辑，将新建记录）" : ""}
           </Typography.Text>
         </Form>
       </Modal>

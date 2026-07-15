@@ -33,9 +33,14 @@ public class DefaultPlanFactory implements PlanFactory {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultPlanFactory.class);
 
+<<<<<<< HEAD
     @Resource private ChannelProperties channelProperties;
 
     @Resource private ConfigTemplateProvider templateProvider;
+=======
+    @Resource
+    private ChannelProperties channelProperties;
+>>>>>>> origin/ca_branch
 
     @Override
     public ContactPlan create(CaseInfo caseInfo, Stage stage, ContextSnapshot snapshot) {
@@ -43,10 +48,14 @@ public class DefaultPlanFactory implements PlanFactory {
             return null;
         }
 
+<<<<<<< HEAD
         log.info(
                 "[DefaultPlanFactory] build plan for case {} stage {}",
                 caseInfo.getCaseId(),
                 stage);
+=======
+        log.info("[DefaultPlanFactory] build plan for case {} stage {}", caseInfo.getCaseId(), stage);
+>>>>>>> origin/ca_branch
 
         List<ContactPlanStep> steps = buildSteps(stage, caseInfo.getCaseId());
         if (steps.isEmpty()) {
@@ -93,8 +102,12 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     private boolean isGuardFrequencyCase(Long caseId) {
+<<<<<<< HEAD
         return caseId != null
                 && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId());
+=======
+        return caseId != null && caseId.equals(channelProperties.getL4a().getGuardFrequencyCaseId());
+>>>>>>> origin/ca_branch
     }
 
     private boolean isGuardNoPhoneCase(Long caseId) {
@@ -107,7 +120,13 @@ public class DefaultPlanFactory implements PlanFactory {
 
     private boolean isObservationCase(Long caseId, Stage stage) {
         ChannelProperties.L4a l4a = channelProperties.getL4a();
+<<<<<<< HEAD
         return caseId != null && caseId == l4a.getObservationCaseId() && stage == Stage.S1;
+=======
+        return caseId != null
+                && caseId == l4a.getObservationCaseId()
+                && stage == Stage.S1;
+>>>>>>> origin/ca_branch
     }
 
     private int observationMinutes() {
@@ -116,20 +135,35 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     private List<ContactPlanStep> buildFromTemplate(Stage stage) {
+<<<<<<< HEAD
         String key = stage != null ? stage.name() : "S1";
         List<ChannelProperties.PlanStepDef> defs = resolveTemplateDefs(key);
         if (defs == null || defs.isEmpty()) {
+=======
+        Map<String, ChannelProperties.PlanTemplate> templates = channelProperties.getPlanTemplates();
+        String key = stage != null ? stage.name() : "S1";
+        ChannelProperties.PlanTemplate tpl = templates.get(key);
+        if (tpl == null) {
+            tpl = templates.get("S1");
+        }
+        if (tpl == null || tpl.getSteps().isEmpty()) {
+>>>>>>> origin/ca_branch
             log.info("[DefaultPlanFactory] no template for stage={}, fallback PUSH→EMAIL", key);
             return buildFallbackFlow();
         }
 
         List<ContactPlanStep> steps = new ArrayList<>();
         int order = 1;
+<<<<<<< HEAD
         for (ChannelProperties.PlanStepDef def : defs) {
+=======
+        for (ChannelProperties.PlanStepDef def : tpl.getSteps()) {
+>>>>>>> origin/ca_branch
             ChannelType channelType = parseChannel(def.getChannel());
             if (channelType == null || channelType == ChannelType.HUMAN_CALL) {
                 continue;
             }
+<<<<<<< HEAD
             steps.add(
                     buildStep(
                             order++,
@@ -137,10 +171,14 @@ public class DefaultPlanFactory implements PlanFactory {
                             def.getDelayMin(),
                             def.getObserveMin(),
                             def.getTemplateId()));
+=======
+            steps.add(buildStep(order++, channelType, def.getDelayMin(), def.getObserveMin(), def.getTemplateId()));
+>>>>>>> origin/ca_branch
         }
         return steps;
     }
 
+<<<<<<< HEAD
     /** DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。 */
     private List<ChannelProperties.PlanStepDef> resolveTemplateDefs(String stageKey) {
         List<ChannelProperties.PlanStepDef> dbDefs =
@@ -157,6 +195,8 @@ public class DefaultPlanFactory implements PlanFactory {
         return tpl == null ? null : tpl.getSteps();
     }
 
+=======
+>>>>>>> origin/ca_branch
     private static ChannelType parseChannel(String name) {
         if (StringUtils.isBlank(name)) {
             return null;
@@ -213,8 +253,12 @@ public class DefaultPlanFactory implements PlanFactory {
         return steps;
     }
 
+<<<<<<< HEAD
     private ContactPlanStep buildStep(
             int order, ChannelType channel, int delayMin, int obsMin, long templateId) {
+=======
+    private ContactPlanStep buildStep(int order, ChannelType channel, int delayMin, int obsMin, long templateId) {
+>>>>>>> origin/ca_branch
         ContactPlanStep step = new ContactPlanStep();
         step.setStepOrder(order);
         step.setChannelType(channel);

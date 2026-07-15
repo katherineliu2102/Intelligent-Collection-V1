@@ -4,9 +4,15 @@ import com.collection.common.enums.EventType;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseContext;
 import com.collection.common.model.CaseInfo;
+import com.collection.common.model.ContextSnapshot;
 import com.collection.common.service.CaseService;
+<<<<<<< HEAD
 import javax.annotation.Resource;
+=======
+import java.util.Map;
+>>>>>>> origin/ca_branch
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -14,6 +20,7 @@ import org.springframework.stereotype.Service;
 /**
  * 数据接入服务。对应架构设计文档 §数据接入层、数据接入与事件规格。
  *
+<<<<<<< HEAD
  * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。 不回写旧库；<b>决策
  * B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push）， 引擎据 payload 组装快照，运行时不读旧库
  * t_collection。CaseService 仅作兜底 / 对账。
@@ -21,6 +28,14 @@ import org.springframework.stereotype.Service;
  * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub 消费者 {@link
  * com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、 不写库；ack/nack/幂等/路由归
  * Consumer。
+=======
+ * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。
+ * 不回写旧库；<b>决策 B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push），
+ * 引擎据 payload 组装快照，运行时不读旧库 t_collection。CaseService 仅作兜底 / 对账。
+ * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub
+ * 消费者 {@link com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、
+ * 不写库；ack/nack/幂等/路由归 Consumer。
+>>>>>>> origin/ca_branch
  */
 @Service
 public class IngestionService {
@@ -36,30 +51,56 @@ public class IngestionService {
     }
 
     /**
+<<<<<<< HEAD
      * 决策 B（2026-06-29）：携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 case_push 映射后调用本方法，引擎据 payload 组装
      * ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
+=======
+     * 决策 B（2026-06-29）：携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 case_push
+     * 映射后调用本方法，引擎据 payload 组装 ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
+>>>>>>> origin/ca_branch
      *
      * @param snapshotFields key 用 {@link CollectionEvent} 快照常量（DPD/PRODUCT/TOTAL_OUTSTANDING/
      *     PENALTY_AMOUNT/DUE_DATE/FULL_REPAY_TIME/NAME/PHONE/EMAIL/JPUSH_TOKEN）；缺失字段做 null 防御。
      */
     public void ingestCase(
+<<<<<<< HEAD
             Long caseId, Long userId, Stage stage, java.util.Map<String, Object> snapshotFields) {
         Stage resolvedStage = stage;
         if (resolvedStage == null && snapshotFields != null) {
             Object dpd = snapshotFields.get(CollectionEvent.DPD);
             if (dpd instanceof Number) {
                 resolvedStage = Stage.fromDpd(((Number) dpd).intValue());
+=======
+            Long caseId, Long userId, Stage stage, Map<String, Object> snapshotFields) {
+        Stage resolvedStage = stage;
+        if (resolvedStage == null && snapshotFields != null) {
+            resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
+        }
+        // 混合方案（2026-07-06）：case_push 不含 dpd/金额/dueDate；payload（非空）缺 dpd 时读旧库回填，
+        // 联系方式（phone/email/name/jpushToken）仍以 payload 为准（putIfAbsent 不覆盖）。
+        if (snapshotFields != null && !snapshotFields.containsKey(CollectionEvent.DPD)) {
+            enrichFinancialFromCaseService(caseId, snapshotFields);
+            if (resolvedStage == null) {
+                resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
+>>>>>>> origin/ca_branch
             }
         }
         if (resolvedStage == null) {
             CaseInfo info = caseService.getCaseInfo(caseId);
             resolvedStage = info != null ? info.getStage() : Stage.S1;
         }
+<<<<<<< HEAD
         CollectionEvent event =
                 CollectionEvent.of(EventType.CASE_INGESTED)
                         .with(CollectionEvent.CASE_ID, caseId)
                         .with(CollectionEvent.USER_ID, userId == null ? caseId : userId)
                         .with(CollectionEvent.STAGE, resolvedStage.name());
+=======
+        CollectionEvent event = CollectionEvent.of(EventType.CASE_INGESTED)
+                .with(CollectionEvent.CASE_ID, caseId)
+                .with(CollectionEvent.USER_ID, userId == null ? caseId : userId)
+                .with(CollectionEvent.STAGE, resolvedStage.name());
+>>>>>>> origin/ca_branch
         if (snapshotFields != null) {
             snapshotFields.forEach(
                     (k, v) -> {
@@ -74,6 +115,40 @@ public class IngestionService {
                 resolvedStage,
                 snapshotFields == null ? 0 : snapshotFields.size());
         eventBus.publish(event);
+    }
+
+    private Stage stageFromDpd(Object dpd) {
+        return dpd instanceof Number ? Stage.fromDpd(((Number) dpd).intValue()) : null;
+    }
+
+    /**
+     * 混合方案回填：payload 缺金融字段时读旧库 {@link CaseService#getContextSnapshot}，把
+     * dpd/totalOutstanding/penaltyAmount/dueDate/product 补进 snapshotFields（{@code putIfAbsent}，
+     * 不覆盖 payload 已带值）。读库失败仅告警，不阻断入案（stage 后续仍可 getCaseInfo 兜底）。
+     */
+    private void enrichFinancialFromCaseService(Long caseId, Map<String, Object> fields) {
+        try {
+            ContextSnapshot snap = caseService.getContextSnapshot(caseId);
+            if (snap == null || snap.getCaseContext() == null) {
+                return;
+            }
+            CaseContext c = snap.getCaseContext();
+            fields.putIfAbsent(CollectionEvent.DPD, c.getDpd());
+            if (c.getTotalOutstanding() != null) {
+                fields.putIfAbsent(CollectionEvent.TOTAL_OUTSTANDING, c.getTotalOutstanding());
+            }
+            if (c.getPenaltyAmount() != null) {
+                fields.putIfAbsent(CollectionEvent.PENALTY_AMOUNT, c.getPenaltyAmount());
+            }
+            if (c.getDueDate() != null) {
+                fields.putIfAbsent(CollectionEvent.DUE_DATE, c.getDueDate().toString());
+            }
+            if (c.getProduct() != null) {
+                fields.putIfAbsent(CollectionEvent.PRODUCT, c.getProduct());
+            }
+        } catch (Exception e) {
+            log.warn("[Ingestion] 回填旧库金融字段失败 caseId={}: {}", caseId, e.getMessage());
+        }
     }
 
     /** 阶段变更 → 发布 STAGE_CHANGED。 */

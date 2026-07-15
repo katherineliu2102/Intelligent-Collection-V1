@@ -19,6 +19,8 @@ public class DashboardController {
     private static final String DELIVERED_RESULTS =
             "('DELIVERED','SENT','ACCEPTED')";
     private static final String FAILED_RESULTS = "('FAILED','REJECTED','BOUNCED')";
+    private static final String ATTEMPTED_RESULTS =
+            "('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED')";
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
     private final JdbcTemplate jdbcTemplate;
@@ -29,7 +31,7 @@ public class DashboardController {
 
     @GetMapping("/outreach/realtime")
     public Map<String, Object> outreachRealtime(
-            @RequestParam(defaultValue = "7") int days) {
+            @RequestParam(defaultValue = "30") int days) {
         int windowDays = Math.max(1, Math.min(90, days));
         LocalDateTime to = LocalDateTime.now();
         LocalDateTime from = to.minusDays(windowDays);
@@ -106,11 +108,7 @@ public class DashboardController {
                 "SELECT t.template_id AS templateId, "
                         + "COALESCE(st.script_slot, CONCAT('tpl-', t.template_id)) AS scriptSlot, "
                         + "st.channel AS templateChannel, "
-                        + "COUNT(*) AS records, "
-                        + "SUM(t.result <> 'SKIPPED') AS sent, "
-                        + "SUM(t.result IN " + DELIVERED_RESULTS + ") AS delivered, "
-                        + "SUM(t.result IN " + FAILED_RESULTS + ") AS failed, "
-                        + "SUM(t.result = 'SKIPPED') AS skipped "
+                        + metricAggregates("t.")
                         + "FROM t_contact_timeline t "
                         + "LEFT JOIN t_script_template st ON st.id = t.template_id "
                         + "WHERE t.direction = 'OUT' "
@@ -127,66 +125,97 @@ public class DashboardController {
     }
 
     private static String metricSelect(String dimExpr, String dimAlias, String resultPrefix) {
-        String resultCol = resultPrefix + "result";
-        return "SELECT " + dimExpr + " AS " + dimAlias + ", "
-                + "COUNT(*) AS records, "
-                + "SUM(" + resultCol + " <> 'SKIPPED') AS sent, "
-                + "SUM(" + resultCol + " IN " + DELIVERED_RESULTS + ") AS delivered, "
-                + "SUM(" + resultCol + " IN " + FAILED_RESULTS + ") AS failed, "
-                + "SUM(" + resultCol + " = 'SKIPPED') AS skipped ";
+        return "SELECT " + dimExpr + " AS " + dimAlias + ", " + metricAggregates(resultPrefix);
+    }
+
+    /** attempted = 实际发起发送（含失败）；skipped/other 不计入送达率分母。 */
+    private static String metricAggregates(String resultPrefix) {
+        String r = resultPrefix + "result";
+        return "COUNT(*) AS records, "
+                + "SUM(" + r + " IN " + ATTEMPTED_RESULTS + ") AS attempted, "
+                + "SUM(" + r + " IN " + DELIVERED_RESULTS + ") AS delivered, "
+                + "SUM(" + r + " IN " + FAILED_RESULTS + ") AS failed, "
+                + "SUM(" + r + " = 'SKIPPED') AS skipped, "
+                + "SUM(CASE WHEN " + r + " IS NULL OR ("
+                + r + " NOT IN ('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED','SKIPPED')) "
+                + "THEN 1 ELSE 0 END) AS other ";
     }
 
     private Map<String, Object> metricRow(java.sql.ResultSet rs, int rowNum)
             throws java.sql.SQLException {
         long records = rs.getLong("records");
-        long sent = rs.getLong("sent");
+        long attempted = rs.getLong("attempted");
         long delivered = rs.getLong("delivered");
         long failed = rs.getLong("failed");
         long skipped = rs.getLong("skipped");
+        long other = rs.getLong("other");
         Map<String, Object> row = new LinkedHashMap<>();
         java.sql.ResultSetMetaData meta = rs.getMetaData();
         for (int i = 1; i <= meta.getColumnCount(); i++) {
             String name = meta.getColumnLabel(i);
-            if ("records".equals(name)
-                    || "sent".equals(name)
-                    || "delivered".equals(name)
-                    || "failed".equals(name)
-                    || "skipped".equals(name)
-                    || "deliveryRate".equals(name)) {
+            if (isMetricColumn(name)) {
                 continue;
             }
             row.put(name, rs.getObject(i));
         }
+        putMetrics(row, records, attempted, delivered, failed, skipped, other);
+        return row;
+    }
+
+    private static boolean isMetricColumn(String name) {
+        return "records".equals(name)
+                || "attempted".equals(name)
+                || "sent".equals(name)
+                || "delivered".equals(name)
+                || "failed".equals(name)
+                || "skipped".equals(name)
+                || "other".equals(name)
+                || "deliveryRate".equals(name);
+    }
+
+    private static void putMetrics(
+            Map<String, Object> row,
+            long records,
+            long attempted,
+            long delivered,
+            long failed,
+            long skipped,
+            long other) {
         row.put("records", records);
-        row.put("sent", sent);
+        row.put("attempted", attempted);
+        row.put("sent", attempted); // 兼容旧字段名
         row.put("delivered", delivered);
         row.put("failed", failed);
         row.put("skipped", skipped);
-        row.put("deliveryRate", sent == 0 ? 0.0 : roundRate(delivered, sent));
-        return row;
+        row.put("other", other);
+        row.put("deliveryRate", attempted == 0 ? 0.0 : roundRate(delivered, attempted));
     }
 
     private Map<String, Object> buildSummary(
             List<Map<String, Object>> byChannel, List<Map<String, Object>> byResult) {
         long records = 0;
-        long sent = 0;
+        long attempted = 0;
         long delivered = 0;
         long failed = 0;
         long skipped = 0;
+        long other = 0;
         for (Map<String, Object> row : byChannel) {
             records += toLong(row.get("records"));
-            sent += toLong(row.get("sent"));
+            attempted += toLong(row.get("attempted"));
             delivered += toLong(row.get("delivered"));
             failed += toLong(row.get("failed"));
             skipped += toLong(row.get("skipped"));
+            other += toLong(row.get("other"));
         }
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("totalRecords", records);
-        summary.put("totalSent", sent);
+        summary.put("totalAttempted", attempted);
+        summary.put("totalSent", attempted); // 兼容
         summary.put("delivered", delivered);
         summary.put("failed", failed);
         summary.put("skipped", skipped);
-        summary.put("deliveryRate", sent == 0 ? 0.0 : roundRate(delivered, sent));
+        summary.put("other", other);
+        summary.put("deliveryRate", attempted == 0 ? 0.0 : roundRate(delivered, attempted));
         summary.put("resultBreakdown", byResult);
         return summary;
     }
@@ -239,8 +268,8 @@ public class DashboardController {
         return out;
     }
 
-    private static double roundRate(long delivered, long sent) {
-        return Math.round(1000.0 * delivered / sent) / 1000.0;
+    private static double roundRate(long delivered, long attempted) {
+        return Math.round(1000.0 * delivered / attempted) / 1000.0;
     }
 
     private static long toLong(Object v) {

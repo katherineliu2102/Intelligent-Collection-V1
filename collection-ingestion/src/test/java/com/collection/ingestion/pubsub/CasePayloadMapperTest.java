@@ -46,11 +46,15 @@ class CasePayloadMapperTest {
         assertEquals(20, ci.snapshotFields.get(CollectionEvent.DPD));
         assertEquals("SKYPAYLOANS", ci.snapshotFields.get(CollectionEvent.PRODUCT));
         assertEquals(
+<<<<<<< HEAD
                 0,
                 new BigDecimal("1500.50")
                         .compareTo(
                                 (BigDecimal)
                                         ci.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING)));
+=======
+                0, new BigDecimal("1500.50").compareTo((BigDecimal) ci.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING)));
+>>>>>>> origin/ca_branch
         assertEquals("+639171234567", ci.snapshotFields.get(CollectionEvent.PHONE));
         assertEquals("a@b.com", ci.snapshotFields.get(CollectionEvent.EMAIL));
         assertEquals("tok-1", ci.snapshotFields.get(CollectionEvent.JPUSH_TOKEN));
@@ -58,8 +62,12 @@ class CasePayloadMapperTest {
 
     @Test
     void mapCasePush_dirtyEmail_isDropped() {
+<<<<<<< HEAD
         JSONObject json =
                 JSON.parseObject("{\"caseId\":1,\"email\":\"0\",\"phone\":\"+639998887777\"}");
+=======
+        JSONObject json = JSON.parseObject("{\"caseId\":1,\"email\":\"0\",\"phone\":\"+639998887777\"}");
+>>>>>>> origin/ca_branch
         CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
         assertFalse(ci.snapshotFields.containsKey(CollectionEvent.EMAIL));
         assertEquals("+639998887777", ci.snapshotFields.get(CollectionEvent.PHONE));
@@ -96,6 +104,7 @@ class CasePayloadMapperTest {
     }
 
     @Test
+<<<<<<< HEAD
     void repaymentUserId_requiredAndFullySettledByOutstanding() {
         JSONObject json = JSON.parseObject("{\"userId\":777,\"totalOutstanding\":0}");
         assertEquals(777L, mapper.repaymentUserId(json));
@@ -104,6 +113,33 @@ class CasePayloadMapperTest {
         JSONObject partial = JSON.parseObject("{\"userId\":777,\"totalOutstanding\":50}");
         assertFalse(mapper.fullySettled(partial));
 
+=======
+    void repayment_keysAreContractNamed_notViaFieldMap() {
+        // 即使配了 case_push field-map（userId→userID / caseId→loanID），repayment 仍按真实小写键读。
+        props.getCasePush().getFieldMap().put(CollectionEvent.USER_ID, "userID");
+        props.getCasePush().getFieldMap().put(CollectionEvent.CASE_ID, "loanID");
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"userId\":777,\"loanId\":88,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1,\"overdue\":0.0}");
+        assertEquals(777L, mapper.repaymentUserId(json));
+        assertEquals(88L, mapper.repaymentLoanId(json));
+    }
+
+    @Test
+    void fullySettled_byFullRepayTimeOrStatus4() {
+        // 样例：STATUS=1（待还款）但 fullRepayTime 非空 → 结清（靠 fullRepayTime 命中）
+        assertTrue(
+                mapper.fullySettled(
+                        JSON.parseObject("{\"userId\":1,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1}")));
+        // STATUS=4（结清）无 fullRepayTime → 结清
+        assertTrue(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":4}")));
+        // STATUS=2（逾期）无 fullRepayTime → 未结清
+        assertFalse(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":2}")));
+    }
+
+    @Test
+    void repaymentUserId_missing_throwsPoison() {
+>>>>>>> origin/ca_branch
         assertThrows(
                 PoisonMessageException.class,
                 () -> mapper.repaymentUserId(JSON.parseObject("{\"loanId\":1}")));

@@ -1,5 +1,12 @@
 package com.collection.service.impl;
 
+<<<<<<< HEAD
+=======
+import com.collection.common.enums.Stage;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+>>>>>>> origin/ca_branch
 /**
  * L4a 官方用例专用合成案件（§L4a.2 / §L4a.5）。
  *
@@ -29,9 +36,13 @@ final class L4aCaseRegistry {
         if (caseId == null) {
             return false;
         }
+<<<<<<< HEAD
         return caseId == THREE_CHANNEL
                 || caseId == GUARD_NO_PHONE
                 || caseId == REBUILD_FAIL
+=======
+        return caseId == THREE_CHANNEL || caseId == GUARD_NO_PHONE || caseId == REBUILD_FAIL
+>>>>>>> origin/ca_branch
                 || caseId == GUARD_FREQUENCY;
     }
 
@@ -46,4 +57,8 @@ final class L4aCaseRegistry {
     static boolean isRebuildFail(Long caseId) {
         return caseId != null && caseId == REBUILD_FAIL;
     }
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/ca_branch
 }

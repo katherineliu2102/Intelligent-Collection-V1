@@ -20,11 +20,18 @@ import org.springframework.stereotype.Component;
  * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为生产实现（可能读 DB 统计历史计划数）。
  *
  * <p>决策逻辑：
+<<<<<<< HEAD
  *
  * <ol>
  *   <li>续建次数 < max-rebuild-count → REBUILD
  *   <li>超限 + stage 可升档（S1→S2, S2→S3, S3→S4）→ ESCALATE
  *   <li>S4 或无法升档 → COMPLETE
+=======
+ * <ol>
+ *   <li>续建次数 < max-rebuild-count → REBUILD</li>
+ *   <li>超限 + stage 可升档（S1→S2, S2→S3, S3→S4）→ ESCALATE</li>
+ *   <li>S4 或无法升档 → COMPLETE</li>
+>>>>>>> origin/ca_branch
  * </ol>
  *
  * <p>内存计数器按 {@code caseId:stage} 维度追踪，重启清零（Phase 1 可接受）。
@@ -38,8 +45,12 @@ public class DefaultExhaustionPolicy implements ExhaustionPolicy {
     @Value("${engine.plan.max-rebuild-count:2}")
     private int maxRebuildCount;
 
+<<<<<<< HEAD
     private final ConcurrentHashMap<String, AtomicInteger> rebuildCounter =
             new ConcurrentHashMap<>();
+=======
+    private final ConcurrentHashMap<String, AtomicInteger> rebuildCounter = new ConcurrentHashMap<>();
+>>>>>>> origin/ca_branch
 
     @Override
     public ExhaustionResult handle(ContactPlan plan, CaseInfo caseInfo, ContextSnapshot snapshot) {

@@ -10,8 +10,13 @@ import org.springframework.stereotype.Component;
 /**
  * 系统级实时守卫。对应核心引擎规格 §1.1、§3.1 步骤②。
  *
+<<<<<<< HEAD
  * <p>实时查 DB 确认案件未还款 / 未冻结 / 未关闭。与业务级 ExecutionGuard 的区别： 本类是系统级不变量（案件还活着吗），失败 → 静默退出（不记录、不推进）。
  *
+=======
+ * <p>实时查 DB 确认案件未还款 / 未冻结 / 未关闭。与业务级 ExecutionGuard 的区别：
+ * 本类是系统级不变量（案件还活着吗），失败 → 静默退出（不记录、不推进）。
+>>>>>>> origin/ca_branch
  * <p>同时兼作"事务间隙取消检测"：基础设施读取失败按 fail-close 处理（核心引擎规格 §5）。
  */
 @Component
@@ -40,10 +45,14 @@ public class PreFlightChecker {
             return true;
         } catch (Exception e) {
             // fail-close：MySQL 不可达 → 静默退出，不执行触达（核心引擎规格 §5 Orchestrator②）
+<<<<<<< HEAD
             log.warn(
                     "[PreFlight] caseId={} check failed (fail-close, skip): {}",
                     caseId,
                     e.getMessage());
+=======
+            log.warn("[PreFlight] caseId={} check failed (fail-close, skip): {}", caseId, e.getMessage());
+>>>>>>> origin/ca_branch
             return false;
         }
     }

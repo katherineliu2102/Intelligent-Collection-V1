@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 /**
- * 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §4.2。
+ * 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §5.3。
  */
 @Getter
 @AllArgsConstructor
