@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 触达历史摘要。ContextSnapshot 组成部分。对应领域模型 §3.3。
+ * 触达历史摘要。ContextSnapshot 组成部分。对应领域模型 §4.3。
  * 由 CaseService.buildContactHistory(userId, caseId) 构建。
  */
 @Data

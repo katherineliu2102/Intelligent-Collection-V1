@@ -7,7 +7,7 @@ import lombok.Getter;
 
 /**
  * 步骤结果。ChannelGateway.dispatch() 的输出，同时作为 AdvancementPolicy.decide() 输入之一。
- * 对应领域模型 §4.4。
+ * 对应领域模型 §5.5。
  *
  * <p>success 由渠道层根据 contactResult 设置：FAILED 类 → false，其余 → true。
  * 引擎仅读 success 决定是否进入故障降级；AdvancementPolicy 读 contactResult 做业务决策。

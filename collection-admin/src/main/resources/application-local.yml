@@ -33,8 +33,9 @@ collection:
     ack-deadline-seconds: 60
     max-concurrency: 4
     # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
-    # case-push:                                  # 上游 JSON key 与契约不一致时配别名（C-I-01 待信贷联调）
-    #   field-map: { caseId: loan_id, dpd: overdue_days }
+    # case-push:                                  # 真实 case_push key（2026-07-06 信贷确认）；生产在 Nacos 维护
+    #   field-map: { caseId: loanID, userId: userID, name: realName, product: appName }
+    #   # phone/email/jpushToken 同名无需映射；dpd/stage/金额 不在 case_push → 读旧库补（case-service=real）
 channel:
   callback:
     base-url: http://localhost:8888/webhook

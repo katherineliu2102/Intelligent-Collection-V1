@@ -55,7 +55,7 @@ public class IngestionProperties {
     }
 
     /**
-     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §9.2）不一致时，用 {@link #fieldMap}
+     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §6.2）不一致时，用 {@link #fieldMap}
      * 把<b>语义字段</b>映射到上游实际 key；未配置则按同名取值（C-I-01 待信贷联调）。
      */
     @Data
@@ -66,7 +66,7 @@ public class IngestionProperties {
         /** 业务 message_id 字段（缺失则回退 PubSub messageId，用于去重）。 */
         private String messageIdField = "messageId";
 
-        /** 语义字段 → 上游 JSON key 的别名表；缺省同名（契约 §9.2 key）。 */
+        /** 语义字段 → 上游 JSON key 的别名表；缺省同名（契约 §6.2 key）。 */
         private Map<String, String> fieldMap = new HashMap<>();
     }
 }

@@ -1,7 +1,7 @@
 # L4b PubSub payload 草案（联调 / 脚本引用）
 
 > 与 L4a 触达口径一致：phone `+639451374358`、email `wzynju@126.com`、jpushToken `1a0018970bf0c19de04`。
-> JSON body 使用领域模型 §9.2 语义 key；信贷若 key 不同，配 Nacos `collection.ingestion.case-push.field-map`。
+> JSON body 使用领域模型 §6.2 语义 key；信贷若 key 不同，配 Nacos `collection.ingestion.case-push.field-map`。
 > **上线前须信贷确认**真实报文 key 名（C-I-01）。
 
 ## case_push — 99000000（S0）

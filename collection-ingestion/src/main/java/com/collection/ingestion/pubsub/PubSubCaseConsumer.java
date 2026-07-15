@@ -168,7 +168,7 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         Long userId = mapper.repaymentUserId(json);
         ingestionService.repayment(userId);
         if (mapper.fullySettled(json)) {
-            Long loanId = mapper.loanId(json);
+            Long loanId = mapper.repaymentLoanId(json);
             if (loanId != null) {
                 dedup.clearIngested(loanId);
                 log.info("[Ingestion] 全额结清 DEL ingested loanId={}", loanId);

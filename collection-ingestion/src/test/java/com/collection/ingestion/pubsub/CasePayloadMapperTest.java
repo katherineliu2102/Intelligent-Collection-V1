@@ -91,14 +91,31 @@ class CasePayloadMapperTest {
     }
 
     @Test
-    void repaymentUserId_requiredAndFullySettledByOutstanding() {
-        JSONObject json = JSON.parseObject("{\"userId\":777,\"totalOutstanding\":0}");
+    void repayment_keysAreContractNamed_notViaFieldMap() {
+        // 即使配了 case_push field-map（userId→userID / caseId→loanID），repayment 仍按真实小写键读。
+        props.getCasePush().getFieldMap().put(CollectionEvent.USER_ID, "userID");
+        props.getCasePush().getFieldMap().put(CollectionEvent.CASE_ID, "loanID");
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"userId\":777,\"loanId\":88,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1,\"overdue\":0.0}");
         assertEquals(777L, mapper.repaymentUserId(json));
-        assertTrue(mapper.fullySettled(json));
+        assertEquals(88L, mapper.repaymentLoanId(json));
+    }
 
-        JSONObject partial = JSON.parseObject("{\"userId\":777,\"totalOutstanding\":50}");
-        assertFalse(mapper.fullySettled(partial));
+    @Test
+    void fullySettled_byFullRepayTimeOrStatus4() {
+        // 样例：STATUS=1（待还款）但 fullRepayTime 非空 → 结清（靠 fullRepayTime 命中）
+        assertTrue(
+                mapper.fullySettled(
+                        JSON.parseObject("{\"userId\":1,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1}")));
+        // STATUS=4（结清）无 fullRepayTime → 结清
+        assertTrue(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":4}")));
+        // STATUS=2（逾期）无 fullRepayTime → 未结清
+        assertFalse(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":2}")));
+    }
 
+    @Test
+    void repaymentUserId_missing_throwsPoison() {
         assertThrows(
                 PoisonMessageException.class,
                 () -> mapper.repaymentUserId(JSON.parseObject("{\"loanId\":1}")));

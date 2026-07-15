@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 触达计划（核心引擎状态机主实体）。对应领域模型 §2.1 / 表 t_contact_plan。
+ * 触达计划（核心引擎状态机主实体）。对应领域模型 §3.1 / 表 t_contact_plan。
  */
 @Data
 public class ContactPlan {

@@ -1,7 +1,7 @@
 package com.collection.common.enums;
 
 /**
- * 穷尽策略动作。ExhaustionResult.action。对应领域模型 §6.10。
+ * 穷尽策略动作。ExhaustionResult.action。对应领域模型 §2.10。
  */
 public enum ExhaustionAction {
     /** 同阶段立即续建：创建新一轮计划（templateId 必填）。 */

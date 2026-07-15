@@ -11,7 +11,7 @@ import lombok.Getter;
 import java.util.List;
 
 /**
- * 执行上下文。所有 SPI 调用的统一输入。对应领域模型 §4.1、核心引擎规格 §4.2。
+ * 执行上下文。所有 SPI 调用的统一输入。对应领域模型 §5.2、核心引擎规格 §4.2。
  *
  * <p>⚠ 约束：SPI 实现方<b>只读</b>，不得调用 plan / currentStep 的任何 setter。
  * 违反此约束会导致引擎状态不可预期。Phase 2 考虑替换为不可变 View 对象。

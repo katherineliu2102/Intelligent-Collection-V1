@@ -4,8 +4,11 @@ import com.collection.common.enums.EventType;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseContext;
 import com.collection.common.model.CaseInfo;
+import com.collection.common.model.ContextSnapshot;
 import com.collection.common.service.CaseService;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -45,12 +48,17 @@ public class IngestionService {
      *     PENALTY_AMOUNT/DUE_DATE/FULL_REPAY_TIME/NAME/PHONE/EMAIL/JPUSH_TOKEN）；缺失字段做 null 防御。
      */
     public void ingestCase(
-            Long caseId, Long userId, Stage stage, java.util.Map<String, Object> snapshotFields) {
+            Long caseId, Long userId, Stage stage, Map<String, Object> snapshotFields) {
         Stage resolvedStage = stage;
         if (resolvedStage == null && snapshotFields != null) {
-            Object dpd = snapshotFields.get(CollectionEvent.DPD);
-            if (dpd instanceof Number) {
-                resolvedStage = Stage.fromDpd(((Number) dpd).intValue());
+            resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
+        }
+        // 混合方案（2026-07-06）：case_push 不含 dpd/金额/dueDate；payload（非空）缺 dpd 时读旧库回填，
+        // 联系方式（phone/email/name/jpushToken）仍以 payload 为准（putIfAbsent 不覆盖）。
+        if (snapshotFields != null && !snapshotFields.containsKey(CollectionEvent.DPD)) {
+            enrichFinancialFromCaseService(caseId, snapshotFields);
+            if (resolvedStage == null) {
+                resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
             }
         }
         if (resolvedStage == null) {
@@ -75,6 +83,40 @@ public class IngestionService {
                 resolvedStage,
                 snapshotFields == null ? 0 : snapshotFields.size());
         eventBus.publish(event);
+    }
+
+    private Stage stageFromDpd(Object dpd) {
+        return dpd instanceof Number ? Stage.fromDpd(((Number) dpd).intValue()) : null;
+    }
+
+    /**
+     * 混合方案回填：payload 缺金融字段时读旧库 {@link CaseService#getContextSnapshot}，把
+     * dpd/totalOutstanding/penaltyAmount/dueDate/product 补进 snapshotFields（{@code putIfAbsent}，
+     * 不覆盖 payload 已带值）。读库失败仅告警，不阻断入案（stage 后续仍可 getCaseInfo 兜底）。
+     */
+    private void enrichFinancialFromCaseService(Long caseId, Map<String, Object> fields) {
+        try {
+            ContextSnapshot snap = caseService.getContextSnapshot(caseId);
+            if (snap == null || snap.getCaseContext() == null) {
+                return;
+            }
+            CaseContext c = snap.getCaseContext();
+            fields.putIfAbsent(CollectionEvent.DPD, c.getDpd());
+            if (c.getTotalOutstanding() != null) {
+                fields.putIfAbsent(CollectionEvent.TOTAL_OUTSTANDING, c.getTotalOutstanding());
+            }
+            if (c.getPenaltyAmount() != null) {
+                fields.putIfAbsent(CollectionEvent.PENALTY_AMOUNT, c.getPenaltyAmount());
+            }
+            if (c.getDueDate() != null) {
+                fields.putIfAbsent(CollectionEvent.DUE_DATE, c.getDueDate().toString());
+            }
+            if (c.getProduct() != null) {
+                fields.putIfAbsent(CollectionEvent.PRODUCT, c.getProduct());
+            }
+        } catch (Exception e) {
+            log.warn("[Ingestion] 回填旧库金融字段失败 caseId={}: {}", caseId, e.getMessage());
+        }
     }
 
     /** 阶段变更 → 发布 STAGE_CHANGED。 */

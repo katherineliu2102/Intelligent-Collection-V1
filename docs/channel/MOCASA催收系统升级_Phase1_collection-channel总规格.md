@@ -100,7 +100,7 @@ PLAN_STEP_DUE
 | 字段 | 规则 |
 |------|------|
 | success | `contactResult` 非 FAILED 类 → true |
-| contactResult | 见领域模型 §6.2；消息类 dispatch 成功常用 **DELIVERED**（已提交供应商） |
+| contactResult | 见领域模型 §2.2；消息类 dispatch 成功常用 **DELIVERED**（已提交供应商） |
 | retryable | 网络超时/5xx=true；号码/token 无效=false |
 | providerMsgId | 通知中心 `requestId`（SMS）/ SendGrid message ID；Push 异步入队可无 ID |
 

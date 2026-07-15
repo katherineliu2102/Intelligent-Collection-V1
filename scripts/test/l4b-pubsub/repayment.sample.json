@@ -1,0 +1,8 @@
+{
+  "dataType": "repayment_push_and_load",
+  "messageId": "L4B-REPAY-99000001-0001",
+  "loanId": "99000001",
+  "userId": "99000001",
+  "STATUS": 4,
+  "fullRepayTime": "2026-07-07 10:00:00"
+}

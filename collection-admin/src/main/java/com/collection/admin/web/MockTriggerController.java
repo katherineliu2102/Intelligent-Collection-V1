@@ -20,6 +20,7 @@ import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
+import com.collection.ingestion.job.DpdStageRollHandler;
 import com.collection.service.impl.MockCaseService;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -44,6 +45,8 @@ public class MockTriggerController {
 
     @Resource
     private IngestionService ingestionService;
+    @Resource
+    private DpdStageRollHandler dpdStageRollHandler;
     @Resource
     private CaseService caseService;
     @Resource
@@ -445,6 +448,17 @@ public class MockTriggerController {
         }
         ingestionService.caseCeased(caseId, maxDpd);
         return ok("CASE_CEASED published, caseId=" + caseId + " maxDpd=" + maxDpd);
+    }
+
+    /**
+     * 手动触发 DPD 日切，等效 XXL-Job {@code dailyRoll}（读白名单 loan 的 {@code overdue_days} →
+     * {@code STAGE_CHANGED}/{@code CASE_CEASED}）。L4b 免注册 XXL-Job 即可即时验 L4b-3/4/8；
+     * 可多次调用验幂等（L4b-8）。结果详见应用日志 {@code [DpdStageRollHandler]}。
+     */
+    @PostMapping("/daily-roll")
+    public Map<String, Object> dailyRoll() {
+        dpdStageRollHandler.dailyRoll();
+        return ok("dailyRoll executed（扫描白名单，详见应用日志 [DpdStageRollHandler]）");
     }
 
     private Map<String, Object> ok(String msg) {

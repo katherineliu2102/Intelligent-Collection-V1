@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 /**
- * 案件上下文。ContextSnapshot 组成部分。对应领域模型 §3.1。
+ * 案件上下文。ContextSnapshot 组成部分。对应领域模型 §4.1。
  * 由 CaseService.buildContext(caseId) 构建。
  */
 @Data
