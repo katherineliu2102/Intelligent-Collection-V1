@@ -1,5 +1,8 @@
 package com.collection.channel.adapter;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.collection.channel.client.NotificationClient;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
@@ -7,18 +10,13 @@ import com.collection.common.dto.StepResult;
 import com.collection.common.enums.ChannelType;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
+import java.util.Collections;
+import java.util.HashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-
-import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 @WireMockTest
 class NotificationSmsAdapterTest {
@@ -48,16 +46,22 @@ class NotificationSmsAdapterTest {
                 .channelType(ChannelType.SMS)
                 .targetAddress("+639171234567")
                 .idempotencyKey("1:1:0")
-                .metadata(new HashMap<>(Collections.singletonMap(StepCommand.META_SMS_BODY, "Hello test")))
+                .metadata(
+                        new HashMap<>(
+                                Collections.singletonMap(StepCommand.META_SMS_BODY, "Hello test")))
                 .build();
     }
 
     @Test
     void sendSuccess() {
-        stubFor(post(urlEqualTo("/v1/sms/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"req-123\"}}")));
+        stubFor(
+                post(urlEqualTo("/v1/sms/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"req-123\"}}")));
 
         StepResult result = adapter.send(smsCommand());
         assertTrue(result.isSuccess());
@@ -67,10 +71,14 @@ class NotificationSmsAdapterTest {
 
     @Test
     void rejectedNoAccount() {
-        stubFor(post(urlEqualTo("/v1/sms/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":2001,\"msg\":\"no available account\"}")));
+        stubFor(
+                post(urlEqualTo("/v1/sms/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":2001,\"msg\":\"no available account\"}")));
 
         StepResult result = adapter.send(smsCommand());
         assertFalse(result.isSuccess());
@@ -80,10 +88,14 @@ class NotificationSmsAdapterTest {
 
     @Test
     void requestSuccessFalseRejected() {
-        stubFor(post(urlEqualTo("/v1/sms/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":false}}")));
+        stubFor(
+                post(urlEqualTo("/v1/sms/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":false}}")));
 
         StepResult result = adapter.send(smsCommand());
         assertFalse(result.isSuccess());
@@ -111,19 +123,24 @@ class NotificationSmsAdapterTest {
     @Test
     void testModeHitsTestSendWithoutSign() {
         properties.getNotification().setSmsTestMode(true);
-        properties.getNotification().setAppKey("");   // 测试端点免签名，appKey 可空
-        stubFor(post(urlEqualTo("/v1/sms/testSend"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"test-1\"}}")));
+        properties.getNotification().setAppKey(""); // 测试端点免签名，appKey 可空
+        stubFor(
+                post(urlEqualTo("/v1/sms/testSend"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"test-1\"}}")));
 
         StepResult result = adapter.send(smsCommand());
         assertTrue(result.isSuccess());
         assertEquals("test-1", result.getProviderMsgId());
         // 走 testSend，不应携带 sign 字段
-        verify(postRequestedFor(urlEqualTo("/v1/sms/testSend"))
-                .withRequestBody(matchingJsonPath("$.appCode", equalTo("mocasa")))
-                .withRequestBody(matchingJsonPath("$.contentType", equalTo("collection")))
-                .withRequestBody(notMatching(".*\\\"sign\\\".*")));
+        verify(
+                postRequestedFor(urlEqualTo("/v1/sms/testSend"))
+                        .withRequestBody(matchingJsonPath("$.appCode", equalTo("mocasa")))
+                        .withRequestBody(matchingJsonPath("$.contentType", equalTo("collection")))
+                        .withRequestBody(notMatching(".*\\\"sign\\\".*")));
     }
 }

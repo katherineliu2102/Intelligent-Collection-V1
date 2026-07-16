@@ -29,3 +29,4 @@ scripts/test/l4b-env.local.sh
 deploy/secrets/*
 !deploy/secrets/.gitkeep
 deploy/nacos/nacos-publish.local.yml
+node_modules/

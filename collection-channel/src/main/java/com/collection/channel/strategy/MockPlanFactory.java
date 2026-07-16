@@ -9,28 +9,27 @@ import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.spi.PlanFactory;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Resource;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-
 /**
  * Phase 1 Mock 实现 —— DefaultPlanFactory 的占位。
  *
- * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→EMAIL（L4a-1 / TC-REG-01）。
+ * <p>默认简单编排：PUSH → EMAIL；{@code channel.debug.legacy-three-step=true} 时 SMS→PUSH→EMAIL（L4a-1 /
+ * TC-REG-01）。
  */
 @Component
 public class MockPlanFactory implements PlanFactory {
 
     private static final Logger log = LoggerFactory.getLogger(MockPlanFactory.class);
 
-    @Resource
-    private ChannelProperties channelProperties;
+    @Resource private ChannelProperties channelProperties;
 
     @Override
     public ContactPlan create(CaseInfo caseInfo, Stage stage, ContextSnapshot snapshot) {
@@ -48,9 +47,7 @@ public class MockPlanFactory implements PlanFactory {
         return plan;
     }
 
-    /**
-     * §4.1 入口守卫：CEASED / D+91 拒建 plan（优先于 stage 匹配）。
-     */
+    /** §4.1 入口守卫：CEASED / D+91 拒建 plan（优先于 stage 匹配）。 */
     static boolean shouldRejectPlan(CaseInfo caseInfo, ContextSnapshot snapshot) {
         if (caseInfo == null) {
             return true;
@@ -126,7 +123,8 @@ public class MockPlanFactory implements PlanFactory {
         return steps;
     }
 
-    private ContactPlanStep buildStep(int order, ChannelType channel, int delayMin, int obsMin, Long templateId) {
+    private ContactPlanStep buildStep(
+            int order, ChannelType channel, int delayMin, int obsMin, Long templateId) {
         ContactPlanStep step = new ContactPlanStep();
         step.setStepOrder(order);
         step.setChannelType(channel);

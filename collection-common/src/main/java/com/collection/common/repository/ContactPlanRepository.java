@@ -6,14 +6,10 @@ import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
-
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。
- * 实现位于 collection-service（MyBatis）。
- */
+/** 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。 实现位于 collection-service（MyBatis）。 */
 public interface ContactPlanRepository {
 
     // ── 计划读取 ──

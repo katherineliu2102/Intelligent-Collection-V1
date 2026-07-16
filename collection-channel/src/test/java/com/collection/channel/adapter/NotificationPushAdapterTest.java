@@ -1,5 +1,8 @@
 package com.collection.channel.adapter;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.*;
+import static org.junit.jupiter.api.Assertions.*;
+
 import com.collection.channel.client.NotificationClient;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
@@ -7,17 +10,13 @@ import com.collection.common.dto.StepResult;
 import com.collection.common.enums.ChannelType;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
-
-import java.util.HashMap;
-import java.util.Map;
-
-import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static org.junit.jupiter.api.Assertions.*;
 
 @WireMockTest
 class NotificationPushAdapterTest {
@@ -66,10 +65,13 @@ class NotificationPushAdapterTest {
 
     @Test
     void enqueueSuccessNoProviderMsgId() {
-        stubFor(post(urlEqualTo("/v1/app_notification/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\"}")));
+        stubFor(
+                post(urlEqualTo("/v1/app_notification/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody("{\"code\":0,\"msg\":\"success\"}")));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertTrue(result.isSuccess());
@@ -79,10 +81,14 @@ class NotificationPushAdapterTest {
 
     @Test
     void noTokenFallbackToSms() {
-        stubFor(post(urlEqualTo("/v1/sms/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"fb-1\"}}")));
+        stubFor(
+                post(urlEqualTo("/v1/sms/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"fb-1\"}}")));
 
         // token 占位为手机号且 fallbackPhone 一致 → 走 SMS fallback
         StepResult result = pushAdapter.send(pushCommand("639171234567", "639171234567"));
@@ -93,10 +99,13 @@ class NotificationPushAdapterTest {
 
     @Test
     void invalidProviderFailed() {
-        stubFor(post(urlEqualTo("/v1/app_notification/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":3001,\"msg\":\"invalid provider\"}")));
+        stubFor(
+                post(urlEqualTo("/v1/app_notification/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody("{\"code\":3001,\"msg\":\"invalid provider\"}")));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertFalse(result.isSuccess());
@@ -106,7 +115,9 @@ class NotificationPushAdapterTest {
 
     @Test
     void transient5xxRetryable() {
-        stubFor(post(urlEqualTo("/v1/app_notification/send")).willReturn(aResponse().withStatus(503)));
+        stubFor(
+                post(urlEqualTo("/v1/app_notification/send"))
+                        .willReturn(aResponse().withStatus(503)));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertFalse(result.isSuccess());
@@ -117,10 +128,14 @@ class NotificationPushAdapterTest {
     @Test
     void syncModeHitsSyncEndpointAndReturnsRequestId() {
         properties.getNotification().setPushSyncMode(true);
-        stubFor(post(urlEqualTo("/v1/app_notification/sync/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"JPush\",\"requestId\":\"jp-1\"}}")));
+        stubFor(
+                post(urlEqualTo("/v1/app_notification/sync/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"JPush\",\"requestId\":\"jp-1\"}}")));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertTrue(result.isSuccess());
@@ -131,10 +146,14 @@ class NotificationPushAdapterTest {
     @Test
     void syncModeRejectedWhenRequestSuccessFalse() {
         properties.getNotification().setPushSyncMode(true);
-        stubFor(post(urlEqualTo("/v1/app_notification/sync/send"))
-                .willReturn(aResponse().withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":false}}")));
+        stubFor(
+                post(urlEqualTo("/v1/app_notification/sync/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":false}}")));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertFalse(result.isSuccess());

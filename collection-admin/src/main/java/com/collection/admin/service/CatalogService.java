@@ -4,12 +4,6 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.email.EmailMilestoneScriptSlots;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Service;
-import org.springframework.util.StreamUtils;
-
-import javax.annotation.PostConstruct;
-import javax.annotation.Resource;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -18,30 +12,34 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.PostConstruct;
+import javax.annotation.Resource;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StreamUtils;
 
-/**
- * 策略/渠道目录聚合：静态 catalog 元数据 + 运行时 {@link ChannelProperties} + 文案草稿。
- */
+/** 策略/渠道目录聚合：静态 catalog 元数据 + 运行时 {@link ChannelProperties} + 文案草稿。 */
 @Service
 public class CatalogService {
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<Map<String, Object>>() {};
+    private static final TypeReference<Map<String, Object>> MAP_TYPE =
+            new TypeReference<Map<String, Object>>() {};
 
-    @Resource
-    private ChannelProperties channelProperties;
+    @Resource private ChannelProperties channelProperties;
 
-    @Resource
-    private ObjectMapper objectMapper;
+    @Resource private ObjectMapper objectMapper;
 
     private Map<String, Object> metadata = new LinkedHashMap<>();
     private Map<String, Object> scriptDrafts = new LinkedHashMap<>();
 
     @PostConstruct
     void loadMetadata() throws Exception {
-        try (InputStream in = new ClassPathResource("catalog/catalog-metadata.json").getInputStream()) {
+        try (InputStream in =
+                new ClassPathResource("catalog/catalog-metadata.json").getInputStream()) {
             metadata = objectMapper.readValue(in, MAP_TYPE);
         }
-        try (InputStream in = new ClassPathResource("catalog/script-drafts.json").getInputStream()) {
+        try (InputStream in =
+                new ClassPathResource("catalog/script-drafts.json").getInputStream()) {
             scriptDrafts = objectMapper.readValue(in, MAP_TYPE);
         }
     }
@@ -102,7 +100,7 @@ public class CatalogService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> findTemplateRow(String slot) {
         Map<String, Object> templates = buildTemplates();
-        for (String key : new String[]{"email", "sms", "push"}) {
+        for (String key : new String[] {"email", "sms", "push"}) {
             List<Map<String, Object>> rows = (List<Map<String, Object>>) templates.get(key);
             if (rows == null) {
                 continue;
@@ -220,7 +218,8 @@ public class CatalogService {
     @SuppressWarnings("unchecked")
     private Map<String, Object> buildTemplates() {
         Map<String, Object> templates = new LinkedHashMap<>();
-        List<Map<String, Object>> scriptSlots = (List<Map<String, Object>>) metadata.get("scriptSlots");
+        List<Map<String, Object>> scriptSlots =
+                (List<Map<String, Object>>) metadata.get("scriptSlots");
 
         List<Map<String, Object>> emailRows = new ArrayList<>();
         for (String slot : EmailMilestoneScriptSlots.PHASE1_ACTIVE) {
@@ -246,7 +245,8 @@ public class CatalogService {
                 if (!"SMS".equals(meta.get("channel"))) {
                     continue;
                 }
-                smsRows.add(buildSmsRow(new LinkedHashMap<>(meta), String.valueOf(meta.get("slot"))));
+                smsRows.add(
+                        buildSmsRow(new LinkedHashMap<>(meta), String.valueOf(meta.get("slot"))));
             }
         }
         templates.put("sms", smsRows);
@@ -257,7 +257,8 @@ public class CatalogService {
                 if (!"PUSH".equals(meta.get("channel"))) {
                     continue;
                 }
-                pushRows.add(buildPushRow(new LinkedHashMap<>(meta), String.valueOf(meta.get("slot"))));
+                pushRows.add(
+                        buildPushRow(new LinkedHashMap<>(meta), String.valueOf(meta.get("slot"))));
             }
         }
         templates.put("push", pushRows);
@@ -333,7 +334,8 @@ public class CatalogService {
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> slotRow(String slot, String channel) {
-        List<Map<String, Object>> scriptSlots = (List<Map<String, Object>>) metadata.get("scriptSlots");
+        List<Map<String, Object>> scriptSlots =
+                (List<Map<String, Object>>) metadata.get("scriptSlots");
         if (scriptSlots != null) {
             for (Map<String, Object> meta : scriptSlots) {
                 if (slot.equals(meta.get("slot"))) {
@@ -426,7 +428,9 @@ public class CatalogService {
     }
 
     private static String draftTitle(Map<String, Object> draft) {
-        return draft == null || draft.get("title") == null ? "" : String.valueOf(draft.get("title"));
+        return draft == null || draft.get("title") == null
+                ? ""
+                : String.valueOf(draft.get("title"));
     }
 
     private static String maskTemplateId(String id) {

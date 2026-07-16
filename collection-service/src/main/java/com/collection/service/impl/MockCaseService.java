@@ -4,9 +4,6 @@ import com.collection.common.enums.Stage;
 import com.collection.common.model.*;
 import com.collection.common.service.CaseService;
 import com.collection.common.service.ProfileService;
-import org.springframework.stereotype.Service;
-
-import javax.annotation.Resource;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -14,6 +11,8 @@ import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import javax.annotation.Resource;
+import org.springframework.stereotype.Service;
 
 /**
  * Phase 1 Mock CaseService —— 合成案件数据，使全链路在不依赖旧库 schema 的情况下可跑通。
@@ -26,8 +25,7 @@ public class MockCaseService implements CaseService {
     private final Set<Long> repaidCases = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final Set<Long> ceasedCases = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
-    @Resource
-    private ProfileService profileService;
+    @Resource private ProfileService profileService;
 
     public void markRepaid(Long caseId) {
         repaidCases.add(caseId);
@@ -76,7 +74,7 @@ public class MockCaseService implements CaseService {
         ctx.setComplaintFrozen(profile.frozen);
         ctx.setFirstLoan(true);
         ctx.setPayCount(0);
-        ctx.setRepaymentUrl("https://app.mocasa.test/repay/" + caseId);
+        ctx.setRepaymentUrl("https://mocasa.com/s/4cTu");
         ctx.setEmailScriptSlot(profile.emailScriptSlot);
         return ctx;
     }
@@ -110,45 +108,117 @@ public class MockCaseService implements CaseService {
 
     private MockCaseProfile resolveProfile(Long caseId) {
         if (ceasedCases.contains(caseId) || caseId == 90091L) {
-            return new MockCaseProfile(91, Stage.S4, "CEASED", false, "STANDARD",
-                    new BigDecimal("5000.00"), LocalDate.now().minusDays(91), null);
+            return new MockCaseProfile(
+                    91,
+                    Stage.S4,
+                    "CEASED",
+                    false,
+                    "STANDARD",
+                    new BigDecimal("5000.00"),
+                    LocalDate.now().minusDays(91),
+                    null);
         }
         if (caseId == 90100L) {
-            return new MockCaseProfile(-3, Stage.S0, "ACTIVE", false, "STANDARD",
-                    new BigDecimal("5000.00"), LocalDate.now().plusDays(3), null);
+            return new MockCaseProfile(
+                    -3,
+                    Stage.S0,
+                    "ACTIVE",
+                    false,
+                    "STANDARD",
+                    new BigDecimal("5000.00"),
+                    LocalDate.now().plusDays(3),
+                    null);
         }
         if (L4aCaseRegistry.isL4aCase(caseId)) {
             String slot = L4aCaseRegistry.isRebuildFail(caseId) ? "INVALID_L4A_REBUILD_SLOT" : null;
-            return new MockCaseProfile(1, Stage.S1, "OVERDUE", false, "STANDARD",
-                    new BigDecimal("5000.00"), LocalDate.now().minusDays(1), slot);
+            return new MockCaseProfile(
+                    1,
+                    Stage.S1,
+                    "OVERDUE",
+                    false,
+                    "STANDARD",
+                    new BigDecimal("5000.00"),
+                    LocalDate.now().minusDays(1),
+                    slot);
         }
-        Optional<MockCaseProfile> smsProfile = SmsCaseRegistry.find(caseId)
-                .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
-                        tc.totalOutstanding, tc.dueDate, null));
+        Optional<MockCaseProfile> smsProfile =
+                SmsCaseRegistry.find(caseId)
+                        .map(
+                                tc ->
+                                        new MockCaseProfile(
+                                                tc.dpd,
+                                                tc.stage,
+                                                "OVERDUE",
+                                                false,
+                                                "STANDARD",
+                                                tc.totalOutstanding,
+                                                tc.dueDate,
+                                                null));
         if (smsProfile.isPresent()) {
             return smsProfile.get();
         }
-        Optional<MockCaseProfile> pushProfile = PushCaseRegistry.find(caseId)
-                .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
-                        tc.totalOutstanding, tc.dueDate, null));
+        Optional<MockCaseProfile> pushProfile =
+                PushCaseRegistry.find(caseId)
+                        .map(
+                                tc ->
+                                        new MockCaseProfile(
+                                                tc.dpd,
+                                                tc.stage,
+                                                "OVERDUE",
+                                                false,
+                                                "STANDARD",
+                                                tc.totalOutstanding,
+                                                tc.dueDate,
+                                                null));
         if (pushProfile.isPresent()) {
             return pushProfile.get();
         }
         return EmailCaseRegistry.find(caseId)
-                .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
-                        tc.totalOutstanding, tc.dueDate, tc.emailScriptSlot))
-                .orElseGet(() -> {
-                    if (caseId == 90007L) {
-                        return new MockCaseProfile(10, Stage.S2, "OVERDUE", false, "FIRM",
-                                new BigDecimal("5000.00"), LocalDate.now().minusDays(10), null);
-                    }
-                    if (caseId == 90008L) {
-                        return new MockCaseProfile(5, Stage.S2, "OVERDUE", true, "STANDARD",
-                                new BigDecimal("5000.00"), LocalDate.now().minusDays(5), null);
-                    }
-                    return new MockCaseProfile(1, Stage.S1, "OVERDUE", false, "STANDARD",
-                            new BigDecimal("5000.00"), LocalDate.now().minusDays(1), null);
-                });
+                .map(
+                        tc ->
+                                new MockCaseProfile(
+                                        tc.dpd,
+                                        tc.stage,
+                                        "OVERDUE",
+                                        false,
+                                        "STANDARD",
+                                        tc.totalOutstanding,
+                                        tc.dueDate,
+                                        tc.emailScriptSlot))
+                .orElseGet(
+                        () -> {
+                            if (caseId == 90007L) {
+                                return new MockCaseProfile(
+                                        10,
+                                        Stage.S2,
+                                        "OVERDUE",
+                                        false,
+                                        "FIRM",
+                                        new BigDecimal("5000.00"),
+                                        LocalDate.now().minusDays(10),
+                                        null);
+                            }
+                            if (caseId == 90008L) {
+                                return new MockCaseProfile(
+                                        5,
+                                        Stage.S2,
+                                        "OVERDUE",
+                                        true,
+                                        "STANDARD",
+                                        new BigDecimal("5000.00"),
+                                        LocalDate.now().minusDays(5),
+                                        null);
+                            }
+                            return new MockCaseProfile(
+                                    1,
+                                    Stage.S1,
+                                    "OVERDUE",
+                                    false,
+                                    "STANDARD",
+                                    new BigDecimal("5000.00"),
+                                    LocalDate.now().minusDays(1),
+                                    null);
+                        });
     }
 
     private static final class MockCaseProfile {
@@ -161,8 +231,15 @@ public class MockCaseService implements CaseService {
         final LocalDate dueDate;
         final String emailScriptSlot;
 
-        MockCaseProfile(int dpd, Stage stage, String caseStatus, boolean frozen, String strategyTone,
-                        BigDecimal totalOutstanding, LocalDate dueDate, String emailScriptSlot) {
+        MockCaseProfile(
+                int dpd,
+                Stage stage,
+                String caseStatus,
+                boolean frozen,
+                String strategyTone,
+                BigDecimal totalOutstanding,
+                LocalDate dueDate,
+                String emailScriptSlot) {
             this.dpd = dpd;
             this.stage = stage;
             this.caseStatus = caseStatus;

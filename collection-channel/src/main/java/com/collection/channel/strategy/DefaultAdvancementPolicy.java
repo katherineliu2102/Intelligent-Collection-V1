@@ -15,10 +15,11 @@ import org.springframework.stereotype.Component;
  * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为按 contactResult 细分的生产实现。
  *
  * <p>决策逻辑：
+ *
  * <ul>
- *   <li>非末步 → ADVANCE_NEXT（不管成功失败，继续走下一步）</li>
- *   <li>末步 + success → PLAN_COMPLETED</li>
- *   <li>末步 + !success → PLAN_EXHAUSTED（触发 ExhaustionPolicy）</li>
+ *   <li>非末步 → ADVANCE_NEXT（不管成功失败，继续走下一步）
+ *   <li>末步 + success → PLAN_COMPLETED
+ *   <li>末步 + !success → PLAN_EXHAUSTED（触发 ExhaustionPolicy）
  * </ul>
  */
 @Primary

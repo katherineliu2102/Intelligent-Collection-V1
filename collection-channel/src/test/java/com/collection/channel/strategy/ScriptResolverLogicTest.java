@@ -20,6 +20,17 @@ class ScriptResolverLogicTest {
     }
 
     @Test
+    void inject_repaymentUrl_appendsShortLink() {
+        String tpl = "MOCASA Collections: {name}, please settle PHP {amount}. Pay: {repaymentUrl}";
+        String out =
+                ScriptLibrary.inject(
+                        tpl, new ScriptVars("Juan", "1,500.00", 3, "https://mocasa.com/s/4cTu"));
+        assertEquals(
+                "MOCASA Collections: Juan, please settle PHP 1,500.00. Pay: https://mocasa.com/s/4cTu",
+                out);
+    }
+
+    @Test
     void inject_replacesAllPlaceholders() {
         String tpl =
                 "MOCASA Collections: {name}, your account is {dpd} day(s) overdue. Please settle PHP {amount} promptly.";
