@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
  * <p><b>范围</b>：仅扫 {@code collection.ingestion.loan-id-whitelist} 名单（Phase 1 / L4b 隔离，避免对全量
  * 真实在催案件发事件）。名单为空时跳过全量扫描（生产全量扫 {@code t_collection} 属切量后，见 C-X-02）。
  *
- * <p>由 XXL-Job 每日 0:05 PHT 调 {@link #dailyRoll()}（注册见 L4b 交接清单 O3）。
+ * <p>由 XXL-Job 每日 0:35 PHT（账务数据落库至少 30 分钟后）调 {@link #dailyRoll()}（注册见 L4b 交接清单 O3）。
  */
 @Component
 public class DpdStageRollHandler {

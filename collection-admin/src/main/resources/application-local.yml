@@ -87,6 +87,12 @@ channel:
     timezone: Asia/Manila
     quiet-hours-start: "21:00"
     quiet-hours-end: "08:00"
+    daily-total-limit: 3
+    daily-limit:
+      SMS: 1
+      PUSH: 1
+      EMAIL: 1
+      AI_CALL: 1
   scripts:
     push-default-deep-link: https://app.mocasa.com/repay
     sms-default-repayment-link: https://mocasa.com/s/4cTu

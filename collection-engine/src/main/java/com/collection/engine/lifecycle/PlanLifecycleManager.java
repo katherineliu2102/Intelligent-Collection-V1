@@ -237,8 +237,11 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        if (plan == null || plan.getStatus() != PlanStatus.STEP_EXECUTING) {
-            return noEvents(); // 非执行态（已处理/已取消），静默吸收
+        // AI_CALL 等 disposition（EXECUTING）；SMS 观察期等 DLR（WAITING）→ 短路结转（引擎 §4.3.3）
+        if (plan == null
+                || (plan.getStatus() != PlanStatus.STEP_EXECUTING
+                        && plan.getStatus() != PlanStatus.STEP_WAITING)) {
+            return noEvents(); // 非执行/等待态（已处理/已取消），静默吸收
         }
         ContactPlanStep step = planRepository.findStepById(stepId);
         ContactResult result = mapCallbackToResult(event.getString("result"));

@@ -169,6 +169,23 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
+    @DisplayName("#6a 静默时段 → 延后执行，不跳过也不推进")
+    void quietHours_deferred() {
+        LocalDateTime resumeAt = LocalDateTime.of(2026, 7, 17, 8, 0);
+        when(executionGuard.evaluate(any()))
+                .thenReturn(GuardVerdict.defer("quiet", "TIME_WINDOW", resumeAt));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).updateStepTriggerTime(STEP_ID, resumeAt, StepStatus.PENDING);
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
+        verify(planRepository, never())
+                .updateStepStatus(eq(STEP_ID), eq(StepStatus.SKIPPED), any());
+        verify(eventBus, never()).publish(any());
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
     @DisplayName("#7 业务守卫抛异常（fail-close）→ SKIPPED + 推进")
     void guardException_failCloseSkipped() {
         when(executionGuard.evaluate(any())).thenThrow(new RuntimeException("guard down"));

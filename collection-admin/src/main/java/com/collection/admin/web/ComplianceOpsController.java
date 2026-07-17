@@ -5,15 +5,20 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 基础合规操作（冻结/解冻/终态取消）。 */
+/** Phase 2 合规操作（冻结/解冻/终态取消）；Phase 1 默认不注册该接口。 */
 @RestController
 @RequestMapping("/compliance")
+@ConditionalOnProperty(
+        prefix = "collection.phase2.compliance-ops",
+        name = "enabled",
+        havingValue = "true")
 public class ComplianceOpsController {
 
     private final JdbcTemplate jdbcTemplate;

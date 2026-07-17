@@ -141,12 +141,23 @@ public class ChannelProperties {
 
     @Data
     public static class Compliance {
-        private Map<String, Integer> dailyLimit = new HashMap<>();
+        private Map<String, Integer> dailyLimit = defaultDailyLimit();
+        /** 单用户在一个 PHT 自然日内，所有自动化渠道合计最多触达次数。 */
+        private int dailyTotalLimit = 3;
         private String timezone = "Asia/Manila";
         private String quietHoursStart = "21:00";
         private String quietHoursEnd = "08:00";
         private String touchWindowStart = "08:00";
         private String touchWindowEnd = "21:00";
+
+        private static Map<String, Integer> defaultDailyLimit() {
+            Map<String, Integer> limits = new HashMap<>();
+            limits.put("SMS", 1);
+            limits.put("PUSH", 1);
+            limits.put("EMAIL", 1);
+            limits.put("AI_CALL", 1);
+            return limits;
+        }
     }
 
     @Data

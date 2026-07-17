@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 /**
- * Phase 1 简化版 ExecutionGuard —— 时段 + 空地址 + 内存频率计数器（无 Redis）。
+ * Phase 1 简化版 ExecutionGuard —— 时段 + 空地址 + 内存频率计数器（单渠道日上限及跨渠道日总上限，无 Redis）。
  *
  * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为 Redis Lua 原子计数的生产实现。
  */
@@ -68,16 +68,26 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         }
 
         if (inQuiet) {
-            return GuardVerdict.block(
+            return GuardVerdict.defer(
                     "QUIET_HOURS "
                             + comp.getQuietHoursStart()
                             + "-"
                             + comp.getQuietHoursEnd()
                             + " "
                             + tz,
-                    "TIME_WINDOW");
+                    "TIME_WINDOW",
+                    nextAllowedAt(ZonedDateTime.now(zone), start, end));
         }
         return null;
+    }
+
+    private static java.time.LocalDateTime nextAllowedAt(
+            ZonedDateTime now, LocalTime start, LocalTime end) {
+        ZonedDateTime next = now.withHour(end.getHour()).withMinute(end.getMinute()).withSecond(0).withNano(0);
+        if (start.isAfter(end) && !now.toLocalTime().isBefore(start)) {
+            next = next.plusDays(1);
+        }
+        return next.toLocalDateTime();
     }
 
     private GuardVerdict checkAddress(ExecutionContext context) {
@@ -127,25 +137,40 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
                 limit = limits.get(channel.name());
             }
         }
-        if (limit == null || limit <= 0) {
-            return null;
-        }
-
         Long userId = context.getPlan().getUserId();
         String dateKey =
                 ZonedDateTime.now(ZoneId.of(channelProperties.getCompliance().getTimezone()))
                         .toLocalDate()
                         .toString();
-        String key = userId + ":" + channel.name() + ":" + dateKey;
+        if (limit != null && limit > 0) {
+            String channelKey = userId + ":" + channel.name() + ":" + dateKey;
+            int channelCount = increment(channelKey);
+            if (channelCount > limit) {
+                return GuardVerdict.block(
+                        "DAILY_LIMIT_EXCEEDED "
+                                + channel.name()
+                                + " "
+                                + channelCount
+                                + "/"
+                                + limit,
+                        "FREQUENCY_LIMIT");
+            }
+        }
 
-        AtomicInteger counter = frequencyMap.computeIfAbsent(key, k -> new AtomicInteger(0));
-        int current = counter.incrementAndGet();
-        if (current > limit) {
-            return GuardVerdict.block(
-                    "DAILY_LIMIT_EXCEEDED " + channel.name() + " " + current + "/" + limit,
-                    "FREQUENCY_LIMIT");
+        int totalLimit = channelProperties.getCompliance().getDailyTotalLimit();
+        if (totalLimit > 0) {
+            int totalCount = increment(userId + ":ALL:" + dateKey);
+            if (totalCount > totalLimit) {
+                return GuardVerdict.block(
+                        "DAILY_TOTAL_LIMIT_EXCEEDED " + totalCount + "/" + totalLimit,
+                        "FREQUENCY_LIMIT");
+            }
         }
         return null;
+    }
+
+    private int increment(String key) {
+        return frequencyMap.computeIfAbsent(key, k -> new AtomicInteger(0)).incrementAndGet();
     }
 
     private static LocalTime parseTime(String timeStr, LocalTime fallback) {

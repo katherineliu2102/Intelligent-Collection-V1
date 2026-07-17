@@ -57,7 +57,7 @@ public class StepExecutionOrchestrator {
             return;
         }
 
-        // ── ② 系统级守卫（实时查 DB：还款/冻结/关闭） ──
+        // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
         if (!preFlightChecker.check(plan.getCaseId())) {
             return; // 静默退出
         }
@@ -82,6 +82,16 @@ public class StepExecutionOrchestrator {
                     "[execStep] blocked by guard: {} / {}",
                     verdict.getBlockedRuleType(),
                     verdict.getBlockedReason());
+            if (verdict.getDeferUntil() != null) {
+                planRepository.updateStepTriggerTime(
+                        step.getId(), verdict.getDeferUntil(), StepStatus.PENDING);
+                planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_SCHEDULED, null);
+                log.info(
+                        "[execStep] deferred by guard until {}: {}",
+                        verdict.getDeferUntil(),
+                        verdict.getBlockedRuleType());
+                return;
+            }
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, verdict.getBlockedRuleType());
             return;
         }

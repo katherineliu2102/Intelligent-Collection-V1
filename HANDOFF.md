@@ -32,14 +32,23 @@
 
 ### 当前简化项（非生产实现）
 
-| 项 | 当前 | 生产目标 |
+| 项 | 当前（本地/CI 替身） | 生产实现（Phase 1 依赖） |
 |---|---|---|
-| 事件总线 | 内存版 | Redis Stream + Consumer Group + PEL/看门狗/DLQ（基础设施规范 §1-§2） |
-| 幂等锁 | 内存版 | Redis SETNX（基础设施规范 §3） |
+| 事件总线 | `InMemoryEventBus` | Redis Stream + Consumer Group + PEL/看门狗/DLQ（基础设施规范 §1-§2）— 待接入 D1 |
+| 幂等锁 | `InMemoryIdempotencyService` | Redis SETNX（基础设施规范 §3）— 待接入 D2 |
+| 合规频控 | `ConfigurableExecutionGuard` 内存计数 | Redis 原子计数（单渠道日上限 + 跨渠道日总上限） |
 | 调度 | Spring `@Scheduled` | XXL-Job Handler（基础设施规范 §4） |
-| SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | 切 Redis 后 I/O 型 SPI 另配 client 级超时作第一道防线 |
+| SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | I/O 型 SPI（Redis Lua 等）另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
 | 可观测性 | 无 | Micrometer + MDC 跨线程（基础设施规范 §6） |
+
+### Phase 1 生产拓扑与 Redis 依赖
+
+Phase 1 **生产依赖 Redis**（旧催收系统已使用 Redis）：事件总线、幂等、合规频控的生产实现均基于 Redis。`InMemoryEventBus` / `InMemoryIdempotencyService` / 内存频控**仅用于本地开发与 CI 链路验证**（跨重启不保留、跨实例不共享），不用于生产。
+
+- **上线前置**：完成 Redis 实现接入（D1/D2）并配置 `collection.eventbus=redis` / `collection.idempotency=redis` + Redis 原子频控。
+- **部署形态**：Phase 1 单活跃实例即可满足吞吐（峰值 QPS 1–3）；Redis 保证幂等、频控与事件可靠投递，扩容多实例无需改业务代码。
+- `collection-common` 已抽象接口，内存 ↔ Redis 切换对业务代码零改动。
 
 ---
 
@@ -49,7 +58,7 @@
 
 - JDK 8、Maven 3.6+
 - 可访问测试库 `ai_collection_db`（连接信息向主架构负责人获取，**不写入仓库**）
-- **暂不需要 Redis**：事件总线/幂等当前是内存版临时实现，仅用于先把链路跑通；Redis Stream 尚未接入，待基础设施开发者完成后（模块 D）即切换为依赖 Redis
+- **本地开发不依赖 Redis**：事件总线/幂等/频控可用内存替身（缺省 `memory`）跑通全链路。**生产依赖 Redis**（Stream、SETNX、原子频控），上线前须完成 Redis 实现接入（模块 D）。
 
 ### 建表（第一次拉代码后执行一次）
 
@@ -209,7 +218,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑
 
-- 每日 0:05 PHT（XXL-Job）按 [渠道编排 Max DPD 口径](./docs/channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#531-难催子条件计算口径) 重算（读旧库 **只读**）
+- 每日 0:35 PHT（XXL-Job；账务数据落库至少 30 分钟后）按 [渠道编排 Max DPD 口径](./docs/channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#531-难催子条件计算口径) 重算（读旧库 **只读**）
 - DPD 1–90 且 Stage 变化 → 发 `STAGE_CHANGED`（含 Stage 回退）
 - DPD ≥ 91 → **仅**发 `CASE_CEASED`（不写旧库 CEASED 列）
 - **不改引擎 Consumer，引擎只消费事件**
@@ -222,14 +231,16 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 #### C1. `MockCaseService` → 真实 `CaseService`
 
-- `getCaseInfo(caseId)` → 查 `t_collection`，填充 `CaseInfo`（含实时还款状态 `isRepaid`、冻结状态 `isFrozen`）
+- `getCaseInfo(caseId)` → 查 `t_collection`，填充 `CaseInfo`（含实时还款状态 `isRepaid`；争议冻结 `isFrozen` 为 Phase 2）
 - `buildContext(caseId)` → 多表 JOIN（`t_collection` + `t_user_repayment_plan`）构建 `CaseContext`
 - `buildContactHistory(userId, caseId)` → 聚合 `t_contact_timeline` 构建 `ContactHistory`
 - `getContextSnapshot(caseId)` → 读 `t_contact_plan.context_snapshot`，JSON 反序列化
 - `isRepaid(caseId)` → 实时查还款状态（PreFlightChecker 和 PTP 处理调用）
 
-#### C2. `MockProfileService` → 真实 `ProfileService`
+#### C2. `MockProfileService` → 真实 `ProfileService`（**上线前必做**）
 
+- **定位**：仅兜底组件，不在主热路径。主链路真实字段由 `CASE_INGESTED` payload 带出、引擎零读库组装；本服务仅在 payload/carry-forward 快照缺失时经 `CaseService.getContextSnapshot` 兜底调用。
+- **为何上线前必做**：兜底路径若仍是 Mock，则 payload 不完整时会回**假画像**污染真实触达；须与 `RealCaseService`（C1）同步接真。
 - `getFullProfile(userId)` → 映射 8+ 张旧表（`t_user_basis` / `t_user_work` / `t_user_telephone_book` / `t_user_equipment` / `t_user_profile_ext`）
 - Phase 1 未填充的字段返回 `null`；所有 SPI 实现和模板渲染须做 **null 防御处理**
 

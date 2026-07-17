@@ -182,7 +182,7 @@ flowchart TB
     end
 
     subgraph P3["③ 实时守卫（瞬态，不落库）"]
-        PF["PreFlightChecker 读 CaseInfo\nrepaid / frozen"]
+        PF["PreFlightChecker 读 CaseInfo\n案件存在 / repaid"]
     end
 
     PLAN --> ASM
@@ -202,7 +202,7 @@ flowchart TB
 | **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
 | **快照**     | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON        | `CASE_INGESTED` 建计划时冻结                                                                           | 决策输入字段；无独立表                                   |
 | **快照**     | ContextSnapshot                            | §4.4      | `t_contact_plan.context_snapshot` | 同上                                                                                               | 快照根；计划存活期内只读，保证步骤间决策一致                        |
-| **瞬态 DTO** | CaseInfo                                   | §5.1      | 否                                 | `PreFlightChecker`（步骤②）；`PlanFactory` / `ExhaustionPolicy`                                       | 实时案件态（`repaid`/`frozen`）；与快照 CaseContext 语义不同 |
+| **瞬态 DTO** | CaseInfo                                   | §5.1      | 否                                 | `PreFlightChecker`（步骤②）；`PlanFactory` / `ExhaustionPolicy`                                       | 实时案件态（`repaid`）；与快照 CaseContext 语义不同 |
 | **瞬态 DTO** | ExecutionContext                           | §5.2      | 否                                 | `PLAN_STEP_DUE` → 步骤执行 ③④⑤                                                                       | SPI 统一入参；含 snapshot + recentTimeline          |
 | **瞬态 DTO** | GuardVerdict                               | §5.3      | 否                                 | 步骤 ③ `ExecutionGuard.evaluate`                                                                   | 合规裁定：放行 / 拦截原因                                |
 | **瞬态 DTO** | StepCommand / StepResult                   | §5.4–§5.5 | 否                                 | 步骤 ④⑤ `StepResolver` / `ChannelGateway`                                                          | 触达指令 ↔ 渠道执行结果                                 |
@@ -638,7 +638,7 @@ flowchart TB
 | payCount         | int        | 是   | 历史还款次数（含本笔之前的贷款）                                                                                             | t_collection.pay_count    |
 | activePlanId     | Long       | 否   | 当前活跃触达计划ID                                                                                                   | t_contact_plan 查询         |
 | strategyTone     | String     | 否   | 编排强度：STANDARD / FIRM（读 snapshot，PlanFactory 匹配模板）                                                            | snapshot                  |
-| complaintFrozen  | boolean    | 否   | 投诉/争议冻结标记；**可恢复实时冻结由 PreFlightChecker 实时查案件状态判定并"停住"**（非快照驱动、非 ExecutionGuard）；快照值仅记录建计划时点，不作中途投诉的冻结依据       | 案件状态（实时）/ snapshot（建计划时点） |
+| complaintFrozen  | boolean    | 否   | 投诉/争议冻结标记；Phase 2 预留。Phase 1 不以该字段拦截触达，快照值仅记录建计划时点       | 案件状态（实时）/ snapshot（建计划时点） |
 | collectionStatus | String     | 否   | 案件催收生命周期：`CEASED` = D+91 完全停催                                                                                | ingestion 日切 / 案件         |
 | repaymentUrl     | String     | 否   | App 还款深链（ingestion 写入；Push/Email/SMS 变量渲染）。**契约必填**，见 [contracts](./contracts/README_ContextSnapshot契约对齐.md) | ingestion / 信贷结账链路        |
 | emailScriptSlot  | String     | 否   | Phase 1 Mock：显式指定 Email 里程碑 scriptSlot（E2E 联调）；为空时由 `EmailMilestoneScriptSlots.resolveByDpd(dpd)` 推断         | Mock / E2E                |
@@ -783,7 +783,7 @@ flowchart TB
 
 | 层          | 消费方                               | 数据来源与维度                                                                              | Phase 1 落地                                                                                                                                                                        |
 | ---------- | --------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **① 合规频控** | `ExecutionGuard`（日频上限 / 接通即停）     | 用户维 · 渠道 · 自然日(PHT) 计数，对齐 `todayTouchCount` / `todayPhoneAnswered`                   | 每步**实时**取数；计数器接口化，Phase 1 内存版（`[ic-v1-overview](../.cursor/rules/ic-v1-overview.mdc)`：内存版、接口抽象、后续切 Redis），维度/语义与 Redis 目标态一致；**不读**冻结快照内 `contactHistory`（会 stale），**不靠**数最近 50 条 |
+| **① 合规频控** | `ExecutionGuard`（单渠道日上限 / 跨渠道日总上限）     | 用户维 · 渠道 · 自然日(PHT)，以及用户维 · 自然日(PHT)总计数；默认各渠道 1 次、跨渠道合计 3 次                   | 每步**实时**取数；计数器接口化，Phase 1 内存版（后续切 Redis）；接通即停为 Phase 2；**不读**冻结快照内 `contactHistory`（会 stale），**不靠**数最近 50 条 |
 | **② 决策统计** | `DecisionEngine` / `StepResolver` | 案件维聚合（`totalTouchCount` / `channelTouchCounts` / `currentPlanAiBotFailCount`）+ 用户维今日 | 每步由 SPI 从 `recentTimeline` 的**对应窗口**聚合得出（见 ③）；不复用冻结快照，符合 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)「步骤决策读 `recentTimeline`、不读快照内 `contactHistory`」                   |
 | **③ 事件明细** | 需逐条事件序列的规则（前步是否已读/回复、AI Bot 连拨未接） | `recentTimeline` 原始事件                                                                | 按 [§5.2](#52-executioncontext执行上下文) 的**时间窗 + 上限**组装：用户维今日 ∪ 案件维本阶段，叠加上限护栏                                                                                                         |
 
@@ -807,7 +807,7 @@ flowchart TB
 | snapshotVersion | String         | 是   | 快照版本标识（用于 A/B 测试时区分） |
 
 
-> **不可变性约束**：快照一旦写入，不随源数据变化而更新。SPI 实现基于快照做决策——这保证了同一计划内步骤之间的决策一致性。不可快照的实时状态（还款/冻结）由 PreFlightChecker 在步骤执行时实时校验。
+> **不可变性约束**：快照一旦写入，不随源数据变化而更新。SPI 实现基于快照做决策——这保证了同一计划内步骤之间的决策一致性。不可快照的实时还款状态由 PreFlightChecker 在步骤执行时实时校验；争议冻结为 Phase 2 能力。
 >
 > **JSON 序列化约定**：样例 JSON 字段名 = Java 模型字段名（fastjson 默认）。注意布尔字段 `CaseContext.isFirstLoan` 序列化为 `**firstLoan`**（去 `is` 前缀）。冻结样例见 `[./contracts/ContextSnapshot.sample.json](./contracts/ContextSnapshot.sample.json)`。MySQL `JSON` 列读回可能规范化键序/空格，测试与对账按**语义等价**断言（不按字节相等）。
 >

@@ -100,7 +100,7 @@
 
 3. **权限现状**：GCP 凭证 `keliu@indiacashgo.com`（ADC）具备 topic publish 与 subscription consume（pull/streaming），但**无 `subscriptions.get`（describe）**——不影响消费，仅无法查订阅元数据。
 
-4. **XXL-Job 未接**：日切 L4b-3/4/8 通过 `POST /mock/daily-roll` 手动触发验证（读真实旧库 dpd）。上线前需由运维注册 XXL-Job 每日 0:05 PHT 调 `DpdStageRollHandler.dailyRoll()`。
+4. **XXL-Job 未接**：日切 L4b-3/4/8 通过 `POST /mock/daily-roll` 手动触发验证（读真实旧库 dpd）。上线前需由运维注册 XXL-Job 每日 0:35 PHT（账务落库至少 30 分钟后）调 `DpdStageRollHandler.dailyRoll()`。
 
 ## 六、距正式上线的后续（除 AI Call 外）
 - 运维分配独占订阅 / 确认订阅唯一消费方，并将生产订阅回切 `collection-cases-ai-v1-sub`。

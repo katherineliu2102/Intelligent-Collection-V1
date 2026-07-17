@@ -520,16 +520,32 @@ class PlanLifecycleManagerTest {
     // ───────────────────────── 差集补全：链路④ 异步回调态拦截/映射（D16/D17/D18） ─────────────────────────
 
     @Test
-    @DisplayName("④-D16 回调时计划非 STEP_EXECUTING → 静默吸收，不改步骤")
+    @DisplayName("④-D16 回调时计划已终态（非 EXECUTING/WAITING）→ 静默吸收，不改步骤")
     void onChannelCallback_nonExecuting_silentlyAbsorbs() {
-        ContactPlan waiting = newPlan(PLAN_ID, PlanStatus.STEP_WAITING, Stage.S2);
-        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(waiting);
+        ContactPlan cancelled = newPlan(PLAN_ID, PlanStatus.PLAN_CANCELLED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(cancelled);
 
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
         verify(planRepository, never()).updateStepStatus(any(), any(), any());
         assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("④ SMS 观察期 STEP_WAITING 收到 DLR → 短路结转 COMPLETED + STEP_COMPLETED")
+    void onChannelCallback_waitingDlr_shortCircuits() {
+        ContactPlan waiting = newPlan(PLAN_ID, PlanStatus.STEP_WAITING, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(waiting);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+
+        CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "DELIVERED");
+        List<CollectionEvent> out = manager.onChannelCallback(event);
+
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
 
     @Test

@@ -18,7 +18,7 @@
 | **Push** | `push-test-token` = **`1a0018970bf0c19de04`**（强制覆盖，不触达真人） | 联调期保留；生产置空 |
 | **SMS** | `sms-test-mode=true`（testSend） | 生产改 false |
 | **Email** | **无全局沙箱**；payload 须为 **126 邮箱** | 同左 |
-| **日切（L4b）** | **`POST /mock/daily-roll` 手动触发**（见 §日切手动验收） | XXL-Job `dailyRoll` 0:05 PHT（上线前接 `@XxlJob`） |
+| **日切（L4b）** | **`POST /mock/daily-roll` 手动触发**（见 §日切手动验收） | XXL-Job `dailyRoll` 0:35 PHT（账务落库 ≥30min 后；上线前接 `@XxlJob`） |
 | **内部事件总线** | `collection.eventbus=memory`（缺省即可） | 切量多实例前改 Redis |
 | **安全红线** | **禁止**向生产 topic `collection-cases` 发测试消息（旧系统会消费） | — |
 

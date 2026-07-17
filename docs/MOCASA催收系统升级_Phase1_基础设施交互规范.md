@@ -30,7 +30,17 @@
 
 [核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) 定义了线程隔离的架构决策（Consumer Pool 与 Cron Thread 分离），本节给出具体规格参数和安全约束。
 
+### Phase 1 生产拓扑与 Redis 依赖
+
+Phase 1 **生产依赖 Redis**（旧催收系统已使用 Redis）：事件总线、幂等、合规频控的生产实现均基于 Redis；`InMemoryEventBus` / `InMemoryIdempotencyService` / `ConfigurableExecutionGuard` 内存计数仅用于本地开发与 CI 链路验证，不用于生产。
+
+- **生产实现**：`RedisStreamEventBusImpl`（Consumer Group + PEL/看门狗/DLQ）、Redis SETNX 幂等、Redis 原子频控计数（单渠道日上限 + 跨渠道日总上限）。
+- **上线前置**：完成上述 Redis 实现接入（HANDOFF D1/D2），生产配置 `collection.eventbus=redis` / `collection.idempotency=redis`。
+- **部署形态**：Phase 1 单活跃实例即可满足吞吐（峰值 QPS 1–3）；Redis 保证幂等、频控与事件可靠投递，扩容至多实例时无需改业务代码。
+
 ### 线程池架构
+
+**Redis Stream 生产拓扑（Phase 1 生产依赖；Redis 实现待接入 HANDOFF D1）**：
 
 ```mermaid
 flowchart LR
@@ -88,7 +98,7 @@ Consumer 线程池必须注册 Micrometer `ExecutorServiceMetrics`，确保 [运
 | 实现 | 何时用 | 切换键 |
 |---|---|---|
 | `InMemoryEventBus` | Phase 1 默认，本地/CI 链路验证 | `collection.eventbus=memory`（缺省） |
-| `RedisStreamEventBusImpl` | 生产环境（HANDOFF D1，待实现） | `collection.eventbus=redis` |
+| `RedisStreamEventBusImpl` | 切多实例前（HANDOFF D1，待实现） | `collection.eventbus=redis` |
 
 > **本节范围**：§2～§2.2 描述 **Redis Stream 生产语义**（XACK、PEL、DLQ、看门狗等）。Phase 1 内存版仅覆盖异步消费 + 背压，**不含**上述 Redis 能力（handler 异常仅 log，无 NACK/重投）；Phase 1 须配键见 [附录 A.2.1](#a21-phase-1-生效缺省即可)。
 
@@ -206,7 +216,7 @@ return current
 |---|---|---|---|---|
 | `planStepDueHandler` | `TriggerScanner` · admin | 每分钟 | `trigger_time≤NOW`，步骤待触发，计划非终态 → `PLAN_STEP_DUE` | `prepareStepDue` → `executeStep` |
 | `callbackTimeoutHandler` | 同上 | 每分钟 | `timeout_time≤NOW`，`EXECUTING`，计划非终态 → `CALLBACK_TIMEOUT` | `onCallbackTimeout`（[§4.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout)） |
-| `dailyRoll` | `DpdStageRollHandler` · ingestion | 0:05 PHT | 旧库 DPD 重算 → `STAGE_CHANGED` / `CASE_CEASED` | `onStageChanged` / `onCaseCeased`（[接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)） |
+| `dailyRoll` | `DpdStageRollHandler` · ingestion | 0:35 PHT | 账务数据落库至少 30 分钟后，旧库 DPD 重算 → `STAGE_CHANGED` / `CASE_CEASED` | `onStageChanged` / `onCaseCeased`（[接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)） |
 
 > **Phase 1 实现**：前两个 Handler 由 admin `TriggerScanner` 的 `@Scheduled`（`collection.scan.interval-ms`，默认 5s）驱动，逻辑同上；生产改 XXL-Job 按 Cron 触发。`dailyRoll` 独立在 ingestion，占位待接 Job。触达精度 ±1min 可接受。
 
@@ -411,9 +421,9 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 <a id="a22-redis-生产切换预留"></a>
 
-#### A.2.2 Redis / 生产切换预留（Phase 1 不必配 Nacos）
+#### A.2.2 Redis 生产键（Phase 1 生产依赖）
 
-`collection.eventbus=redis` / `collection.idempotency=redis` 切换后生效。**L4b 联调保持缺省 `memory` 即可**；完整默认值与热更列见正文，附录只索引键名。
+`collection.eventbus=redis` / `collection.idempotency=redis` 为生产配置，在 Redis 实现接入后启用（HANDOFF D1/D2）。本地开发与 L4b 联调可用缺省 `memory` 替身。完整默认值与热更列见正文，附录只索引键名。
 
 | 参数 Key | 默认值 | 热更 | 规格 |
 |---|---|---|---|

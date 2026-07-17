@@ -117,7 +117,7 @@ PLAN_STEP_DUE
 | disposition | String | Voice 建议 | 业务分支：见 [LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
 | providerMsgId | String | 建议 | 对账 |
 
-**引擎行为**（`PlanLifecycleManager.onChannelCallback`）：仅当 plan 为 `STEP_EXECUTING` 时更新 step → `STEP_COMPLETED`。
+**引擎行为**（`PlanLifecycleManager.onChannelCallback`）：plan 为 `STEP_EXECUTING`（AI_CALL disposition）或 `STEP_WAITING`（SMS DLR 短路）时更新 step → `COMPLETED` 并发布 `STEP_COMPLETED`；其余态静默吸收。
 
 **SendGrid Event Webhook**：**不**发布 `CHANNEL_CALLBACK` 完成步骤；由 admin 服务 **更新** `t_contact_timeline`（同 `providerMsgId` 幂等升级 READ/CLICKED 等）。
 

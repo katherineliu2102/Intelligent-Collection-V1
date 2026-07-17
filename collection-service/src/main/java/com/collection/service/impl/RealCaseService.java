@@ -7,7 +7,6 @@ import com.collection.common.model.ContactHistory;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
-import com.collection.service.mapper.AdminCaseFreezeMapper;
 import com.collection.service.mapper.CollectionCaseMapper;
 import com.collection.service.mapper.CollectionCaseRow;
 import java.math.BigDecimal;
@@ -53,8 +52,6 @@ public class RealCaseService implements CaseService {
     private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
     @Resource private CollectionCaseMapper caseMapper;
-    @Resource private AdminCaseFreezeMapper freezeMapper;
-
     /** 还款深链模板，{caseId} 占位。 */
     @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
     private String repaymentUrlTemplate;
@@ -73,7 +70,6 @@ public class RealCaseService implements CaseService {
         info.setTotalOutstanding(row.getTotalNotPaid());
         info.setDueDate(row.getRepaymentDate());
         info.setRepaid(isRepaidRow(row));
-        info.setFrozen(isFrozen(caseId));
         return info;
     }
 
@@ -161,16 +157,6 @@ public class RealCaseService implements CaseService {
             throw new IllegalStateException("t_collection 无 loan_id=" + caseId + " 的案件");
         }
         return row;
-    }
-
-    private boolean isFrozen(Long caseId) {
-        try {
-            return freezeMapper.countFrozenByCaseId(caseId) > 0;
-        } catch (Exception e) {
-            log.warn(
-                    "[RealCaseService] freeze check failed, caseId={}: {}", caseId, e.getMessage());
-            return false;
-        }
     }
 
     private boolean isRepaidRow(CollectionCaseRow row) {

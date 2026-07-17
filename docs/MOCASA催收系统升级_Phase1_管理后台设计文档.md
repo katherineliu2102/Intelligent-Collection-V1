@@ -504,17 +504,17 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 ---
 
-### 5.6 基础合规操作
+### 5.6 合规操作（Phase 2 预留）
 
-**定位**：满足 PRD 场景 C 的最小后台能力；**不是**独立合规子系统。
+**定位**：投诉/争议冻结、解冻和终态取消不属于 Phase 1；接口实现由 `collection.phase2.compliance-ops.enabled=true` 显式启用。
 
 | 操作 | 行为 | 角色 |
 |------|------|------|
-| **投诉冻结** | 对用户活跃 plan 打冻结标记；引擎 Pre-flight 拦截新触达，不取消 plan | 催收主管 |
-| **解冻** | 清除冻结标记，恢复触达 | 催收主管 |
-| **终态取消** | 确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
+| **投诉冻结** | Phase 2：对用户活跃 plan 写冻结标记 | 催收主管 |
+| **解冻** | Phase 2：清除冻结标记 | 催收主管 |
+| **终态取消** | Phase 2：确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
 
-记录：操作人、时间、原因（操作日志）。不建设 Consent 台账、DNC 管理、Dispute 工单流 ✅。
+Phase 2 记录操作人、时间、原因（操作日志）。Phase 1 不建设 Consent 台账、DNC 管理、Dispute 工单流。
 
 ---
 

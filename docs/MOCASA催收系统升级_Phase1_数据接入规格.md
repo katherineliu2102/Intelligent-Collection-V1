@@ -48,7 +48,7 @@
   → 接入：校验 / 组装 payload → EventBus：CASE_INGESTED | REPAYMENT_RECEIVED
   → 引擎：建计划 / 状态机 / 触达（非本文）
 
-DpdStageRollHandler 每日 0:05 PHT
+DpdStageRollHandler 每日 0:35 PHT
   → 只读旧库扫描在催名单（Phase 1 显式依赖，见 §1.3 决策与 §4）
   → EventBus：STAGE_CHANGED | CASE_CEASED
 ```
@@ -302,7 +302,7 @@ DpdStageRollHandler 每日 0:05 PHT
 
 ## 4. 阶段变更与 DPD 日切
 
-`DpdStageRollHandler` 每日 **0:05 PHT** 重算 Max DPD 并 publish 阶段事件（生产经 XXL-Job，见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)）。
+`DpdStageRollHandler` 每日 **0:35 PHT**（账务数据落库至少 30 分钟后）重算 Max DPD 并 publish 阶段事件（生产经 XXL-Job，见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)）。
 
 > **Phase 1 日切交付（B2）**：在 [§4.2 并行期读库](#42-读库与演进) 上跑通 [§4.3](#43-max-dpd-与日切流程) hybrid 重算，产出 [§4.4](#44-产出事件) 事件，[§4.5](#45-幂等与重跑) 可重跑。切量后读库切换（§4.2）与 FIRM / `strategyTone`（[C-D-07](#c-d-日切与-dpd)）Phase 1 固定 `STANDARD`。
 
@@ -342,7 +342,7 @@ B2 **只读**；定义读哪张表，不算 DPD。未闭合项 → [附录 C（C
 
 | 项 | 规格 |
 |---|---|
-| 触发 | 每日 **0:05 PHT**（`Asia/Manila`），`DpdStageRollHandler.dailyRoll()` |
+| 触发 | 每日 **0:35 PHT**（`Asia/Manila`；账务数据落库至少 30 分钟后），`DpdStageRollHandler.dailyRoll()` |
 | 读库 | [§4.2 并行期](#42-读库与演进) |
 | 算法 | **hybrid**：优先 bill 级公式；缺 bill → fallback `DATE_DIFF(TODAY_PHT, repayment_date)` |
 | 比对 | `oldStage = Stage.fromDpd(old_max_dpd)`，`newStage = Stage.fromDpd(new_max_dpd)` |
@@ -587,7 +587,7 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 | C-D-05 | **在催扫描 SQL** | ✅ 口径：`full_repay_time IS NULL AND total_not_paid > 0`；同 `loan_id` 多行取 **`create_time DESC` 最新行** | — | 信贷 + DBA | §4.2、下方 C-D 联调确认 |
 | C-D-06 | **日切 `old_max_dpd`** | ✅ 直接取 `t_collection.overdue_days`（与 C-D-03 同源，无需重算缓存） | — | 接入 | §4.3 |
 | C-D-07 | **`strategyTone` / FIRM** | Phase 1 固定 `STANDARD`（§3.1 / 渠道 §6.3.1） | 难催子条件入案/日切/还款何时计算 | 接入 + service | 渠道 §6.3.1 |
-| C-D-08 | **XXL-Job `dailyRoll`** | 规格 0:05 PHT | Job 注册、环境、与 B2 联调 | 运维 + 接入 | [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
+| C-D-08 | **XXL-Job `dailyRoll`** | 规格 0:35 PHT（账务落库 ≥30min 后） | Job 注册、环境、与 B2 联调 | 运维 + 接入 | [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
 
 #### C-D 联调确认（2026-07-06，主架构拍板）
 
