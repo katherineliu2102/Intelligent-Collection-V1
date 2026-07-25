@@ -11,13 +11,12 @@ import org.springframework.stereotype.Component;
 /**
  * 数据接入（B1）配置绑定，prefix = {@code collection.ingestion}（数据接入规格 §2.1）。
  *
- * <p>GCP 连接信息（project / subscription / 凭证）走环境变量，<b>不入仓</b>：YAML 中以
- * {@code ${GCP_PUBSUB_PROJECT:}} / {@code ${GCP_PUBSUB_SUBSCRIPTION:}} 映射；凭证由
- * {@code GOOGLE_APPLICATION_CREDENTIALS} 经 ADC 自动加载。
+ * <p>GCP 连接信息（project / subscription / 凭证）走环境变量，<b>不入仓</b>：YAML 中以 {@code ${GCP_PUBSUB_PROJECT:}} /
+ * {@code ${GCP_PUBSUB_SUBSCRIPTION:}} 映射；凭证由 {@code GOOGLE_APPLICATION_CREDENTIALS} 经 ADC 自动加载。
  *
  * <p>{@link #enabled} 默认 {@code false}：本地 / CI 不启动 PubSub 消费（{@link
- * com.collection.ingestion.pubsub.PubSubCaseConsumer} 受 {@code @ConditionalOnProperty} 门控），
- * 联调 / 生产置 {@code true}。
+ * com.collection.ingestion.pubsub.PubSubCaseConsumer} 受 {@code @ConditionalOnProperty} 门控）， 联调 /
+ * 生产置 {@code true}。
  */
 @Data
 @Component
@@ -39,6 +38,9 @@ public class IngestionProperties {
     /** 并发消费度，默认 4（§2.1），用作 flow-control 最大未确认条数与拉取线程数。 */
     private int maxConcurrency = 4;
 
+    /** 超过该阈值的 case_push 进入实时核验后的受控 replay，默认 24 小时。 */
+    private int lateMessageThresholdHours = 24;
+
     /** 仅处理名单内 loan_id；空 = 全量（§6.0 联调隔离，名单不入仓）。 */
     private List<Long> loanIdWhitelist = new ArrayList<>();
 
@@ -55,8 +57,8 @@ public class IngestionProperties {
     }
 
     /**
-     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §6.2）不一致时，用 {@link #fieldMap}
-     * 把<b>语义字段</b>映射到上游实际 key；未配置则按同名取值（C-I-01 待信贷联调）。
+     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §6.2）不一致时，用 {@link #fieldMap} 把<b>语义字段</b>映射到上游实际
+     * key；未配置则按同名取值（C-I-01 待信贷联调）。
      */
     @Data
     public static class CasePush {

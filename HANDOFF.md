@@ -34,10 +34,10 @@
 
 | 项 | 当前（本地/CI 替身） | 生产实现（Phase 1 依赖） |
 |---|---|---|
-| 事件总线 | `InMemoryEventBus` | Redis Stream + Consumer Group + PEL/看门狗/DLQ（基础设施规范 §1-§2）— 待接入 D1 |
-| 幂等锁 | `InMemoryIdempotencyService` | Redis SETNX（基础设施规范 §3）— 待接入 D2 |
+| 事件总线 | `InMemoryEventBus`（local/CI） | Pilot `RedisStreamEventBus`：Consumer Group、PEL reclaim、超阈值 DLQ stream；需 Redis 环境验收 |
+| 幂等锁 | `InMemoryIdempotencyService`（local/CI） | Pilot `RedisIdempotencyService`：Redis SETNX + TTL |
 | 合规频控 | `ConfigurableExecutionGuard` 内存计数 | Redis 原子计数（单渠道日上限 + 跨渠道日总上限） |
-| 调度 | Spring `@Scheduled` | XXL-Job Handler（基础设施规范 §4） |
+| 调度 | Spring `@Scheduled`（仅 local/test） | Pilot 官方 XXL-Job：`planStepDueHandler` / `callbackTimeoutHandler` / `dailyRoll` |
 | SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | I/O 型 SPI（Redis Lua 等）另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
 | 可观测性 | 无 | Micrometer + MDC 跨线程（基础设施规范 §6） |
@@ -144,14 +144,16 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 
 #### A2. `MockExecutionGuard` → `ComplianceExecutionGuard`
 
-步骤执行前合规校验（频率 / 时段 / 放弃率）。
+步骤执行前合规校验（频率 / 时段 / 空地址）。呼损率自动降级为 Phase 2。
 
 - **接口**：`com.collection.common.spi.ExecutionGuard`
 - **方法签名**：`GuardVerdict evaluate(ExecutionContext)`
 - **关键约束**
   - 硬超时 20ms（单次 Redis Lua 脚本完成计数器读取+增加+TTL）
   - Redis key 前缀：`compliance:daily:{userId}:{channel}:{date}`
-  - 拦截时返回 `GuardVerdict.block(reason, ruleType)`，引擎自动 SKIPPED + 推进下一步
+  - 默认允许窗口为 08:00–21:00 PHT；时段外返回带 `deferUntil` 的裁定并重排
+  - 空地址/频控等正常拦截返回 `GuardVerdict.block(reason, NO_EMAIL/NO_PHONE/NO_TOKEN/FREQUENCY_LIMIT)`；引擎写 `COMPLIANCE_BLOCKED` timeline 后推进
+  - SPI 异常/超时才 fail-close 为 `SKIPPED`
   - 不允许返回 `null`
 
 #### A3. `MockStepResolver` → `DefaultStepResolver`
@@ -163,7 +165,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **关键约束**
   - **零 DB I/O**，只读 `ExecutionContext.contextSnapshot`
   - `metadata` 里 `callbackUrl` / `timeoutMinutes` 对异步渠道（AI_CALL）必填
-  - 硬超时 50ms；返回 `null` = **主动跳过该步**（引擎标 SKIPPED 推进，非失败，用于 EMAIL 非里程碑 DPD / 无邮箱）；异常/超时 = FAILED
+  - 硬超时 50ms；返回 `null` = **策略性主动跳过该步**（引擎标 `SKIPPED` 推进，非失败）；空地址必须由前置 Guard 拦截；异常/超时 = FAILED
 
 #### A4. `MockAdvancementPolicy` → `DefaultAdvancementPolicy`
 
@@ -194,9 +196,10 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **方法签名**：`StepResult dispatch(StepCommand)`
 - **机器轨渠道（Phase 1）**：SMS / PUSH / EMAIL / AI_CALL（TTS / HUMAN_CALL 由 LTH 域外独立编排）
 - **关键约束**
-  - 消息类（SMS/PUSH 等）→ `success=true, DELIVERED`；异步类（AI_CALL）→ `success=true, DELIVERED`（真实结果等 Webhook 回调）
+  - SMS / PUSH / EMAIL 成功 dispatch 即 `success=true, DELIVERED`，`observationMinutes=0`；异步类（AI_CALL）真实结果等 Webhook 回调
   - 渠道内部熔断/fallback 对引擎完全透明；抛异常引擎一律视为 `retryable`
   - 供应商错误码统一映射为 `StepResult.errorCode`
+  - channel 只返回 `StepResult`，不写 `t_contact_timeline`
 
 #### 需新建的渠道编排表（领域模型附录 B，DDL 待补充到 `db/schema.sql`）
 
@@ -211,14 +214,14 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 #### B1. `IngestionService` → 真实 PubSub 消费
 
 - 接 GCP PubSub，消费上游信贷系统推送（`case_push` / `repayment_push_and_load`；`assign_signal` Phase 1 不路由）
-- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；**入案主链路不读**旧库 `t_collection`、**不回写**任何库（见 [数据接入 §3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
+- 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；payload 优先，缺 `dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate` 时可经 CaseService **只读**回填；不回写任何库，不自行组装快照（见 [数据接入 §3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
 - 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load` 仅 publish `REPAYMENT_RECEIVED`
-- `context_snapshot` 由**引擎**据 `CASE_INGESTED` payload 组装并写入 plan（[§3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`CaseService` 仅 payload 缺失兜底 / L4b 对账
+- `context_snapshot` 由**引擎**据完整 `CASE_INGESTED` payload 组装并写入 plan（[§3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；引擎不在建快照时补库
 - 现有 `IngestionService` 骨架方法在此替换为真实 PubSub Consumer
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑
 
-- 每日 0:35 PHT（XXL-Job；账务数据落库至少 30 分钟后）按 [渠道编排 Max DPD 口径](./docs/channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#531-难催子条件计算口径) 重算（读旧库 **只读**）
+- 每日 0:35 PHT（XXL-Job；账务数据落库至少 30 分钟后）在并行期读取旧库 `t_collection.overdue_days`；切量后才按 bill 级 Max DPD 重算（均只读）
 - DPD 1–90 且 Stage 变化 → 发 `STAGE_CHANGED`（含 Stage 回退）
 - DPD ≥ 91 → **仅**发 `CASE_CEASED`（不写旧库 CEASED 列）
 - **不改引擎 Consumer，引擎只消费事件**
@@ -231,15 +234,17 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 #### C1. `MockCaseService` → 真实 `CaseService`
 
+- 所有 `caseId` = 信贷 `loan_id`，旧库关联一律使用 `t_collection.loan_id`，不得使用 `t_collection.id`
+- 为 ingestion 提供缺失金融字段的只读回填：仅 `dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate`，不得覆盖 payload 联系方式
 - `getCaseInfo(caseId)` → 查 `t_collection`，填充 `CaseInfo`（含实时还款状态 `isRepaid`；争议冻结 `isFrozen` 为 Phase 2）
 - `buildContext(caseId)` → 多表 JOIN（`t_collection` + `t_user_repayment_plan`）构建 `CaseContext`
 - `buildContactHistory(userId, caseId)` → 聚合 `t_contact_timeline` 构建 `ContactHistory`
 - `getContextSnapshot(caseId)` → 读 `t_contact_plan.context_snapshot`，JSON 反序列化
-- `isRepaid(caseId)` → 实时查还款状态（PreFlightChecker 和 PTP 处理调用）
+- `isRepaid(caseId)` → 实时查还款状态（仅引擎 `PreFlightChecker` 调用；PTP 为 Phase 2）
 
 #### C2. `MockProfileService` → 真实 `ProfileService`（**上线前必做**）
 
-- **定位**：仅兜底组件，不在主热路径。主链路真实字段由 `CASE_INGESTED` payload 带出、引擎零读库组装；本服务仅在 payload/carry-forward 快照缺失时经 `CaseService.getContextSnapshot` 兜底调用。
+- **定位**：不在主入案链路。联系方式与 Phase 1 最小画像由 `CASE_INGESTED` payload 带出；引擎只消费完整 payload 组装快照。ProfileService 可用于约定外的后续兜底/对账，不得替代接入层金融字段回填。
 - **为何上线前必做**：兜底路径若仍是 Mock，则 payload 不完整时会回**假画像**污染真实触达；须与 `RealCaseService`（C1）同步接真。
 - `getFullProfile(userId)` → 映射 8+ 张旧表（`t_user_basis` / `t_user_work` / `t_user_telephone_book` / `t_user_equipment` / `t_user_profile_ext`）
 - Phase 1 未填充的字段返回 `null`；所有 SPI 实现和模板渲染须做 **null 防御处理**
@@ -301,6 +306,19 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 ## 五、跨模块契约（改动前请同步对齐）
 
 以下是被多个模块共享的契约文件。**可以演进**（这版只是初版框架），但因为改动会影响所有依赖方，**改前请先在群里同步并与主架构负责人对齐**，由主架构评估对 `collection-engine` 的影响后统一改、统一发版：
+
+### 2026-07-24 Phase 1 SSOT 契约变更通知（须确认）
+
+> 本节记录已裁决的文档契约，**不是**“代码已完成”声明。owner 须在实现或联调前确认；字段定义以 [领域模型](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) 为 SSOT，执行行为以 [引擎↔渠道执行契约](./docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) 为 SSOT。
+
+| 接收方 / owner | 已裁决契约 | 需确认 / 实施动作 |
+| --- | --- | --- |
+| `collection-channel` | PUSH token 统一为 `device.jpushToken`（JPush Registration ID），不使用 `fcmToken`；token 为空且有手机号时仅允许同一次 dispatch 内 Push→SMS fallback | 确认 Adapter / Resolver 不再读取或要求 `fcmToken`，且 fallback 不查库 |
+| `collection-channel` | `StepResolver=null` 仅策略性跳过；空地址由 `ExecutionGuard` 返回 `NO_EMAIL` / `NO_PHONE` / `NO_TOKEN`，引擎写 `COMPLIANCE_BLOCKED` 后推进 | 在真实 Guard 实现该规则；Resolver 不得用 null 表达空地址 |
+| `collection-channel` | SMS / PUSH / EMAIL 均成功 dispatch 即完成，`observationMinutes=0`；AI_CALL 等回调 | 确认 PlanFactory 不为三消息渠道生成观察期或 DLR 完成路径 |
+| `collection-channel` | `t_contact_timeline` 只由核心引擎写；channel 只返回 `StepResult` | 移除/禁止 channel 对 timeline 的直接写入 |
+| `collection-service` | `caseId` 统一是信贷 `loan_id`（Long）；旧库关联使用 `t_collection.loan_id` | 确认 Mapper、CaseService 查询和对账不使用 `t_collection.id` 作为 caseId |
+| `collection-service` | CaseService 为 ingestion 提供缺失金融字段的只读回填（`dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate`），并为引擎提供实时还款守卫 | 暴露或确认只读查询能力；回填不得覆盖 payload 的 phone / email / jpushToken |
 
 ```
 collection-common/src/main/java/com/collection/common/spi/        # 5 个 SPI 接口

@@ -7,6 +7,7 @@ import com.collection.common.enums.StepStatus;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 /** 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。 实现位于 collection-service（MyBatis）。 */
@@ -39,6 +40,9 @@ public interface ContactPlanRepository {
 
     void updatePlanStatus(Long planId, PlanStatus status, CancelReason reason);
 
+    /** 标记 REBUILD 中的旧计划。该标记只应在包含新计划插入与旧计划终态化的同一事务内短暂存在。 */
+    default void markRenewalPending(Long planId) {}
+
     /** 首步进入 EXECUTING 时写 startedAt（IF NULL THEN SET）。 */
     void markStarted(Long planId);
 
@@ -54,6 +58,29 @@ public interface ContactPlanRepository {
     ContactPlanStep getNextStep(Long planId, int currentStepOrder);
 
     void updateStepStatus(Long stepId, StepStatus status, ContactResult result);
+
+    /** 条件状态迁移。返回 false 表示步骤已由回调、超时或取消路径处理，应作为幂等 no-op。 */
+    default boolean transitionStepStatus(
+            Long stepId,
+            List<StepStatus> expectedStatuses,
+            StepStatus targetStatus,
+            ContactResult result) {
+        updateStepStatus(stepId, targetStatus, result);
+        return true;
+    }
+
+    default boolean transitionStepStatus(
+            Long stepId, StepStatus expectedStatus, StepStatus targetStatus, ContactResult result) {
+        return transitionStepStatus(stepId, Arrays.asList(expectedStatus), targetStatus, result);
+    }
+
+    /** 首次开始执行只写 executed_at，绝不写 completed_at。 */
+    default void markStepExecuting(Long stepId) {
+        updateStepStatus(stepId, StepStatus.EXECUTING, null);
+    }
+
+    /** 观察期的预置最终结果，不改变步骤状态或完成时间。 */
+    default void updateStepResult(Long stepId, ContactResult result) {}
 
     void updateStepTriggerTime(Long stepId, LocalDateTime triggerTime, StepStatus status);
 

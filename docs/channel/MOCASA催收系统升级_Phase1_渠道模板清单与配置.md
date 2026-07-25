@@ -66,9 +66,9 @@ docs/
 
 | scriptSlot | 渠道 | 供应商 | 触发 | 渲染 / template_id | 素材 | Phase 1 |
 |------------|------|--------|------|-------------------|------|---------|
-| `S0_REMINDER` | SMS / Push | LTH / FCM | D-3、D-2 · 08:00 | Resolver → `sms_body` / FCM data | 待填 · 含防诈骗 | ⏳ |
-| `S0_REMINDER_URGENT` | SMS / Push | LTH / FCM | D-1 · 08:00 | 同上 | 待填 | ⏳ |
-| `S0_DUE_TODAY` | SMS / Push | LTH / FCM | D0 · 08:00 | 同上 | 待填 | ⏳ |
+| `S0_REMINDER` | SMS / Push | LTH / Notification Center → JPush | D-3、D-2 · 08:00 | Resolver → `sms_body` / JPush data | 待填 · 含防诈骗 | ⏳ |
+| `S0_REMINDER_URGENT` | SMS / Push | LTH / Notification Center → JPush | D-1 · 08:00 | 同上 | 待填 | ⏳ |
+| `S0_DUE_TODAY` | SMS / Push | LTH / Notification Center → JPush | D0 · 08:00 | 同上 | 待填 | ⏳ |
 | `S0_DUE_TODAY_EMAIL` | EMAIL | SendGrid | D0 · 14:00 | `d-9b485bfd24e14950a7811faf33c2b22f` | [HTML](./email-templates/milestones/S0_DUE_TODAY_EMAIL.html) · [Test Data](./email-templates/email-templates-test/test-data.sample.json) | ✅ **启用** |
 
 ### 2.2 S1（D+1 ~ D+3）
@@ -86,7 +86,7 @@ docs/
 
 | scriptSlot | 渠道 | 供应商 | 触发 | 渲染 / template_id | 素材 | Phase 1 |
 |------------|------|--------|------|-------------------|------|---------|
-| `S2_SMS_STANDARD` / `S2_SMS_FIRM` | SMS | LTH | 08:00 | `sms_body` + offer 占位 | 待填 | ⏳ |
+| `S2_SMS_STANDARD` / `S2_SMS_FIRM` | SMS | LTH | 08:00 | `sms_body`（不含动态 offer 变量） | 待填 | ⏳ |
 | `S2_PUSH_STANDARD` | PUSH | FCM | 12:00 | data payload | 待填 | ⏳ |
 | `S2_EMAIL_ENTRY` | EMAIL | SendGrid | D+4 · 14:00 | `d-86ed8faae3b24489ad7db8a11067b8c4` | [HTML](./email-templates/milestones/S2_EMAIL_ENTRY.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d4.json) | ✅ **启用** |
 | `S2_EMAIL_MID` | EMAIL | SendGrid | D+7 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S2_EMAIL_MID.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d7.json) | 📦 HTML 备用 |
@@ -169,7 +169,7 @@ channel:
 
 **叙事原则**（v3）：见 [email-templates/README §2](./email-templates/README.md#2-催收心理学矩阵)——**全程无 third-party**；D+75 用 `assignment_date` 预告 **final delinquency review**（禁写停催/委外）。
 **Subject / Preheader SSOT**：[`email-templates/subjects.md`](./email-templates/subjects.md)  
-**语言**：Phase 1 仅英文；S2+ 静态 Offer 引导（无 `offer_amount`）。
+**语言**：Phase 1 仅英文；S2+ 可使用泛化 payment-options 引导，但不承诺减免、不使用 `offer_*` 变量。
 
 ### 3.3 里程碑速查
 

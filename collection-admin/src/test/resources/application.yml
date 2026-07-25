@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: intelligent-collection-l3-it
+  cloud:
+    nacos:
+      config:
+        enabled: false

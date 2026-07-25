@@ -1,9 +1,9 @@
-# L4a 全量化前置条件 & 编排同事补全清单（通知）
+# L4a 全量化前置条件 & 编排同事补全清单（历史协作通知）
 
 > **发起**：主架构（engine）  **接收**：编排同事（collection-channel）
 > **日期**：2026-06-22
-> **关联**：测试主文档 [`§L4a 端到端用例清单`](./MOCASA催收系统升级_Phase1_测试文档.md)（L4a-1…8）；契约见 `docs/contracts/`、渠道指南见 `docs/channel/`。
-> **一句话**：L4a-**薄**（mock 数据源 + 真实渠道）已具备运行条件（A3/A6 已真实）；要把 L4a 推到 **全量（L4a-全）**，需把 **A1/A2/A4/A5 四个 SPI 从 `Mock*` 切到 `Default*`**——这四个归你（channel）负责。本文列清「前置条件」与「你需要补全的部分」。
+> **历史边界**：本文记录 2026-06-22/25 的协作背景与临时实现，不定义当前 L4a 状态、准入、用例或出口。当前裁决以[测试 SSOT T3b](./MOCASA催收系统升级_Phase1_测试文档.md#6-t3b-真实渠道--合成数据源l4a)为准。
+> **已失效事项**：旧版 L4a-6 消息观察期及等待约 90 秒已撤销；Phase 1 消息观察期为 0。本文后续任何旧“观察期”文字均仅为历史记录，不可执行。
 
 ---
 
@@ -44,7 +44,7 @@
 ### A1 → `DefaultPlanFactory`（最高优先，解锁最多用例）
 - **现状**：`MockPlanFactory` 固定三种编排（默认 `PUSH→EMAIL`、`single-step`、`legacy-three-step`），模板 ID 硬编码（101/102/201…）。
 - **需补**：按 **stage / DPD / 渠道签约** 构造真实计划结构——步序、`channelType`、`delayMinutes`、`observationMinutes`、`templateId`、语气(scriptSlot 由 A3 推导)。返回 `null`=不建计划（CEASED/D+91 拒建逻辑 `shouldRejectPlan` 已在 mock，迁移到 Default 时保留）。
-- **解锁**：L4a-1（真实三渠道步序）、L4a-4（真实升档计划）、L4a-6（真实观察期时长）、L4a-8（stage×模板）。
+- **历史解锁描述**：L4a-1（真实三渠道步序）、L4a-4（真实升档计划）、L4a-8（stage×模板）。旧 L4a-6 观察期描述已撤销，见文首。
 - **验收/契约**：计划结构契约 `ContactPlan.steps`；渠道指南 `TC-PLAN-STRUCT-S1`/`S0`/`TONE-02`/`COMMON`。
 
 ### A2 → `DefaultExecutionGuard`（合规）
@@ -107,7 +107,7 @@
 - 快照字段 / 取号口径：`do../contracts/README_ContextSnapshot契约对齐.md` + `ContextSnapshot.sample.json`
 - SPI 实现约束 + 生命周期 E1–E8：`docs/contracts/README_编排同事对齐清单.md`
 - 渠道功能测试 `TC-*`、模板/合规/计划结构：`docs/channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md`
-- L4a 用例清单（8 条）：`docs/testing/MOCASA催收系统升级_Phase1_测试文档.md` §L4a
+- 当前 L4a 用例与状态：`docs/testing/MOCASA催收系统升级_Phase1_测试文档.md` T3b
 
 ---
 
@@ -221,4 +221,4 @@ channel:
 ./scripts/test/l4a-official-test.sh            # App 已运行时
 ```
 
-08:00–21:00 PHT；L4a-6 观察期默认额外等待 ~90s。日志：`logs/run/l4a.last.log`、`logs/run/admin.log`。
+08:00–21:00 PHT；旧 L4a-6 观察期等待已撤销，不得执行。日志：`logs/run/l4a.last.log`、`logs/run/admin.log`。

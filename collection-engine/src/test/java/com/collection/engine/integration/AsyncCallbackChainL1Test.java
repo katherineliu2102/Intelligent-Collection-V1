@@ -22,7 +22,6 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
-import com.collection.common.spi.StepResolver;
 import com.collection.engine.bus.InMemoryIdempotencyService;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.lifecycle.ContextAssembler;
@@ -30,6 +29,7 @@ import com.collection.engine.lifecycle.EventConsumerDispatcher;
 import com.collection.engine.lifecycle.PlanLifecycleManager;
 import com.collection.engine.lifecycle.PreFlightChecker;
 import com.collection.engine.lifecycle.StepExecutionOrchestrator;
+import com.collection.engine.lifecycle.StepOutcomeRecorder;
 import com.collection.engine.spi.SpiInvoker;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
@@ -42,9 +42,8 @@ import org.junit.jupiter.api.Test;
 /**
  * 链路④ 异步回调链 L1 内存集成（差集 D3）。
  *
- * <p>用同步内存总线 + 内存仓储驱动真实引擎组件，覆盖<b>电话类（AI_CALL）渠道</b>的异步语义：
- * 发送后保持 {@code STEP_EXECUTING} 并注册超时哨兵，随后分别由 {@code CHANNEL_CALLBACK}（回调完成）
- * 与 {@code CALLBACK_TIMEOUT}（超时兜底）驱动步骤结转 + 计划推进。复用
+ * <p>用同步内存总线 + 内存仓储驱动真实引擎组件，覆盖<b>电话类（AI_CALL）渠道</b>的异步语义： 发送后保持 {@code STEP_EXECUTING}
+ * 并注册超时哨兵，随后分别由 {@code CHANNEL_CALLBACK}（回调完成） 与 {@code CALLBACK_TIMEOUT}（超时兜底）驱动步骤结转 + 计划推进。复用
  * {@link FullChainIntegrationTest} 的内存仓储/总线/服务替身（同包可见），仅替换为单步 AI_CALL 计划工厂。
  */
 class AsyncCallbackChainL1Test {
@@ -81,12 +80,22 @@ class AsyncCallbackChainL1Test {
         inject(orchestrator, "contextAssembler", contextAssembler);
         inject(orchestrator, "planRepository", planRepo);
         inject(orchestrator, "timelineRepository", timelineRepo);
+        StepOutcomeRecorder outcomeRecorder = new StepOutcomeRecorder();
+        inject(outcomeRecorder, "planRepository", planRepo);
+        inject(outcomeRecorder, "timelineRepository", timelineRepo);
+        inject(orchestrator, "stepOutcomeRecorder", outcomeRecorder);
+        inject(
+                orchestrator,
+                "decisionLogRepository",
+                (com.collection.common.repository.DecisionLogRepository) dl -> {});
         inject(orchestrator, "eventBus", bus);
         inject(orchestrator, "spiInvoker", SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
         inject(manager, "planRepository", planRepo);
+        inject(manager, "timelineRepository", timelineRepo);
+        inject(manager, "stepOutcomeRecorder", outcomeRecorder);
         inject(manager, "caseService", caseService);
         inject(manager, "planFactory", new AiCallPlanFactory());
         inject(
@@ -118,8 +127,7 @@ class AsyncCallbackChainL1Test {
         assertThat(async.getTimeoutTime()).isNotNull();
 
         // 供应商回调 ANSWERED → 步骤完成 → 推进 → 穷尽 COMPLETE → 计划完成
-        bus.publish(
-                callbackEvent(EventType.CHANNEL_CALLBACK, async).with("result", "ANSWERED"));
+        bus.publish(callbackEvent(EventType.CHANNEL_CALLBACK, async).with("result", "ANSWERED"));
         bus.drainAll();
 
         assertThat(async.getStatus()).isEqualTo(StepStatus.COMPLETED);

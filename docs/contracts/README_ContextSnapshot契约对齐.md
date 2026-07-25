@@ -11,7 +11,7 @@
 ## 数据流向
 
 ```
-接入层从 case_push 填充快照字段 → 随 CASE_INGESTED payload 带出（不读旧库）
+接入层优先从 case_push 填充快照字段；缺 dpd/金额/日期/产品时可经 CaseService 只读回填
         → 引擎建计划时据 payload 组装 ContextSnapshot → JSON 落 t_contact_plan.context_snapshot
         → SPI 决策只读快照（零 DB I/O）
         → StepResolver(编排同事) 读快照产出 StepCommand(channelType/targetAddress/templateId)
@@ -26,36 +26,33 @@
 
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
-| `caseContext.caseId` / `userId` / `stage` / `dpd` | 选模板、定位案件 | 服务同事映射 |
-| `caseContext.totalOutstanding` | 模板 `amount_due`（金额 SSOT） | 服务同事映射 |
-| `caseContext.repaymentUrl` | 模板 `payment_link` | 接入 / 信贷结账链路 |
-| `userProfile.basic.primaryPhone` | SMS `targetAddress`（E.164 `+63` 格式） | 服务同事映射 |
-| `userProfile.basic.name` | 模板 `borrower_name` | 服务同事映射 |
-| `userProfile.basic.language` | `metadata.language`（默认 `en`） | 服务同事映射 |
-| `userProfile.basic.alternatePhones` | 备用号（可选） | 服务同事映射 |
-| `userProfile.device.phoneValidity` | 无效号过滤 | 服务同事映射 |
-| `contactHistory.todayTouchCount` / `channelTouchCounts` | 频控守卫 | 我（接入）组装 |
+| `caseContext.caseId` / `userId` / `stage` / `dpd` | 选模板、定位案件；caseId=信贷 loan_id | ingestion 映射/回填，引擎组装 |
+| `caseContext.totalOutstanding` | 模板 `amount_due`（金额 SSOT） | ingestion 映射/回填 |
+| `caseContext.repaymentUrl` | 模板 `payment_link` | 引擎按受控 repayment-url-template 生成 |
+| `userProfile.basic.primaryPhone` | SMS `targetAddress`（E.164 `+63` 格式） | ingestion payload |
+| `userProfile.basic.name` | 模板 `borrower_name` | ingestion payload |
+| `userProfile.basic.language` | `metadata.language`（默认 `en`） | ingestion payload |
+| `contactHistory.todayTouchCount` / `channelTouchCounts` | 冻结审计快照；运行时频控不读此值 | 引擎/计数器 |
 
 ### PUSH
 
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
-| `caseContext.caseId` / `userId` / `stage` | 选模板、定位 | 服务同事映射 |
+| `caseContext.caseId` / `userId` / `stage` | 选模板、定位 | ingestion 映射/回填，引擎组装 |
 | `userProfile.device.jpushToken` | PUSH `targetAddress`（JPush Registration ID）；空 → PushAdapter 同槽 fallback SMS | 上游 `case_push` 消息体（**已确认 2026-07**）；缺失时可降级读新库，见 [接入 §3.1 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库) |
-| `caseContext.repaymentUrl` | `data.deep_link` | 接入 / 信贷结账链路 |
-| `userProfile.behavior.appLastActiveTime` | 活跃度判断（可选块） | 服务同事映射 |
+| `caseContext.repaymentUrl` | `data.deep_link` | 引擎按受控 repayment-url-template 生成 |
 
 ### EMAIL
 
 | 字段路径 | 用途 | 谁负责 |
 |---|---|---|
-| `caseContext.caseId` / `userId` / `stage` / `dpd` | 选模板、定位、变量 `overdue_days` | 服务同事映射 |
-| `userProfile.basic.email` | EMAIL `targetAddress`；`null` → Guard `NO_EMAIL` → 步骤 SKIP | 服务同事映射 |
-| `caseContext.repaymentUrl` | 模板 `payment_link` | 接入 / 信贷结账链路 |
+| `caseContext.caseId` / `userId` / `stage` / `dpd` | 选模板、定位、变量 `overdue_days` | ingestion 映射/回填，引擎组装 |
+| `userProfile.basic.email` | EMAIL `targetAddress`；空值 → Guard `NO_EMAIL` → COMPLIANCE_BLOCKED | ingestion payload |
+| `caseContext.repaymentUrl` | 模板 `payment_link` | 引擎按受控 repayment-url-template 生成 |
 
 > ⚠ 三渠道共用**同一份** ContextSnapshot，按 `channelType` 取地址：
 > SMS→`basic.primaryPhone`、PUSH→`device.jpushToken`、EMAIL→`basic.email`。
-> `targetAddress` 由 **StepResolver** 从快照填入 `StepCommand`，Gateway/Adapter **不再取号**。
+> `targetAddress` 由 **StepResolver** 从快照填入 `StepCommand`，Gateway/Adapter **不再取号**。唯一例外是 PUSH 无 token 时，Gateway 可在同一 dispatch 使用已解析的 SMS 地址 fallback；该 fallback 不读库。
 > 真实 `StepResolver` 须按渠道分支取号（`MockStepResolver` 已按此分支，真实实现由编排同事替换）。
 
 ## 金额 SSOT（对外文案变量）
@@ -70,10 +67,10 @@
 
 ## 开放问题（已定稿 2026-06-09，详见 [契约对齐回复](./README_ContextSnapshot契约对齐.md) §6）
 
-1. **PUSH device token 来源**：✅ **`case_push` 消息体携带 `jpushToken`**（运维确认 2026-07）。ingestion 映射进 payload → 快照 `device.jpushToken`；缺失 → 可选 enrichment 读新库或 PUSH fallback SMS。
+1. **PUSH device token 来源**：✅ **`case_push` 消息体携带 `jpushToken`**（运维确认 2026-07）。ingestion 映射进 payload → 快照 `device.jpushToken`；缺失 → 可选 enrichment 读新库或 PUSH fallback SMS。**不使用 fcmToken。**
 2. **`targetAddress` 由谁定**：✅ 已决 → **StepResolver** 从快照填入，Gateway/Adapter 不再取号。
 3. **手机号格式**：✅ 已决 → 快照统一 **E.164 `+63...`**；通知中心 `mobile` 可容错，Adapter 可再归一化。
-4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填。**更新（2026-06-18，编排同事已授权）**：`repayment.*`（金额冗余）与 `risk.*`（编排策略不需要、PTP 履约率暂不计算）**Phase 1 移除**；`work.* / contacts.* / behavior.* / device.{deviceModel,osVersion,phoneValidity,viber/whatsapp}` 及 `basic` 人口属性 **结构保留、Phase 1 不填充（Phase 2 预留）**。
+4. **`work.*` / `risk.*` 等是否需要**：✅ 消息渠道模板可不填。`repayment.*`（金额冗余）与 `risk.*` 已从 Phase 1 移除；`work.* / contacts.* / behavior.* / device.{deviceModel,osVersion,phoneValidity,viber/whatsapp}` 及 `basic` 人口属性结构保留、Phase 1 不填充（Phase 2 预留）。Offer 字段、投诉冻结/Override 均为 Phase 2，不得作为 Phase 1 StepResolver 输入。
 
 ## 约定
 
@@ -84,5 +81,6 @@
 
 | 日期 | 变更 | 说明 |
 |---|---|---|
-| 2026-07-02 | **`jpushToken` 主路径 = `case_push` 消息体** | 运维确认上游已携带；入案主链路零读库；`t_user_device_token` 降为可选 enrichment 降级 |
+| 2026-07-02 | **`jpushToken` 主路径 = `case_push` 消息体** | 运维确认上游已携带；正常 token 路径零读库；`t_user_device_token` 降为可选 enrichment 降级 |
+| 2026-07-24 | **入案 hybrid + repaymentUrl owner 收敛** | payload 优先，金融字段缺失可只读回填；引擎生成 repaymentUrl；空地址由 Guard 截断。 |
 | 2026-06-18 | **`ContactHistory.ptpCount` / `ptpFulfilledCount` Phase 1 为 null** | 类型 `int`→`Integer`；Phase 1 不计算 PTP，返回 null（非 0），避免与「零承诺」混淆。样例 JSON 已同步为 null。 |

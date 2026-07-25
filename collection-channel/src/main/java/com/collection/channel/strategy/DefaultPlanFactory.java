@@ -82,9 +82,8 @@ public class DefaultPlanFactory implements PlanFactory {
             return steps;
         }
         if (isObservationCase(caseId, stage)) {
-            List<ContactPlanStep> steps = new ArrayList<>();
-            steps.add(buildStep(1, ChannelType.SMS, 0, observationMinutes(), 101L));
-            return steps;
+            // Phase 1：SMS 同步完成，observation 恒 0（不再注入 WAITING 用例）
+            return buildSingleStep("SMS");
         }
         if (channelProperties.getDebug().isLegacyThreeStep()) {
             return buildLegacyThreeStep();
@@ -108,11 +107,6 @@ public class DefaultPlanFactory implements PlanFactory {
     private boolean isObservationCase(Long caseId, Stage stage) {
         ChannelProperties.L4a l4a = channelProperties.getL4a();
         return caseId != null && caseId == l4a.getObservationCaseId() && stage == Stage.S1;
-    }
-
-    private int observationMinutes() {
-        int mins = channelProperties.getL4a().getObservationMinutes();
-        return mins > 0 ? mins : 1;
     }
 
     private List<ContactPlanStep> buildFromTemplate(Stage stage) {

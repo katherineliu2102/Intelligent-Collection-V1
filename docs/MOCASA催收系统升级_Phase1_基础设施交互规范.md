@@ -145,7 +145,7 @@ public interface CollectionEventBus {
 
 | 项 | 约定 |
 |---|---|
-| 持久化 | DLQ 消息落 MySQL（含原始信封 + 入队原因 + 投递次数 + 首次/末次失败时间），不仅留在 Redis，避免实例重启丢失 |
+| 持久化 | **C 类上线前置**：DLQ 消息落 MySQL `t_event_dlq`（含原始信封、入队原因、投递次数、首次/末次失败时间），不仅留在 Redis。DDL owner=主架构/common，权威文件=`db/schema.sql`；Redis/DLQ 实现接入时一并补表，避免实例重启丢失 |
 | 自动重放 | 定时任务扫描可重放消息（排除反序列化失败等不可恢复毒消息），重投回原 Stream 消费管线；重放计数独立，二次失败仍达上限 → 标记为"需人工" |
 | 幂等保障 | 重放复用既有事件消费去重（`processed:{event_id}`，[§3](#3-运行时状态redis-kv)），保证重复投递安全 |
 | 人工兜底 | 不可恢复 / 重放仍失败的消息保留待人工处理，并告警（[运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md)，规划中） |
@@ -216,9 +216,9 @@ return current
 |---|---|---|---|---|
 | `planStepDueHandler` | `TriggerScanner` · admin | 每分钟 | `trigger_time≤NOW`，步骤待触发，计划非终态 → `PLAN_STEP_DUE` | `prepareStepDue` → `executeStep` |
 | `callbackTimeoutHandler` | 同上 | 每分钟 | `timeout_time≤NOW`，`EXECUTING`，计划非终态 → `CALLBACK_TIMEOUT` | `onCallbackTimeout`（[§4.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout)） |
-| `dailyRoll` | `DpdStageRollHandler` · ingestion | 0:35 PHT | 账务数据落库至少 30 分钟后，旧库 DPD 重算 → `STAGE_CHANGED` / `CASE_CEASED` | `onStageChanged` / `onCaseCeased`（[接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)） |
+| `dailyRoll` | `DpdStageRollHandler` · ingestion | 0:35 PHT | 并行期读取旧库 `overdue_days` → `STAGE_CHANGED` / `CASE_CEASED`；切量后再改 bill 重算 | `onStageChanged` / `onCaseCeased`（[接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)） |
 
-> **Phase 1 实现**：前两个 Handler 由 admin `TriggerScanner` 的 `@Scheduled`（`collection.scan.interval-ms`，默认 5s）驱动，逻辑同上；生产改 XXL-Job 按 Cron 触发。`dailyRoll` 独立在 ingestion，占位待接 Job。触达精度 ±1min 可接受。
+> **C 类上线前置**：前两个 Handler 当前由 admin `TriggerScanner` 的 `@Scheduled`（`collection.scan.interval-ms`，默认 5s）驱动；生产须切换 XXL-Job 按 Cron 触发。`dailyRoll` 独立在 ingestion，生产注册 XXL-Job 前须完成运行环境与联调签字。触达精度 ±1min 可接受。
 
 **扫描分页**：每批 `LIMIT N`（默认 1000，`engine.consumer.scan_limit`）；`count==LIMIT` 告警、等下轮 Cron，禁止单 Job 内递归扫完（[运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md)）。
 
@@ -243,7 +243,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `PLAN_STEP_DUE` | Consumer 消费后步骤离开「待触发」 | 幂等锁 |
 | `CALLBACK_TIMEOUT` | Consumer 消费后步骤离开 `EXECUTING`/超时态 | 步骤状态 + 幂等锁 |
 
-> **投诉解冻**：admin 清冻结标记 + 对当前步骤 `register_job(PLAN_STEP_DUE, NOW())` 重设 `trigger_time`；若仍在幂等锁 TTL（15min）内，须等 TTL 过期或显式清锁后再重注入（[引擎 §5 ②](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)）。
+> **投诉/争议冻结**：Phase 2 能力；Phase 1 不存在解冻重注入、Override 事件或 Guard 拦截路径。
 
 ---
 
@@ -259,7 +259,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 |---|---|
 | `CASE_INGESTED` / `STAGE_CHANGED` | 读 payload→snapshot；升档 carry-forward / 写 `savePlan` |
 | `PLAN_STEP_DUE` | **prepareStepDue**（事务）：R 锁计划/查步骤 · W 计划→EXECUTING、`markStarted`、清 trigger（观察期：W 步骤 COMPLETED）→ **executeStep**：R `getContactHistory` · W `updateStepStatus`, `writeTimeline`, `updateStepTimeoutTime`… |
-| `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 写 `updateStepStatus`（不写 timeline，见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
+| `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
 | `REPAYMENT_RECEIVED` / `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase` / 写 `updatePlanStatus`→CANCELLED |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
@@ -439,8 +439,8 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `engine.consumer.group_name` | `collection-engine` | N | §2 |
 | `engine.consumer.stream_key` | `collection:event_stream` | N | §2 |
 | `engine.step.executing_reaper_minutes` | `30` | Y | [引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复) |
-| `engine.compliance.daily_limit` | 按渠道 | Y | [引擎 §5 ③](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线) |
-| `engine.compliance.weekly_limit` | 按渠道 | Y | 引擎 §5 ③ |
+| `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | [领域 §4.3](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#43-contacthistory触达历史摘要) |
+| `engine.compliance.weekly_limit` | 未启用（Phase 2 预留） | Y | Phase 1 仅按自然日频控 |
 | `engine.compliance.quiet_hours_start` | `21:00` | Y | 引擎 §5 ③ |
 | `engine.compliance.quiet_hours_end` | `08:00` | Y | 引擎 §5 ③ |
 

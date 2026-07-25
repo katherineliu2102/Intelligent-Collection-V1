@@ -73,7 +73,7 @@ DpdStageRollHandler 每日 0:35 PHT
 
 | 项 | 结论 |
 |---|---|
-| 读库 | 入案主链路**不读**旧库 `t_collection`；`jpushToken` 由上游 `case_push` 消息体携带（**已确认 2026-07**）；缺失时可降级读新库 `t_user_device_token`（见 [§3.1 读库](#读库)）。 |
+| 读库 | 入案以 `case_push` 为主；缺 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 时，允许接入经 CaseService **只读**旧库回填。`jpushToken` 主路径来自消息体，缺失时可降级读新库 `t_user_device_token`。 |
 | payload | 快照字段随 `CASE_INGESTED` payload 带出（[§3.1](#34-与-caseservice--profileservice-的调用边界)）；冻结写入由引擎完成（[§4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）。 |
 | `CASE_INGESTED` | **本催收周期**内首次 publish；同周期增量 ack 跳过；全额结清后 key 清除（§2.2 / §3.3）。 |
 | `REPAYMENT_RECEIVED` | 校验通过即 publish；**不写**库；全额结清时 DEL `ingestion:ingested:{loan_id}`。 |
@@ -82,7 +82,7 @@ DpdStageRollHandler 每日 0:35 PHT
 
 | 项 | 结论 |
 |---|---|
-| 读库 | 并行期只读旧库 `t_collection` + `t_user_repayment_plan`（[§4.2](#42-读库与演进)）；切量后读新库见同节。 |
+| 读库 | 并行期只读旧库 `t_collection.overdue_days`；切量后才按 §4.2 的 bill/信贷数据重算。 |
 | 产出事件 | **仅**日切产出 `STAGE_CHANGED` / `CASE_CEASED`；`assign_signal` 预留、不路由（§2.2）。 |
 | 写库 | **不回写**任何库（`t_collection` 由旧系统 `case_load` 加工，非信贷直写）。 |
 
@@ -148,7 +148,7 @@ DpdStageRollHandler 每日 0:35 PHT
 | 字段 | 上游 PubSub JSON；payload key 清单 → [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)；**业务主键** `loan_id` ↔ payload `caseId` 见 [§3.1](#34-与-caseservice--profileservice-的调用边界)；JSON key 别名 → `field-map`（[A.6 #1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入)） |
 | 校验 | §3.2 |
 | 写库 | 无 |
-| 读库 | 组装 payload 时按需读新库，见 [§3.1 读库](#读库) |
+| 读库 | 组装 payload 时可按 §3.1 只读回填金融字段或 token，绝不写 plan/旧库 |
 
 | publish 条件 | 动作 |
 |---|---|
@@ -186,7 +186,7 @@ DpdStageRollHandler 每日 0:35 PHT
 
 ### 3.1 入案快照主链路与模块职责
 
-快照字段经 `case_push` → `CASE_INGESTED` payload 带出；引擎 `buildSnapshotFromEvent` 组装并冻结 `ContextSnapshot`。**入案主链路不读**旧库 `t_collection`、不写 plan。
+快照字段优先经 `case_push` → `CASE_INGESTED` payload 带出；缺金融字段时接入可经 CaseService **只读**旧库回填，再由引擎 `buildSnapshotFromEvent` 组装并冻结 `ContextSnapshot`。入案主链路不写 plan、不回写任何旧库。
 
 **处理步骤**
 
@@ -219,7 +219,7 @@ DpdStageRollHandler 每日 0:35 PHT
 | payload 字段清单与类型 | [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段) | SSOT；接入按表填 key |
 | PubSub 字段名对齐 | 接入 | 上游 JSON key 与契约不一致时，用 Nacos 别名表 `collection.ingestion.case-push.field-map` 映射到语义字段（联调确认 [A.6 #1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入)） |
 | 语义映射与清洗 | 接入 | PubSub 语义字段 → payload key（清单 [§6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)）；清洗/推算规则见下表 |
-| 按需读库补字段 | 接入 | 见 [读库](#读库)（**可选**：仅 `jpushToken` 缺失且 `enrich-jpush-token=true`） |
+| 按需读库补字段 | 接入 | 见 [读库](#读库)：金融字段缺失时经 CaseService 只读回填；jpushToken 缺失且开关开启时读新库 |
 | payload → 快照 JSON | 引擎 | `buildSnapshotFromEvent`；字段路径见 [contracts](./contracts/README_ContextSnapshot契约对齐.md) |
 
 **语义映射与清洗**（接入组装 payload 时执行；**引擎 payload→快照不做清洗**，原样写入）
@@ -240,21 +240,21 @@ DpdStageRollHandler 每日 0:35 PHT
 |---|---|---|
 | **接入**（`collection-ingestion`） | 主链路 | 校验、组装 payload、publish 事件 |
 | **引擎**（`collection-engine`） | 主链路 | 消费 `CASE_INGESTED`、组装 / 冻结 `ContextSnapshot`、写 plan |
-| **CaseService**（`collection-service`，引擎 SPI） | 非主链路 | payload 缺失时引擎降级读旧库；**不由接入层直接调用** |
+| **CaseService**（`collection-service`） | 接入回填 / 引擎守卫 | 接入缺金融字段时只读回填 payload；引擎仅用于实时守卫，不从原始事件直接构造快照 |
 
-**接入层禁止**：不写 `t_contact_plan`、不调 `PlanFactory`、不读旧库 `t_collection` 组快照。
+**接入层禁止**：不写 `t_contact_plan`、不调 `PlanFactory`、不回写旧库；除本节定义的字段级只读回填外，不得自行组装 ContextSnapshot。
 
 <a id="读库"></a>
 <a id="35-jpushtoken-phase-1-数仓同步--接入-enrichment"></a>
 
 **读库**
 
-入案主链路的数据来源是 PubSub 消息体；上游 `case_push` **已携带 `jpushToken`**（运维确认 2026-07），与案件/画像字段同源，**主链路零读库**。以下为可选降级读库点：
+入案主链路的数据来源优先是 PubSub 消息体；上游 `case_push` **已携带 `jpushToken`**（运维确认 2026-07）。金融字段缺失时采用已确认的 hybrid 只读回填，联系方式始终以 payload 为准。读库点如下：
 
 | 场景 | 数据源 | 读取方 | 链路 | 约定 |
 |---|---|---|---|---|
 | `case_push` 缺 `jpushToken`（**可选降级**） | 新库 `t_user_device_token` | 接入 | 主链路 | 仅当 `enrich-jpush-token=true` 且消息缺失时查新库；正常路径不触发。无 token / 查失败：不写 key、warn，仍 publish（PUSH→SMS） |
-| payload 缺失兜底 | 旧库 `t_collection` | CaseService | 非主链路 | 引擎降级路径；非 publish 前置 |
+| 缺 `dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate` | 旧库 `t_collection` 等 | 接入经 CaseService | 入案主链路 | 只读回填、`putIfAbsent`；不得覆盖 payload 联系方式；回填失败按校验规则 nack/poison |
 | 触达前还款守卫 | 旧库 | 引擎 `PreFlightChecker` | 非主链路 | 见 [核心引擎 §5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线) |
 | 在催名单 / bill DPD | 旧库 `t_collection` + `t_user_repayment_plan` | 接入日切 | 非入案 | 见 [§4.2](#42-读库与演进) |
 
@@ -269,7 +269,7 @@ DpdStageRollHandler 每日 0:35 PHT
 | **必填 / 格式** | 缺必填或格式不可修复 → **ack + poison/DLQ** + 告警（**不 nack**，避免毒丸重投） |
 | **null 防御** | 非关键字段缺失 → payload 记缺省；下游 null 防御 → [HANDOFF C2](../HANDOFF.md) |
 | **乱序** | `repayment_push_and_load` 先于 `case_push` → 仍 publish（引擎无活跃计划 noop）；过期 `case_push`（`publish_time` < `ingestion:last_seen:{loan_id}`）→ ack 跳过 |
-| **迟到** | `publish_time` 超 24h 的 `case_push` → ack + 审计；**不**触发首次 `CASE_INGESTED`（存量 §6.2 replay） |
+| **迟到** | `publish_time` 超 24h 的 `case_push` → 审计 + 实时 CaseService 核验；仅白名单、未结清、未停催且当前仍应在催的案件受控 replay `CASE_INGESTED`，其余 ack 跳过 |
 | **瞬态失败** | 下游超时 / DB 不可达等 → nack 重投；超 N 次 → poison（§2.3） |
 
 <a id="33-接入幂等键"></a>
@@ -302,17 +302,17 @@ DpdStageRollHandler 每日 0:35 PHT
 
 ## 4. 阶段变更与 DPD 日切
 
-`DpdStageRollHandler` 每日 **0:35 PHT**（账务数据落库至少 30 分钟后）重算 Max DPD 并 publish 阶段事件（生产经 XXL-Job，见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)）。
+`DpdStageRollHandler` 每日 **0:35 PHT** 读取并行期旧库已计算的 `t_collection.overdue_days`，发布阶段事件；切量后才改为 bill 级 Max DPD 重算（生产经 XXL-Job，见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)）。
 
-> **Phase 1 日切交付（B2）**：在 [§4.2 并行期读库](#42-读库与演进) 上跑通 [§4.3](#43-max-dpd-与日切流程) hybrid 重算，产出 [§4.4](#44-产出事件) 事件，[§4.5](#45-幂等与重跑) 可重跑。切量后读库切换（§4.2）与 FIRM / `strategyTone`（[C-D-07](#c-d-日切与-dpd)）Phase 1 固定 `STANDARD`。
+> **Phase 1 日切交付（B2）**：在 [§4.2 并行期读库](#42-读库与演进) 上读取已计算的 `overdue_days`，产出 [§4.4](#44-产出事件) 事件，[§4.5](#45-幂等与重跑) 可重跑。切量后才启用 bill 级 Max DPD 重算；`strategyTone` Phase 1 固定 `STANDARD`。
 
 ### 4.1 边界与职责
 
 | 项 | 规格 |
 |---|---|
 | **阶段变更来源** | Phase 1 **唯一**来源为 DPD 日切；`assign_signal`（§2.2）不路由 |
-| **模块职责** | B2：只读库 → 重算 Max DPD → publish 事件；**不写**旧库 / 新库 |
-| **与 §3.1 读库** | 入案主链路不读旧库组快照（§3.1）；日切需**全量在催名单** → 读旧库是 B2 专属，非矛盾 |
+| **模块职责** | B2：并行期只读 `overdue_days` → publish 事件；切量后重算 Max DPD；**不写**旧库 / 新库 |
+| **与 §3.1 读库** | 入案只读回填缺失金融字段；日切需全量在催名单并读取旧库 DPD，二者皆只读且职责不同 |
 | **Phase 2 预留** | 若接入 `assign_signal`，须定义 JSON 契约及与日切的优先级 / 去重（避免同案同日双重 `STAGE_CHANGED`） |
 
 ### 4.2 读库与演进
@@ -321,7 +321,7 @@ B2 **只读**；定义读哪张表，不算 DPD。未闭合项 → [附录 C（C
 
 | 阶段 | 在催名单 | bill DPD | 说明 |
 |---|---|---|---|
-| **并行期（B2 必做）** | 旧库 `t_collection` | 旧库 `t_user_repayment_plan` | 旧系统并行，数据实时有效；**无需 ETL 至** `ai_collection_db` |
+| **并行期（B2 必做）** | 旧库 `t_collection` | `t_collection.overdue_days` | 旧系统并行且每日已计算；无需读取 bill 表或 ETL 至 `ai_collection_db` |
 | **切量后** | 新库 `t_contact_plan` | ETL 至 `ai_collection_db` 或信贷 API | 前提：§6.2 replay 完成；bill 迁移须在旧系统停写前完成 |
 
 **并行期扫描条件**（在催名单）：
@@ -330,21 +330,22 @@ B2 **只读**；定义读哪张表，不算 DPD。未闭合项 → [附录 C（C
 
 ### 4.3 Max DPD 与日切流程
 
-**口径 SSOT**（不展开，见 [渠道编排 §4.1 / §5.2 / §6.3.1](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层)）：
+**口径 SSOT**：
 
 | 项 | 规格 |
 |---|---|
-| **Loan Max DPD** | 整笔 loan 下各 bill **`max(bill_dpd)`**；`bill_dpd = DATE_DIFF(as_of_date, due_date, DAY)`（bill 已到期且未结清） |
+| **并行期 DPD** | 直接读取旧库已计算的 `t_collection.overdue_days` |
+| **切量后 Loan Max DPD** | 整笔 loan 下各 bill **`max(bill_dpd)`**；`bill_dpd = DATE_DIFF(as_of_date, due_date, DAY)`（bill 已到期且未结清） |
 | **Stage 映射** | Max DPD → `Stage.fromDpd`（S0[-3,0]…S4[31,90]；≥91 停催，**不是** Stage） |
 | **Stage 回退** | Max DPD **下降**时须 publish `STAGE_CHANGED`（目标 stage 降低）；引擎取消旧计划并重建（渠道 §5.2） |
 
-**并行期重算（B2 交付标准）**：
+**并行期读取（B2 交付标准）**：
 
 | 项 | 规格 |
 |---|---|
 | 触发 | 每日 **0:35 PHT**（`Asia/Manila`；账务数据落库至少 30 分钟后），`DpdStageRollHandler.dailyRoll()` |
 | 读库 | [§4.2 并行期](#42-读库与演进) |
-| 算法 | **hybrid**：优先 bill 级公式；缺 bill → fallback `DATE_DIFF(TODAY_PHT, repayment_date)` |
+| 算法 | 直接读取 `overdue_days`；旧系统负责并行期每日计算 |
 | 比对 | `oldStage = Stage.fromDpd(old_max_dpd)`，`newStage = Stage.fromDpd(new_max_dpd)` |
 
 > 实现与联调未闭合项 → [附录 C（C-D-* / C-B-*）](#附录-c联调与实现跟踪台账)。
@@ -353,8 +354,8 @@ B2 **只读**；定义读哪张表，不算 DPD。未闭合项 → [附录 C（C
 
 ```
 for each active loan_id (§4.2 并行期读库):
-  oldMaxDpd = current max_dpd
-  newMaxDpd = recompute hybrid per above
+  oldMaxDpd = last observed overdue_days
+  newMaxDpd = t_collection.overdue_days
   if newMaxDpd == oldMaxDpd: continue
   if newMaxDpd >= 91:
       publish CASE_CEASED(caseId, maxDpd)   // 不写旧库

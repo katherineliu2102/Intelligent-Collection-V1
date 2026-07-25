@@ -144,6 +144,7 @@ public class ChannelProperties {
         private Map<String, Integer> dailyLimit = defaultDailyLimit();
         /** 单用户在一个 PHT 自然日内，所有自动化渠道合计最多触达次数。 */
         private int dailyTotalLimit = 3;
+
         private String timezone = "Asia/Manila";
         private String quietHoursStart = "21:00";
         private String quietHoursEnd = "08:00";

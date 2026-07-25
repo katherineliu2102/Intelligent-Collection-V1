@@ -24,6 +24,8 @@ collection:
     interval-ms: 5000
   idempotency: memory
   eventbus: memory
+  webhook:
+    signature-required: false
   # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
   # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
   ingestion:

@@ -11,20 +11,21 @@ import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
  * DPD 日切处理器（对齐待办 E2 / 基础设施规范 §4 / 数据接入规格 C-D）。
  *
- * <p><b>并行期口径（2026-07-06 主架构拍板，C-D 联调确认）</b>：旧系统每日已重算并写
- * {@code t_collection.overdue_days}，本 Job <b>只读不重算</b>——直接取 {@code overdue_days} 作 Max DPD
- * （经 {@link CaseService#getCaseInfo}，其内部 {@code selectByLoanId} 已按 {@code create_time DESC} 取最新行、
- * {@code full_repay_time}/{@code total_not_paid} 判在催）：
+ * <p><b>并行期口径（2026-07-06 主架构拍板，C-D 联调确认）</b>：旧系统每日已重算并写 {@code t_collection.overdue_days}，本 Job
+ * <b>只读不重算</b>——直接取 {@code overdue_days} 作 Max DPD （经 {@link CaseService#getCaseInfo}，其内部 {@code
+ * selectByLoanId} 已按 {@code create_time DESC} 取最新行、 {@code full_repay_time}/{@code total_not_paid}
+ * 判在催）：
  *
  * <ul>
- *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}（引擎升/降档，carry-forward 快照）</li>
- *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}（引擎 cancel plan，对齐 seed 99000005）</li>
- *   <li>已结清（{@code repaid}）→ 跳过（还款事件另行取消计划）</li>
+ *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}（引擎升/降档，carry-forward 快照）
+ *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}（引擎 cancel plan，对齐 seed 99000005）
+ *   <li>已结清（{@code repaid}）→ 跳过（还款事件另行取消计划）
  * </ul>
  *
  * <p><b>范围</b>：仅扫 {@code collection.ingestion.loan-id-whitelist} 名单（Phase 1 / L4b 隔离，避免对全量
@@ -41,6 +42,9 @@ public class DpdStageRollHandler {
     @Resource private CaseService caseService;
     @Resource private ContactPlanRepository planRepository;
     @Resource private IngestionService ingestionService;
+
+    @Autowired(required = false)
+    private RedisDailyRollDeduplicator dailyRollDeduplicator;
 
     /** 供 XXL-Job / 调度器调用。 */
     public void dailyRoll() {
@@ -76,7 +80,7 @@ public class DpdStageRollHandler {
         List<ContactPlan> active = planRepository.findActivePlansByCase(loanId);
 
         if (dpd >= 91) {
-            if (!active.isEmpty()) {
+            if (!active.isEmpty() && acquireDailyRollEvent("ceased", loanId, dpd)) {
                 ingestionService.caseCeased(loanId, dpd);
                 counters[1]++;
                 log.info("[DpdStageRollHandler] loanId={} dpd={} ≥91 → CASE_CEASED", loanId, dpd);
@@ -85,7 +89,7 @@ public class DpdStageRollHandler {
         }
 
         Stage current = active.isEmpty() ? null : active.get(0).getStage();
-        if (current != null && current != newStage) {
+        if (current != null && current != newStage && acquireDailyRollEvent("stage", loanId, dpd)) {
             ingestionService.changeStage(loanId, newStage);
             counters[0]++;
             log.info(
@@ -95,5 +99,9 @@ public class DpdStageRollHandler {
                     current,
                     newStage);
         }
+    }
+
+    private boolean acquireDailyRollEvent(String type, Long loanId, int dpd) {
+        return dailyRollDeduplicator == null || dailyRollDeduplicator.acquire(type, loanId, dpd);
     }
 }

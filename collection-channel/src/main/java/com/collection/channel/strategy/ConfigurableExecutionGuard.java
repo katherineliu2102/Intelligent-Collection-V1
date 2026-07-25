@@ -83,7 +83,8 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
 
     private static java.time.LocalDateTime nextAllowedAt(
             ZonedDateTime now, LocalTime start, LocalTime end) {
-        ZonedDateTime next = now.withHour(end.getHour()).withMinute(end.getMinute()).withSecond(0).withNano(0);
+        ZonedDateTime next =
+                now.withHour(end.getHour()).withMinute(end.getMinute()).withSecond(0).withNano(0);
         if (start.isAfter(end) && !now.toLocalTime().isBefore(start)) {
             next = next.plusDays(1);
         }
@@ -147,12 +148,7 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
             int channelCount = increment(channelKey);
             if (channelCount > limit) {
                 return GuardVerdict.block(
-                        "DAILY_LIMIT_EXCEEDED "
-                                + channel.name()
-                                + " "
-                                + channelCount
-                                + "/"
-                                + limit,
+                        "DAILY_LIMIT_EXCEEDED " + channel.name() + " " + channelCount + "/" + limit,
                         "FREQUENCY_LIMIT");
             }
         }

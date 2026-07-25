@@ -1,0 +1,36 @@
+spring:
+  config:
+    import: "optional:nacos:"
+  cloud:
+    nacos:
+      config:
+        enabled: false
+  datasource:
+    url: ${L3_IT_DB_URL}
+    username: ${L3_IT_DB_USER}
+    password: ${L3_IT_DB_PASS}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+    jdbc-type-for-null: "NULL"
+
+collection:
+  eventbus: memory
+  idempotency: memory
+  ingestion:
+    enabled: false
+
+channel:
+  fallback-to-mock: true
+
+engine:
+  spi:
+    timeout-enabled: false
+  consumer:
+    thread-pool-size: 2
+    queue-capacity: 32
+  decision-log:
+    enabled: false

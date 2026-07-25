@@ -38,10 +38,10 @@
 | caseContext | `caseId`, `userId`, `dpd`, `stage`, `product`, `dueDate` | 选槽、模板变量、Guard |
 | caseContext | `totalOutstanding` | 文案 `amount_due`（金额 SSOT） |
 | caseContext | `repaymentUrl` | SMS 链接、Push `deep_link`、Email `payment_link` |
-| caseContext | `strategyTone`, `complaintFrozen`, `collectionStatus` | PlanFactory / Guard；`strategyTone` 计算见 [渠道编排 §6.3.1](./MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) |
+| caseContext | `strategyTone`, `collectionStatus` | PlanFactory；Phase 1 固定 STANDARD，collectionStatus 仅审计 |
 | basic | `name`, `primaryPhone`, `email`, `language` | 文案、`targetAddress` |
-| device | `jpushToken`, `phoneValidity` | Push `targetAddress`；Guard |
-| contactHistory | `todayTouchCount`, `channelTouchCounts`, … | Guard 频控 |
+| device | `jpushToken` | Push `targetAddress`；Guard |
+| contactHistory | `todayTouchCount`, `channelTouchCounts`, … | 冻结审计；Phase 1 Guard 频控读实时计数器 |
 
 **不在快照中**：`title`、`body`、`sms_body`（Resolver 渲染）；`scene`（Adapter/Resolver 固定 `"collection"`）。
 
@@ -53,7 +53,7 @@ App Push **无法**由 channel 模块自行生成 token；必须从快照透传�
 |------|--------|------|
 | 1. 采集 | **App 客户端** | 登录/启动时向极光 SDK 注册，取得 **JPush Registration ID**（不是 FCM token） |
 | 2. 上报 | **App / 信贷后端** | 将 RID 写入用户设备表（现网：`t_user_equipment`）；**入案时由信贷组装进 `case_push` JSON** |
-| 3. 入案组装 | **数据接入层（ingestion）** | 解析 `case_push.jpushToken` → `CASE_INGESTED` payload → `userProfile.device.jpushToken`（**零读库**） |
+| 3. 入案组装 | **数据接入层（ingestion）** | 解析 `case_push.jpushToken` → `CASE_INGESTED` payload → `userProfile.device.jpushToken`；缺失时可读新库 token 镜像 |
 | 4. 落库 | **引擎** | `buildSnapshotFromEvent` 组装精简快照 JSON → `t_contact_plan.context_snapshot` |
 | 5. 渠道执行 | **StepResolver** | `device.jpushToken` → `StepCommand.targetAddress` |
 | 6. 发送 | **NotificationPushAdapter** | `targetAddress` → 通知中心 API `token` → JPush |
@@ -148,7 +148,7 @@ App(JPush SDK) → 信贷后端 → case_push.jpushToken → ingestion → Conte
 
 | ContextSnapshot | StepCommand | SendGrid API | 说明 |
 |-----------------|-------------|--------------|------|
-| `basic.email` | `targetAddress` | `personalizations[0].to` | `null` → Guard SKIP |
+| `basic.email` | `targetAddress` | `personalizations[0].to` | 空值 → Guard `NO_EMAIL` → `COMPLIANCE_BLOCKED` |
 | `caseContext.repaymentUrl` | `dynamicTemplateData.payment_link` | 模板变量 | |
 | `caseContext.totalOutstanding` | `dynamicTemplateData.amount_due` | 模板变量 | |
 | `caseContext.dpd` | `dynamicTemplateData.overdue_days` | 模板变量 | |
@@ -172,7 +172,7 @@ SMS   → targetAddress = basic.primaryPhone
         metadata.sms_body = render(scriptSlot, name, totalOutstanding, dpd, repaymentUrl, language)
         metadata.language = basic.language ?? "en"
 
-PUSH  → targetAddress = device.jpushToken（空则 metadata.fallbackPhone + 留给 Adapter fallback）
+PUSH  → targetAddress = device.jpushToken（空 token 时 Gateway 使用已解析的 basic.primaryPhone + sms_body fallback；不定义 metadata.fallbackPhone）
         metadata.title / body = renderPushTitleBody(scriptSlot, …)
         metadata.pushData = JSON.stringify({ scene, case_id, deep_link, script_slot })  // 全 string
         metadata.sms_body = 同槽 SMS 正文（供 fallback）

@@ -25,6 +25,10 @@ if [ "${BUILD:-1}" = "0" ]; then NO_BUILD=1; fi
 
 HOST="${HOST:-http://localhost:8888}"
 export HOST
+# L4a 使用 MockCaseService 合成案件；Nacos 的 L4b real-case 配置不能继承到此运行。
+export COLLECTION_CASE_SERVICE="${COLLECTION_CASE_SERVICE:-mock}"
+# 受控远程 MySQL 的查询延迟可能超过生产硬超时；L4a 验证业务链路，不注入 SPI 超时语义。
+export ENGINE_SPI_TIMEOUT_ENABLED="${ENGINE_SPI_TIMEOUT_ENABLED:-false}"
 
 RUN_LOG_DIR="$ROOT/logs/run"
 mkdir -p "$RUN_LOG_DIR"
@@ -35,6 +39,8 @@ echo "========== 1/4 停止旧进程 =========="
 "$ROOT/scripts/dev/stop-local.sh"
 
 echo "========== 2/4 启动 App =========="
+echo "[restart-and-l4a] COLLECTION_CASE_SERVICE=${COLLECTION_CASE_SERVICE}"
+echo "[restart-and-l4a] ENGINE_SPI_TIMEOUT_ENABLED=${ENGINE_SPI_TIMEOUT_ENABLED}"
 if [ "$NO_BUILD" -eq 1 ]; then
   "$ROOT/scripts/dev/start-local.sh" --detach --no-build
 else

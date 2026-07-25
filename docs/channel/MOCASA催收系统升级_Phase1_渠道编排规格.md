@@ -6,6 +6,8 @@
 > **模块**: `collection-channel`（策略子层）  
 > **关联文档**: [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[渠道文档索引](./README_渠道文档索引.md)、[HANDOFF.md](../HANDOFF.md)
 
+> **2026-07-24 Phase 1 SSOT 收敛（主架构裁决）**：本文件早期的 Offer/F10、投诉/争议冻结、Override/人工外呼、呼损率自动降级描述均为 **Phase 2 设计讨论**，不得作为 Phase 1 channel 实现或验收依据。Phase 1 仅实施 SMS/PUSH/EMAIL/AI_CALL 机器轨；空地址由 Guard 返回 `NO_*` 后引擎写 `COMPLIANCE_BLOCKED` timeline；动态 Offer、实时投诉冻结/Override、跨供应商切换均不实现。本文中与该裁决冲突的历史策略段落按此注记解释；字段以领域模型为 SSOT，执行语义以 contracts 为 SSOT。Owner：`collection-channel` 仅更新编排用法，不改 common 字段。
+
 ---
 
 ## 目录
@@ -212,7 +214,7 @@ MOCASA 坐席有限、本次升级重点是机器自动化，方案主张 **后�
 | **AI 外呼** | **可对话**；LTH 回调 `disposition` 驱动 `AdvancementPolicy` 与中断事件（§7.10、§9） | — |
 | **条件 Email（16:00 `*_EMAIL_CONDITIONAL`）** | **不实现**：`PlanFactory` **不生成**对应 plan step；§7.0 逻辑保留作文档 | 依赖「无互动」标签与 Push/SMS/短链数据 |
 | **无互动判定** | **不接入** ingestion / Guard | 同上 |
-| **无邮箱** | `ExecutionGuard` **BLOCK**（`NO_EMAIL`）→ 步骤 SKIPPED，不计触达 | 可考虑加码 SMS |
+| **无邮箱** | `ExecutionGuard` **BLOCK**（`NO_EMAIL`）→ 引擎记 `COMPLIANCE_BLOCKED` timeline 后推进 | 可考虑加码 SMS |
 | **Email 形态** | 各 Stage **仅里程碑 Email**（§7.9，通常 14:00） | 条件 Email |
 | **Email 里程碑数量** | **正式策略：全旅程仅 5 封**（控频/降封号风险）；`DefaultPlanFactory` / `EmailMilestoneScriptSlots` 仅生成/映射下表 DPD；其余 8 个里程碑 HTML 保留不发 | 扩至 §7.3 目标态 13 封 |
 | **Email 模板** | SendGrid Dynamic Template；`scriptSlot` → `template_id` 见 [渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid) | — |
@@ -246,7 +248,7 @@ MOCASA 坐席有限、本次升级重点是机器自动化，方案主张 **后�
 | ------ | ----------- | ----------------- | ---------------- |
 | **S0** | D-3 ~ D0    | 到期前提醒（机器轨新接管）     | （无对应）            |
 | **S1** | D+1 ~ D+3   | 早期 / FPD 窗口       | STAGE 1          |
-| **S2** | D+4 ~ D+15  | 中期；Offer 起步       | STAGE 2（边界延长）    |
+| **S2** | D+4 ~ D+15  | 中期；Payment options 泛化引导       | STAGE 2（边界延长）    |
 | **S3** | D+16 ~ D+30 | 中晚期；Pay Now 强调    | STAGE 3（边界延长）    |
 | **S4** | D+31 ~ D+90 | 晚期；Remedial / 催告函 | STAGE 4（合并原 S4+） |
 
@@ -333,10 +335,7 @@ flowchart LR
 
 ### 5.3 Offer 与 bill 维度
 
-- **Offer**：S2 起 `offer_eligible`；F10 规则引擎匹配减免档位，**写入 `context_snapshot` 供 StepResolver 做模板变量替换**（不在 StepResolver 内调外部接口，见 [核心引擎规格 §4.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md)）
-- **不绑固定 DPD 折扣表**，话术不公开时间表（反博弈）；对外文案须含 **「实际减免以 App 还款页为准」** 类免责（中/英由业务定稿），避免快照与还款时点偏差引发客诉
-- **罚息减免**：**账务核销** 在信贷/App 结账链路 **按 Bill 核算**——仅减免已达该逾期阶段 bill 的罚息，或要求先结清早期 bill 本金；防止用整笔高 DPD 套取全 bill 减免；SMS/Email **不构成** 已生效的减免凭证
-- **Phase 1 默认**：不发短信券码锁定（不发 Coupon ID）；若业务改为「触达前发券」，须单独立项并修订引擎/信贷接口，不可仅在 StepResolver 内实现
+> **Phase 2 预留**：Offer/F10 不进入 Phase 1 `ContextSnapshot`，ingestion 不填充，StepResolver 不消费，模板不得要求 `offer_*` 动态变量。Phase 1 仅可使用不承诺减免金额的泛化 payment-options 文案；实际账务核销与 Offer 规则待 Phase 2 由信贷/App 链路单独定义。
 
 ---
 
@@ -350,14 +349,13 @@ L1 不做画像系统，在 Stage 模板上叠加 **少量事实标记**。
 | 标记             | 触发（均为事实）                                                                                         | 作用                    | 生命周期       |
 | -------------- | ------------------------------------------------------------------------------------------------ | --------------------- | ---------- |
 | **难催 → FIRM**  | 历史曾 S2+（**不含本笔首次进 S2**）/ 历史 PTP 履约率 <50% / 三期并发逾期 ≥2 / **连续 2 天无互动**（可配：无打开/点击/还款）/ **PTP 到期未还** | S2+ 使用加强话术模板（FIRM）    | **只硬化不回退** |
-| **投诉/争议 → 冻结** | 投诉或争议识别                                                                                          | ExecutionGuard 暂停全部触达 | 人工解除前持续    |
+| **投诉/争议 → 冻结** | Phase 2 投诉或争议识别 | Phase 2 Guard/事件中断 | Phase 2 定义 |
 
 
 ### 6.2 计算逻辑（优先级树，非加权分）
 
 ```
-if 投诉 or 争议 → FREEZE
-else if 难催条件满足 → FIRM（仅 S2+ 模板匹配）
+if 难催条件满足 → FIRM（仅 S2+ 模板匹配）
 else → STANDARD（S0/S1 始终 STANDARD tone）
 ```
 

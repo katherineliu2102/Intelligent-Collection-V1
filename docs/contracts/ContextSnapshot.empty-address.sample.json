@@ -1,0 +1,40 @@
+{
+  "caseContext": {
+    "caseId": 1003,
+    "userId": 9002,
+    "dpd": 1,
+    "stage": "S1",
+    "product": "BNPL",
+    "totalOutstanding": 500.00,
+    "penaltyAmount": 0.00,
+    "dueDate": "2026-07-23",
+    "caseStatus": "IN_COLLECTION",
+    "firstLoan": true,
+    "payCount": 0,
+    "strategyTone": "STANDARD",
+    "collectionStatus": "ACTIVE",
+    "repaymentUrl": "https://app.mocasa.test/repay/1003"
+  },
+  "userProfile": {
+    "userId": 9002,
+    "basic": {
+      "name": "Maria Santos",
+      "primaryPhone": null,
+      "email": null,
+      "language": "en"
+    },
+    "device": {
+      "jpushToken": null
+    },
+    "profileCompleteness": 0.25
+  },
+  "contactHistory": {
+    "totalTouchCount": 0,
+    "channelTouchCounts": {},
+    "todayTouchCount": 0,
+    "todayPhoneAnswered": false,
+    "currentPlanAiBotFailCount": 0
+  },
+  "snapshotTime": "2026-07-24T08:00:00",
+  "snapshotVersion": "v1"
+}

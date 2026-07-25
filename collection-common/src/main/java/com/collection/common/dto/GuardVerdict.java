@@ -3,9 +3,7 @@ package com.collection.common.dto;
 import java.time.LocalDateTime;
 import lombok.Getter;
 
-/**
- * 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §5.3。
- */
+/** 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §5.3。 */
 @Getter
 public class GuardVerdict {
 
@@ -19,7 +17,10 @@ public class GuardVerdict {
     private final LocalDateTime deferUntil;
 
     private GuardVerdict(
-            boolean allowed, String blockedReason, String blockedRuleType, LocalDateTime deferUntil) {
+            boolean allowed,
+            String blockedReason,
+            String blockedRuleType,
+            LocalDateTime deferUntil) {
         this.allowed = allowed;
         this.blockedReason = blockedReason;
         this.blockedRuleType = blockedRuleType;

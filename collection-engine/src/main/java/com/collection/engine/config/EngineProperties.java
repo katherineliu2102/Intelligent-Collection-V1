@@ -21,6 +21,7 @@ public class EngineProperties {
     private final Consumer consumer = new Consumer();
     private final Context context = new Context();
     private final Spi spi = new Spi();
+    private final DecisionLog decisionLog = new DecisionLog();
 
     @Data
     public static class Step {
@@ -65,5 +66,17 @@ public class EngineProperties {
         private long stepResolverTimeoutMs = 50;
         private long advancementPolicyTimeoutMs = 10;
         private long exhaustionPolicyTimeoutMs = 50;
+    }
+
+    /**
+     * 决策日志落库配置（供数仓分析，引擎只写不读）。Phase 1 仅记 StepResolver（④）step 级决策， 引擎侧合成 engineType=RULE /
+     * confidence=1.0；fail-open 事务外写，不阻断触达链路。
+     */
+    @Data
+    public static class DecisionLog {
+        /** 关闭时引擎完全跳过 decision_log 写入（默认开）。 */
+        private boolean enabled = true;
+        /** 规则引擎版本标识，写入 t_decision_log.engine_version。 */
+        private String version = "rule-v1";
     }
 }

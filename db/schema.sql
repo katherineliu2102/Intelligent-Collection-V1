@@ -15,10 +15,17 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
     current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
     total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/COMPLAINT/MANUAL（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
+    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/CASE_NOT_FOUND/COMPLAINT/MANUAL（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键 case_id:stage:create_timestamp',
-    renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Phase 1 未使用，预留',
+    renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',
+    active_stage_key    VARCHAR(128) GENERATED ALWAYS AS (
+        CASE
+            WHEN renewal_pending = 0 AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')
+            THEN CONCAT(case_id, ':', stage)
+            ELSE NULL
+        END
+    ) STORED COMMENT '仅可执行活跃计划参与 case+stage 唯一约束',
     version             INT             NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
     started_at          DATETIME        NULL     COMMENT '首步进入EXECUTING时写入',
     completed_at        DATETIME        NULL     COMMENT '进入终态时写入',
@@ -26,8 +33,22 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_case (case_id),
     INDEX idx_status (status),
-    INDEX idx_user_stage (user_id, stage)
+    INDEX idx_user_stage (user_id, stage),
+    UNIQUE KEY uk_active_stage_key (active_stage_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划主表';
+
+-- 既有环境迁移：同阶段 REBUILD 先把旧行置 renewal_pending=1，再插入新行、最后完成旧行。
+ALTER TABLE t_contact_plan
+    ADD COLUMN IF NOT EXISTS active_stage_key VARCHAR(128)
+    GENERATED ALWAYS AS (
+        CASE
+            WHEN renewal_pending = 0 AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')
+            THEN CONCAT(case_id, ':', stage)
+            ELSE NULL
+        END
+    ) STORED;
+ALTER TABLE t_contact_plan
+    ADD UNIQUE INDEX IF NOT EXISTS uk_active_stage_key (active_stage_key);
 
 -- 7.1.2 触达计划步骤表
 CREATE TABLE IF NOT EXISTS t_contact_plan_step (
@@ -49,10 +70,13 @@ CREATE TABLE IF NOT EXISTS t_contact_plan_step (
     completed_at        DATETIME        NULL     COMMENT '步骤完成时间',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_plan_order (plan_id, step_order),
+    UNIQUE KEY uk_plan_step_order (plan_id, step_order),
     INDEX idx_trigger (trigger_time, status),
     INDEX idx_timeout (timeout_time, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划步骤表';
+
+ALTER TABLE t_contact_plan_step
+    ADD UNIQUE INDEX IF NOT EXISTS uk_plan_step_order (plan_id, step_order);
 
 -- 7.1.3 决策日志
 CREATE TABLE IF NOT EXISTS t_decision_log (
@@ -81,6 +105,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     user_id             BIGINT          NOT NULL,
     plan_id             BIGINT          NULL,
     step_id             BIGINT          NULL,
+    attempt_key         VARCHAR(128)    NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)',
     channel             VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
     direction           VARCHAR(8)      NOT NULL DEFAULT 'OUT' COMMENT 'OUT/IN',
     template_id         BIGINT          NULL,
@@ -93,10 +118,50 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_case_time (case_id, created_at),
     INDEX idx_user_channel (user_id, channel),
-    INDEX idx_plan (plan_id)
+    INDEX idx_plan (plan_id),
+    UNIQUE KEY uk_attempt_key (attempt_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
 
--- 7.2.3 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
+-- 既有环境迁移：MySQL 8.0.33 支持 IF NOT EXISTS，重复执行安全。
+ALTER TABLE t_contact_timeline
+    ADD COLUMN IF NOT EXISTS attempt_key VARCHAR(128) NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)';
+ALTER TABLE t_contact_timeline
+    ADD UNIQUE INDEX IF NOT EXISTS uk_attempt_key (attempt_key);
+
+-- 7.2.2 供应商回调审计：原始回调证据，与 timeline 最终触达事实分层。
+CREATE TABLE IF NOT EXISTS t_channel_callback_audit (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    plan_id             BIGINT          NOT NULL,
+    step_id             BIGINT          NOT NULL,
+    case_id             BIGINT          NULL,
+    provider_msg_id     VARCHAR(128)    NULL,
+    result              VARCHAR(32)     NULL,
+    disposition         VARCHAR(64)     NULL,
+    canonical_payload   TEXT            NOT NULL,
+    signature           VARCHAR(512)    NULL,
+    signature_valid     TINYINT(1)      NOT NULL,
+    received_at         DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_plan_step_received (plan_id, step_id, received_at),
+    INDEX idx_provider_msg_id (provider_msg_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商渠道回调原始审计';
+
+-- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
+CREATE TABLE IF NOT EXISTS t_event_dlq (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    event_id            VARCHAR(64)     NOT NULL,
+    event_type          VARCHAR(64)     NOT NULL,
+    payload             JSON            NOT NULL,
+    failure_reason      VARCHAR(256)    NOT NULL,
+    delivery_count      INT             NOT NULL DEFAULT 1,
+    first_failed_at     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_failed_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING',
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_event_dlq_event_id (event_id),
+    INDEX idx_event_dlq_status_last (status, last_failed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='事件死信队列';
+
+-- 7.2.4 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
 CREATE TABLE IF NOT EXISTS t_user_device_token (
     user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID',
     jpush_token         VARCHAR(256)    NULL     COMMENT 'JPush Registration ID（源：旧库 t_user_extend.ji_guang_token）',

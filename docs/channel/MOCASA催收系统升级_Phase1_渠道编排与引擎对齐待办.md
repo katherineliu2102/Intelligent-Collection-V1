@@ -4,6 +4,8 @@
 > **渠道编排已定**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) v1.4（本节仅摘要，方案比选针对 **引擎实现路径**）。  
 > **对照**: [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)  
 > **建议时长**: 约 40–50 分钟
+>
+> **2026-07-24 收敛说明**：这是历史会议待办，不是 Phase 1 契约 SSOT。Offer/F10、投诉冻结/Override、呼损率自动降级均已裁决为 Phase 2；执行语义以 [引擎↔渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) 为准。
 
 ---
 
@@ -15,7 +17,7 @@
 
 | ID | 优先级 | 动作 | 改哪里 | 对齐依据 | 规模 |
 |---|---|---|---|---|---|
-| **CH-1** | **P1** | **SMS 步骤完成时机改写**：删除「SMS dispatch 成功即同步 STEP_COMPLETED」；改为 **SMS 两段语义**（dispatch=受理 → `STEP_WAITING` → DLR 短路结转 / 最长等观察期上限） | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md) L236 | [引擎 §2.3.3](../MOCASA催收系统升级_Phase1_核心引擎规格.md)（DLR 短路 + 10min 上限）、[执行契约 §1/§3](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | S |
+| **CH-1** | ~~P1~~ | ~~SMS 两段 WAITING~~ → **已撤销（2026-07-18）**：维持 §3.5「SMS/Push/Email dispatch 成功即同步 `STEP_COMPLETED`」；引擎已强制 SMS 不进 WAITING | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md) L236 | 架构 §1.6.7 + 引擎 §4.3.3 / §5⑦ | — |
 | **CH-2** | P2 | **渠道对账扫描（Phase 2）**：补独立章节；引擎 §4.3.4 Phase 1 仅一级超时哨兵，对账扫描明确押后 Phase 2 | 渠道编排规格（新 §） | 一级哨兵已在引擎；Phase 2 运维兜底 | M |
 
 **CH-1 建议替换文案（可直接粘贴改 L236 段）**：
@@ -25,7 +27,7 @@
 > | 渠道 | dispatch 后计划态 | 步骤完成方式 |
 > |---|---|---|
 > | **PUSH / EMAIL** | 无观察期 | `dispatch` 成功即 `STEP_COMPLETED`；SendGrid `delivered`/`open` **不**用于完成 plan step |
-> | **SMS** | `STEP_WAITING`（观察期） | ① `dispatch` 成功=**供应商受理**；② 收到 **DLR** → `CHANNEL_CALLBACK` → **立即短路** `STEP_COMPLETED`；③ 观察期内未收到 DLR → 定时结转（默认最长 **10min**，由 `PlanFactory` 写 `observationMinutes`） |
+> | **SMS** | 无观察期 | `dispatch` 成功即 `STEP_COMPLETED`；DLR 不用于完成步骤 |
 > | **AI_CALL / TTS** | `STEP_EXECUTING` | 等 `CHANNEL_CALLBACK`（见 [引擎 §3.1⑦](../MOCASA催收系统升级_Phase1_核心引擎规格.md)） |
 >
 > Phase 1 **无** `HUMAN_CALL` step（E4）。
@@ -34,8 +36,8 @@
 
 | ID | 优先级 | 动作 | 负责人 | 依据 |
 |---|---|---|---|---|
-| **CH-3** | **P1** | **`PlanFactory` 写 `observationMinutes`**：SMS 步骤 >0（默认 **10** min，可按 stage 覆盖）；PUSH/EMAIL=**0** | 编排 `DefaultPlanFactory` | 执行契约 §3；引擎只读该字段 |
-| **CH-4** | **P1** | **SMS DLR → `CHANNEL_CALLBACK`**：LTH/通知中心 DLR Webhook 经 admin 鉴权发布事件；`map_callback_to_result` 映射为 DELIVERED 等 | 编排 Adapter + admin Webhook | 引擎 §2.3.3 已放开 `STEP_WAITING` 消费 DLR |
+| **CH-3** | ~~P1~~ | ~~SMS observationMinutes>0~~ → **已撤销（2026-07-18）**：Phase 1 消息三渠道 observation 恒 0 | 编排 `DefaultPlanFactory` | 执行契约 §3（修订） |
+| **CH-4** | ~~P1~~ | ~~SMS DLR → CHANNEL_CALLBACK~~ → **已撤销（2026-07-18）**：Phase 1 不靠 DLR 完成步骤 | — | 架构 §1.6.7 |
 | **CH-5** | P1 | **执行契约 S2 真实化**（未完成的 Mock 替换）：`ChannelGateway` 三情形 StepResult、PUSH fallback；`ExecutionGuard` NO_EMAIL/NO_PHONE/NO_TOKEN；`StepResolver` language/templateId | 编排 | [执行契约 §推进路线 S2](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) |
 | **CH-6** | P2 | **`jpushToken` 收口**：PushAdapter 取号切到 `device.jpushToken`；完成后通知主架构删 `fcmToken` | 编排 → 主架构改 common | 执行契约 token 口径 |
 | **CH-7** | P2 | **E4 代码自检**：`StepResolver` / `PlanFactory` Phase 1 **永不输出** `channelType=HUMAN_CALL`（文档 E4 已定，引擎 Batch1 已标注 Phase 2 预留） | 编排 Code Review | 对齐待办 E4 + 引擎 §2.3.4 |
@@ -53,12 +55,12 @@
 ```text
 【阶段 D 引擎回执 · 编排待办 2026-06-23】
 
-引擎 Batch1 已合入核心引擎规格（CASE_CEASED / SMS DLR 短路 / HUMAN_CALL Phase2 预留）。
+引擎 Batch1 已合入核心引擎规格（CASE_CEASED / SMS 同步完成 / HUMAN_CALL Phase2 预留）。
 请编排同事优先处理：
 
-1. [P1] CH-1：改渠道编排规格 §3.5 L236 — SMS 改为「受理→STEP_WAITING→DLR 短路，最长 10min」；PUSH/EMAIL 仍 dispatch 即完成。文案见对齐待办「CH-1 建议替换文案」。
-2. [P1] CH-3：DefaultPlanFactory 为 SMS 写 observationMinutes=10（可 stage 覆盖），PUSH/EMAIL=0。
-3. [P1] CH-4：SMS DLR Webhook → CHANNEL_CALLBACK（引擎 §2.3.3 已支持 STEP_WAITING 短路结转）。
+1. [已撤销] CH-1：SMS/PUSH/EMAIL 均 dispatch 成功即完成。
+2. [已撤销] CH-3：消息三渠道 observationMinutes=0。
+3. [已撤销] CH-4：SMS DLR 不进入 CHANNEL_CALLBACK。
 4. [P1] CH-5：执行契约 S2 Mock 真实化（Guard/Resolver/Gateway），L2 联调前置。
 5. [P2] CH-2：补「二级渠道对账扫描」章节或标规划中（引擎/架构在等回链目标）。
 

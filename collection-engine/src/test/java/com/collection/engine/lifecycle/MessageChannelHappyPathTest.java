@@ -40,6 +40,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 /**
  * 消息渠道（SMS/PUSH）happy-path 纯逻辑单测——不连库，全 mock SPI / Repository / EventBus。
@@ -53,6 +55,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class MessageChannelHappyPathTest {
 
     private static final long PLAN_ID = 100L;
@@ -69,6 +72,7 @@ class MessageChannelHappyPathTest {
     @Mock private ContextAssembler contextAssembler;
     @Mock private ContactPlanRepository planRepository;
     @Mock private TimelineRepository timelineRepository;
+    @Mock private StepOutcomeRecorder stepOutcomeRecorder;
     @Mock private CollectionEventBus eventBus;
     @Spy private EngineProperties props = new EngineProperties();
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
@@ -119,6 +123,24 @@ class MessageChannelHappyPathTest {
                                 .build());
         // ⑤½ 回写前取消复检：计划仍非终态
         when(planRepository.findById(PLAN_ID)).thenReturn(plan);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(ContactResult.class),
+                        any(ChannelType.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordWaiting(
+                        any(),
+                        any(),
+                        any(ChannelType.class),
+                        any(ContactResult.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
     }
 
     @Test
@@ -130,9 +152,16 @@ class MessageChannelHappyPathTest {
         orchestrator.executeStep(plan, step);
 
         verify(channelGateway).dispatch(any(StepCommand.class));
-        verify(timelineRepository).writeTimeline(any());
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.DELIVERED),
+                        eq(ChannelType.SMS),
+                        any(),
+                        any());
 
         ArgumentCaptor<CollectionEvent> captor = ArgumentCaptor.forClass(CollectionEvent.class);
         verify(eventBus).publish(captor.capture());
@@ -144,16 +173,53 @@ class MessageChannelHappyPathTest {
     }
 
     @Test
-    @DisplayName("带观察期消息渠道：发送成功 → STEP_WAITING（不立即发布完成事件）")
-    void messageChannel_withObservation_entersWaiting() {
+    @DisplayName("SMS 即使配置 observation>0 → 仍同步 COMPLETED（Phase 1 不进 WAITING）")
+    void sms_ignoresObservation_syncCompletes() {
         stubHappyPath();
         step.setObservationMinutes(30);
 
         orchestrator.executeStep(plan, step);
 
-        verify(timelineRepository).writeTimeline(any());
-        verify(planRepository).updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.EXECUTING));
-        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_WAITING, null);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.DELIVERED),
+                        eq(ChannelType.SMS),
+                        any(),
+                        any());
+        verify(planRepository, never())
+                .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
+        verify(eventBus).publish(any());
+    }
+
+    @Test
+    @DisplayName("Phase 2 消息渠道（VIBER）observation>0 → STEP_WAITING")
+    void viber_withObservation_entersWaiting() {
+        stubHappyPath();
+        step.setChannelType(ChannelType.VIBER);
+        step.setObservationMinutes(30);
+        when(stepResolver.resolve(any()))
+                .thenReturn(
+                        StepCommand.builder()
+                                .channelType(ChannelType.VIBER)
+                                .targetAddress("+639170000000")
+                                .templateId("T_VIBER_01")
+                                .idempotencyKey("k-1")
+                                .build());
+
+        orchestrator.executeStep(plan, step);
+
+        verify(stepOutcomeRecorder)
+                .recordWaiting(
+                        eq(plan),
+                        eq(step),
+                        eq(ChannelType.VIBER),
+                        eq(ContactResult.DELIVERED),
+                        any(),
+                        any());
         verify(eventBus, never()).publish(any());
     }
 

@@ -14,8 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * PreFlightChecker 系统级守卫分支单测（核心引擎规格 §3.1②、§5）。全 mock，不连库。 覆盖测试矩阵 #5a-5e：案件不存在 / 已还款 / 存活 /
- * 读取失败重投。
+ * PreFlightChecker 系统级守卫分支单测（核心引擎规格 §3.1②、§5）。全 mock，不连库。 覆盖测试矩阵 #5a-5e：案件不存在 / 已还款 / 存活 / 读取失败重投。
  */
 @ExtendWith(MockitoExtension.class)
 class PreFlightCheckerTest {

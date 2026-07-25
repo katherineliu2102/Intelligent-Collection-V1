@@ -25,6 +25,7 @@ import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.repository.ContactPlanRepository;
+import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.CaseService;
 import com.collection.common.service.PredictiveDialerService;
 import com.collection.common.spi.AdvancementPolicy;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -59,6 +61,8 @@ class PlanLifecycleManagerTest {
     private static final long USER_ID = 9001L;
 
     @Mock private ContactPlanRepository planRepository;
+    @Mock private TimelineRepository timelineRepository;
+    @Mock private StepOutcomeRecorder stepOutcomeRecorder;
     @Mock private CaseService caseService;
     @Mock private PlanFactory planFactory;
     @Mock private AdvancementPolicy advancementPolicy;
@@ -239,12 +243,30 @@ class PlanLifecycleManagerTest {
     void onChannelCallback_completesStep() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.ANSWERED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.ANSWERED),
+                        eq(step.getChannelType()),
+                        any(),
+                        any());
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
@@ -254,11 +276,30 @@ class PlanLifecycleManagerTest {
     void onCallbackTimeout_failsStep() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         List<CollectionEvent> out =
                 manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        org.mockito.ArgumentMatchers.contains("CALLBACK_TIMEOUT"));
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
@@ -292,6 +333,7 @@ class PlanLifecycleManagerTest {
         when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
         when(exhaustionPolicy.handle(any(), any(), any()))
                 .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        // renewal_pending 置位后，旧计划不再参与活跃计划检查。
         when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
         ContactPlan created = newPlan(0L, null, Stage.S2);
         created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
@@ -299,8 +341,10 @@ class PlanLifecycleManagerTest {
 
         manager.onPlanExhausted(planExhaustedEvent());
 
-        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
-        verify(planRepository).savePlan(any());
+        InOrder inOrder = org.mockito.Mockito.inOrder(planRepository);
+        inOrder.verify(planRepository).markRenewalPending(PLAN_ID);
+        inOrder.verify(planRepository).savePlan(any());
+        inOrder.verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
     }
 
     @Test
@@ -533,17 +577,35 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("④ SMS 观察期 STEP_WAITING 收到 DLR → 短路结转 COMPLETED + STEP_COMPLETED")
-    void onChannelCallback_waitingDlr_shortCircuits() {
+    @DisplayName("④ Phase 2 预留：STEP_WAITING 收到回调仍可短路结转（Phase 1 SMS 不进 WAITING）")
+    void onChannelCallback_waiting_shortCircuits() {
         ContactPlan waiting = newPlan(PLAN_ID, PlanStatus.STEP_WAITING, Stage.S2);
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(waiting);
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "DELIVERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(waiting),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.DELIVERED),
+                        any(),
+                        any(),
+                        any());
         assertThat(out).hasSize(1);
         assertThat(out.get(0).getEventType()).isEqualTo(EventType.STEP_COMPLETED);
     }
@@ -566,16 +628,54 @@ class PlanLifecycleManagerTest {
     void onChannelCallback_mapsResultVariants() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
-        manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NO_ANSWER"));
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.NO_ANSWER);
+        manager.onChannelCallback(
+                stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NO_ANSWER"));
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.NO_ANSWER),
+                        any(),
+                        any(),
+                        any());
 
         manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "BUSY"));
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.BUSY);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.BUSY),
+                        any(),
+                        any(),
+                        any());
 
         manager.onChannelCallback(
                 stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NOT_A_RESULT"));
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.ANSWERED),
+                        any(),
+                        any(),
+                        any());
     }
 
     // ───────────────────────── 差集补全：链路⑤ 还款过滤失败/CASE_CEASED（D28/D29-L0） ─────────────────────────
@@ -634,7 +734,9 @@ class PlanLifecycleManagerTest {
                         .with(CollectionEvent.DPD, 10)
                         .with(CollectionEvent.PHONE, "+639171234567")
                         .with(CollectionEvent.EMAIL, "a@b.com")
-                        .with(CollectionEvent.TOTAL_OUTSTANDING, new java.math.BigDecimal("1500.00"));
+                        .with(
+                                CollectionEvent.TOTAL_OUTSTANDING,
+                                new java.math.BigDecimal("1500.00"));
 
         manager.onCaseIngested(event);
 

@@ -11,8 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 /**
  * 防漂移守卫：Phase 1 基础设施为内存版（架构设计文档 §3.1 / §1.5）。
  *
- * <p>断言默认装配为内存实现，且 Redis 版尚未引入。若未来接入 Redis（多实例前置），
- * 本测试会失败——提醒同步更新架构文档中「Phase 1 现状为内存版」的口径。
+ * <p>断言默认装配为内存实现，且 Redis 版尚未引入。若未来接入 Redis（多实例前置）， 本测试会失败——提醒同步更新架构文档中「Phase 1 现状为内存版」的口径。
  */
 class DefaultInfraWiringTest {
 
@@ -41,10 +40,10 @@ class DefaultInfraWiringTest {
     }
 
     @Test
-    @DisplayName("Redis 版基础设施尚未引入（切多实例时才补，届时更新本测试与架构文档 §3.1）")
-    void redisImplementationsNotYetPresent() {
-        assertThat(classPresent("com.collection.engine.bus.RedisStreamEventBus")).isFalse();
-        assertThat(classPresent("com.collection.engine.bus.RedisIdempotencyService")).isFalse();
+    @DisplayName("Redis 版基础设施仅在显式 profile 配置时启用")
+    void redisImplementationsArePresentButNotDefault() {
+        assertThat(classPresent("com.collection.engine.bus.RedisStreamEventBus")).isTrue();
+        assertThat(classPresent("com.collection.engine.bus.RedisIdempotencyService")).isTrue();
     }
 
     private static boolean classPresent(String fqcn) {

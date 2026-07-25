@@ -1,0 +1,34 @@
+spring:
+  redis:
+    host: ${COLLECTION_REDIS_HOST}
+    port: ${COLLECTION_REDIS_PORT:6379}
+    password: ${COLLECTION_REDIS_PASSWORD:}
+    ssl: ${COLLECTION_REDIS_SSL:false}
+
+collection:
+  eventbus: redis
+  idempotency: redis
+  case-service: real
+  xxl:
+    enabled: true
+    admin-addresses: ${XXL_JOB_ADMIN_ADDRESSES}
+    app-name: ${XXL_JOB_EXECUTOR_APP_NAME:collection-pilot}
+    access-token: ${XXL_JOB_ACCESS_TOKEN}
+    executor-address: ${XXL_JOB_EXECUTOR_ADDRESS:}
+    executor-ip: ${XXL_JOB_EXECUTOR_IP:}
+    executor-port: ${XXL_JOB_EXECUTOR_PORT:9999}
+  redis:
+    stream: ${COLLECTION_REDIS_STREAM:collection:pilot:events}
+    consumer-group: ${COLLECTION_REDIS_CONSUMER_GROUP:collection-engine-pilot}
+    consumer-name: ${HOSTNAME:engine-pilot-1}
+  webhook:
+    signature-required: true
+    hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET}
+  ingestion:
+    enabled: true
+    redis-dedup-enabled: true
+    # 白名单由 Nacos/环境下发；空名单会扩大处理范围，Pilot 启动校验必须拒绝。
+    loan-id-whitelist: ${COLLECTION_PILOT_LOAN_IDS:}
+
+channel:
+  fallback-to-mock: false

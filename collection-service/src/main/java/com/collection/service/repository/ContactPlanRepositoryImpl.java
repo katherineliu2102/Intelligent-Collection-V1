@@ -70,6 +70,9 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
             if (step.getStatus() == null) {
                 step.setStatus(StepStatus.PENDING);
             }
+            if (step.getIdempotencyKey() == null) {
+                step.setIdempotencyKey(plan.getId() + ":" + step.getStepOrder());
+            }
             stepMapper.insert(step);
             order++;
         }
@@ -80,6 +83,13 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
         planMapper.updateStatus(planId, status, reason);
         if (status != null && status.isTerminal()) {
             planMapper.markCompleted(planId);
+        }
+    }
+
+    @Override
+    public void markRenewalPending(Long planId) {
+        if (planMapper.markRenewalPending(planId) != 1) {
+            throw new IllegalStateException("unable to reserve plan for rebuild: " + planId);
         }
     }
 
@@ -116,6 +126,25 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     @Override
     public void updateStepStatus(Long stepId, StepStatus status, ContactResult result) {
         stepMapper.updateStatus(stepId, status, result);
+    }
+
+    @Override
+    public boolean transitionStepStatus(
+            Long stepId,
+            List<StepStatus> expectedStatuses,
+            StepStatus targetStatus,
+            ContactResult result) {
+        return stepMapper.transitionStatus(stepId, expectedStatuses, targetStatus, result) == 1;
+    }
+
+    @Override
+    public void markStepExecuting(Long stepId) {
+        stepMapper.markExecuting(stepId);
+    }
+
+    @Override
+    public void updateStepResult(Long stepId, ContactResult result) {
+        stepMapper.updateResult(stepId, result);
     }
 
     @Override

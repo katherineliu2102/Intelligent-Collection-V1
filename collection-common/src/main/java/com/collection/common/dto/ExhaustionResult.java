@@ -9,9 +9,7 @@ import lombok.Getter;
 /**
  * 穷尽结果。ExhaustionPolicy.handle() 的输出。对应领域模型 §5.7。
  *
- * <p>字段约束：
- * REBUILD → templateId 必填, targetStage=null；
- * ESCALATE → targetStage 必填, templateId=null；
+ * <p>字段约束： REBUILD → templateId 必填, targetStage=null； ESCALATE → targetStage 必填, templateId=null；
  * COMPLETE → 二者均 null。
  */
 @Getter
@@ -25,11 +23,19 @@ public class ExhaustionResult {
     private final String reason;
 
     public static ExhaustionResult rebuild(String templateId, String reason) {
-        return ExhaustionResult.builder().action(ExhaustionAction.REBUILD).templateId(templateId).reason(reason).build();
+        return ExhaustionResult.builder()
+                .action(ExhaustionAction.REBUILD)
+                .templateId(templateId)
+                .reason(reason)
+                .build();
     }
 
     public static ExhaustionResult escalate(Stage targetStage, String reason) {
-        return ExhaustionResult.builder().action(ExhaustionAction.ESCALATE).targetStage(targetStage).reason(reason).build();
+        return ExhaustionResult.builder()
+                .action(ExhaustionAction.ESCALATE)
+                .targetStage(targetStage)
+                .reason(reason)
+                .build();
     }
 
     public static ExhaustionResult complete(String reason) {

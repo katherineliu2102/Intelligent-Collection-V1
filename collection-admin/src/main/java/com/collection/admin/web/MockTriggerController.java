@@ -20,14 +20,18 @@ import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
+import com.collection.ingestion.job.DpdStageRollHandler;
 import com.collection.service.impl.MockCaseService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -37,9 +41,15 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/mock")
+@Profile({"local", "test"})
 public class MockTriggerController {
 
+    private static final long[] L4A_CASE_IDS = {
+        94999L, 94201L, 94101L, 94102L, 92001L, 93101L, 93201L, 95001L, 94801L, 94805L, 94804L
+    };
+
     @Resource private IngestionService ingestionService;
+    @Resource private DpdStageRollHandler dpdStageRollHandler;
     @Resource private CaseService caseService;
     @Resource private StepResolver stepResolver;
     @Resource private SendGridEmailAdapter sendGridEmailAdapter;
@@ -51,6 +61,8 @@ public class MockTriggerController {
     @Resource private ScriptLibrary scriptLibrary;
 
     @Resource private ChannelProperties channelProperties;
+
+    @Resource private JdbcTemplate jdbcTemplate;
 
     /**
      * 直连 SendGrid 发一封 Email（不经 plan/DB）。 用于 DB 不可用时的渠道冒烟；caseId 见
@@ -394,6 +406,60 @@ public class MockTriggerController {
         return ok("CASE_INGESTED published, caseId=" + caseId);
     }
 
+    /**
+     * 清理 L4a 官方固定合成案的运行数据，使官方脚本可重复执行。
+     *
+     * <p>端点仅在 local/test profile 暴露；没有任意 caseId 参数，不触碰旧库 {@code t_collection}。
+     */
+    @PostMapping("/reset-l4a")
+    public Map<String, Object> resetL4a() {
+        if (!(caseService instanceof MockCaseService)) {
+            return fail("MOCK_CASE_SERVICE_REQUIRED", "L4a reset requires MockCaseService");
+        }
+        String placeholders = String.join(",", Collections.nCopies(L4A_CASE_IDS.length, "?"));
+        Object[] caseIds = new Object[L4A_CASE_IDS.length];
+        List<Long> resetCaseIds = new ArrayList<>(L4A_CASE_IDS.length);
+        for (int i = 0; i < L4A_CASE_IDS.length; i++) {
+            caseIds[i] = L4A_CASE_IDS[i];
+            resetCaseIds.add(L4A_CASE_IDS[i]);
+        }
+
+        jdbcTemplate.update(
+                "DELETE a FROM t_channel_callback_audit a "
+                        + "JOIN t_contact_plan p ON p.id = a.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        jdbcTemplate.update(
+                "DELETE d FROM t_decision_log d "
+                        + "JOIN t_contact_plan p ON p.id = d.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        jdbcTemplate.update(
+                "DELETE s FROM t_contact_plan_step s "
+                        + "JOIN t_contact_plan p ON p.id = s.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        int timelines =
+                jdbcTemplate.update(
+                        "DELETE FROM t_contact_timeline WHERE case_id IN (" + placeholders + ")",
+                        caseIds);
+        int plans =
+                jdbcTemplate.update(
+                        "DELETE FROM t_contact_plan WHERE case_id IN (" + placeholders + ")",
+                        caseIds);
+        ((MockCaseService) caseService).resetCases(new HashSet<>(resetCaseIds));
+        Map<String, Object> result = ok("L4a fixed-case runtime data cleared");
+        result.put("plansDeleted", plans);
+        result.put("timelinesDeleted", timelines);
+        return result;
+    }
+
     /** 模拟还款到账：标记 mock 案件已还款 + 发布 REPAYMENT_RECEIVED（应取消该用户活跃计划）。 */
     @PostMapping("/repayment")
     public Map<String, Object> repayment(
@@ -410,6 +476,13 @@ public class MockTriggerController {
     public Map<String, Object> stageChanged(@RequestParam Long caseId, @RequestParam Stage stage) {
         ingestionService.changeStage(caseId, stage);
         return ok("STAGE_CHANGED published, caseId=" + caseId + " stage=" + stage);
+    }
+
+    /** 仅 local/test：同步触发并行期 DPD 日切，供 L4b 重跑与 dedup 验证。 */
+    @PostMapping("/daily-roll")
+    public Map<String, Object> dailyRoll() {
+        dpdStageRollHandler.dailyRoll();
+        return ok("daily roll triggered");
     }
 
     /** 模拟 PTP 到期。Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED，此端点仅发布事件、无消费方（核心引擎规格 §2.6）。 */

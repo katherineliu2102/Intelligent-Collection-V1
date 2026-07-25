@@ -45,7 +45,7 @@
 | ③ 决策上下文快照    | CaseContext + UserProfile + ContactHistory（冻结不可变） | `t_contact_plan.context_snapshot`（JSON） | 引擎建计划时序列化，见 §4                                       |
 | ④ 触达指令 → 结果  | 渠道类型/地址/模板/幂等键 → 成功标记/结果枚举/供应商消息 ID               | `StepCommand` → `StepResult`（SPI DTO）   | 引擎 ↔ 渠道编排，见 §5                                       |
 | ⑤ 统一触达记录     | 渠道、结果、内容摘要、供应商回调原文                                | `t_contact_timeline`                    | 渠道执行 / 人工外呼 / 迁移共写，见 [§3.4](#34-contactrecord统一触达记录) |
-| ⑥ 决策日志       | 决策类型、输入快照、输出结果、置信度                                | `t_decision_log`                        | 引擎只写不读，供数仓分析，见 [§3.3](#33-decisionlog决策日志)           |
+| ⑥ 决策日志       | 决策类型、输入快照、输出结果、置信度                                | `t_decision_log`                        | 引擎只写不读，供数仓分析（**Phase 1 仅 ④ StepResolver**），见 [§3.3](#33-decisionlog决策日志) |
 | ⑦ 外部触发数据     | 供应商回调结果、步骤到期/超时信号                                 | EventPayload（经 admin 收敛）                | 不驱动决策，仅触发引擎重新读取快照/状态                                 |
 
 
@@ -176,9 +176,10 @@ flowchart TB
         ASM["组装 ExecutionContext\nplan + step + snapshot + recentTimeline"]
         ASM --> G3["③ ExecutionGuard → GuardVerdict"]
         G3 --> G4["④ StepResolver → StepCommand"]
+        G4 -.->|"Phase 1 落 DecisionLog"| DL["t_decision_log\n（④ CHANNEL_SELECT）"]
         G4 --> G5["⑤ ChannelGateway → StepResult"]
         G5 --> ADV["AdvancementPolicy → AdvancementDecision"]
-        ADV --> WR["写 DecisionLog / ContactRecord"]
+        G5 --> WR["写 ContactRecord（时间线）"]
     end
 
     subgraph P3["③ 实时守卫（瞬态，不落库）"]
@@ -198,7 +199,7 @@ flowchart TB
 | ---------- | ------------------------------------------ | --------- | --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
 | **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
 | **持久实体**   | ContactPlanStep                            | §3.2      | `t_contact_plan_step`             | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进                                      | 计划内单步；含 trigger/timeout 调度字段                  |
-| **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | 每次 SPI 调用后（步骤执行 ③④⑤）                                                                             | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
+| **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记          | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
 | **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
 | **快照**     | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON        | `CASE_INGESTED` 建计划时冻结                                                                           | 决策输入字段；无独立表                                   |
 | **快照**     | ContextSnapshot                            | §4.4      | `t_contact_plan.context_snapshot` | 同上                                                                                               | 快照根；计划存活期内只读，保证步骤间决策一致                        |
@@ -311,14 +312,13 @@ flowchart TB
 | FAILED    | API 失败、重试耗尽等            |
 
 
-**SMS — 派发 + 可选观察期**（`observationMinutes>0` 时进 `STEP_WAITING`）
+**SMS — 同步派发**（Phase 1 与 PUSH/EMAIL 相同：`dispatch` 成功即完成，不进 `STEP_WAITING`）
 
 
-| 枚举值              | 含义                 |
-| ---------------- | ------------------ |
-| DELIVERED        | 通知中心受理；或观察期内收到 DLR |
-| SENT_NO_RESPONSE | 观察期届满仍无 DLR        |
-| FAILED           | 同步派发失败             |
+| 枚举值       | 含义        |
+| --------- | --------- |
+| DELIVERED | 通知中心受理成功  |
+| FAILED    | 同步派发失败    |
 
 
 **AI_CALL — 话单回调**（`CHANNEL_CALLBACK` 完成步骤）
@@ -341,7 +341,7 @@ flowchart TB
 | REJECTED | 退订 / 硬退信 / 举报垃圾 |
 
 
-> 退订：Webhook 异步写入 `REJECTED` 后 Guard 拦截后续 Email；无邮箱 → 发信前 `SKIPPED`。细则见 SendGrid 对接说明。
+> 退订：Webhook 异步写入 `REJECTED` 后 Guard 拦截后续 Email。空邮箱、空手机号、且 Push 无 token 与可回退手机号时，均由 Guard 先返回 `COMPLIANCE_BLOCKED`；不会进入 `StepResolver`。
 
 **系统内部 / Phase 2 预留**
 
@@ -349,12 +349,12 @@ flowchart TB
 | 枚举值                | 含义    | 写 timeline | 说明                        |
 | ------------------ | ----- | ---------- | ------------------------- |
 | COMPLIANCE_BLOCKED | 合规拦截  | 是          | 含频控、空地址等                  |
-| SKIPPED            | 主动跳过  | **否**      | 如 EMAIL 无邮箱               |
+| SKIPPED            | 策略性主动跳过  | **否**      | 仅 `StepResolver` 正常返回 `null`（如非里程碑槽位） |
 | CHANNEL_DOWN       | 渠道不可用 | **否**      | 健康检查失败                    |
 | REPLIED            | 用户回复  | 是          | Phase 2（VIBER / WHATSAPP） |
 
 
-> **step 与 timeline**：写入 `ContactResult` 时，默认**同时推进 plan step** 并写 timeline；**例外**——SendGrid Webhook 仅更新 `t_contact_timeline.result`（Email 的 READ/CLICKED/REJECTED，不推进 step）。Email result 只升不降：`DELIVERED` → `READ` → `CLICKED`。
+> **step 与 timeline**：空地址/频控等 Guard 拦截为 `COMPLIANCE_BLOCKED`，由引擎写 timeline 后推进；策略性 `SKIPPED` 不写 timeline、仍推进。其余写入 `ContactResult` 时默认同时推进 plan step 并写 timeline。例外是 SendGrid Webhook 仅更新 `t_contact_timeline.result`（Email 的 READ/CLICKED/REJECTED，不推进 step）。Email result 只升不降：`DELIVERED` → `READ` → `CLICKED`。
 
 ### 2.3 PlanStatus（触达计划状态）
 
@@ -403,7 +403,7 @@ flowchart TB
 | SCRIPT_SELECT  | 话术选择：决定使用哪个话术组  |
 | TIMING         | 触达时间：决定最佳触达时间   |
 
-> SPI 调用时机与实现见 [核心引擎规格 §5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)。Phase 1 `TIMING`：固定 9AM–6PM PHT 窗口，RuleBasedEngine 直接返回。
+> SPI 调用时机与实现见 [核心引擎规格 §5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)。Phase 1 合规默认允许触达窗口为 **08:00–21:00 PHT**，由 `ExecutionGuard` 按 Nacos 配置执行；`TIMING` 不得绕过该 Guard。
 >
 > **Phase 2 预留**：`ASSIGNMENT`、`CHANNEL_MODE_SELECT`（枚举保留，Phase 1 不写 `t_decision_log`）。
 
@@ -412,6 +412,19 @@ flowchart TB
 
 > **Java**：`com.collection.common.enums.EventType`  
 > **载体**：Redis Stream（路由 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；payload §6；信封 [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
+
+| 枚举值 | Phase 1 状态 | 说明 |
+| --- | --- | --- |
+| CASE_INGESTED | 活跃 | 接入首次入催 |
+| STAGE_CHANGED | 活跃 | 日切变更或引擎升档 |
+| REPAYMENT_RECEIVED | 活跃 | 全额结清中断 |
+| PLAN_STEP_DUE | 活跃 | 调度触发步骤 |
+| CHANNEL_CALLBACK | 活跃 | AI_CALL 回调 |
+| CALLBACK_TIMEOUT | 活跃 | AI_CALL 回调超时哨兵 |
+| STEP_COMPLETED | 活跃 | 步骤完成后推进 |
+| PLAN_EXHAUSTED | 活跃 | 计划穷尽后续建决策 |
+| CASE_CEASED | 活跃 | DPD≥91 停催 |
+| PTP_EXPIRED | Phase 2 预留 | Phase 1 不生产、不消费 |
 
 ### 2.7 CancelReason（计划取消原因）
 
@@ -496,7 +509,7 @@ flowchart TB
 | cancelReason    | CancelReason        | cancel_reason    | 否   | 取消原因（枚举 §2.7，仅终态 PLAN_CANCELLED 时有值）                                                                 |
 | contextSnapshot | String              | context_snapshot | 否   | 决策上下文快照（§4.4 ContextSnapshot 的 JSON 序列化字符串；DB 列类型 JSON）                                              |
 | idempotencyKey  | String              | idempotency_key  | 否   | 计划创建幂等键（`case_id:stage:create_timestamp`），防止事件重投导致重复创建计划。若架构使用 UNIQUE 约束替代则可降为预留                     |
-| renewalPending  | boolean             | renewal_pending  | 是   | ~~Phase 1 未使用，预留~~。穷尽续建为同步操作（旧计划终态 → 即时创新计划），无中间"待续建"态                                               |
+| renewalPending  | boolean             | renewal_pending  | 是   | REBUILD 同一事务内旧计划的短暂过渡标记：置 1 后不再参与活跃计划唯一约束/调度，插入新计划后旧计划立即终态化；事务失败整体回滚。                                               |
 | version         | int                 | version          | 是   | 乐观锁版本号，每次状态变更 +1                                                                                     |
 | startedAt       | LocalDateTime       | started_at       | 否   | 计划开始执行时间。引擎写入时机：首步进入 EXECUTING 时（`IF plan.startedAt IS NULL THEN SET`）                               |
 | completedAt     | LocalDateTime       | completed_at     | 否   | 计划完成时间。引擎写入时机：计划进入终态（PLAN_COMPLETED / PLAN_CANCELLED）时 SET                                           |
@@ -548,6 +561,7 @@ flowchart TB
 > **Java**：`com.collection.common.model.DecisionLog`  
 > **表**：`t_decision_log` · DDL [附录 A A.1.3](#a13-t_decision_log--决策日志)  
 > **用途**：SPI 决策审计；引擎只写不读，供数仓分析与 Phase 2 模型训练。
+> **Phase 1 落库范围**：仅 ④ `StepResolver` 解析成功后写一条 step 级记录（`decision_type=CHANNEL_SELECT`、`engine_type=RULE`、`confidence=1.0`），`fail-open` 事务外写不阻断触达；③ Guard 拦截率走 `t_contact_timeline`，推进/穷尽决策 Phase 2 再补记。
 
 
 | 字段             | Java 类型       | DB 列            | 必填  | 说明                                                 |
@@ -583,6 +597,7 @@ flowchart TB
 | userId           | Long          | 是   | 用户 ID                                                           |
 | planId           | Long          | 否   | 关联触达计划 ID。历史迁移数据（source=ETL_SYNC）无计划 ID，传 null                  |
 | stepId           | Long          | 否   | 关联步骤 ID。人工渠道的坐席录入和历史迁移数据无步骤 ID                                  |
+| attemptKey       | String        | 否   | 系统触达为 `planId:stepId:retryCount`，唯一约束确保每次尝试仅一条最终事实；迁移/人工记录可为 null |
 | channel          | ChannelType   | 是   | 渠道枚举                                                            |
 | direction        | Direction     | 是   | OUT=系统发出，IN=用户响应（如用户回复 Viber 消息）                                |
 | templateId       | Long          | 否   | 使用的话术模板 ID                                                      |
@@ -599,7 +614,8 @@ flowchart TB
 >
 > 1. 合规拦截的触达**也写入** `t_contact_timeline`，result=COMPLIANCE_BLOCKED，用于形成完整的用户接触全貌（同时写入 `t_compliance_violation` 记录详情）。
 > 2. 渠道发送失败（重试耗尽）写入 `t_contact_timeline`，result=FAILED。
-> 3. 同一个 providerMsgId 的回调更新是幂等的：更新 result 和 providerCallback，不新增记录。
+> 3. 同一次触达尝试以 attemptKey 幂等：重复回调更新 result/providerMsgId/providerCallback，不新增记录。不同 step 或 retryCount 是不同尝试，分别保留。
+> 4. 供应商原始回调序列写 `t_channel_callback_audit`，不作为 timeline 触达次数，供排障和渠道分析。
 
 ---
 
@@ -620,7 +636,7 @@ flowchart TB
 
 | 字段               | 类型         | 必填  | 说明                                                                                                           | 来源                        |
 | ---------------- | ---------- | --- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
-| caseId           | Long       | 是   | 案件ID                                                                                                         | t_collection.id           |
+| caseId           | Long       | 是   | 信贷业务贷款标识；全链路等同 `loan_id`，**不是**旧库 hex 行主键 `t_collection.id`                              | t_collection.loan_id / CASE_INGESTED payload |
 | userId           | Long       | 是   | 用户ID                                                                                                         | t_collection.user_id      |
 | dpd              | int        | 是   | 逾期天数（D-3 起为负数，D0=0，D+1=1）                                                                                    | t_collection.overdue_day  |
 | stage            | Stage      | 是   | 当前催收阶段                                                                                                       | 由 DPD 计算                  |
@@ -637,14 +653,14 @@ flowchart TB
 | isFirstLoan      | boolean    | 是   | 是否首贷用户（JSON 序列化为 `firstLoan`，见 §4.4 注）                                                                       | 数仓或 t_collection 扩展       |
 | payCount         | int        | 是   | 历史还款次数（含本笔之前的贷款）                                                                                             | t_collection.pay_count    |
 | activePlanId     | Long       | 否   | 当前活跃触达计划ID                                                                                                   | t_contact_plan 查询         |
-| strategyTone     | String     | 否   | 编排强度：STANDARD / FIRM（读 snapshot，PlanFactory 匹配模板）                                                            | snapshot                  |
+| strategyTone     | String     | 否   | 编排强度：Phase 1 固定 `STANDARD`；FIRM 规则为后续阶段预留                                                            | 引擎由 payload/配置推导 |
 | complaintFrozen  | boolean    | 否   | 投诉/争议冻结标记；Phase 2 预留。Phase 1 不以该字段拦截触达，快照值仅记录建计划时点       | 案件状态（实时）/ snapshot（建计划时点） |
 | collectionStatus | String     | 否   | 案件催收生命周期：`CEASED` = D+91 完全停催                                                                                | ingestion 日切 / 案件         |
-| repaymentUrl     | String     | 否   | App 还款深链（ingestion 写入；Push/Email/SMS 变量渲染）。**契约必填**，见 [contracts](./contracts/README_ContextSnapshot契约对齐.md) | ingestion / 信贷结账链路        |
+| repaymentUrl     | String     | 否   | App 还款深链；引擎按受控 `collection.repayment-url-template` 基于 `caseId` 生成，供 Push/Email/SMS 渲染；点击归因不属 Phase 1 | engine snapshot builder |
 | emailScriptSlot  | String     | 否   | Phase 1 Mock：显式指定 Email 里程碑 scriptSlot（E2E 联调）；为空时由 `EmailMilestoneScriptSlots.resolveByDpd(dpd)` 推断         | Mock / E2E                |
 
 
-> **字段映射说明**：上表中"来源"列标注的是逻辑来源。`CaseContext` 由 `CaseService.buildContext(caseId)` 构建，具体的字段映射和多表 JOIN 逻辑在 CaseService 实现中定义。`isFirstLoan` 的判定规则：同一 userId 在系统中仅有一笔贷款记录。
+> **字段映射说明**：上表中"来源"列标注的是逻辑来源。`caseId` 始终为信贷 `loan_id`；`CaseService` 查旧库时必须按该业务键映射，不能透传 `t_collection.id`。`isFirstLoan` 的判定规则：同一 userId 在系统中仅有一笔贷款记录。
 
 ### 4.2 UserProfile（用户画像）
 
@@ -683,7 +699,7 @@ flowchart TB
 | idNumber        | String     | 否   | t_user_basis.id_number（中间四位脱敏后写入；**Phase 1 ProfileService 未实现**，Phase 2 组装时执行）      |
 | address         | String     | 否   | t_user_basis.address                                                                |
 | primaryPhone    | String     | 是   | t_user_basis.phone（SMS `targetAddress` 来源，E.164 `+63`）                              |
-| email           | String     | 否   | EMAIL 渠道 `targetAddress` 来源（空 → Guard `NO_EMAIL` → 步骤 SKIP）。来源 t_user_basis / 信贷用户表 |
+| email           | String     | 否   | EMAIL 渠道 `targetAddress` 来源（空 → Guard `NO_EMAIL` → `COMPLIANCE_BLOCKED`）。来源 t_user_basis / 信贷用户表 |
 | language        | String     | 否   | 用户语言偏好 ISO 639-1（tl/en）；StepResolver → `metadata.language`；默认 en                    |
 | alternatePhones | ListString | 否   | t_user_telephone_book 提取（🅿️2）                                                      |
 
@@ -717,9 +733,9 @@ flowchart TB
 | ------------------------ | ----------------------- | --- | --------------------------- | --------------------------------------------- |
 | bestContactHour          | Integer                 | 否   | t_user_profile_ext（Phase 2） | 预留，后期数仓填充                                     |
 | preferredChannel         | ChannelType             | 否   | t_user_profile_ext（Phase 2） | 预留，系统运行累积                                     |
-| channelReachability      | MapChannelType, Boolean | 否   | 运行时检测                       | Phase 1 实现：通过各渠道 supports() 判定                |
-| lastEffectiveContactTime | LocalDateTime           | 否   | t_contact_timeline 聚合       | Phase 1 实现：查询最近一次 result=ANSWERED/REPLIED 的时间 |
-| lastEffectiveChannel     | ChannelType             | 否   | t_contact_timeline 聚合       | 同上                                            |
+| channelReachability      | MapChannelType, Boolean | 否   | 运行时检测                       | Phase 2 预留；Phase 1 以地址存在与渠道配置判断                |
+| lastEffectiveContactTime | LocalDateTime           | 否   | t_contact_timeline 聚合       | Phase 2 预留 |
+| lastEffectiveChannel     | ChannelType             | 否   | t_contact_timeline 聚合       | Phase 2 预留 |
 | appLastActiveTime        | LocalDateTime           | 否   | App 埋点 / 数仓                 | 预留                                            |
 
 
@@ -809,6 +825,8 @@ flowchart TB
 
 > **不可变性约束**：快照一旦写入，不随源数据变化而更新。SPI 实现基于快照做决策——这保证了同一计划内步骤之间的决策一致性。不可快照的实时还款状态由 PreFlightChecker 在步骤执行时实时校验；争议冻结为 Phase 2 能力。
 >
+> **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；接入层优先映射 `case_push`，缺少金融字段时可经 `CaseService` **只读回填** `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`。引擎仅消费 payload，并衍生 `stage`（由 dpd）、`collectionStatus`（dpd≥91 时 `CEASED`）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。联系方式以 payload 为准，不被回填覆盖。
+>
 > **JSON 序列化约定**：样例 JSON 字段名 = Java 模型字段名（fastjson 默认）。注意布尔字段 `CaseContext.isFirstLoan` 序列化为 `**firstLoan`**（去 `is` 前缀）。冻结样例见 `[./contracts/ContextSnapshot.sample.json](./contracts/ContextSnapshot.sample.json)`。MySQL `JSON` 列读回可能规范化键序/空格，测试与对账按**语义等价**断言（不按字节相等）。
 >
 > ⚠️ **待确认**：具体的序列化策略（全量 vs 精简字段）、快照大小上限、快照刷新机制（阶段变更时是否重建）待后续讨论确定。
@@ -891,7 +909,10 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | --------------- | ------- | --- | -------------------------------------------------------------------------- |
 | allowed         | boolean | 是   | true=放行，false=拦截                                                           |
 | blockedReason   | String  | 否   | 拦截原因（allowed=true 时为 null）                                                 |
-| blockedRuleType | String  | 否   | 拦截规则类型：FREQUENCY_LIMIT / TIME_WINDOW / CONNECT_AND_STOP / ABANDONMENT_RATE |
+| blockedRuleType | String  | 否   | 拦截规则类型：FREQUENCY_LIMIT / TIME_WINDOW / NO_EMAIL / NO_PHONE / NO_TOKEN；CONNECT_AND_STOP、ABANDONMENT_RATE 为 Phase 2 预留 |
+| deferUntil      | LocalDateTime | 否 | 仅 `TIME_WINDOW` 且 `allowed=false` 时必填；引擎重设当前步骤触发时刻，不写拦截 timeline |
+
+> **空地址与延期语义**：EMAIL 无邮箱、SMS 无手机号、PUSH 同时无 jpushToken 和手机号时，Guard 返回对应 `NO_*`，引擎记 `COMPLIANCE_BLOCKED`、写 timeline 后推进。PUSH 有手机号但无 token 由 Gateway 在同一次 dispatch 内 fallback SMS。只有合规时段不满足时使用 `deferUntil` 延期；投诉/争议冻结与呼损率自动降级均为 Phase 2，不得在 Phase 1 Guard 中拦截。
 
 
 ### 5.4 StepCommand（步骤命令）
@@ -904,7 +925,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | 字段             | 类型                | 必填  | 说明                                                             |
 | -------------- | ----------------- | --- | -------------------------------------------------------------- |
 | channelType    | ChannelType       | 是   | Phase 1：SMS / PUSH / EMAIL / AI_CALL（Phase 2：VIBER / WHATSAPP） |
-| targetAddress  | String            | 是   | 手机号 / Token / 邮箱（按渠道解释）                                        |
+| targetAddress  | String            | 是   | 手机号 / Token / 邮箱（按渠道解释）；必填仅指 Guard 已放行后，空地址不得进入 Resolver/dispatch |
 | templateId     | String            | 是   | 模板 ID（策略选定，执行层渲染）                                              |
 | idempotencyKey | String            | 是   | 透传 step.idempotencyKey，渠道层供应商去重                                |
 | metadata       | MapString, Object | 否   | 扩展字段，已知 key 见下表                                                |
@@ -930,7 +951,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | fallback_sms        | META_FALLBACK_SMS          | String/Boolean | PUSH 同槽 fallback SMS 标记/开关                   |
 
 
-> **执行运行时语义**（`retryable` 判定、观察期、空地址处理等）不在本文复述，见 [contracts 引擎渠道执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) 与 `.cursor/rules/ic-v1-channel-contract.mdc`。
+> **Phase 1 执行语义**：`StepResolver=null` 仅表示策略性跳过，结果为 `SKIPPED` 且不写 timeline；空地址必须在 Guard 截断，不能以 null 表达。SMS/PUSH/EMAIL 成功 dispatch 即同步完成，`observationMinutes=0`，不进 `STEP_WAITING`；AI_CALL 等待回调。详细交互用法见 [contracts 引擎渠道执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)。
 
 ### 5.5 StepResult（步骤结果）
 
@@ -948,9 +969,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | providerMsgId | String        | 否   | 供应商消息/通话 ID，回调关联与对账                                             |
 
 
-> **success 判定规则**：由渠道层根据 contactResult 设置。FAILED 类 → false，其余 → true。引擎仅读 success 决定是否进入故障降级；AdvancementPolicy 读 contactResult 做业务决策。
->
-> `**retryable` 判定、观察期（STEP_WAITING）、空地址（NO_EMAIL/NO_PHONE/NO_TOKEN）等执行运行时语义**为渠道执行契约，不在本文复述，见 [contracts 引擎渠道执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)。
+> **success 判定规则**：发送受理为 `success=true/contactResult=DELIVERED/retryable=false`；网络超时、供应商 5xx、限流和熔断为 `success=false/FAILED/retryable=true`；地址无效、退订和其他确定性异常为 `success=false/FAILED/retryable=false`。引擎仅读 success 决定故障降级；AdvancementPolicy 读 contactResult 做业务决策。StepResult 不承担空地址语义，该路径在 Guard 截断。
 
 ### 5.6 AdvancementDecision（推进决策）
 
@@ -1056,7 +1075,7 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     cancel_reason       VARCHAR(64)     NULL     COMMENT '取消原因: REPAID/STAGE_UPGRADE/CEASED（Phase 2 预留 COMPLAINT/MANUAL/PTP_EXPIRED）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键（case_id:stage:create_timestamp），防止事件重投重复创建。Phase 1 预留',
-    renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'Phase 1 未使用，预留。穷尽续建为同步操作无中间态',
+    renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',
     version             INT             NOT NULL DEFAULT 0 COMMENT '乐观锁版本号，每次状态变更 +1',
     started_at          DATETIME        NULL     COMMENT '首步进入EXECUTING时写入（IF NULL THEN SET）',
     completed_at        DATETIME        NULL     COMMENT '计划进入终态时写入',

@@ -40,6 +40,7 @@ import com.collection.engine.lifecycle.EventConsumerDispatcher;
 import com.collection.engine.lifecycle.PlanLifecycleManager;
 import com.collection.engine.lifecycle.PreFlightChecker;
 import com.collection.engine.lifecycle.StepExecutionOrchestrator;
+import com.collection.engine.lifecycle.StepOutcomeRecorder;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
@@ -118,12 +119,21 @@ class ChannelContractL2Test {
         inject(orchestrator, "contextAssembler", contextAssembler);
         inject(orchestrator, "planRepository", planRepo);
         inject(orchestrator, "timelineRepository", timelineRepo);
+        StepOutcomeRecorder outcomeRecorder = new StepOutcomeRecorder();
+        inject(outcomeRecorder, "planRepository", planRepo);
+        inject(outcomeRecorder, "timelineRepository", timelineRepo);
+        inject(orchestrator, "stepOutcomeRecorder", outcomeRecorder);
+        inject(
+                orchestrator,
+                "decisionLogRepository",
+                (com.collection.common.repository.DecisionLogRepository) dl -> {});
         inject(orchestrator, "eventBus", bus);
         inject(orchestrator, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
         inject(manager, "planRepository", planRepo);
+        inject(manager, "stepOutcomeRecorder", outcomeRecorder);
         inject(manager, "caseService", caseService);
         inject(manager, "planFactory", planFactory);
         inject(
@@ -270,10 +280,10 @@ class ChannelContractL2Test {
     // ───────────────────────── C6 ─────────────────────────
 
     @Test
-    @DisplayName("C6 SMS 有观察期 → 发送成功进 STEP_WAITING；到期 prepareStepDue → 结转 COMPLETED")
-    void c6_smsObservation_waitsThenSettles() {
+    @DisplayName("C6 SMS 同步完成 → dispatch 成功即 COMPLETED，即使 observation>0 也不进 WAITING")
+    void c6_sms_syncCompletes_noWaiting() {
         planFactory.channel = ChannelType.SMS;
-        planFactory.observationMinutes = 10;
+        planFactory.observationMinutes = 10; // 应被引擎忽略
         gateway.behavior =
                 cmd ->
                         StepResult.builder()
@@ -285,17 +295,7 @@ class ChannelContractL2Test {
 
         ingestAndRunDue();
 
-        // 受理成功但进观察期：计划 STEP_WAITING，步骤尚未 COMPLETED
-        assertThat(onlyPlan().getStatus()).isEqualTo(PlanStatus.STEP_WAITING);
-        assertThat(onlyStep().getStatus()).isNotEqualTo(StepStatus.COMPLETED);
-
-        // 观察期到期：把触发时间拨到过去，再投 PLAN_STEP_DUE → 结转
-        ContactPlanStep s = onlyStep();
-        planRepo.updateStepTriggerTime(
-                s.getId(), LocalDateTime.now().minusMinutes(1), s.getStatus());
-        bus.publish(stepDue(s.getPlanId(), s.getId()));
-        bus.drainAll();
-
+        assertThat(onlyPlan().getStatus()).isNotEqualTo(PlanStatus.STEP_WAITING);
         assertThat(onlyStep().getStatus()).isEqualTo(StepStatus.COMPLETED);
     }
 

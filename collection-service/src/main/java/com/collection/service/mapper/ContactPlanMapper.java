@@ -30,19 +30,22 @@ public interface ContactPlanMapper {
 
     @Select(
             "SELECT * FROM t_contact_plan "
-                    + "WHERE user_id = #{userId} AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+                    + "WHERE user_id = #{userId} AND renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
                     + "ORDER BY id ASC")
     List<ContactPlan> selectActiveByUser(@Param("userId") Long userId);
 
     @Select(
             "SELECT * FROM t_contact_plan "
-                    + "WHERE case_id = #{caseId} AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+                    + "WHERE case_id = #{caseId} AND renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
                     + "ORDER BY id ASC")
     List<ContactPlan> selectActiveByCase(@Param("caseId") Long caseId);
 
     @Select(
             "SELECT * FROM t_contact_plan "
                     + "WHERE case_id = #{caseId} AND stage = #{stage} "
+                    + "AND renewal_pending = 0 "
                     + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
                     + "ORDER BY id DESC LIMIT 1")
     ContactPlan selectActiveByCaseAndStage(
@@ -66,6 +69,12 @@ public interface ContactPlanMapper {
             @Param("planId") Long planId,
             @Param("status") PlanStatus status,
             @Param("cancelReason") com.collection.common.enums.CancelReason cancelReason);
+
+    @Update(
+            "UPDATE t_contact_plan SET renewal_pending = 1, version = version + 1, updated_at = NOW() "
+                    + "WHERE id = #{planId} AND renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')")
+    int markRenewalPending(@Param("planId") Long planId);
 
     @Update(
             "UPDATE t_contact_plan SET started_at = NOW(), version = version + 1, updated_at = NOW() "

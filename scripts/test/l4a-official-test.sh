@@ -6,7 +6,7 @@
 # 用法：
 #   ./scripts/test/l4a-official-test.sh
 #   ./scripts/test/restart-and-l4a.sh          # 停服→编译→后台起→本脚本（推荐一键）
-#   HOST=http://localhost:8888 OBS_MIN=1 ./scripts/test/l4a-official-test.sh
+#   HOST=http://localhost:8888 ./scripts/test/l4a-official-test.sh
 #   L4A_ONLY=3,guard ./scripts/test/l4a-official-test.sh   # 只跑 L4a-3 + Guard 段
 # =============================================================================
 set -uo pipefail
@@ -24,9 +24,14 @@ CASE_GMAIL=95001
 CASE_GUARD=94801
 CASE_GUARD_FREQ=94805
 CASE_REBUILD=94804
-OBS_MIN="${OBS_MIN:-1}"
 FAIL=0
 PASS=0
+
+# Intel Homebrew Python cannot run on Apple Silicon without Rosetta. Prefer the
+# system runtime when the inherited python3 command is not executable.
+if ! python3 -c 'import sys' >/dev/null 2>&1 && /usr/bin/python3 -c 'import sys' >/dev/null 2>&1; then
+  export PATH="/usr/bin:$PATH"
+fi
 
 pp() { if command -v jq >/dev/null 2>&1; then jq .; elif command -v python3 >/dev/null 2>&1; then python3 -m json.tool; else cat; fi; }
 line() { printf '%.0s-' {1..78}; echo; }
@@ -72,6 +77,36 @@ assert_active_count() {
   if [ "$n" = "$want" ]; then pass "$label 活跃计划数=$want"; else fail "$label 活跃计划数=${n} (expect ${want})"; fi
 }
 
+wait_active_count() {
+  local cid="$1" want="$2" max="$3"
+  local elapsed=0 n
+  while [ "$elapsed" -lt "$max" ]; do
+    n=$(get "$PLANS/active/by-case/$cid" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo -1)
+    [ "$n" = "$want" ] && return 0
+    sleep 5; elapsed=$((elapsed + 5))
+  done
+  return 1
+}
+
+has_cancel() {
+  local cid="$1" want="$2"
+  get "$PLANS/by-case/$cid/history?limit=10" | python3 -c "
+import json,sys
+want=sys.argv[1]
+sys.exit(0 if any(p.get('status') == 'PLAN_CANCELLED' and p.get('cancelReason') == want for p in json.load(sys.stdin)) else 1)
+" "$want"
+}
+
+wait_cancel() {
+  local cid="$1" want="$2" max="$3"
+  local elapsed=0
+  while [ "$elapsed" -lt "$max" ]; do
+    has_cancel "$cid" "$want" && return 0
+    sleep 5; elapsed=$((elapsed + 5))
+  done
+  return 1
+}
+
 wait_timeline_new() {
   local uid="$1" want="$2" max="$3" baseline="${4:-0}"
   local elapsed=0 cnt=0 new_cnt=0
@@ -81,6 +116,23 @@ wait_timeline_new() {
     [ "$new_cnt" -lt 0 ] && new_cnt=0
     echo "   [${elapsed}s] timeline +${new_cnt} (want>=${want})"
     if [ "$new_cnt" -ge "$want" ]; then return 0; fi
+    sleep 10; elapsed=$((elapsed + 10))
+  done
+  return 1
+}
+
+wait_timeline_channel() {
+  local uid="$1" channel="$2" max="$3"
+  local elapsed=0
+  while [ "$elapsed" -lt "$max" ]; do
+    if get "$PLANS/timeline/$uid?limit=50" | python3 -c "
+import json,sys
+channel=sys.argv[1]
+sys.exit(0 if any(row.get('channel') == channel for row in json.load(sys.stdin)) else 1)
+" "$channel"; then
+      return 0
+    fi
+    echo "   [${elapsed}s] case=${uid} 尚无 ${channel} timeline"
     sleep 10; elapsed=$((elapsed + 10))
   done
   return 1
@@ -141,6 +193,11 @@ if ! curl -s -o /dev/null -w "%{http_code}" "$PLANS/active/by-case/1" | grep -qE
   echo "✗ 无法连接 $HOST"; exit 1
 fi
 pass "App 可达 $HOST"
+if post "$MOCK/reset-l4a" | pp; then
+  pass "L4a 固定案例运行数据已清理"
+else
+  echo "✗ 无法清理 L4a 固定案例运行数据"; exit 1
+fi
 
 if should_run 1; then
 # =============================================================================
@@ -178,12 +235,12 @@ if should_run 3; then
 # L4a-3 还款取消 REPAID（94101）
 # =============================================================================
 hdr "L4a-3 还款取消 REPAID (case=$CASE_REPAY)"
+post "$MOCK/reset-l4a" >/dev/null
 post "$MOCK/ingest?caseId=$CASE_REPAY&userId=$CASE_REPAY&stage=S1" | pp
-sleep 15
+wait_active_count "$CASE_REPAY" 1 45 || fail "L4a-3 初始计划未在时限内创建"
 post "$MOCK/repayment?userId=$CASE_REPAY&caseId=$CASE_REPAY" | pp
-sleep 5
-assert_active_count "$CASE_REPAY" 0 "L4a-3"
-assert_cancel "$CASE_REPAY" "REPAID" "L4a-3"
+wait_active_count "$CASE_REPAY" 0 30 && pass "L4a-3 活跃计划数=0" || fail "L4a-3 活跃计划未取消"
+wait_cancel "$CASE_REPAY" "REPAID" 30 && pass "L4a-3 cancelReason=REPAID" || assert_cancel "$CASE_REPAY" "REPAID" "L4a-3"
 sleep 1
 fi
 
@@ -192,13 +249,16 @@ if should_run 4; then
 # L4a-4 STAGE_UPGRADE（94101）
 # =============================================================================
 hdr "L4a-4 阶段升档 STAGE_UPGRADE (case=$CASE_STAGE)"
+post "$MOCK/reset-l4a" >/dev/null
 post "$MOCK/ingest?caseId=$CASE_STAGE&userId=$CASE_STAGE&stage=S1" | pp
-sleep 12
+wait_active_count "$CASE_STAGE" 1 45 || fail "L4a-4 初始计划未在时限内创建"
 post "$MOCK/stage-changed?caseId=$CASE_STAGE&stage=S2" | pp
-sleep 8
-assert_cancel "$CASE_STAGE" "STAGE_UPGRADE" "L4a-4"
-st=$(get "$PLANS/active/by-case/$CASE_STAGE" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['stage'] if ps else '')" 2>/dev/null)
-[ "$st" = "S2" ] && pass "L4a-4 新活跃计划 stage=S2" || fail "L4a-4 新计划 stage=$st"
+wait_cancel "$CASE_STAGE" "STAGE_UPGRADE" 45 && pass "L4a-4 cancelReason=STAGE_UPGRADE" || assert_cancel "$CASE_STAGE" "STAGE_UPGRADE" "L4a-4"
+get "$PLANS/by-case/$CASE_STAGE/history?limit=10" | python3 -c "
+import json,sys
+plans=json.load(sys.stdin)
+sys.exit(0 if any(p.get('stage') == 'S2' for p in plans) else 1)
+" && pass "L4a-4 已创建 stage=S2 计划" || fail "L4a-4 未找到 stage=S2 新计划"
 sleep 1
 fi
 
@@ -207,37 +267,32 @@ if should_run 5; then
 # L4a-5 CEASED（94101）
 # =============================================================================
 hdr "L4a-5 CASE_CEASED (case=$CASE_CEASE)"
+post "$MOCK/reset-l4a" >/dev/null
 post "$MOCK/ingest?caseId=$CASE_CEASE&userId=$CASE_CEASE&stage=S1" | pp
-sleep 8
+wait_active_count "$CASE_CEASE" 1 45 || fail "L4a-5 初始计划未在时限内创建"
 post "$MOCK/case-ceased?caseId=$CASE_CEASE" | pp
-sleep 5
-assert_active_count "$CASE_CEASE" 0 "L4a-5"
-assert_cancel "$CASE_CEASE" "CEASED" "L4a-5"
+wait_active_count "$CASE_CEASE" 0 30 && pass "L4a-5 活跃计划数=0" || fail "L4a-5 活跃计划未取消"
+wait_cancel "$CASE_CEASE" "CEASED" 30 && pass "L4a-5 cancelReason=CEASED" || assert_cancel "$CASE_CEASE" "CEASED" "L4a-5"
 sleep 1
 fi
 
 if should_run 6; then
 # =============================================================================
-# L4a-6 观察期 STEP_WAITING → COMPLETED（94102）
+# L4a-6 SMS 同步完成（94102）
 # =============================================================================
-hdr "L4a-6 观察期结转 (case=$CASE_OBS observeMin=$OBS_MIN)"
+hdr "L4a-6 SMS 同步完成 (case=$CASE_OBS)"
 post "$MOCK/ingest?caseId=$CASE_OBS&userId=$CASE_OBS&stage=S1" | pp
-sleep 8
-wait_plan_status "$CASE_OBS" "STEP_WAITING" 30 && pass "L4a-6 进入 STEP_WAITING" || fail "L4a-6 未进入 STEP_WAITING"
+wait_plan_status "$CASE_OBS" "PLAN_COMPLETED" 30 && pass "L4a-6 同步完成 PLAN_COMPLETED" || fail "L4a-6 未完成"
 pid6=$(get "$PLANS/by-case/$CASE_OBS/history?limit=1" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['id'] if ps else '')" 2>/dev/null)
 if [ -n "$pid6" ]; then
   get "$PLANS/$pid6/steps" | python3 -c "
 import json,sys
 steps=json.load(sys.stdin)
-w=any(s.get('status') in ('EXECUTING','WAITING') or s.get('observationMinutes',0)>0 for s in steps)
-sys.exit(0 if steps else 1)
-" && pass "L4a-6 计划含观察期步骤" || fail "L4a-6 无步骤"
+w=bool(steps) and all(s.get('status') == 'COMPLETED' for s in steps)
+waiting=any(s.get('status') == 'WAITING' or s.get('observationMinutes',0) != 0 for s in steps)
+sys.exit(0 if w and not waiting else 1)
+" && pass "L4a-6 步骤均 COMPLETED，未进入 WAITING" || fail "L4a-6 步骤状态或观察期不符"
 fi
-wait_sec=$(( (OBS_MIN * 60) + 30 ))
-echo "   等待观察期 ${wait_sec}s ..."
-sleep "$wait_sec"
-st=$(get "$PLANS/by-case/$CASE_OBS/history?limit=1" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['status'] if ps else '')" 2>/dev/null)
-[[ "$st" == "PLAN_COMPLETED" || "$st" == "STEP_SCHEDULED" || "$st" == "PLAN_CANCELLED" ]] && pass "L4a-6 观察期后 plan=$st" || fail "L4a-6 观察期后 status=$st"
 sleep 1
 fi
 
@@ -265,10 +320,11 @@ hdr "L4a-8 scriptSlot x stage + 126 vs Gmail"
 for pair in "92001:S0" "93101:S1" "93201:S2"; do
   cid="${pair%%:*}"; st="${pair##*:}"
   post "$MOCK/ingest?caseId=$cid&userId=$cid&stage=$st" | pp
-  sleep 8
 done
 post "$MOCK/ingest?caseId=$CASE_GMAIL&userId=$CASE_GMAIL&stage=S0" | pp
-sleep 8
+for cid in 92001 93101 93201; do
+  wait_timeline_channel "$cid" "EMAIL" 210 && pass "L4a-8 case=$cid 已产生 EMAIL timeline" || fail "L4a-8 case=$cid EMAIL 未在时限内产生"
+done
 HOST="$HOST" python3 <<'PY' && pass "L4a-8 126 跨 stage 有 EMAIL" || fail "L4a-8 126 EMAIL 缺失"
 import json, os, urllib.request
 host = os.environ.get("HOST", "http://localhost:8888")

@@ -18,9 +18,11 @@
 | 停止 | `./scripts/dev/stop-local.sh` |
 | 一键 L4a（停→编译→起→测） | `./scripts/test/restart-and-l4a.sh` |
 | 仅跑 L4a 官方 8 条 | `./scripts/test/l4a-official-test.sh` |
-| **L4b 跑前检查** | `./scripts/test/l4b-preflight.sh`（`--strict` 严格模式） |
+| **L4b 跑前检查** | `./scripts/test/l4b-preflight.sh`（`--strict` 严格模式；仅预检，不替代 L4b 测试） |
+| L4b 测试消息发布 | `GCP_PUBSUB_TEST_TOPIC=collection-cases-test1 ./scripts/test/l4b-pubsub/publish-test-messages.sh case`（仅隔离测试 topic） |
+| L4b 官方闭环 | `scripts/test/l4b-official-test.sh` **当前缺失**；T4 未关闭项，禁止假定可执行 |
 | L4a 单条 | `L4A_ONLY=6 ./scripts/test/l4a-official-test.sh` |
-| Level A 冒烟 | `./scripts/test/smoke-level-a.sh all` |
+| Level A 冒烟 | `./scripts/test/smoke-level-a.sh all`（本地 Mock 冒烟，不等于 L4a/L4b） |
 | 发布渠道密钥到 Nacos | `./scripts/dev/publish-channel-secrets-to-nacos.ps1` |
 
 ## 日志

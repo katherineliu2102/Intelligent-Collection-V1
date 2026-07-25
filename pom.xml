@@ -41,6 +41,8 @@
         <lombok.version>1.18.42</lombok.version>
         <commons-lang3.version>3.12.0</commons-lang3.version>
         <mysql.version>8.0.33</mysql.version>
+        <!-- 2.5.0 是 Java 8 / Spring Boot 2.7 可用的最新 XXL-Job 线；3.x 迁至 Jakarta/JDK17。 -->
+        <xxl-job.version>2.5.0</xxl-job.version>
     </properties>
 
     <dependencyManagement>
@@ -116,6 +118,11 @@
                 <artifactId>mysql-connector-j</artifactId>
                 <version>${mysql.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.xuxueli</groupId>
+                <artifactId>xxl-job-core</artifactId>
+                <version>${xxl-job.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -147,6 +154,11 @@
                     <version>3.2.5</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <includes>
+                            <include>**/*Test.java</include>
+                            <include>**/*IT.java</include>
+                        </includes>
+                        <excludedGroups>integration</excludedGroups>
                     </configuration>
                 </plugin>
                 <plugin>
@@ -211,5 +223,33 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>integration-tests</id>
+            <activation>
+                <property>
+                    <name>groups</name>
+                    <value>integration</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration combine.self="override">
+                            <useModulePath>false</useModulePath>
+                            <includes>
+                                <include>**/*Test.java</include>
+                                <include>**/*IT.java</include>
+                            </includes>
+                            <groups>integration</groups>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

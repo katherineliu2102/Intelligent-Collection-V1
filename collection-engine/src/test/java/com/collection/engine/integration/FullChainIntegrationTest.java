@@ -42,6 +42,7 @@ import com.collection.engine.lifecycle.EventConsumerDispatcher;
 import com.collection.engine.lifecycle.PlanLifecycleManager;
 import com.collection.engine.lifecycle.PreFlightChecker;
 import com.collection.engine.lifecycle.StepExecutionOrchestrator;
+import com.collection.engine.lifecycle.StepOutcomeRecorder;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
@@ -107,12 +108,21 @@ class FullChainIntegrationTest {
         inject(orchestrator, "contextAssembler", contextAssembler);
         inject(orchestrator, "planRepository", planRepo);
         inject(orchestrator, "timelineRepository", timelineRepo);
+        StepOutcomeRecorder outcomeRecorder = new StepOutcomeRecorder();
+        inject(outcomeRecorder, "planRepository", planRepo);
+        inject(outcomeRecorder, "timelineRepository", timelineRepo);
+        inject(orchestrator, "stepOutcomeRecorder", outcomeRecorder);
+        inject(
+                orchestrator,
+                "decisionLogRepository",
+                (com.collection.common.repository.DecisionLogRepository) dl -> {});
         inject(orchestrator, "eventBus", bus);
         inject(orchestrator, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
         inject(manager, "planRepository", planRepo);
+        inject(manager, "stepOutcomeRecorder", outcomeRecorder);
         inject(manager, "caseService", caseService);
         inject(manager, "planFactory", new ThreeChannelPlanFactory());
         inject(

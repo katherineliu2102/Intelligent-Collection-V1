@@ -167,7 +167,7 @@
 
 PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。
 
-> `jpushToken` 随 `case_push` 携带；入案主链路零读库。缺失时可启用 `collection.ingestion.enrich-jpush-token=true`，降级读取 `t_user_device_token`。`CASE_INGESTED` payload 由引擎冻结为 `context_snapshot`；字段定义见 [领域模型 §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)。
+> `jpushToken` 随 `case_push` 携带；缺失时可启用 `collection.ingestion.enrich-jpush-token=true`，降级读取 `t_user_device_token`。金融字段缺失时，接入可经 CaseService 只读回填后再发布 payload；引擎只消费 payload 并冻结为 `context_snapshot`。字段与衍生责任见 [领域模型 §4/§6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)。
 
 #### 1.2.2 应用入站
 
@@ -182,7 +182,7 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 |---|---|---|---|---|
 | `planStepDueHandler` | 每分钟 | `trigger_time <= NOW()` 且步骤待触发、计划非终态 | `PLAN_STEP_DUE` | 计划首步/后续步到期触发触达；观察期结束重触发；退避重试到期 |
 | `callbackTimeoutHandler` | 每分钟 | `timeout_time <= NOW()` 且 step=`EXECUTING`、计划非终态 | `CALLBACK_TIMEOUT` | AI_CALL dispatch 后 Webhook 超时未到，步骤 FAILED 并推进 |
-| `dailyRoll` | 每日 0:35 PHT | 旧库在催名单 + bill DPD | `STAGE_CHANGED` / `CASE_CEASED` | DPD 日切导致阶段变更或停催 |
+| `dailyRoll` | 每日 0:35 PHT | 并行期旧库在催名单 + `overdue_days`；切量后才 bill DPD 重算 | `STAGE_CHANGED` / `CASE_CEASED` | DPD 日切导致阶段变更或停催 |
 
 完整规格见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)。
 
@@ -211,7 +211,7 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 |---|---|---|
 | ① 幂等锁 | `idempotency_key` SETNX 去重 | 重复 → 静默退出 |
 | ② 系统级守卫 | `PreFlightChecker` 实时查案件存活（不存在 / 已还款） | 不可触达 → 静默退出；读取失败 → NACK 重投 |
-| ③ 业务级守卫 | SPI `ExecutionGuard` 合规校验（时段 / 空地址 / 频率） | 静默时段 → 延后执行；其他拦截、异常或超时 → SKIPPED + 推进 |
+| ③ 业务级守卫 | SPI `ExecutionGuard` 合规校验（时段 / 空地址 / 频率） | 静默时段 → 延后执行；正常 block → `COMPLIANCE_BLOCKED` timeline + 推进；SPI 异常/超时 fail-close → SKIPPED + 推进 |
 | ④ 步骤解析 | SPI `StepResolver` 读 `context_snapshot` 生成 `StepCommand` | 异常或超时 → FAILED + 推进；返回 `null` → SKIPPED + 推进 |
 | ⑤ 渠道调度 | `ChannelGateway.dispatch()` → `StepResult` | 可重试失败 → 退避重试；其余失败交 ⑥ |
 | ⑤½ 取消复检 | 渠道 I/O 后重读 plan 状态 | 已取消 → 写 timeline，不推进 |
@@ -222,8 +222,9 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 
 | 渠道类别 | 调用后状态 | 完成方式 |
 |---|---|---|
-| 消息类 (SMS/Push/Email)；Viber/WhatsApp Phase 2 预留 | STEP_WAITING 或直接推进 | 同步返回成功 |
+| 消息类 (SMS/Push/Email) | 直接推进（不进 `STEP_WAITING`） | `dispatch` 成功即同步完成 |
 | 电话类 (AI_CALL) | 保持 STEP_EXECUTING | 等待 `CHANNEL_CALLBACK`（AI Call 供应商 Webhook 回调） |
+| Viber/WhatsApp（Phase 2） | 可按配置进观察期 | Phase 2 |
 
 > 计划状态机见 [核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)；并发竞态控制见 [§1.6.4](#164-并发竞态控制与终态单调) 与 [核心引擎规格 §3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#32-并发与一致性模型)。
 
@@ -321,7 +322,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 **不变量**：SPI 的静态决策输入（案件 / 画像等）读不可变 `context_snapshot`，不实时回查旧库；单个计划内所有步骤共享同一份决策上下文。（实时存活状态与合规频次计数为明确例外，见下。）
 
 **约束**：
-- 接入层组装 `CASE_INGESTED` payload（PubSub 字段 + 按需 enrichment）；引擎建计划时将 payload 映射为不可变 `context_snapshot` 写入 plan 行（主链路不读旧库；`CaseService`/`ProfileService` 仅作可选对账兜底，见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
+- 接入层组装 `CASE_INGESTED` payload（PubSub 字段优先；缺金融字段时可经 CaseService 只读 enrichment）；引擎只将完整 payload 映射为不可变 `context_snapshot` 写入 plan 行，不在建快照时读旧库。ProfileService 不进入主入案链路（见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
 - `STAGE_CHANGED` 取消旧阶段计划并重建，新计划 carry-forward 旧快照并刷新 `stage`（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）
 - 实时读取例外：还款状态由 `PreFlightChecker`（骨架②）实时校验；合规频次 / 时段计数由 `ExecutionGuard`（骨架③）读实时计数器——二者均不走快照。争议冻结及其后台操作为 Phase 2 能力。
 
@@ -381,7 +382,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 **不变量**：仅异步语音渠道（`AI_CALL`）有回调——dispatch 成功后保持 `STEP_EXECUTING`，供应商通话结束后回调引擎带回结果；回调丢失时计划可自愈退出，不永久卡死。（SMS/PUSH/EMAIL 为同步发送，无回调对账。）
 
 **约束**：
-- Phase 1：供应商 Webhook → `STEP_COMPLETED`；超时未回调则引擎哨兵 `CALLBACK_TIMEOUT` 自愈
+- Phase 1：供应商 Webhook 仅鉴权并发布 `CHANNEL_CALLBACK`；引擎写回调 timeline、发布 `STEP_COMPLETED`。超时未回调则引擎哨兵 `CALLBACK_TIMEOUT` 写 FAILED timeline 后自愈
 - Phase 2：渠道对账扫描（查供应商补发）作运维兜底，Phase 1 不实现
 - Webhook 入站见 [§1.2.2 应用入站](#122-应用入站)
 

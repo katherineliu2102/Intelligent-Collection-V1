@@ -35,6 +35,12 @@ public class MockCaseService implements CaseService {
         ceasedCases.add(caseId);
     }
 
+    /** 清理受控 L4a 案例在本进程内累积的还款/停催标记，供 local/test 复跑使用。 */
+    public void resetCases(Set<Long> caseIds) {
+        repaidCases.removeAll(caseIds);
+        ceasedCases.removeAll(caseIds);
+    }
+
     @Override
     public CaseInfo getCaseInfo(Long caseId) {
         MockCaseProfile profile = resolveProfile(caseId);

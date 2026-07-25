@@ -60,10 +60,10 @@ flowchart TB
 | 执行子层 Adapter（SMS/Push/Email） | ✅ | `NotificationSmsAdapter` / `NotificationPushAdapter` / `SendGridEmailAdapter` |
 | `DefaultStepResolver` + ScriptLibrary | ✅ | 取址 `jpushToken`、scriptSlot、变量注入 |
 | SPI A1/A2/A4/A5 | 🟡 | 主架构 **2026-06-25 临时代写** `@Primary`（L4a-全）；**非生产**，编排须 review 并替换 |
-| SMS DLR → `CHANNEL_CALLBACK` | 🔴 | 仅通用 `/webhook/channel-callback` 骨架；通知中心 DLR 未接 |
+| SMS DLR → `CHANNEL_CALLBACK` | ⏭ | **已撤销（2026-07-18）**：Phase 1 SMS 同步完成，不靠 DLR 结转 |
 | `LthVoiceAdapter` + voice Webhook | 🔴 | 未实现 |
 | `ComplianceExecutionGuard`（Redis） | 🔴 | 临时 `ConfigurableExecutionGuard` 为内存版 |
-| 渠道编排规格 §3.5 SMS 观察期 | ✅ | 2026-06-26 与引擎 §2.3.3、执行契约对齐 |
+| 渠道编排规格 §3.5 SMS 同步完成 | ✅ | 2026-07-18：与架构 §1.6.7 / 引擎 §5⑦ 对齐（不进 WAITING） |
 
 ## SSOT 边界（引用替代搬运）
 

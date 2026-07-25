@@ -14,6 +14,7 @@ import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
+import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.ContactResult;
 import com.collection.common.enums.PlanStatus;
@@ -22,6 +23,7 @@ import com.collection.common.event.CollectionEventBus;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
+import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
@@ -64,6 +66,8 @@ class StepExecutionOrchestratorTest {
     @Mock private ContextAssembler contextAssembler;
     @Mock private ContactPlanRepository planRepository;
     @Mock private TimelineRepository timelineRepository;
+    @Mock private StepOutcomeRecorder stepOutcomeRecorder;
+    @Mock private DecisionLogRepository decisionLogRepository;
     @Mock private CollectionEventBus eventBus;
     @Spy private EngineProperties props = new EngineProperties();
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
@@ -96,6 +100,30 @@ class StepExecutionOrchestratorTest {
                 .thenReturn(ExecutionContext.builder().plan(plan).currentStep(step).build());
         when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.allow());
         when(planRepository.findById(PLAN_ID)).thenReturn(plan); // ⑤½ 复检默认非终态
+        when(planRepository.transitionStepStatus(
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(ContactResult.class)))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(ContactResult.class),
+                        any(ChannelType.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordWaiting(
+                        any(),
+                        any(),
+                        any(ChannelType.class),
+                        any(ContactResult.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
     }
 
     private void stubResolver(ChannelType ch) {
@@ -126,6 +154,19 @@ class StepExecutionOrchestratorTest {
                 .build();
     }
 
+    private void verifyTerminalRecorded(StepStatus status, ContactResult result) {
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(status),
+                        eq(result),
+                        any(ChannelType.class),
+                        any(),
+                        any());
+    }
+
     @Test
     @DisplayName("#4 PUSH 无观察期成功 → STEP_COMPLETED + 发布")
     void push_noObservation_completes() {
@@ -136,22 +177,21 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verifyTerminalRecorded(StepStatus.COMPLETED, ContactResult.DELIVERED);
         verify(eventBus).publish(any());
     }
 
     @Test
-    @DisplayName("#5 系统守卫不通过（已还款/冻结/读失败 fail-close）→ 静默退出")
-    void preflightFail_silentExit() {
-        when(preFlightChecker.check(CASE_ID)).thenReturn(false);
+    @DisplayName("#5 系统守卫发现已还款 → 取消计划，不触达也不推进")
+    void preflightRepaid_cancelsPlan() {
+        when(preFlightChecker.blockingReason(CASE_ID)).thenReturn(CancelReason.REPAID);
 
         orchestrator.executeStep(plan, step);
 
         verify(channelGateway, never()).dispatch(any());
         verify(eventBus, never()).publish(any());
-        verify(planRepository, never())
-                .updateStepStatus(eq(STEP_ID), eq(StepStatus.EXECUTING), any());
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
     }
 
     @Test
@@ -162,8 +202,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
@@ -192,8 +231,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
@@ -205,20 +243,23 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
 
     @Test
-    @DisplayName("#8b StepResolver 返回 null → SKIPPED + 推进（主动跳过，非失败）")
+    @DisplayName("#8b StepResolver 返回 null → SKIPPED + 推进但不写 timeline（策略性跳过）")
     void resolverNull_skipped() {
         when(stepResolver.resolve(any())).thenReturn(null);
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository)
+                .transitionStepStatus(
+                        STEP_ID, StepStatus.EXECUTING, StepStatus.SKIPPED, ContactResult.SKIPPED);
         verify(eventBus).publish(any());
+        verify(timelineRepository, never()).writeTimeline(any());
         verify(channelGateway, never()).dispatch(any());
     }
 
@@ -258,7 +299,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(planRepository, never()).incrementRetryCount(STEP_ID);
     }
@@ -272,7 +313,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(planRepository, never()).incrementRetryCount(STEP_ID);
         verify(planRepository, never())
