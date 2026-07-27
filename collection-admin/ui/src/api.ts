@@ -13,7 +13,13 @@ async function request(path: string, init?: RequestInit) {
   const body = isJson ? await resp.json() : undefined;
   if (!resp.ok) {
     const msg = body?.message || `${resp.status} ${resp.statusText}`;
-    throw new Error(msg);
+    const err = new Error(msg) as Error & {
+      code?: string;
+      errors?: Array<{ field?: string; code?: string; message?: string }>;
+    };
+    err.code = body?.code;
+    err.errors = body?.errors;
+    throw err;
   }
   return body;
 }
@@ -116,6 +122,19 @@ export const api = {
   }) {
     return request("/config/script-templates", {
       method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  },
+  validateScriptTemplate(payload: {
+    scriptSlot: string;
+    channel: string;
+    locale?: string;
+    body?: string;
+    title?: string;
+    version: number;
+  }) {
+    return request("/config/script-templates/validate", {
+      method: "POST",
       body: JSON.stringify(payload)
     });
   },

@@ -1,6 +1,24 @@
-import { Button, Card, Form, Input, Modal, Space, Table, Tabs, Tag, Typography, message } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message
+} from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import {
+  ALLOWED_VARS,
+  LIMITS,
+  validateScriptTemplateLocal
+} from "../scriptTemplateValidation";
 import { PlanTemplatesTab } from "./PlanTemplatesTab";
 
 type CatalogRow = {
@@ -86,6 +104,10 @@ function effectiveLabel(src: EffectiveSource): string {
   return EFFECTIVE_LABEL[src];
 }
 
+function lengthHint(current: number, max: number): string {
+  return `${current}/${max}`;
+}
+
 export function TemplatesPage() {
   const [loading, setLoading] = useState(false);
   const [sms, setSms] = useState<MergedRow[]>([]);
@@ -139,6 +161,11 @@ export function TemplatesPage() {
     load();
   }, [load]);
 
+  const localValidation = useMemo(
+    () => validateScriptTemplateLocal(edit.channel, edit.title, edit.body),
+    [edit.channel, edit.title, edit.body]
+  );
+
   const openEdit = (row: MergedRow) => {
     setEdit({
       open: true,
@@ -153,7 +180,21 @@ export function TemplatesPage() {
     });
   };
 
+  const insertVar = (target: "title" | "body", varName: string) => {
+    const token = `{${varName}}`;
+    setEdit((s) => {
+      if (target === "title") {
+        return { ...s, title: `${s.title}${token}` };
+      }
+      return { ...s, body: `${s.body}${token}` };
+    });
+  };
+
   const submitEdit = async () => {
+    if (!localValidation.valid) {
+      message.error(localValidation.errors[0]?.message || "Validation failed");
+      return;
+    }
     setEdit((s) => ({ ...s, saving: true }));
     try {
       await api.updateScriptTemplate({
@@ -168,7 +209,11 @@ export function TemplatesPage() {
       setEdit(emptyEdit);
       await load();
     } catch (e: any) {
-      message.error(e.message);
+      const details =
+        Array.isArray(e.errors) && e.errors.length
+          ? e.errors.map((x: any) => x.message).join("; ")
+          : e.message;
+      message.error(details);
       setEdit((s) => ({ ...s, saving: false }));
     }
   };
@@ -248,6 +293,9 @@ export function TemplatesPage() {
     }
   ];
 
+  const bodyMax = edit.channel === "SMS" ? LIMITS.smsBodyMax : LIMITS.pushBodyMax;
+  const titleMax = LIMITS.pushTitleMax;
+
   return (
     <Card
       title="Message Templates"
@@ -320,26 +368,108 @@ export function TemplatesPage() {
         open={edit.open}
         onOk={submitEdit}
         confirmLoading={edit.saving}
+        okButtonProps={{ disabled: !localValidation.valid }}
         onCancel={() => setEdit(emptyEdit)}
         okText="Save"
-        width={640}
+        width={720}
       >
         <Form layout="vertical">
+          <Form.Item label="允许变量（点击插入到正文）">
+            <Space wrap>
+              {ALLOWED_VARS.map((v) => (
+                <Tag
+                  key={v}
+                  color="blue"
+                  style={{ cursor: "pointer" }}
+                  onClick={() => insertVar("body", v)}
+                >
+                  {`{${v}}`}
+                </Tag>
+              ))}
+              {edit.hasTitle && (
+                <Typography.Text type="secondary">
+                  标题插入：
+                  {ALLOWED_VARS.map((v) => (
+                    <Tag
+                      key={`t-${v}`}
+                      style={{ cursor: "pointer", marginInlineStart: 4 }}
+                      onClick={() => insertVar("title", v)}
+                    >
+                      {`{${v}}`}
+                    </Tag>
+                  ))}
+                </Typography.Text>
+              )}
+            </Space>
+          </Form.Item>
           {edit.hasTitle && (
-            <Form.Item label="Title">
+            <Form.Item
+              label={`Title（${lengthHint(edit.title.length, titleMax)}）`}
+              validateStatus={
+                localValidation.errors.some((e) => e.field === "title") ? "error" : undefined
+              }
+              help={localValidation.errors.find((e) => e.field === "title")?.message}
+            >
               <Input
                 value={edit.title}
+                maxLength={titleMax}
+                showCount
                 onChange={(e) => setEdit((s) => ({ ...s, title: e.target.value }))}
               />
             </Form.Item>
           )}
-          <Form.Item label="Body" help="Placeholders: {name} {amount} {dpd} {repaymentUrl}">
+          <Form.Item
+            label={`Body（${lengthHint(edit.body.length, bodyMax)}）`}
+            validateStatus={
+              localValidation.errors.some((e) => e.field === "body") ? "error" : undefined
+            }
+            help={
+              localValidation.errors.find((e) => e.field === "body")?.message ||
+              (edit.channel === "SMS"
+                ? "SMS 必须包含 {amount} 与 {repaymentUrl}；仅允许白名单变量。"
+                : undefined)
+            }
+          >
             <Input.TextArea
-              rows={4}
+              rows={5}
               value={edit.body}
+              maxLength={bodyMax}
+              showCount
               onChange={(e) => setEdit((s) => ({ ...s, body: e.target.value }))}
             />
           </Form.Item>
+          {localValidation.warnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={localValidation.warnings.map((w) => w.message).join("；")}
+            />
+          )}
+          {(localValidation.preview.bodyRendered || localValidation.preview.titleRendered) && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="样例渲染预览"
+              description={
+                <Space direction="vertical" size={2}>
+                  {localValidation.preview.titleRendered && (
+                    <Typography.Text>
+                      <b>Title:</b> {localValidation.preview.titleRendered}（
+                      {localValidation.preview.titleRenderedLength} 字）
+                    </Typography.Text>
+                  )}
+                  {localValidation.preview.bodyRendered && (
+                    <Typography.Text>
+                      <b>Body:</b> {localValidation.preview.bodyRendered}（
+                      {localValidation.preview.bodyRenderedLength} 字）
+                    </Typography.Text>
+                  )}
+                </Space>
+              }
+            />
+          )}
           <Form.Item label="Change Reason">
             <Input
               value={edit.reason}

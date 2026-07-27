@@ -151,6 +151,21 @@ curl -s -b cookies.txt "http://localhost:8888/dashboard/outreach/realtime?days=3
 - 初始 seed：`db/seed-admin-config.sql`
 - 开关：`channel.config.db-source-enabled`（默认 true）
 
+### 5.1 SMS / Push 文案保存护栏
+
+保存前前后端双校验（后端为唯一拦截门禁）：
+
+| 规则 | SMS | Push |
+|------|-----|------|
+| 允许变量 | 仅 `{name}` `{amount}` `{dpd}` `{repaymentUrl}` | 同左 |
+| 必填变量 | body 必须含 `{amount}`、`{repaymentUrl}` | title/body 不可同时为空 |
+| 模板字数硬上限 | body ≤ 300 | title ≤ 40，body ≤ 120 |
+| 样例渲染上限 | ≤ 400（>160 / >320 仅警告分段成本） | title ≤ 60，body ≤ 180 |
+
+- 编辑弹窗：变量 chip 一键插入、字数计数、样例渲染预览、非法变量红字提示。
+- Dry-run：`POST /config/script-templates/validate`（不落库，返回 errors/warnings/preview）。
+- 非法保存返回 `TEMPLATE_VALIDATION_FAILED`（HTTP 400）。
+
 ---
 
 ## 6. 数据链路自查

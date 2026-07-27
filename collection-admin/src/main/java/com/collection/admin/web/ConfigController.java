@@ -4,6 +4,8 @@ import com.collection.admin.web.dto.ConfigRollbackRequest;
 import com.collection.admin.web.dto.EvaluationSettingsRequest;
 import com.collection.admin.web.dto.PlanTemplateRequest;
 import com.collection.admin.web.dto.ScriptTemplateRequest;
+import com.collection.admin.web.validation.ScriptTemplateValidator;
+import com.collection.admin.web.validation.TemplateValidationException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -199,6 +201,16 @@ public class ConfigController {
         return ApiResponse.success(items);
     }
 
+    /** 文案保存前 dry-run 校验（不落库）；返回 errors/warnings/preview。 */
+    @PostMapping("/script-templates/validate")
+    public Map<String, Object> validateScriptTemplate(
+            @Valid @RequestBody ScriptTemplateRequest body) {
+        String channel = body.getChannel().trim().toUpperCase();
+        ScriptTemplateValidator.ValidationResult result =
+                ScriptTemplateValidator.validate(channel, body.getTitle(), body.getBody());
+        return ApiResponse.success(result.toMap());
+    }
+
     @PutMapping("/script-templates")
     @Transactional
     public Map<String, Object> updateScriptTemplate(
@@ -208,6 +220,7 @@ public class ConfigController {
         String slot = body.getScriptSlot().trim();
         String channel = body.getChannel().trim().toUpperCase();
         String locale = StringUtils.isBlank(body.getLocale()) ? "en" : body.getLocale().trim();
+        assertScriptTemplateValid(channel, body.getTitle(), body.getBody());
         String contentJson = buildScriptContentJson(body);
         long nextConfigVersion = nextConfigVersion();
 
@@ -726,6 +739,14 @@ public class ConfigController {
         jdbcTemplate.update(
                 "UPDATE t_config_version_seq SET current_version = ?, updated_at = NOW() WHERE id = 1",
                 configVersion);
+    }
+
+    private void assertScriptTemplateValid(String channel, String title, String body) {
+        ScriptTemplateValidator.ValidationResult result =
+                ScriptTemplateValidator.validate(channel, title, body);
+        if (result.hasErrors()) {
+            throw new TemplateValidationException(result.getErrors(), result.getWarnings());
+        }
     }
 
     private static ResponseStatusException conflict() {
