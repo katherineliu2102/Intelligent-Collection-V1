@@ -109,10 +109,6 @@ final class PushCaseRegistry {
         }
     }
 
-<<<<<<< HEAD
-    private PushCaseRegistry() {}
-=======
     private PushCaseRegistry() {
     }
->>>>>>> origin/ca_branch
 }

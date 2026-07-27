@@ -197,11 +197,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 ### 模块 B：数据接入 → `collection-ingestion`
 
-<<<<<<< HEAD
-**负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §9](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#9-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
-=======
 **负责人参考文档：[《数据接入规格》](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md)**（事件 payload 字段见 [领域模型 §6](./docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)；Stream/DLQ 运行时见 [基础设施 §2](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)）
->>>>>>> origin/ca_branch
 
 #### B1. `IngestionService` → 真实 PubSub 消费
 

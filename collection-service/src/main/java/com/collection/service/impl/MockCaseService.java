@@ -131,47 +131,6 @@ public class MockCaseService implements CaseService {
         }
         if (L4aCaseRegistry.isL4aCase(caseId)) {
             String slot = L4aCaseRegistry.isRebuildFail(caseId) ? "INVALID_L4A_REBUILD_SLOT" : null;
-<<<<<<< HEAD
-            return new MockCaseProfile(
-                    1,
-                    Stage.S1,
-                    "OVERDUE",
-                    false,
-                    "STANDARD",
-                    new BigDecimal("5000.00"),
-                    LocalDate.now().minusDays(1),
-                    slot);
-        }
-        Optional<MockCaseProfile> smsProfile =
-                SmsCaseRegistry.find(caseId)
-                        .map(
-                                tc ->
-                                        new MockCaseProfile(
-                                                tc.dpd,
-                                                tc.stage,
-                                                "OVERDUE",
-                                                false,
-                                                "STANDARD",
-                                                tc.totalOutstanding,
-                                                tc.dueDate,
-                                                null));
-        if (smsProfile.isPresent()) {
-            return smsProfile.get();
-        }
-        Optional<MockCaseProfile> pushProfile =
-                PushCaseRegistry.find(caseId)
-                        .map(
-                                tc ->
-                                        new MockCaseProfile(
-                                                tc.dpd,
-                                                tc.stage,
-                                                "OVERDUE",
-                                                false,
-                                                "STANDARD",
-                                                tc.totalOutstanding,
-                                                tc.dueDate,
-                                                null));
-=======
             return new MockCaseProfile(1, Stage.S1, "OVERDUE", false, "STANDARD",
                     new BigDecimal("5000.00"), LocalDate.now().minusDays(1), slot);
         }
@@ -184,58 +143,10 @@ public class MockCaseService implements CaseService {
         Optional<MockCaseProfile> pushProfile = PushCaseRegistry.find(caseId)
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, null));
->>>>>>> origin/ca_branch
         if (pushProfile.isPresent()) {
             return pushProfile.get();
         }
         return EmailCaseRegistry.find(caseId)
-<<<<<<< HEAD
-                .map(
-                        tc ->
-                                new MockCaseProfile(
-                                        tc.dpd,
-                                        tc.stage,
-                                        "OVERDUE",
-                                        false,
-                                        "STANDARD",
-                                        tc.totalOutstanding,
-                                        tc.dueDate,
-                                        tc.emailScriptSlot))
-                .orElseGet(
-                        () -> {
-                            if (caseId == 90007L) {
-                                return new MockCaseProfile(
-                                        10,
-                                        Stage.S2,
-                                        "OVERDUE",
-                                        false,
-                                        "FIRM",
-                                        new BigDecimal("5000.00"),
-                                        LocalDate.now().minusDays(10),
-                                        null);
-                            }
-                            if (caseId == 90008L) {
-                                return new MockCaseProfile(
-                                        5,
-                                        Stage.S2,
-                                        "OVERDUE",
-                                        true,
-                                        "STANDARD",
-                                        new BigDecimal("5000.00"),
-                                        LocalDate.now().minusDays(5),
-                                        null);
-                            }
-                            return new MockCaseProfile(
-                                    1,
-                                    Stage.S1,
-                                    "OVERDUE",
-                                    false,
-                                    "STANDARD",
-                                    new BigDecimal("5000.00"),
-                                    LocalDate.now().minusDays(1),
-                                    null);
-                        });
-=======
                 .map(tc -> new MockCaseProfile(tc.dpd, tc.stage, "OVERDUE", false, "STANDARD",
                         tc.totalOutstanding, tc.dueDate, tc.emailScriptSlot))
                 .orElseGet(() -> {
@@ -250,7 +161,6 @@ public class MockCaseService implements CaseService {
                     return new MockCaseProfile(1, Stage.S1, "OVERDUE", false, "STANDARD",
                             new BigDecimal("5000.00"), LocalDate.now().minusDays(1), null);
                 });
->>>>>>> origin/ca_branch
     }
 
     private static final class MockCaseProfile {

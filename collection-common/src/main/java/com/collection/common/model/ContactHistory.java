@@ -9,12 +9,8 @@ import java.util.Map;
 import lombok.Data;
 
 /**
-<<<<<<< HEAD
- * 触达历史摘要。ContextSnapshot 组成部分。对应领域模型 §3.3。 由 CaseService.buildContactHistory(userId, caseId) 构建。
-=======
  * 触达历史摘要。ContextSnapshot 组成部分。对应领域模型 §4.3。
  * 由 CaseService.buildContactHistory(userId, caseId) 构建。
->>>>>>> origin/ca_branch
  */
 @Data
 public class ContactHistory {
@@ -31,9 +27,5 @@ public class ContactHistory {
     private Integer ptpCount;
     /** PTP 兑现次数。Phase 1 不计算，为 null；Phase 2 从 t_contact_timeline 聚合。 */
     private Integer ptpFulfilledCount;
-<<<<<<< HEAD
-
-=======
->>>>>>> origin/ca_branch
     private LocalDate stageEntryDate;
 }
