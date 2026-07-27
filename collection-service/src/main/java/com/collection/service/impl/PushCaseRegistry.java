@@ -109,6 +109,5 @@ final class PushCaseRegistry {
         }
     }
 
-    private PushCaseRegistry() {
-    }
+    private PushCaseRegistry() {}
 }

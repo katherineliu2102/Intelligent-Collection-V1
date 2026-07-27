@@ -551,15 +551,18 @@ class PlanLifecycleManagerTest {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
 
-        manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NO_ANSWER"));
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.NO_ANSWER);
+        manager.onChannelCallback(
+                stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NO_ANSWER"));
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.NO_ANSWER);
 
         manager.onChannelCallback(stepEvent(EventType.CHANNEL_CALLBACK).with("result", "BUSY"));
         verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.BUSY);
 
         manager.onChannelCallback(
                 stepEvent(EventType.CHANNEL_CALLBACK).with("result", "NOT_A_RESULT"));
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
+        verify(planRepository)
+                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.ANSWERED);
     }
 
     // ───────────────────────── 差集补全：链路⑤ 还款过滤失败/CASE_CEASED（D28/D29-L0） ─────────────────────────
@@ -618,7 +621,9 @@ class PlanLifecycleManagerTest {
                         .with(CollectionEvent.DPD, 10)
                         .with(CollectionEvent.PHONE, "+639171234567")
                         .with(CollectionEvent.EMAIL, "a@b.com")
-                        .with(CollectionEvent.TOTAL_OUTSTANDING, new java.math.BigDecimal("1500.00"));
+                        .with(
+                                CollectionEvent.TOTAL_OUTSTANDING,
+                                new java.math.BigDecimal("1500.00"));
 
         manager.onCaseIngested(event);
 

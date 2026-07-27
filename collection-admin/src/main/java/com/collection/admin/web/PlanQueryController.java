@@ -36,14 +36,15 @@ public class PlanQueryController {
 
     /** 查询某案件最近计划（含终态），供 L4a cancelReason / 幂等断言。 */
     @GetMapping("/by-case/{caseId}/history")
-    public List<ContactPlan> historyByCase(@PathVariable Long caseId,
-                                           @RequestParam(defaultValue = "10") int limit) {
+    public List<ContactPlan> historyByCase(
+            @PathVariable Long caseId, @RequestParam(defaultValue = "10") int limit) {
         return planRepository.findRecentPlansByCase(caseId, limit);
     }
 
     /** 查询计划下全部步骤。 */
     @GetMapping("/{planId}/steps")
-    public List<com.collection.common.model.ContactPlanStep> stepsByPlan(@PathVariable Long planId) {
+    public List<com.collection.common.model.ContactPlanStep> stepsByPlan(
+            @PathVariable Long planId) {
         return planRepository.findStepsByPlan(planId);
     }
 

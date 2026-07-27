@@ -16,8 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/dashboard")
 public class DashboardController {
 
-    private static final String DELIVERED_RESULTS =
-            "('DELIVERED','SENT','ACCEPTED')";
+    private static final String DELIVERED_RESULTS = "('DELIVERED','SENT','ACCEPTED')";
     private static final String FAILED_RESULTS = "('FAILED','REJECTED','BOUNCED')";
     private static final String ATTEMPTED_RESULTS =
             "('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED')";
@@ -30,8 +29,7 @@ public class DashboardController {
     }
 
     @GetMapping("/outreach/realtime")
-    public Map<String, Object> outreachRealtime(
-            @RequestParam(defaultValue = "30") int days) {
+    public Map<String, Object> outreachRealtime(@RequestParam(defaultValue = "30") int days) {
         int windowDays = Math.max(1, Math.min(90, days));
         LocalDateTime to = LocalDateTime.now();
         LocalDateTime from = to.minusDays(windowDays);
@@ -132,12 +130,29 @@ public class DashboardController {
     private static String metricAggregates(String resultPrefix) {
         String r = resultPrefix + "result";
         return "COUNT(*) AS records, "
-                + "SUM(" + r + " IN " + ATTEMPTED_RESULTS + ") AS attempted, "
-                + "SUM(" + r + " IN " + DELIVERED_RESULTS + ") AS delivered, "
-                + "SUM(" + r + " IN " + FAILED_RESULTS + ") AS failed, "
-                + "SUM(" + r + " = 'SKIPPED') AS skipped, "
-                + "SUM(CASE WHEN " + r + " IS NULL OR ("
-                + r + " NOT IN ('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED','SKIPPED')) "
+                + "SUM("
+                + r
+                + " IN "
+                + ATTEMPTED_RESULTS
+                + ") AS attempted, "
+                + "SUM("
+                + r
+                + " IN "
+                + DELIVERED_RESULTS
+                + ") AS delivered, "
+                + "SUM("
+                + r
+                + " IN "
+                + FAILED_RESULTS
+                + ") AS failed, "
+                + "SUM("
+                + r
+                + " = 'SKIPPED') AS skipped, "
+                + "SUM(CASE WHEN "
+                + r
+                + " IS NULL OR ("
+                + r
+                + " NOT IN ('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED','SKIPPED')) "
                 + "THEN 1 ELSE 0 END) AS other ";
     }
 

@@ -8,8 +8,7 @@ import lombok.Builder;
 import lombok.Getter;
 
 /**
- * 步骤命令。StepResolver.resolve() 的输出，同时作为 ChannelGateway.dispatch() 的输入。
- * 对应领域模型 §5.4。
+ * 步骤命令。StepResolver.resolve() 的输出，同时作为 ChannelGateway.dispatch() 的输入。 对应领域模型 §5.4。
  *
  * <p>metadata 已知 key（Phase 1）：stage / language / callbackUrl / timeoutMinutes / scriptSlot /
  * sms_body / title / body / pushData / dynamicTemplateData / case_id / fallback_sms。

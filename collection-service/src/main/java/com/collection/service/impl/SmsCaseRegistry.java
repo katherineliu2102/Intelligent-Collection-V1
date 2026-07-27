@@ -89,6 +89,5 @@ final class SmsCaseRegistry {
         }
     }
 
-    private SmsCaseRegistry() {
-    }
+    private SmsCaseRegistry() {}
 }

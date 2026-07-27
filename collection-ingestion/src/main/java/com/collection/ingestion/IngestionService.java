@@ -17,12 +17,13 @@ import org.springframework.stereotype.Service;
 /**
  * 数据接入服务。对应架构设计文档 §数据接入层、数据接入与事件规格。
  *
- * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。
- * 不回写旧库；<b>决策 B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push），
- * 引擎据 payload 组装快照，运行时不读旧库 t_collection。CaseService 仅作兜底 / 对账。
- * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub
- * 消费者 {@link com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、
- * 不写库；ack/nack/幂等/路由归 Consumer。
+ * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。 不回写旧库；<b>决策
+ * B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push）， 引擎据 payload 组装快照，运行时不读旧库
+ * t_collection。CaseService 仅作兜底 / 对账。
+ *
+ * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub 消费者 {@link
+ * com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、 不写库；ack/nack/幂等/路由归
+ * Consumer。
  */
 @Service
 public class IngestionService {
@@ -38,8 +39,8 @@ public class IngestionService {
     }
 
     /**
-     * 决策 B（2026-06-29）：携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 case_push
-     * 映射后调用本方法，引擎据 payload 组装 ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
+     * 决策 B（2026-06-29）：携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 case_push 映射后调用本方法，引擎据 payload 组装
+     * ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
      *
      * @param snapshotFields key 用 {@link CollectionEvent} 快照常量（DPD/PRODUCT/TOTAL_OUTSTANDING/
      *     PENALTY_AMOUNT/DUE_DATE/FULL_REPAY_TIME/NAME/PHONE/EMAIL/JPUSH_TOKEN）；缺失字段做 null 防御。
@@ -62,10 +63,11 @@ public class IngestionService {
             CaseInfo info = caseService.getCaseInfo(caseId);
             resolvedStage = info != null ? info.getStage() : Stage.S1;
         }
-        CollectionEvent event = CollectionEvent.of(EventType.CASE_INGESTED)
-                .with(CollectionEvent.CASE_ID, caseId)
-                .with(CollectionEvent.USER_ID, userId == null ? caseId : userId)
-                .with(CollectionEvent.STAGE, resolvedStage.name());
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, caseId)
+                        .with(CollectionEvent.USER_ID, userId == null ? caseId : userId)
+                        .with(CollectionEvent.STAGE, resolvedStage.name());
         if (snapshotFields != null) {
             snapshotFields.forEach(
                     (k, v) -> {
@@ -88,8 +90,8 @@ public class IngestionService {
 
     /**
      * 混合方案回填：payload 缺金融字段时读旧库 {@link CaseService#getContextSnapshot}，把
-     * dpd/totalOutstanding/penaltyAmount/dueDate/product 补进 snapshotFields（{@code putIfAbsent}，
-     * 不覆盖 payload 已带值）。读库失败仅告警，不阻断入案（stage 后续仍可 getCaseInfo 兜底）。
+     * dpd/totalOutstanding/penaltyAmount/dueDate/product 补进 snapshotFields（{@code putIfAbsent}， 不覆盖
+     * payload 已带值）。读库失败仅告警，不阻断入案（stage 后续仍可 getCaseInfo 兜底）。
      */
     private void enrichFinancialFromCaseService(Long caseId, Map<String, Object> fields) {
         try {

@@ -3,9 +3,7 @@ package com.collection.common.dto;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
-/**
- * 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §5.3。
- */
+/** 守卫裁定。ExecutionGuard.evaluate() 的输出。对应领域模型 §5.3。 */
 @Getter
 @AllArgsConstructor
 public class GuardVerdict {

@@ -54,8 +54,9 @@ public interface ContactPlanMapper {
                     + "ORDER BY completed_at DESC LIMIT 1")
     ContactPlan selectLastCompleted(@Param("caseId") Long caseId);
 
-    @Select("SELECT * FROM t_contact_plan " +
-            "WHERE case_id = #{caseId} ORDER BY id DESC LIMIT #{limit}")
+    @Select(
+            "SELECT * FROM t_contact_plan "
+                    + "WHERE case_id = #{caseId} ORDER BY id DESC LIMIT #{limit}")
     List<ContactPlan> selectRecentByCase(@Param("caseId") Long caseId, @Param("limit") int limit);
 
     @Update(

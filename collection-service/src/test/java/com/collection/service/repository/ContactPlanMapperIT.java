@@ -1,5 +1,9 @@
 package com.collection.service.repository;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.PlanStatus;
@@ -9,6 +13,7 @@ import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
+import java.util.List;
 import org.apache.ibatis.datasource.pooled.PooledDataSource;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
@@ -23,24 +28,19 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 /**
  * L3 落库集成测（草稿，供 collection-service 服务同事并入）。
  *
- * <p>定位：验证 {@link ContactPlanMapper}/{@link ContactPlanStepMapper} 注解 SQL 与真实
- * {@code ai_collection_db} schema 的列/枚举/类型匹配（对应测试文档 D10/D11/D14/D19/D27）。
+ * <p>定位：验证 {@link ContactPlanMapper}/{@link ContactPlanStepMapper} 注解 SQL 与真实 {@code
+ * ai_collection_db} schema 的列/枚举/类型匹配（对应测试文档 D10/D11/D14/D19/D27）。
  *
- * <p>为何连真实库：本模块无 H2、CI 无 Docker（Testcontainers 不可用），MySQL 特有语法
- * （{@code FOR UPDATE}、{@code JSON}、{@code ON UPDATE CURRENT_TIMESTAMP}）在 H2 上不可靠。
+ * <p>为何连真实库：本模块无 H2、CI 无 Docker（Testcontainers 不可用），MySQL 特有语法 （{@code FOR UPDATE}、{@code
+ * JSON}、{@code ON UPDATE CURRENT_TIMESTAMP}）在 H2 上不可靠。
  *
  * <p>安全：每个用例在**单一 SqlSession 内 insert→select→rollback**，绝不 commit，不污染库。
  *
  * <p>门控：仅当环境变量 {@code L3_IT_DB_URL} 存在时运行；CI/本地无库时自动跳过。
+ *
  * <pre>
  *   export L3_IT_DB_URL="jdbc:mysql://HOST:3306/ai_collection_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Manila"
  *   export L3_IT_DB_USER=ai_collection
@@ -53,18 +53,21 @@ class ContactPlanMapperIT {
 
     /** 哨兵 case/user id，避免与真实催收数据冲突（且全程 rollback，实际不落库）。 */
     private static final long SENTINEL_CASE = 99_009_999L;
+
     private static final long SENTINEL_USER = 99_009_999L;
 
     private static SqlSessionFactory factory;
 
     @BeforeAll
     static void setUp() {
-        PooledDataSource ds = new PooledDataSource(
-                "com.mysql.cj.jdbc.Driver",
-                System.getenv("L3_IT_DB_URL"),
-                System.getenv("L3_IT_DB_USER"),
-                System.getenv("L3_IT_DB_PASS"));
-        Configuration cfg = new Configuration(new Environment("l3-it", new JdbcTransactionFactory(), ds));
+        PooledDataSource ds =
+                new PooledDataSource(
+                        "com.mysql.cj.jdbc.Driver",
+                        System.getenv("L3_IT_DB_URL"),
+                        System.getenv("L3_IT_DB_USER"),
+                        System.getenv("L3_IT_DB_PASS"));
+        Configuration cfg =
+                new Configuration(new Environment("l3-it", new JdbcTransactionFactory(), ds));
         cfg.setMapUnderscoreToCamelCase(true);
         cfg.setJdbcTypeForNull(JdbcType.NULL);
         cfg.setDefaultEnumTypeHandler(EnumTypeHandler.class);
@@ -136,7 +139,8 @@ class ContactPlanMapperIT {
                 // context_snapshot 为 MySQL JSON 列：读回会被规范化（空格/键序可能变化），
                 // 故按语义断言而非字节相等（引擎侧按 JSON 解析，不依赖原始格式）。
                 assertNotNull(loaded.getContextSnapshot());
-                assertTrue(loaded.getContextSnapshot().replaceAll("\\s", "").contains("\"dpd\":2"),
+                assertTrue(
+                        loaded.getContextSnapshot().replaceAll("\\s", "").contains("\"dpd\":2"),
                         "context_snapshot 应保留 dpd=2");
 
                 List<ContactPlanStep> steps = stepMapper.selectByPlan(plan.getId());
@@ -159,7 +163,10 @@ class ContactPlanMapperIT {
                 ContactPlan plan = newPlan();
                 planMapper.insert(plan);
 
-                assertEquals(1, planMapper.updateStatus(plan.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID));
+                assertEquals(
+                        1,
+                        planMapper.updateStatus(
+                                plan.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID));
                 ContactPlan loaded = planMapper.selectById(plan.getId());
                 assertEquals(PlanStatus.PLAN_CANCELLED, loaded.getStatus());
                 assertEquals(CancelReason.REPAID, loaded.getCancelReason());
@@ -202,12 +209,15 @@ class ContactPlanMapperIT {
                 planMapper.insert(active);
                 ContactPlan cancelled = newPlan();
                 planMapper.insert(cancelled);
-                planMapper.updateStatus(cancelled.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                planMapper.updateStatus(
+                        cancelled.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
 
                 List<ContactPlan> activePlans = planMapper.selectActiveByCase(SENTINEL_CASE);
-                assertTrue(activePlans.stream().anyMatch(p -> p.getId().equals(active.getId())),
+                assertTrue(
+                        activePlans.stream().anyMatch(p -> p.getId().equals(active.getId())),
                         "非终态计划应出现在 active 列表");
-                assertTrue(activePlans.stream().noneMatch(p -> p.getId().equals(cancelled.getId())),
+                assertTrue(
+                        activePlans.stream().noneMatch(p -> p.getId().equals(cancelled.getId())),
                         "已取消计划不应出现在 active 列表");
             } finally {
                 session.rollback();

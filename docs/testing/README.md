@@ -8,6 +8,7 @@
 | 文档 | 说明 |
 |------|------|
 | [测试主文档](./MOCASA催收系统升级_Phase1_测试文档.md) | Phase 1 测试唯一信息源 |
+| [CI 与 Git 提交操作手册](../CI与Git提交操作手册.md) | PR 提交前 Spotless / commit 规范 / CI 排障 |
 | [L4a 编排同事补全清单](./MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | L4a-全 SPI 切换、CaseRegistry、官方脚本 |
 | [_archive/L4a_对齐纪要_20260622.md](./_archive/L4a_对齐纪要_20260622.md) | 2026-06-22 channel↔engine 一次性对齐（只读） |
 

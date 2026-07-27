@@ -40,16 +40,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/mock")
 public class MockTriggerController {
 
-    @Resource
-    private IngestionService ingestionService;
-    @Resource
-    private DpdStageRollHandler dpdStageRollHandler;
-    @Resource
-    private CaseService caseService;
-    @Resource
-    private StepResolver stepResolver;
-    @Resource
-    private SendGridEmailAdapter sendGridEmailAdapter;
+    @Resource private IngestionService ingestionService;
+    @Resource private DpdStageRollHandler dpdStageRollHandler;
+    @Resource private CaseService caseService;
+    @Resource private StepResolver stepResolver;
+    @Resource private SendGridEmailAdapter sendGridEmailAdapter;
 
     @Resource private NotificationSmsAdapter notificationSmsAdapter;
 
@@ -382,10 +377,11 @@ public class MockTriggerController {
 
     /** 注入新案件，触发建计划 → 步骤执行全链路。 */
     @PostMapping("/ingest")
-    public Map<String, Object> ingest(@RequestParam Long caseId,
-                                      @RequestParam(required = false) Long userId,
-                                      @RequestParam(required = false) Stage stage,
-                                      @RequestParam(required = false) Boolean legacyThreeStep) {
+    public Map<String, Object> ingest(
+            @RequestParam Long caseId,
+            @RequestParam(required = false) Long userId,
+            @RequestParam(required = false) Stage stage,
+            @RequestParam(required = false) Boolean legacyThreeStep) {
         boolean prevLegacy = channelProperties.getDebug().isLegacyThreeStep();
         if (legacyThreeStep != null) {
             channelProperties.getDebug().setLegacyThreeStep(legacyThreeStep);
@@ -422,7 +418,9 @@ public class MockTriggerController {
     @PostMapping("/ptp-expired")
     public Map<String, Object> ptpExpired(@RequestParam Long caseId, @RequestParam Long ptpId) {
         ingestionService.ptpExpired(caseId, ptpId);
-        return ok("PTP_EXPIRED published (Phase 2 预留, no engine consumer in Phase 1), caseId=" + caseId);
+        return ok(
+                "PTP_EXPIRED published (Phase 2 预留, no engine consumer in Phase 1), caseId="
+                        + caseId);
     }
 
     /**
@@ -441,9 +439,9 @@ public class MockTriggerController {
     }
 
     /**
-     * 手动触发 DPD 日切，等效 XXL-Job {@code dailyRoll}（读白名单 loan 的 {@code overdue_days} →
-     * {@code STAGE_CHANGED}/{@code CASE_CEASED}）。L4b 免注册 XXL-Job 即可即时验 L4b-3/4/8；
-     * 可多次调用验幂等（L4b-8）。结果详见应用日志 {@code [DpdStageRollHandler]}。
+     * 手动触发 DPD 日切，等效 XXL-Job {@code dailyRoll}（读白名单 loan 的 {@code overdue_days} → {@code
+     * STAGE_CHANGED}/{@code CASE_CEASED}）。L4b 免注册 XXL-Job 即可即时验 L4b-3/4/8； 可多次调用验幂等（L4b-8）。结果详见应用日志
+     * {@code [DpdStageRollHandler]}。
      */
     @PostMapping("/daily-roll")
     public Map<String, Object> dailyRoll() {

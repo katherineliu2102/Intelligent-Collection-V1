@@ -6,8 +6,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 /**
- * 接入层去重 / 幂等存储（数据接入规格 §3.3）。Phase 1 <b>内存版</b>，与引擎侧 {@code processed:} /
- * {@code lock:plan:} 分层、互不替代；生产切 Redis（同前缀 {@code ingestion:*}）。
+ * 接入层去重 / 幂等存储（数据接入规格 §3.3）。Phase 1 <b>内存版</b>，与引擎侧 {@code processed:} / {@code lock:plan:}
+ * 分层、互不替代；生产切 Redis（同前缀 {@code ingestion:*}）。
  *
  * <p>三道检查各管一类重复：
  *
@@ -16,12 +16,12 @@ import org.springframework.stereotype.Component;
  *       dedup:case_push:{message_id}}）；
  *   <li>{@link #isStale} / {@link #recordSeen}：同 loan 更旧 publish_time 的乱序消息（{@code
  *       last_seen:{loan_id}}）；
- *   <li>{@link #isIngested} / {@link #markIngested} / {@link #clearIngested}：本催收周期已 publish
- *       过 {@code CASE_INGESTED} 后的增量推送（{@code ingested:{loan_id}}），全额结清时清除。
+ *   <li>{@link #isIngested} / {@link #markIngested} / {@link #clearIngested}：本催收周期已 publish 过
+ *       {@code CASE_INGESTED} 后的增量推送（{@code ingested:{loan_id}}），全额结清时清除。
  * </ul>
  *
- * <p><b>标记时机</b>：messageId / ingested 仅在 publish <b>成功后</b>标记，失败 nack 后允许重投重处理
- * （配合 §2.3 ACK 语义，支撑 L4b-7 NACK 重投幂等）。
+ * <p><b>标记时机</b>：messageId / ingested 仅在 publish <b>成功后</b>标记，失败 nack 后允许重投重处理 （配合 §2.3 ACK 语义，支撑
+ * L4b-7 NACK 重投幂等）。
  */
 @Component
 public class IngestionDedupStore {

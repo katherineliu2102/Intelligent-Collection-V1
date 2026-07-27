@@ -46,7 +46,11 @@ class CasePayloadMapperTest {
         assertEquals(20, ci.snapshotFields.get(CollectionEvent.DPD));
         assertEquals("SKYPAYLOANS", ci.snapshotFields.get(CollectionEvent.PRODUCT));
         assertEquals(
-                0, new BigDecimal("1500.50").compareTo((BigDecimal) ci.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING)));
+                0,
+                new BigDecimal("1500.50")
+                        .compareTo(
+                                (BigDecimal)
+                                        ci.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING)));
         assertEquals("+639171234567", ci.snapshotFields.get(CollectionEvent.PHONE));
         assertEquals("a@b.com", ci.snapshotFields.get(CollectionEvent.EMAIL));
         assertEquals("tok-1", ci.snapshotFields.get(CollectionEvent.JPUSH_TOKEN));
@@ -54,7 +58,8 @@ class CasePayloadMapperTest {
 
     @Test
     void mapCasePush_dirtyEmail_isDropped() {
-        JSONObject json = JSON.parseObject("{\"caseId\":1,\"email\":\"0\",\"phone\":\"+639998887777\"}");
+        JSONObject json =
+                JSON.parseObject("{\"caseId\":1,\"email\":\"0\",\"phone\":\"+639998887777\"}");
         CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
         assertFalse(ci.snapshotFields.containsKey(CollectionEvent.EMAIL));
         assertEquals("+639998887777", ci.snapshotFields.get(CollectionEvent.PHONE));
@@ -107,7 +112,8 @@ class CasePayloadMapperTest {
         // 样例：STATUS=1（待还款）但 fullRepayTime 非空 → 结清（靠 fullRepayTime 命中）
         assertTrue(
                 mapper.fullySettled(
-                        JSON.parseObject("{\"userId\":1,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1}")));
+                        JSON.parseObject(
+                                "{\"userId\":1,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1}")));
         // STATUS=4（结清）无 fullRepayTime → 结清
         assertTrue(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":4}")));
         // STATUS=2（逾期）无 fullRepayTime → 未结清

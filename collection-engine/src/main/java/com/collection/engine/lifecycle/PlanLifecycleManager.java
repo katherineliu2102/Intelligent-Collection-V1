@@ -59,7 +59,8 @@ public class PlanLifecycleManager {
         }
         // 决策 B：payload 携带快照字段时据此组装，运行时不读旧库 t_collection；
         // 缺失（如旧调用 / 兜底）时降级 CaseService。
-        ContextSnapshot snapshot = hasSnapshotPayload(event) ? buildSnapshotFromEvent(event, stage) : null;
+        ContextSnapshot snapshot =
+                hasSnapshotPayload(event) ? buildSnapshotFromEvent(event, stage) : null;
         CaseInfo caseInfo = caseInfoFromSnapshot(snapshot);
         if (stage == null) {
             CaseInfo info = caseInfo != null ? caseInfo : caseService.getCaseInfo(caseId);
@@ -310,8 +311,8 @@ public class PlanLifecycleManager {
     // ───────────────────────── PTP 到期（§2.6，Phase 2 预留） ─────────────────────────
 
     /**
-     * Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED（Dispatcher 未订阅，核心引擎规格 §2.6）。
-     * 方法体保留作 Phase 2 前向兼容，Phase 1 不会被事件总线触发。
+     * Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED（Dispatcher 未订阅，核心引擎规格 §2.6）。 方法体保留作 Phase 2 前向兼容，Phase 1
+     * 不会被事件总线触发。
      */
     @Transactional
     public List<CollectionEvent> onPtpExpired(CollectionEvent event) {
