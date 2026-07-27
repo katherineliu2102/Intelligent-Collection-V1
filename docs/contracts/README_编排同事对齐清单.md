@@ -1,10 +1,12 @@
 # 与编排同事（collection-channel）对齐清单
 
 > **版本**: Phase 1  
-> **日期**: 2026-06-11  
+> **日期**: 2026-06-11（**E6/E7 结论更新 2026-07-27**）  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-common` / `collection-channel`  
-> **关联文档**: [核心引擎规格 §6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)、[ContextSnapshot 契约对齐](./README_ContextSnapshot契约对齐.md)、[引擎渠道执行契约对齐](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)
+> **关联文档**: [核心引擎规格 §6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)、[ContextSnapshot 契约对齐](./README_ContextSnapshot契约对齐.md)、[引擎渠道执行契约对齐](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)、[渠道编排规格 V1.6](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)
+>
+> E1–E8 会议纪要见 [对齐待办（历史）](../channel/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md)；**业务规则以编排规格为准**。
 
 ---
 
@@ -54,8 +56,8 @@
 | E3 | Override 中断事件最小集 + 谁写标签 | 最小集 + cancel AI |
 | E4 | 引擎是否调度 HUMAN_CALL | **不**进 plan（LTH + 标签） |
 | E5 | 外呼调度是否做 VoiceQueue | 固定 trigger_time，不做 Queue |
-| E6 | Offer 是否进 ContextSnapshot、谁填 | snapshot + ingestion 填，StepResolver 只读 |
-| E7 | PTP 来源 | Phase 1 仅坐席 App |
+| E6 | Offer 是否进 ContextSnapshot | **已决 Phase 2**：Phase 1 不做 F10；snapshot **无** offer 字段 |
+| E7 | PTP 来源 | **已决 Phase 2**：Phase 1 不记录、不作策略输入；引擎不消费 `PTP_EXPIRED` |
 | E8 | 客户进线事件是否进引擎 | Phase 1 仅 LTH 打标 |
 
-> E6 直接影响 `ContextSnapshot` 是否要加 offer 字段（如 `offerEligible` 等）——若拍板采纳，由我在 common 扩字段并更新样例。
+> E6/E7 以 [PRD](../MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) + [编排规格 V1.6](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md) 为准；勿再按「待拍板」扩 common 字段。

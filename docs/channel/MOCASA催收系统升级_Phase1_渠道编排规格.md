@@ -4,9 +4,9 @@
 > **日期**: 2026-07-24  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`（策略子层）  
-> **关联文档**: [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](../MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](../MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[HANDOFF.md](../HANDOFF.md)
+> **关联文档**: [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](../MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](../MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[HANDOFF.md](../../HANDOFF.md)
 >
-> **V1.6**：前置 **Stage × 渠道一览**；删参考 SQL；精简已决待办。  
+> **V1.6**：前置 **Stage × 渠道一览**；删参考 SQL；精简已决待办；**SMS = 观察期（非 dispatch 即完成）**；Wave 改称第 1/2 次外呼。  
 > **V1.5**：难催不含 PTP；Offer/F10 → Phase 2；`strategyTone` Phase 1 固定 STANDARD。
 
 ---
@@ -175,7 +175,13 @@ Tone ∈ { STANDARD, FIRM }   # FIRM 仅 S2+
 | VoiceQueue | 引擎不管；LTH 排队 | 可选 channel 内队列 |
 | Offer / PTP | **不做** | F10；`PTP_EXPIRED` |
 
-**步骤完成**：SMS/Push/Email 在 `dispatch` 成功即 `STEP_COMPLETED`；AI 等 `CHANNEL_CALLBACK`。
+**步骤完成**（与 [执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) / 引擎一致）：
+
+| 渠道 | `dispatch` 后 | 说明 |
+|------|----------------|------|
+| **PUSH / EMAIL** | 即 `STEP_COMPLETED` | 无观察期 |
+| **SMS** | → `STEP_WAITING` | 等 DLR 或观察期（默认约 10min）期满结转 |
+| **AI** | → `STEP_EXECUTING` | 等 `CHANNEL_CALLBACK` |
 
 执行层对接见 [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)。
 
