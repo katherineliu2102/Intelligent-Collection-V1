@@ -1,17 +1,16 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.2  
-> **日期**: 2026-07-07  
-> **状态**: ✅ 可开发（Phase 1 范围）；配置写接口 Phase 1.5  
+> **版本**: v1.1  
+> **日期**: 2026-06-30  
+> **状态**: ✅ 设计草案（基于产品讨论与 Intelligent-Collection-V1 方案对齐）  
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
-> **定位**: 管理后台的信息架构、功能模块、交互闭环、技术边界、分阶段交付路线，以及 REST API / 扩展 DDL 实现规格（附录 C）。  
+> **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
 > **关联文档**:  
 > - [产品需求文档 (PRD)](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
 > - [架构设计文档](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
-> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2、§7、§8  
-> - [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)（交叉对齐见 [附录 C.7](#附录-c7与数据接入规格交叉对齐)）  
+> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
 > - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
-> **权威 DDL**: 引擎表 [`../db/schema.sql`](../db/schema.sql)；后台扩展 [`../db/schema-admin.sql`](../db/schema-admin.sql)
+> **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）
 
 ---
 
@@ -39,7 +38,6 @@
 - [12. 开放问题](#12-开放问题)
 - [附录 A：与 PRD 功能映射](#附录-a与-prd-功能映射)
 - [附录 B：现有代码与页面资产](#附录-b现有代码与页面资产)
-- [附录 C：实现规格（API 契约与 DDL）](#附录-c实现规格api-契约与-ddl)
 
 ---
 
@@ -374,8 +372,15 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 | 层级 | 能力 | 时机 | 拦截示例 |
 |------|------|------|----------|
-| **静态校验**（P0） | 字段级规则校验，保存前同步执行 | 点击保存 | 触达时段非法（如 22:00–06:00 跨夜未声明）、日频率上限 = 0、模板变量缺失、scriptSlot 无渠道映射、计划步骤引用了停用渠道 |
-| **Dry-run 预演**（P1） | 对历史案件样本回放新规则，展示命中分布 | 保存前可选触发 | 新规则导致某 Stage 触达量骤增/归零、与现有合规阈值冲突、绝大多数案件未命中任何模板 |
+| **静态校验**（P0） | 字段级规则校验，保存前同步执行 | 点击保存 | 触达时段非法（如 22:00–06:00 跨夜未声明）、日频率上限 = 0、**文案非法/未知变量/超字数**（`ScriptTemplateValidator`，SMS/Push）、scriptSlot 无渠道映射、计划步骤引用了停用渠道 |
+| **Dry-run 预演**（P1） | 对历史案件样本回放新规则，展示命中分布；文案侧已提供 `POST /config/script-templates/validate` | 保存前可选触发 | 新规则导致某 Stage 触达量骤增/归零、与现有合规阈值冲突、绝大多数案件未命中任何模板 |
+
+**文案模板静态规则（SMS/Push，已落地）**：
+
+- 变量白名单与引擎一致：`{name}` `{amount}` `{dpd}` `{repaymentUrl}`；未知 `{xxx}` 拒绝保存。
+- SMS body 必含 `{amount}` + `{repaymentUrl}`；模板 ≤300，样例渲染 ≤400（>160/>320 警告多段短信成本）。
+- Push title ≤40 / body ≤120；title+body 不可同时为空。
+- UI：Templates 编辑弹窗变量 chip、字数条、样例预览；后端 `PUT` 写库前强制校验。
 
 **Dry-run 实现**：复用 `MockTriggerController` 能力，取近期历史案件样本（如近 7 日 N 个案件），用**新配置**跑一遍 plan 生成与 Guard 校验（不真实发送），输出：
 
@@ -439,13 +444,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 平均延迟 | 高于阈值 |
 | 错误码分布 | 某错误码突增 |
 
-对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；**Phase 1.5 确认采用后台嵌入 Grafana 面板**（优先用户体验一致性）。
-
-嵌入约束（避免后续实现偏离）：
-
-- 后台页面内嵌 dashboard panel（iframe）展示关键图块；保留「在 Grafana 打开」链接用于深度排障。
-- 鉴权先采用简化单租户方案（内部网络 + 统一只读视角），不引入复杂多租户 SSO 编排。
-- 面板访问失败时降级为「监控暂不可用 + 跳转 Grafana」；不阻断后台主流程。
+对接 Micrometer + Prometheus + Grafana（架构文档 §2 技术栈决策）；后台嵌入 Grafana 面板或自建简化视图 ⏳ 待确认嵌入 vs 跳转。
 
 #### 5.4.3 全局切流（Emergency）
 
@@ -508,7 +507,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 渠道 | 场景 |
 |------|------|
 | 后台站内通知 | 新异常簇出现或某簇升级（增速翻倍） |
-| 外部告警 | **钉钉机器人（Phase 1.5）**；按簇而非逐条推送，包含 clusterKey、影响条数、最近 5 分钟增量、跳转链接 |
+| 外部告警 ⏳ | 钉钉 / 邮件；按簇而非逐条推送，对接方式待确认 |
 
 ---
 
@@ -523,8 +522,6 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | **终态取消** | 确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
 
 记录：操作人、时间、原因（操作日志）。不建设 Consent 台账、DNC 管理、Dispute 工单流 ✅。
-
-**并行期跨系统冻结**：`LEGACY` / `MIGRATING` 阶段须与旧催收系统**同步**冻结同一 `loan_id`；Runbook 见 [数据接入规格 §6.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#63-投诉跨系统冻结-runbook)。切量至 `NEW` 后仅本系统 API 即可。
 
 ---
 
@@ -545,12 +542,11 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 #### 5.7.2 holdout 基准对比（Phase 1.5 主口径）
 
-**做法**：分案时按 `userId` hash 留出**可配置比例** `holdout_ratio`（默认 10%，可调范围建议 1%–20%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
+**做法**：分案时按 `userId` hash 留出固定小比例（如 5–10%）走**基准策略**（不随配置变更），其余走实验策略。评估时对比「实验组 vs 同期 holdout」。
 
 | 要素 | 说明 |
 |------|------|
 | 分流 | 分案阶段按 `userId` hash 稳定分桶，holdout 固定不变 |
-| 比例参数 | `holdout_ratio` 配置化；变更需记录 `change_log` 与生效 `config_version` |
 | 基准组 | 始终走基准策略，作为「同期资产质量」的参照系 |
 | 对比口径 | 实验组指标 − 同期 holdout 指标 = 真实 Lift（剔除质量波动） |
 | cohort 对齐 | 进一步按入催批次 / 起始 DPD 日期分组对比，而非日历日 |
@@ -596,24 +592,15 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | **Phase 1.5 目标** | DB 配置表为主，Nacos 仅渠道密钥 | 后台完整读写 |
 | **Phase 2** | DB + 多租户 scoped 配置 | 同上 |
 
-### 6.2 配置表与后台运行表（与领域模型对齐）
+### 6.2 待建配置表（与领域模型对齐）
 
-权威 DDL 见 [`../db/schema-admin.sql`](../db/schema-admin.sql)；JSON 字段契约见 [附录 C.1](#c1-数据资产与-ddl)。
-
-| 分类 | 表 | 用途 | 领域模型状态 |
-|------|-----|------|-------------|
-| 配置（Phase 1.5 写入） | `t_contact_plan_template` | 计划模板 JSON | NEW（首版 DDL 已落 `schema-admin.sql`） |
-| 配置 | `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW |
-| 配置 | `t_compliance_rule` | 合规阈值 | NEW |
-| 配置 | `t_channel_config` | 渠道路由与开关 | NEW |
-| 配置 | `t_evaluation_setting` + `t_evaluation_setting_history` | 策略评估参数（如 `holdout_ratio`）及历史快照 | NEW |
-| 配置 | `t_script_template` | 话术 / scriptSlot | 本设计新增 |
-| 配置 | `t_config_change_log` + `t_config_version_seq` | 配置变更日志与全局版本 | 本设计新增 |
-| 后台运行（Phase 1） | `t_admin_case_freeze` | 投诉冻结（不 ALTER 旧库 `t_collection`） | 本设计新增 |
-| 后台运行 | `t_ops_exception` | 异常队列 | 本设计新增 |
-| 引擎运行（ALTER） | `t_contact_plan_step` / `t_contact_timeline` | 增 `config_version`、快照列 | EXISTING |
-
-Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切换在 Phase 1.5 完成（与领域模型 §8 不矛盾）。
+| 表 | 用途 | 领域模型状态 |
+|----|------|-------------|
+| `t_contact_plan_template` | 计划模板 JSON | NEW ⚠️ 待 DDL |
+| `t_strategy_rule` | 策略规则矩阵（含 `risk_tier` 预留列） | NEW ⚠️ 待 DDL |
+| `t_compliance_rule` | 合规阈值 | NEW ⚠️ 待 DDL |
+| `t_channel_config` | 渠道路由与开关 | NEW ⚠️ 待 DDL |
+| `t_config_change_log` | 配置变更日志 | 本设计新增建议 |
 
 **所有配置表的公共列约定**：
 
@@ -650,25 +637,13 @@ Phase 1 引擎仍读 Nacos `channel.*`；表可提前落库，写入与读源切
 | config_key | 如 scriptSlot、template_id |
 | from_version / to_version | 变更前后配置版本号 |
 | diff_summary | 变更摘要（JSON diff 或文本） |
-| rollback_ref | 回滚来源版本引用（**Phase 1.5 必做**） |
+| rollback_ref | 可一键回滚至指定版本 ⏳ P1 |
 
 **乐观锁（防多人脏写）**✅ P0：
 
 - 每条配置记录带 `version` 字段；保存时 `UPDATE ... WHERE id=? AND version=?`（CAS）
 - 版本不匹配 → 拒绝写入，提示「该配置已被他人修改，请刷新后重试」
 - 与节点数无关，单实例多人编辑也必须有
-
-#### 6.4.1 配置回滚（Phase 1.5 必做，MVP）
-
-目标：在配置误发布后，支持分钟级恢复到历史稳定版本，避免投诉/触达异常持续放大。
-
-MVP 规则（防止实现歧义）：
-
-- 回滚不是把全局版本号减小，而是**基于目标历史版本复制生成新版本**（`new_config_version = current + 1`）。
-- 默认作用域为「全局配置快照回滚」（plan/script/rule/compliance/channel 一致回退），避免局部回滚引入配置组合不一致。
-- 生效范围：**仅影响新建 plan**；已生成且已落快照的运行中步骤不被改写（保持可复盘）。
-- 回滚操作必须写 `t_config_change_log`，记录 `rollback_ref`、operator、reason、from_version、to_version。
-- 回滚后发布 `CONFIG_CHANGED` 事件，触发策略缓存刷新路径（同普通发布）。
 
 ### 6.5 历史快照与可复盘（核心数据约束）
 
@@ -683,7 +658,7 @@ MVP 规则（防止实现歧义）：
 | `t_contact_timeline` | `config_version` + `rendered_ref` | 实际发送时的配置版本 + 渲染内容引用（变量已填充的话术摘要） |
 
 - **快照粒度**✅：存 `config_version` + 关键参数 JSON 快照（已确认口径）——平衡存储成本与可复盘性；需要完整正文时按 `config_version` 回查配置表。
-- **跨文档影响** ⚠️：运行表 ALTER 已在 `schema-admin.sql` 定义；领域模型 §7 须同步引用。
+- **跨文档影响** ⚠️：此为运行表 schema 变更，需在 [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §7 DDL 配合增列。本设计提出需求，DDL 落地以领域模型文档为准。
 
 ### 6.6 节点配置一致性（多实例演进项）
 
@@ -837,23 +812,6 @@ gantt
 | 回收效果看板 | 分 Stage 回收率、漏斗（冷层） |
 | SQL 规则治理 | F12 |
 
-#### 10.2.1 Phase 1.5 实施验收清单
-
-| 模块 | 必须交付 | 验收标准 |
-|------|----------|----------|
-| 配置治理基础 | `evaluation-settings` 参数读写、`config_version` 递增、`change_log` 留痕 | holdout_ratio 可通过后台 API 修改；冲突写返回 409；审计日志可追溯 |
-| 配置回滚 MVP | 版本列表、回滚到历史版本、回滚日志 | 回滚生成新的 `config_version`；不降低版本号；仅影响新建 plan / 后续策略读取 |
-| 配置中心 CRUD | 计划模板、话术、策略规则、合规规则、渠道配置 | 所有写接口带 `version`；保存前静态校验；JSON 字段符合附录 C 契约 |
-| 引擎读源切换 | 从 Nacos/Java 常量切到 DB 配置缓存 | 新建 plan 使用当前 `config_version`；step/timeline 落快照 |
-| Grafana 嵌入 | 后台内嵌渠道健康监控面板 | 面板可在后台展示；失败时显示兜底文案与 Grafana 跳转链接 |
-| 钉钉告警 | 异常簇聚合告警推送 | 新异常簇或增速升级时按 clusterKey 推送；避免逐条告警风暴 |
-| 异常队列增强 | `groupBy=cluster`、批量 ACK/resolve | 同类异常可折叠查看并批量处理 |
-| 策略评估 | holdout + cohort 对齐结果页 | 支持按 stage / scriptSlot / config_version 查看实验组 vs holdout 指标 |
-| UI 产品化 | Dashboard / Strategy / Ops / Compliance / System 页面真实联调 | 不再只展示占位页；核心操作有 loading/error/success 状态 |
-| 回归测试 | Phase 1.5 自测脚本与测试文档 | 覆盖配置保存、回滚、版本列表、holdout 参数、异常聚合 |
-
-首个开发切片（当前优先级）：配置治理基础 + 回滚 MVP 的后端 API，先覆盖 `evaluation-settings.holdout_ratio`，再扩展到计划模板/话术/规则表。
-
 ### 10.3 Phase 2 扩展
 
 | 交付项 | 说明 |
@@ -874,17 +832,13 @@ gantt
 | 审批发布流 | **不做** | 内部流程简单、合规要求低；静态校验 + Dry-run 替代 |
 | 重型合规子系统 | **不做** | 引擎 Guard + 基础冻结操作足够；非业务重点 |
 | 策略效果评估 | **holdout 基准 + cohort 对齐（Phase 1.5）** | 避免现金贷 vintage 波动造成 Fake Lift；前后对比仅作辅助 |
-| holdout 比例 | **参数化配置（默认 10%）** | 方便按业务阶段动态调优，不改代码 |
 | risk_tier 风险分层 | **字段预留，Phase 1 不填充** | 金额无区分度；行为粗分不适合对外；Phase 2 接 ML 评分卡 |
 | 配置护栏 | **静态校验 P0 + Dry-run P1** | 无审批流但需防荒谬配置上线 |
 | 历史快照 | **config_version + 关键参数 JSON** | 改配置后旧案可复盘当时真实内容 |
-| 配置回滚 | **Phase 1.5 必做（MVP 全局回滚）** | 配置误发布可分钟级止损，降低投诉与运营风险 |
 | 看板数据源 | **冷热分离** | 热层 MySQL 分钟级支撑 15 分钟闭环；冷层 BigQuery 做趋势 |
-| Grafana 集成 | **后台嵌入 + 跳转兜底** | 优先统一体验，同时保留深度排障入口 |
 | 配置并发 | **乐观锁 P0** | 防多人编辑脏写；与单/多实例无关 |
 | 节点一致性视图 | **多实例演进项** | Phase 1 单实例无脑裂；>1 节点时启用 |
 | 异常队列 | **Phase 1 必做；Phase 1.5 折叠聚合** | 防网关抖动雪崩；批量操作 |
-| 异常外部告警 | **钉钉机器人（Phase 1.5）** | 与现有协作链路一致，闭环更快 |
 | 计费模块 | **Phase 2，预留数据模型** | 商业化时需要，当前无计费需求 |
 | AI 质检 / 多地区 | **Phase 2，提前规划模块** | 依赖 ASR 与新市场拓展 |
 | 配置存储 | **Phase 1.5 迁 DB** | 摆脱 Nacos/代码发布依赖，实现场景 B |
@@ -899,11 +853,11 @@ gantt
 |---|------|------|------|
 | Q1 | 看板冷热分离细节（热层物化视图刷新周期） | §5.1.0 架构已定为 MySQL 热 + BQ 冷；刷新策略待实现 | ⏳ 默认热层 1–5 分钟刷新 |
 | Q2 | 渠道 ROI 成本单价由谁维护、如何录入？ | §5.1.3 渠道 ROI | ❓ 待运营确认 |
-| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ✅ 已定：钉钉机器人（Phase 1.5） |
-| Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ✅ 已定：后台嵌入（保留跳转链接） |
-| Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ✅ 已定：Phase 1.5 必做（MVP 全局回滚） |
+| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ❓ 待运维确认 |
+| Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ⏳ 默认跳转，嵌入成本高 |
+| Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ⏳ 默认 P1，手动回滚可先接受 |
 | Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ⏳ 默认 React + Ant Design Pro |
-| Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ✅ 已定：比例参数化（默认 10%，可配置） |
+| Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ❓ 待策略/业务确认 |
 
 ---
 
@@ -936,313 +890,6 @@ gantt
 
 ---
 
-## 附录 C：实现规格（API 契约与 DDL）
-
-> 原独立文档「管理后台 API 与 DDL 规格」已并入本附录；字段级 DDL 以 [`../db/schema-admin.sql`](../db/schema-admin.sql) 为权威，本节提供可读副本 + JSON 契约 + REST API 契约。
-
-### C.1 数据资产与 DDL
-
-#### 表分类与 Phase 边界
-
-| 分类 | 表 | Owner / 写入方 | Phase |
-|------|-----|----------------|-------|
-| 已有（引擎） | `t_contact_plan`、`t_contact_plan_step`、`t_contact_timeline`、`t_decision_log` | collection-engine / channel | 仅 ALTER 增快照列 |
-| 新建（配置） | `t_contact_plan_template`、`t_strategy_rule`、`t_compliance_rule`、`t_channel_config`、`t_evaluation_setting`、`t_evaluation_setting_history` | collection-admin（Phase 1.5） | 表 Phase 1 可落库；读源切换 1.5 |
-| 新建（后台） | `t_script_template`、`t_config_change_log`、`t_config_version_seq`、`t_admin_case_freeze`、`t_ops_exception` | collection-admin | 冻结 / 异常 Phase 1 |
-| 已有（案件） | 旧库 `t_collection` 等 | 只读 | 冻结用 `t_admin_case_freeze`，不 ALTER 旧表 |
-
-变更 `schema-admin.sql` 时须同步：本附录 JSON 契约、领域模型 §1.2 表状态、编排层确认 JSON 与 `ChannelProperties` / Nacos 可迁移。
-
-#### 配置表 JSON 契约（Phase 1.5 写入）
-
-**`t_contact_plan_template.plan_json`**（对齐 Nacos `channel.plan-templates` / `ChannelProperties.PlanStepDef`）：
-
-```json
-{
-  "steps": [
-    { "channel": "SMS", "delayMin": 0, "observeMin": 0, "templateId": 101 },
-    { "channel": "PUSH", "delayMin": 1, "observeMin": 0, "templateId": 102 }
-  ]
-}
-```
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| steps | array | 是 | 按 step_order 顺序执行 |
-| steps[].channel | string | 是 | `ChannelType`（SMS/PUSH/EMAIL/AI_CALL/TTS 等）；`HUMAN_CALL` 当前被 `DefaultPlanFactory` 跳过 |
-| steps[].delayMin | int | 否 | 相对上一步延迟分钟，默认 0 |
-| steps[].observeMin | int | 否 | 观察期分钟，默认 0 |
-| steps[].templateId | long | 否 | 写入 `t_contact_plan_step.template_id`；**非** scriptSlot |
-
-⏳ Phase 1.5 若改为 plan 内显式 `scriptSlot`，须同步改 `DefaultPlanFactory` / `DefaultStepResolver` 及本 Schema。
-
-**`t_script_template.content_json`** 按渠道：
-
-| channel | JSON 结构 | 变量占位符 | Nacos 迁移源 |
-|---------|-----------|-----------|-------------|
-| SMS | `{ "body": "MOCASA: {name}, ..." }` | `{name}` `{amount}` `{dpd}` | `channel.scripts.sms.<scriptSlot>` |
-| PUSH | `{ "title": "...", "body": "..." }` | 同上 | `channel.scripts.push.<scriptSlot>` |
-| EMAIL | `{ "preview": "..." }` 可选 | 动态数据在 SendGrid | `channel.sendgrid.templates.<scriptSlot>` → `external_template_id` |
-
-**`t_compliance_rule`**：一行一条规则；Nacos 扁平 `channel.compliance` 拆为多行 `rule_code`。
-
-| rule_code | rule_json 示例 | Nacos 对应 |
-|-----------|---------------|-----------|
-| TOUCH_WINDOW | `{ "timezone": "Asia/Manila", "start": "06:00", "end": "22:00" }` | 可触达时段（PRD §7.2 默认） |
-| QUIET_HOURS | `{ "timezone": "Asia/Manila", "start": "22:00", "end": "06:00" }` | 禁止触达时段（`TOUCH_WINDOW` 之补集） |
-| DAILY_CAP | `{ "limit": 1 }` | `compliance.daily-limit.<CHANNEL>` |
-
-> **口径 SSOT**：Phase 1 默认触达窗 **06:00–22:00 PHT**（与 §5.2.4、PRD §7.2 一致）。`ExecutionGuard` / Nacos `channel.compliance` / `t_compliance_rule` 落库均用上述 `TOUCH_WINDOW` + `QUIET_HOURS` 成对配置，禁止 08:00–21:00 等偏离 PRD 的示例值。
-
-**`t_channel_config.route_json`** 示例（草案）：
-
-```json
-{ "primary": "notification-center", "fallback": ["mock"], "timeoutSec": 30 }
-```
-
-**配置版本**：每次发布 `t_config_version_seq.current_version++`，各配置表写入同一 `config_version`，并追加 `t_config_change_log`；乐观锁用各表 `version` 字段 CAS。
-
-#### 后台运行表（Phase 1）
-
-**`t_admin_case_freeze`**：
-
-| status | 含义 |
-|--------|------|
-| FROZEN | 投诉冻结，PreFlight 拦截触达 |
-| RELEASED | 解冻 |
-| ESCALATED | 已升级 COMPLAINT 终态 |
-
-Phase 1 必做：`RealCaseService` / `PreFlightChecker` 读此表，`isFrozen(caseId)` 替代硬编码 `false`。
-
-**`t_ops_exception`**：Phase 1 **逐条**写入；Phase 1.5 按 `cluster_key = type:channel:errorCode` 折叠展示（见 §5.5.2）。
-
-#### 运行表扩展（ALTER）
-
-| 表 | 新增列 | 写入时机 |
-|----|--------|----------|
-| `t_contact_plan_step` | `config_version`, `resolved_params` | 引擎生成 step 时 |
-| `t_contact_timeline` | `config_version`, `rendered_ref` | 渠道发送成功后 |
-
-`resolved_params` 示例：
-
-```json
-{ "templateId": 101, "scriptSlot": "S2_SMS_STANDARD", "channel": "SMS", "tone": "STANDARD" }
-```
-
-#### 部署与验证
-
-```powershell
-cd Intelligent-Collection-V1
-$env:DB_PASSWORD='<from Nacos spring.datasource.password>'
-python scripts/dev/apply-schema-admin.py
-```
-
-预期输出：`SCHEMA_ADMIN_OK`；且存在上述全部新表；`t_contact_plan_step.config_version` 列存在。
-
----
-
-### C.2 API 通用约定
-
-#### Base URL 与鉴权
-
-- 开发：`http://localhost:8888`（local profile）；无全局 `/api/v1`，沿用 `/catalog`、`/plans` 风格
-- 鉴权：Shiro Session（复用旧库 `t_system_role`）；Header `Cookie: JSESSIONID=...` 或后续 Bearer JWT
-- 未登录：`401` `{ "code": "UNAUTHORIZED", "message": "..." }`
-
-#### 响应 envelope
-
-成功：
-
-```json
-{ "success": true, "data": { }, "timestamp": "2026-07-06T12:00:00+08:00" }
-```
-
-错误：
-
-```json
-{
-  "success": false,
-  "code": "VALIDATION_ERROR",
-  "message": "human readable",
-  "details": [ { "field": "quietHoursStart", "reason": "invalid time" } ]
-}
-```
-
-#### 分页
-
-Query：`page=1&pageSize=20`（默认 20，最大 100）。响应 `data.items` + `page` / `pageSize` / `total`。
-
-#### 乐观锁与错误码
-
-配置写接口（Phase 1.5）请求体带 `version`；冲突返回 **409** `VERSION_CONFLICT`。
-
-| code | HTTP | 说明 |
-|------|------|------|
-| UNAUTHORIZED | 401 | 未登录 |
-| FORBIDDEN | 403 | 无权限 |
-| NOT_FOUND | 404 | 资源不存在 |
-| VALIDATION_ERROR | 400 | 静态校验失败 |
-| VERSION_CONFLICT | 409 | 乐观锁冲突 |
-| INTERNAL_ERROR | 500 | 未预期错误 |
-
----
-
-### C.3 Phase 1 API（P0）
-
-对应 [§10.1 Phase 1 最小可用](#101-phase-1-最小可用p0)。
-
-#### 案件与计划（扩展已有）
-
-**GET `/plans/overview/by-case/{caseId}`** — 单案 360° 聚合；扩展 `caseSummary`：
-
-```json
-{
-  "caseId": 92002,
-  "userId": 90004,
-  "stage": "S2",
-  "dpd": 7,
-  "frozen": false,
-  "plans": [ { "plan": {}, "steps": [] } ],
-  "timeline": []
-}
-```
-
-> `caseId` 为业务 `loan_id`（数字），与 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#31-入案快照主链路与模块职责) 一致，**非**旧库 `t_collection.id`（hex）。
-
-**GET `/cases/search`** — Query：`caseId`, `userId`, `stage`, `planStatus`, `frozen`；列表项脱敏 phone/email。
-
-#### 策略目录（已有 Catalog）
-
-- `GET /catalog/overview`
-- `GET /catalog/template/{slot}`
-- `GET /catalog/template/{slot}/preview`
-
-Phase 1 只读；Phase 1.5 写接口见 C.4。
-
-#### 合规操作 — ComplianceOpsController
-
-**POST `/compliance/freeze`**
-
-```json
-{ "caseId": 92002, "userId": 90004, "reason": "Customer complaint via hotline" }
-```
-
-行为：upsert `t_admin_case_freeze` status=FROZEN；写 change_log。权限：催收主管。
-
-**POST `/compliance/unfreeze`** — `{ "caseId": 92002, "reason": "..." }`
-
-**POST `/compliance/escalate`** — `{ "caseId": 92002, "reason": "..." }`；status=ESCALATED；活跃 plan 写 `cancel_reason=COMPLAINT` 终态。
-
-#### 异常队列 — OpsQueueController
-
-**GET `/ops/exceptions`** — Query：`status`（默认 OPEN）、`type`、`channel`、`page`、`pageSize`。Phase 1 逐条；Phase 1.5 增加 `groupBy=cluster`。
-
-响应 item 示例：
-
-```json
-{
-  "id": 1001,
-  "exceptionType": "CALLBACK_TIMEOUT",
-  "channel": "SMS",
-  "errorCode": "TIMEOUT",
-  "caseId": 92002,
-  "planId": 501,
-  "stepId": 9001,
-  "severity": "WARN",
-  "message": "Callback not received within 300s",
-  "status": "OPEN",
-  "clusterKey": "CALLBACK_TIMEOUT:SMS:TIMEOUT",
-  "createdAt": "2026-07-06T11:00:00+08:00"
-}
-```
-
-- `POST /ops/exceptions/{id}/ack`
-- `POST /ops/exceptions/{id}/resolve` — `{ "action": "RETRY|IGNORE|MANUAL_FIXED", "note": "..." }`
-- `POST /ops/exceptions/batch-resolve`（Phase 1.5）— 按 `clusterKey` 批量处理
-
-**异常写入方**（非 admin API）：引擎 CALLBACK_TIMEOUT、渠道熔断监听器、接入层毒丸/DLQ 告警桥接 → 写 `t_ops_exception`（见 C.5、C.7）。
-
-#### 系统管理（最小）
-
-- `GET /admin/me` — 当前用户与角色
-- `GET /admin/audit-logs` — Query：`configType`、`operator`、`from`、`to`
-
----
-
-### C.4 Phase 1.5 API（概要）
-
-#### ConfigController — 配置 CRUD + 热加载
-
-| Method | Path | 说明 |
-|--------|------|------|
-| GET | /config/plan-templates | 列表 |
-| GET | /config/plan-templates/{id} | 详情 |
-| PUT | /config/plan-templates/{id} | 更新（带 version） |
-| POST | /config/plan-templates/{id}/validate | 静态校验 |
-| POST | /config/plan-templates/{id}/dry-run | 历史样本预演 |
-| GET/PUT | /config/script-templates/... | 话术 |
-| GET/PUT | /config/strategy-rules/... | 策略矩阵 |
-| GET/PUT | /config/compliance-rules/... | 合规 |
-| GET/PUT | /config/channels/... | 渠道开关 |
-| GET/PUT | /config/evaluation-settings | 策略评估参数（含 `holdout_ratio`） |
-| POST | /config/publish | 递增 config_version + CONFIG_CHANGED 事件 |
-| GET | /config/versions | 配置版本列表（含变更摘要/操作人） |
-| POST | /config/rollback | 回滚到指定历史版本（生成新 config_version） |
-
-#### DashboardController / 策略评估
-
-| Method | Path | 层 / 说明 |
-|--------|------|-----------|
-| GET | /dashboard/outreach/realtime | 热层：触达量/送达率/接通率 |
-| GET | /dashboard/recovery/trend | 冷层：回收漏斗（BigQuery） |
-| GET | /dashboard/evaluation/holdout | 实验组 vs holdout 对比 |
-| GET | /dashboard/evaluation/changelog-markers | 配置变更时间轴 |
-
----
-
-### C.5 引擎与管理后台对齐清单
-
-| # | 项 | 负责模块 | Phase |
-|---|-----|----------|-------|
-| 1 | PreFlight 读 `t_admin_case_freeze` | collection-service | 1 |
-| 2 | 引擎写 step/timeline 时落 config_version + resolved_params | collection-engine / channel | 1.5 |
-| 3 | CALLBACK_TIMEOUT → 写 t_ops_exception | collection-engine | 1 |
-| 4 | DefaultPlanFactory 改读 t_contact_plan_template | collection-channel | 1.5 |
-| 5 | ComplianceExecutionGuard 改读 t_compliance_rule | collection-channel | 1.5 |
-| 6 | CONFIG_CHANGED 订阅刷新缓存 | engine.strategy | 1.5 |
-| 7 | holdout 分案 hash 逻辑 | collection-channel / engine | 1.5 |
-| 8 | 接入毒丸/DLQ → 写 `t_ops_exception`（INGESTION_FAILURE） | collection-ingestion | 1 |
-
----
-
-### C.6 实现开放问题
-
-| # | 问题 | 影响 |
-|---|------|------|
-| I1 | Shiro 登录接旧 console 还是新做最小登录？ | C.2 鉴权 |
-| I3 | plan_json 与 Nacos 迁移脚本谁维护？ | C.4 ConfigController |
-| I4 | holdout 比例参数的运营变更权限（谁可改、何时生效） | §5.7.2 / C.4 |
-
----
-
-### 附录 C.7：与数据接入规格交叉对齐
-
-两文档分属 **`collection-ingestion`** 与 **`collection-admin`**，主体正交；以下交叉点以 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) 为准。
-
-| 维度 | 数据接入规格（SSOT） | 管理后台 | 对齐结论 |
-|------|---------------------|----------|----------|
-| **业务主键** | PubSub `loan_id` → payload `caseId`；与旧库 `t_collection.loan_id` 同值；**非** hex `t_collection.id` | API / 冻结 / 异常均用 `caseId` | ✅ 一致；后台检索与冻结须用 loan 级 `caseId` |
-| **入案写库** | 接入不写 `t_contact_plan`；引擎消费 `CASE_INGESTED` 后写 plan | 后台只读 plan / timeline | ✅ 职责分离 |
-| **快照冻结** | 「冻结写入由引擎完成」指 `ContextSnapshot` 组装冻结 | `t_admin_case_freeze` 为**投诉运营冻结** | ✅ 不同概念；命名上勿混淆 |
-| **旧库 `t_collection`** | 入案主链路不读；日切 B2 只读扫描在催名单 | 案件检索读新库 plan，不依赖入案读旧库 | ✅ 无冲突 |
-| **INGESTION_FAILURE** | 毒丸 → DLQ + 同步写 `t_ops_exception`（§2.3 字段映射）；`collection-ingestion` 负责写入 | 异常队列类型含 INGESTION_FAILURE | ✅ 已闭合；DLQ 管重放，ops 管运维可见 |
-| **投诉跨系统冻结** | §6.3 Runbook：并行期旧系统 + 新系统 `POST /compliance/freeze` 双侧同步 | `t_admin_case_freeze` + §5.6 | ✅ 已闭合；切 `NEW` 后仅新系统 |
-| **日切 vs 入案 stage** | 同周期增量 `case_push` ack 跳过；阶段靠日切 `STAGE_CHANGED` | 360° 展示引擎 plan 上的 stage | ✅ 后台展示引擎态，不以 PubSub 增量为准 |
-
----
-
 > **修订历史**  
-> - v1.3 · 2026-07-07 · 明确关键决策：Grafana 后台嵌入、回滚 Phase 1.5 必做（MVP）、holdout 比例参数化、异常外部告警采用钉钉  
-> - v1.2 · 2026-07-07 · 合并原「API 与 DDL 规格」为附录 C；更新 §6.2 表状态；增加与数据接入规格交叉对齐  
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论

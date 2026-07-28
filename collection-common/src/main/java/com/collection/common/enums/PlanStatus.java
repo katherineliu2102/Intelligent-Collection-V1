@@ -1,11 +1,7 @@
 package com.collection.common.enums;
 
-/**
- * 触达计划状态。对应领域模型 §6.3、核心引擎规格 §2.1。
- * 6 态：4 非终态 + 2 终态。
- */
+/** 触达计划状态。对应领域模型 §2.3、核心引擎规格 §2.1。 6 态：4 非终态 + 2 终态。 */
 public enum PlanStatus {
-
     PENDING(false),
     STEP_SCHEDULED(false),
     STEP_EXECUTING(false),

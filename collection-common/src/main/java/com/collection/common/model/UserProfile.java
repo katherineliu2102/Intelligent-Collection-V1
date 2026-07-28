@@ -8,7 +8,7 @@ import java.util.Map;
 import lombok.Data;
 
 /**
- * 用户画像。ContextSnapshot 组成部分。对应领域模型 §3.2。 由 ProfileService.getFullProfile(userId) 构建；Phase 1
+ * 用户画像。ContextSnapshot 组成部分。对应领域模型 §4.2。 由 ProfileService.getFullProfile(userId) 构建；Phase 1
  * 部分维度渐进填充（可能为 null）。
  */
 @Data

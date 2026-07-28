@@ -1,5 +1,7 @@
 package com.collection.admin.web;
 
+import com.collection.admin.web.validation.ScriptTemplateValidator;
+import com.collection.admin.web.validation.TemplateValidationException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +18,26 @@ import org.springframework.web.server.ResponseStatusException;
 /** 管理后台 API 统一异常封装。 */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(TemplateValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleTemplateValidation(
+            TemplateValidationException e) {
+        Map<String, Object> body =
+                ApiResponse.failure("TEMPLATE_VALIDATION_FAILED", e.getMessage());
+        List<Map<String, Object>> errors = new ArrayList<>();
+        for (ScriptTemplateValidator.Issue issue : e.getErrors()) {
+            errors.add(issue.toMap());
+        }
+        List<Map<String, Object>> warnings = new ArrayList<>();
+        if (e.getWarnings() != null) {
+            for (ScriptTemplateValidator.Issue issue : e.getWarnings()) {
+                warnings.add(issue.toMap());
+            }
+        }
+        body.put("errors", errors);
+        body.put("warnings", warnings);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException e) {

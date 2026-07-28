@@ -11,13 +11,15 @@
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标/功能/渠道选型/合规（位置：docs 根；与 zoe 的 channel/ 版需统一） |
+| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标/功能/渠道选型/合规（docs 根，唯一 PRD） |
 | [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) | ✅ | 分层、SPI 边界、关键机制、技术栈 |
 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 事件路由、状态机、七步管线、SPI 定义 |
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
 | [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis/XXL-Job/Repository、**运行配置附录 A**、可观测性（生产目标） |
-| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域 §9、配置键见 infra 附录 A |
-| [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) | 🟡 | 后台信息架构、模块设计、REST API / 扩展 DDL 实现规格（附录 C）；Phase 1 只读 + 有限写 |
+| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域模型、配置键见 infra 附录 A |
+| [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) | 🟡 | 后台信息架构、模块设计、REST API / 扩展 DDL；Phase 1 只读 + 有限写 |
+
+> ✅ **2026-07-27**：根规格 merge conflict 已按 **`ca_branch` 侧**统一消解（投诉终态取消 / COMPLAINT → Phase 2；领域模型 TOC 以 2026-07-08 重构版为准：枚举 §2、EventPayload §6）。
 
 ### collection-common 契约查阅
 
@@ -56,12 +58,17 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [操作说明 Nacos 本地启动](./操作说明_Nacos本地启动.md) | ✅ | 本地/Docker 启动；与根 `../README.md` 互补 |
+| [CI 与 Git 提交操作手册](./CI与Git提交操作手册.md) | ✅ | PR 三道闸、Spotless/commit 规范、本地恢复与排障 |
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 
-入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。包含：渠道编排规格、collection-channel 总规格、引擎对齐待办(E1–E8)、4 个 adapter 对接说明(LTH SMS/Voice、SendGrid Email、FCM Push)。
-根目录另有编排同事维护的：开发执行指南、开发进度、功能测试指南、渠道模板清单与配置、策略迭代与测试操作手册，以及 [`email-templates/`](./email-templates/) 邮件模板全套。
+入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md) 或 [`channel/CONTEXT.md`](./channel/CONTEXT.md)。
+
+均在 **`docs/channel/`**：编排规格（V1.6）、collection-channel 总规格、开发执行/进度/功能测试、模板清单、策略手册、Notification（SMS+Push）/ SendGrid / LTH Voice 对接说明。  
+邮件 HTML 在 [`email-templates/`](./email-templates/)（docs 根）。
+
+> 历史会议纪要 [`渠道编排与引擎对齐待办`](./channel/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md)（E1–E8）已归档口径；**现行规则以编排规格 V1.6 为准**（无 Offer/F10、无 PTP 策略）。
 
 ---
 
-> 2026-06-26：`docs/testing/`、`scripts/dev/` + `scripts/test/` 已落地；核心规格仍留 `docs/` 根。
+> 2026-07-27：渠道索引与 adapter 说明已按 Notification（非 FCM）校正；根规格 merge conflict 已按 ca_branch 消解。

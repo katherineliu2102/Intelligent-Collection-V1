@@ -107,7 +107,8 @@ public class ScriptLibrary {
      * 变量注入 + name 缺失时的标点/空格清理。 例："MOCASA Collections: {name}, ..." 当 name 为空 → "MOCASA Collections:
      * ..."。
      */
-    static String inject(String template, ScriptVars vars) {
+    /** 公开给后台校验等复用同一套注入逻辑。 */
+    public static String inject(String template, ScriptVars vars) {
         String name = vars != null && vars.getName() != null ? vars.getName().trim() : "";
         String amount = vars != null && vars.getAmount() != null ? vars.getAmount() : "";
         String dpd = vars != null ? String.valueOf(vars.getDpd()) : "0";

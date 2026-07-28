@@ -725,7 +725,7 @@ void prepareStepDue_waitingCarryOver_noResult_sentNoResponse() {
 
 #### 6.2.5 待澄清/漂移修正（本链路）
 
-- **§11-2 漂移已核对修正**：代码 `EventType` 枚举（`collection-common/.../enums/EventType.java` L19）**已含** `CALLBACK_TIMEOUT`（L21 亦含 `CASE_CEASED`），`EventConsumerDispatcher` L41 已注册 `CALLBACK_TIMEOUT→onCallbackTimeout`。故「枚举缺失」不成立，真实漂移**仅为领域模型 §6.6 文档表未列**该哨兵事件。§11-2 状态已由「枚举缺失」修正为「**文档表待补登**」（详见 §11-2）。
+- **§11-2 漂移已核对修正**：代码 `EventType` 枚举（`collection-common/.../enums/EventType.java` L19）**已含** `CALLBACK_TIMEOUT`（L21 亦含 `CASE_CEASED`），`EventConsumerDispatcher` L41 已注册 `CALLBACK_TIMEOUT→onCallbackTimeout`。故「枚举缺失」不成立，真实漂移**仅为领域模型 §2.6 文档表未列**该哨兵事件。§11-2 状态已由「枚举缺失」修正为「**文档表待补登**」（详见 §11-2）。
 - **§11-8 已拍板（2026-06-21）**：§6.1 定义卡「数据落点 = `t_contact_timeline`（回调结果 / 超时记录）」——`onChannelCallback`/`onCallbackTimeout` 引擎侧**不写 timeline**（仅 `StepExecutionOrchestrator` 发送路径写）。**结论：回调/超时结果 timeline 由 L3 admin 落库统一补写，引擎侧不补码**；引擎职责保持「更新 step 状态 + 发 STEP_COMPLETED」。差集 D19 转 L3 admin 落库项（归 D14 同环境）。
 
 #### 6.2.6 补测骨架（草案：需本地 `mvn test` 编译运行确认，未保证一次通过）
@@ -1061,7 +1061,7 @@ void c8_aiCallCallback_completesStep() {
 
 #### 7.2.5 待澄清（本链路）
 
-- **§11-1 CASE_CEASED/CancelReason.CEASED（已核对，状态细化）**：**代码现状已就绪**——`EventType.CASE_CEASED`（`EventType.java` L21）、`EventConsumerDispatcher` L38 `CASE_CEASED→onCaseCeased` 已注册、`PlanLifecycleManager#onCaseCeased`（L84–96，取消活跃计划 `CancelReason.CEASED`）、`CancelReason.CEASED`（`CancelReason.java` L12，engineManaged=true）均在代码。**结论**：§11-1 **不是「枚举缺失」**，残留仅 (a) 领域模型 §6.6/§6.7 文档表待补登；(b) 引擎 `onCaseCeased` 的 **L0/L1 测试待回补**（D29，本节出骨架）；(c) 渠道 `TC-CEASED-01/02` 口径（L4）。「停催不再建」由 `onCaseCeased` 不建 + `createPlanForStage` CEASED 双重前置守卫（L335–345）保证。
+- **§11-1 CASE_CEASED/CancelReason.CEASED（已核对，状态细化）**：**代码现状已就绪**——`EventType.CASE_CEASED`（`EventType.java` L21）、`EventConsumerDispatcher` L38 `CASE_CEASED→onCaseCeased` 已注册、`PlanLifecycleManager#onCaseCeased`（L84–96，取消活跃计划 `CancelReason.CEASED`）、`CancelReason.CEASED`（`CancelReason.java` L12，engineManaged=true）均在代码。**结论**：§11-1 **不是「枚举缺失」**，残留仅 (a) 领域模型 §2.6/§2.7 文档表待补登；(b) 引擎 `onCaseCeased` 的 **L0/L1 测试待回补**（D29，本节出骨架）；(c) 渠道 `TC-CEASED-01/02` 口径（L4）。「停催不再建」由 `onCaseCeased` 不建 + `createPlanForStage` CEASED 双重前置守卫（L335–345）保证。
 - **PTP 补偿取消的 cancel_reason 口径（已拍板 2026-06-21）**：**Phase 1 不考虑 PTP 的差异化处理**——`onPtpExpired` 已还款补偿取消统一写 `CancelReason.REPAID`（与还款链一致），**不引入** `CancelReason.PTP_EXPIRED`（该枚举值 engineManaged=false，Phase 1 不写入）。既有 #27-R/#27-A 维持现状；PTP **无活跃→续建（M20/D2）** 因 PTP 非 Phase 1 焦点，**改判 Phase 2 延后**（§12.3），骨架（§7.2.6 ①）预留待 Phase 2 启用，不计入 Phase 1 `@Test`。
 
 #### 7.2.6 补测骨架（草案：需本地 `mvn test` 编译运行确认，未保证一次通过）
@@ -1395,6 +1395,8 @@ done
 
 ### L4b.1 入场 checklist（跑前必读）
 
+> **运维 / 信贷待办与附录确认范围** → [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)（含 A.3/A.6 焦点表、D1/D2 生产切量门禁）。本节保留跑前技术断言。
+
 #### 联调配置（真实入站 + 沙箱触达）
 
 | 层 | 键 | L4b 取值 |
@@ -1402,6 +1404,7 @@ done
 | PubSub | `GCP_PUBSUB_SUBSCRIPTION` | **`collection-cases-ai-v1-sub`**（禁止 `collection-cases-sub`） |
 | 接入 | `collection.ingestion.enabled` | **`true`** |
 | 接入（可选） | `collection.ingestion.loan-id-whitelist` | 仅处理名单内 `loan_id`，其余 ack 跳过 |
+| 内部总线 | `collection.eventbus` / `collection.idempotency` | **缺省 `memory`**（L4b 不必写 Nacos；见交接清单） |
 | 渠道 | `channel.notification.push-test-token` | Push 强制投测试 app |
 | 渠道 | `channel.notification.sms-test-mode` | **`true`**（testSend） |
 | 渠道 | SendGrid 测试收件人 | 内部邮箱（见 [功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)） |
@@ -1436,7 +1439,8 @@ done
 - [ ] **新库**：`t_contact_plan` / `_step` / `t_contact_timeline` / `t_user_device_token` 已建；MyBatis L3 已装配。
 - [ ] **日切**：XXL-Job `dailyRoll` 已注册（B2）。
 - [ ] **旧库只读**（可选对账）：`t_collection`；主链路不读旧库（决策 B）。
-- [ ] **A1–A6**：与 L4a 一致；Mock 时按 §L4b.4 标「薄」。
+- [ ] **基础设施附录**：**A.3 必配** + **A.6 部分签字**（#1/#2/#3/#6/#7/#8）；A.5 / A.2.2 跳过；详见 [交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md#文档与配置焦点主架构--信贷）。
+- [ ] **A1–A6 渠道装配**：与 L4a 一致；Mock 时按 §L4b.4 标「薄」。
 - [ ] **数据安全**：白名单、脱敏、触发间隔 ≥1s。
 - [ ] **方案 A**：全额结清 `repayment_push_and_load` → `DEL ingestion:ingested:{loan_id}`（接入 §2.2.2 / §3.3）。
 
@@ -1711,13 +1715,13 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 
 | # | 不一致点 | 文档/代码现状 | 影响 | 建议 |
 |---|---|---|---|---|
-| **§11-1** | `CASE_CEASED` 事件 + `CancelReason.CEASED`（代码已落地，焦点收窄） | **代码已含**：`EventType.CASE_CEASED`（L21）、`CancelReason.CEASED`（`CancelReason.java` L12，engineManaged=true）、`PlanLifecycleManager#onCaseCeased`（L84–96，取消活跃计划 `CancelReason.CEASED`，不再建）、Dispatcher L38 已注册 `CASE_CEASED→onCaseCeased`；仅领域模型 §6.6/§6.7 文档表滞后未列；渠道指南 `TC-CEASED-01` 期望 `cancel_reason=CEASED`，对齐 **E1** | **非「枚举缺失」**；残留：(a) 文档表待补登；(b) `onCaseCeased` 的 L0/L1 测试待回补（**D29**，§7.2.6 已出骨架）；(c) 渠道 `TC-CEASED-*`（L4） | 在领域模型 §6.6 补 `CASE_CEASED`、§6.7 补 `CancelReason.CEASED`（标注 engineManaged）；补链路⑤ `onCaseCeased` L0+L1 断言（D29，骨架见 §7.2.6）+ 渠道 `TC-CEASED-01/02`。**链路① 的「CEASED→不建计划」由 `createPlanForStage` 前置守卫 + 工厂 null 实现，不依赖本条**（见 §3.2.5） |
-| **§11-2** | `CALLBACK_TIMEOUT` 文档表待补登（已核对修正） | **代码已含**：`collection-common/.../enums/EventType.java` L19 含 `CALLBACK_TIMEOUT`（且 L21 含 `CASE_CEASED`，共 10 值），`EventConsumerDispatcher` L41 已注册 `CALLBACK_TIMEOUT→onCallbackTimeout`；规格 §1.1 称其为「内部超时哨兵」；仅领域模型 §6.6 文档表未列出 | **非「枚举缺失」**，真实漂移仅为文档表滞后 | 状态由「枚举缺失」修正为「**文档表待补登**」：在领域模型 §6.6 表补 `CALLBACK_TIMEOUT`（标注「引擎内部哨兵，不跨模块」）；§11-1 的 `CASE_CEASED` 同理已在 `EventType` 落地（`onCaseCeased`+`CancelReason.CEASED` 均在代码），其待澄清焦点收窄为渠道 `TC-CEASED-*` 口径与 L0 回补 |
+| **§11-1** | `CASE_CEASED` 事件 + `CancelReason.CEASED`（代码已落地，焦点收窄） | **代码已含**：`EventType.CASE_CEASED`（L21）、`CancelReason.CEASED`（`CancelReason.java` L12，engineManaged=true）、`PlanLifecycleManager#onCaseCeased`（L84–96，取消活跃计划 `CancelReason.CEASED`，不再建）、Dispatcher L38 已注册 `CASE_CEASED→onCaseCeased`；仅领域模型 §2.6/§2.7 文档表滞后未列；渠道指南 `TC-CEASED-01` 期望 `cancel_reason=CEASED`，对齐 **E1** | **非「枚举缺失」**；残留：(a) 文档表待补登；(b) `onCaseCeased` 的 L0/L1 测试待回补（**D29**，§7.2.6 已出骨架）；(c) 渠道 `TC-CEASED-*`（L4） | 在领域模型 §2.6 补 `CASE_CEASED`、§2.7 补 `CancelReason.CEASED`（标注 engineManaged）；补链路⑤ `onCaseCeased` L0+L1 断言（D29，骨架见 §7.2.6）+ 渠道 `TC-CEASED-01/02`。**链路① 的「CEASED→不建计划」由 `createPlanForStage` 前置守卫 + 工厂 null 实现，不依赖本条**（见 §3.2.5） |
+| **§11-2** | `CALLBACK_TIMEOUT` 文档表待补登（已核对修正） | **代码已含**：`collection-common/.../enums/EventType.java` L19 含 `CALLBACK_TIMEOUT`（且 L21 含 `CASE_CEASED`，共 10 值），`EventConsumerDispatcher` L41 已注册 `CALLBACK_TIMEOUT→onCallbackTimeout`；规格 §1.1 称其为「内部超时哨兵」；仅领域模型 §2.6 文档表未列出 | **非「枚举缺失」**，真实漂移仅为文档表滞后 | 状态由「枚举缺失」修正为「**文档表待补登**」：在领域模型 §2.6 表补 `CALLBACK_TIMEOUT`（标注「引擎内部哨兵，不跨模块」）；§11-1 的 `CASE_CEASED` 同理已在 `EventType` 落地（`onCaseCeased`+`CancelReason.CEASED` 均在代码），其待澄清焦点收窄为渠道 `TC-CEASED-*` 口径与 L0 回补 |
 | **§11-8** | 回调/超时路径 timeline 由 L3 admin 落库统一补（已拍板） | §6.1 定义卡「数据落点 = `t_contact_timeline`（回调结果/超时记录）」；`PlanLifecycleManager#onChannelCallback`（L211–225）/`#onCallbackTimeout`（L229–242）**仅更新 step.status + 发 STEP_COMPLETED，引擎侧不写 timeline**；timeline 仅在 `StepExecutionOrchestrator` 发送路径写 | 回调结果/超时记录的 timeline 落点归属明确 | **已拍板（2026-06-21）：回调/超时结果 timeline 由 L3 admin 落库统一补写，引擎侧不补码**。引擎职责保持「更新 step 状态 + 发 STEP_COMPLETED」；admin Webhook/超时扫描落库时同步写 `t_contact_timeline`（回调结果/超时记录）。§6.1 定义卡「数据落点」语义不变（落点真实但落库在 admin/L3），引擎 L0/L1 不再就此补 `@Test`，差集 D19 转 L3 admin 落库项 |
 | **§11-3** | ADVANCE_NEXT 且 delay=0「立即执行」（已核对修正：规格用词↔代码实现） | **代码现状**：`onStepCompleted` 的 ADVANCE_NEXT 分支对**任意 delay（含 0）** 均走 `updateStepTriggerTime(next, now+max(0,delay), PENDING)` + `updateCurrentStep` + `updatePlanStatus(STEP_SCHEDULED)`，**不存在「同步递归 execute_step」代码路径**；delay=0 时 `trigger_time=now`，由 `TriggerScanner`/`findDueSteps` 下一扫描周期即刻发 `PLAN_STEP_DUE` 驱动。**测试现状**：L0 仅测 delay>0（#15）；L1 经 `findDueSteps` 循环驱动覆盖 delay=0 即刻语义，无独立 L0 断言 | M9 无独立断言（D1）；**规格 §2.3.2「立即 execute_step」用词与代码（STEP_SCHEDULED+扫描器驱动）有歧义** | **不臆造同步递归测试**：规格「立即执行」=语义上无人为延时，工程实现 = `STEP_SCHEDULED + trigger=now + 扫描器驱动`。补 L0 据实断言「delay=0 → trigger≈now + STEP_SCHEDULED、返回事件 isEmpty」（`onStepCompleted_advanceNext_delayZero_schedulesWithNowTrigger`，§5.2.6），**闭合 D1/M9**；并建议校正规格 §2.3.2 表述为「trigger=now 即刻调度」 |
-| **§11-4** | VIBER / WHATSAPP Phase 1 范围 | 规格 §3.1⑦ 分流将 VIBER/WHATSAPP 列入「消息类」；领域模型 §6.1 标 VIBER=接入（待签约）、WHATSAPP=升级；当前无任何测试与渠道实现 | 渠道全集 D7 是否计入 Phase 1 测全 | 确认 Phase 1 实测渠道集合（疑似仅 SMS/PUSH/EMAIL + AI_CALL），VIBER/WHATSAPP 标 ⏭ 或注「接入即补」 |
+| **§11-4** | VIBER / WHATSAPP Phase 1 范围 | 规格 §3.1⑦ 分流将 VIBER/WHATSAPP 列入「消息类」；领域模型 §2.1 标 VIBER=接入（待签约）、WHATSAPP=升级；当前无任何测试与渠道实现 | 渠道全集 D7 是否计入 Phase 1 测全 | 确认 Phase 1 实测渠道集合（疑似仅 SMS/PUSH/EMAIL + AI_CALL），VIBER/WHATSAPP 标 ⏭ 或注「接入即补」 |
 | **§11-5** | HUMAN_CALL 引擎分流 | 规格七步⑦把 HUMAN_CALL 归「电话/人工类」保持 EXECUTING；但对齐清单 **E4** 与渠道 `TC-PLAN-STRUCT-COMMON` 约定「Phase 1 不进 plan / StepResolver 永不输出 HUMAN_CALL」 | D9：引擎是否需测 HUMAN_CALL 分流 | 以 E4 为准：Phase 1 不构造 HUMAN_CALL 步骤；引擎分流逻辑保留但标「Phase 1 不触发」，不强制 L0 |
-| **§11-6** | PUSH 取号口径 `jpushToken` vs `fcmToken` | 契约定稿与领域模型 §3.2 DeviceInfo 以 **`jpushToken`** 为准；但 `FullChainIntegrationTest` 变量名 `FCM` 实际 set 进 `device.jpushToken`（命名误导，语义正确）；`UserProfile.DeviceInfo` 暂留 `fcmToken` 兼容字段 | 测试可读性/收口动作 | 收口：编排切 `jpushToken` 后由主架构在 common 移除 `fcmToken`；同步把 `FullChainIntegrationTest` 变量名 `FCM`→`JPUSH` |
+| **§11-6** | PUSH 取号口径 `jpushToken` vs `fcmToken` | 契约定稿与领域模型 §4.2 UserProfile.DeviceInfo 以 **`jpushToken`** 为准；但 `FullChainIntegrationTest` 变量名 `FCM` 实际 set 进 `device.jpushToken`（命名误导，语义正确）；`UserProfile.DeviceInfo` 暂留 `fcmToken` 兼容字段 | 测试可读性/收口动作 | 收口：编排切 `jpushToken` 后由主架构在 common 移除 `fcmToken`；同步把 `FullChainIntegrationTest` 变量名 `FCM`→`JPUSH` |
 | **§11-7** | `idempotency_key` 维度 | 领域模型字段注释为 `plan_id:step_order:attempt`；引擎实测 key=`planId:stepOrder:retryCount`（#31）；契约定稿口径 `plan:stepOrder:retryCount` | 术语 attempt vs retryCount | 统一表述为 `retryCount`（与代码一致），更新领域模型注释 |
 | **§11-10** | 建计划阶段 vs 执行阶段守卫边界（已澄清） | §3.1② `PreFlightChecker` 是**执行阶段**（`executeStep`）守卫，读失败→`check=false`→静默退出（fail-close，不 NACK）；**建计划阶段**（`onCaseIngested→createPlanForStage`）的 `CaseService.getCaseInfo/getContextSnapshot` 读失败**无 fail-close**，异常上抛→`@Transactional` 回滚→NACK 重消费 | 链路① 读失败行为与链路②执行守卫不同，易混淆 | **已澄清**：建计划阶段读失败 = NACK 重消费（计划不可丢）；执行阶段守卫 = fail-close 静默跳过。差集 D25 据此补 L0（建计划阶段读失败异常上抛断言） |
 | **§11-9** | 空地址 SKIP 断言归属（方案A，已澄清） | 契约定稿「方案A」：空地址（`NO_PHONE`/`NO_TOKEN`/`NO_EMAIL`）由编排侧 `ExecutionGuard` 返回 `block`，引擎统一 `markSkipped`（SKIPPED+COMPLIANCE_BLOCKED+推进）；`NO_EMAIL` 已由 C3 覆盖，`NO_PHONE`/`NO_TOKEN` 在引擎侧无 L0/L2 断言（D5） | 链路② 空地址 SKIP 语义的引擎↔编排断言边界 | **已澄清**：引擎侧用 L2 替身断言「block→SKIPPED」通用语义（②-S30/S31，可内存补 +2 `@Test`，见 §4.2.6）；rule 码真值（哪种缺失→哪个码）归编排 L4（`TC-PUSH-02`/`TC-EMAIL-02`）。PUSH 空 token 但有 SMS 号→编排 fallback SMS（C2，不进 SKIP） |
@@ -1812,7 +1816,7 @@ SELECT JSON_EXTRACT(context_snapshot,'$.caseContext.dpd')              AS dpd,
 #### §11 待澄清收口（2 项，影响范围认定，尽早拍板）
 
 - [ ] **§11-4/§11-5 范围拍板**：VIBER/WHATSAPP 与 HUMAN_CALL 是否计入 Phase 1 测全（若否→ ⏭ Phase 2，D7/D9 即关闭）。当前暂按「Phase 1 仅 SMS/PUSH/EMAIL + AI_CALL」处理，待正式确认后更新 §10.5 与 §12.3。
-- [ ] **§11-2 文档补登**：领域模型 §6.6 补 `CALLBACK_TIMEOUT`（内部哨兵）/ `CASE_CEASED`，§6.7 补 `CancelReason.CEASED`（engineManaged）。不阻塞测试，但影响「文档↔代码一致性」门禁。
+- [ ] **§11-2 文档补登**：领域模型 §2.6 补 `CALLBACK_TIMEOUT`（内部哨兵）/ `CASE_CEASED`，§2.7 补 `CancelReason.CEASED`（engineManaged）。不阻塞测试，但影响「文档↔代码一致性」门禁。
 
 #### 全量收口顺序（建议）
 

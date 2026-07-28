@@ -1,8 +1,6 @@
 package com.collection.common.enums;
 
-/**
- * 触达方向。对应领域模型 §6.11。
- */
+/** 触达方向。对应领域模型 §2.11。 */
 public enum Direction {
     /** 系统发出。 */
     OUT,

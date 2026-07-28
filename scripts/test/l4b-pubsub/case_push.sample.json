@@ -1,0 +1,11 @@
+{
+  "dataType": "case_push",
+  "messageId": "L4B-CASE-99000000-0001",
+  "loanID": "99000000",
+  "userID": "99000000",
+  "realName": "Test Case S0",
+  "appName": "QuickLoan",
+  "phone": "+639451374358",
+  "email": "wzynju@126.com",
+  "jpushToken": "1a0018970bf0c19de04"
+}

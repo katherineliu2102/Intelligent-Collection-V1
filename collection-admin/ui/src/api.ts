@@ -13,7 +13,13 @@ async function request(path: string, init?: RequestInit) {
   const body = isJson ? await resp.json() : undefined;
   if (!resp.ok) {
     const msg = body?.message || `${resp.status} ${resp.statusText}`;
-    throw new Error(msg);
+    const err = new Error(msg) as Error & {
+      code?: string;
+      errors?: Array<{ field?: string; code?: string; message?: string }>;
+    };
+    err.code = body?.code;
+    err.errors = body?.errors;
+    throw err;
   }
   return body;
 }
@@ -119,12 +125,28 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
+  validateScriptTemplate(payload: {
+    scriptSlot: string;
+    channel: string;
+    locale?: string;
+    body?: string;
+    title?: string;
+    version: number;
+  }) {
+    return request("/config/script-templates/validate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
   deactivateScriptTemplate(scriptSlot: string, channel: string, locale = "en") {
     const q = new URLSearchParams({ scriptSlot, channel, locale }).toString();
     return request(`/config/script-templates?${q}`, { method: "DELETE" });
   },
   listPlanTemplates() {
     return request("/config/plan-templates");
+  },
+  dashboardOutreachRealtime(days = 30) {
+    return request(`/dashboard/outreach/realtime?days=${days}`);
   },
   deactivatePlanTemplate(templateCode: string) {
     return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {

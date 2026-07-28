@@ -31,7 +31,7 @@ public class CollectionEvent {
     public static final String RESULT = "result";
 
     // ── 决策 B（2026-06-29）：CASE_INGESTED 携带的快照字段，引擎据此组装 ContextSnapshot，
-    //    运行时不读旧库 t_collection。SSOT 见领域模型 §9.2。
+    //    运行时不读旧库 t_collection。SSOT 见领域模型 §2.2。
     public static final String DPD = "dpd";
     public static final String PRODUCT = "product";
     public static final String TOTAL_OUTSTANDING = "totalOutstanding";

@@ -1,7 +1,7 @@
 package com.collection.common.enums;
 
 /**
- * 触达结果。对应领域模型 §6.2。
+ * 触达结果。对应领域模型 §2.2。
  *
  * <p>priority 用于回调更新时的"只升级不降级"判定： DELIVERED(1) &lt; READ(2) &lt; CLICKED(3) &lt; REPLIED(4)。
  * 电话类结果（ANSWERED/NO_ANSWER/BUSY）及失败类为终态，priority=0，不参与升级链。
