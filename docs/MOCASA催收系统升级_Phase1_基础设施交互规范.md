@@ -8,7 +8,12 @@
 
 ## 目录
 
-- [1. 消费线程模型](#1-消费线程模型)
+- [1. 运行模式、消费线程与上线门槛](#1-运行模式消费线程与上线门槛)
+  - [1.1 运行模式与上线门槛](#11-运行模式与上线门槛)
+  - [1.2 线程职责与边界](#12-线程职责与边界)
+  - [1.3 Consumer 线程池与背压](#13-consumer-线程池与背压)
+  - [1.4 Daemon 恢复机制](#14-daemon-恢复机制)
+  - [1.5 上线前容量校准清单](#15-上线前容量校准清单)
 - [2. 事件总线（Redis Stream）](#2-事件总线redis-stream)
 - [3. 运行时状态（Redis KV）](#3-运行时状态redis-kv)
 - [4. 定时调度（XXL-Job）](#4-定时调度xxl-job)
@@ -26,21 +31,29 @@
 
 ---
 
-## 1. 消费线程模型
+## 1. 运行模式、消费线程与上线门槛
 
-[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) 定义了线程隔离的架构决策（Consumer Pool 与 Cron Thread 分离），本节给出具体规格参数和安全约束。
+[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) 定义了 Consumer Pool、Cron 与 Daemon 的线程隔离决策。本节先说明各环境实际运行的基础设施，再定义生产目标拓扑、线程规格及上线前校准要求。
 
-### Phase 1 生产拓扑与 Redis 依赖
+### 1.1 运行模式与上线门槛
 
-Phase 1 **生产依赖 Redis**（旧催收系统已使用 Redis）：事件总线、幂等、合规频控的生产实现均基于 Redis；`InMemoryEventBus` / `InMemoryIdempotencyService` / `ConfigurableExecutionGuard` 内存计数仅用于本地开发与 CI 链路验证，不用于生产。
+| 运行环境 | 事件总线与幂等实现 | 用途与限制 |
+|---|---|---|
+| 本地开发 / CI / L4 联调 | `InMemoryEventBus`、`InMemoryIdempotencyService`、`ConfigurableExecutionGuard` 内存计数 | 用于功能链路验证；不具备跨实例幂等、PEL、可靠重投或 Redis 原子频控能力 |
+| 生产目标态 | `RedisStreamEventBusImpl`、Redis SETNX 幂等、Redis 原子频控计数 | 支持 Consumer Group、PEL、DLQ、跨实例幂等和跨渠道频控 |
 
-- **生产实现**：`RedisStreamEventBusImpl`（Consumer Group + PEL/看门狗/DLQ）、Redis SETNX 幂等、Redis 原子频控计数（单渠道日上限 + 跨渠道日总上限）。
-- **上线前置**：完成上述 Redis 实现接入（HANDOFF D1/D2），生产配置 `collection.eventbus=redis` / `collection.idempotency=redis`。
-- **部署形态**：Phase 1 单活跃实例即可满足吞吐（峰值 QPS 1–3）；Redis 保证幂等、频控与事件可靠投递，扩容至多实例时无需改业务代码。
+**当前 Phase 1 代码默认内存实现；生产上线前必须完成 Redis D1/D2。** 生产配置须使用 `collection.eventbus=redis` 与 `collection.idempotency=redis`，并完成下列验收：
 
-### 线程池架构
+- `RedisStreamEventBusImpl` 接入 Consumer Group、PEL 拾取、DLQ 与看门狗。
+- Redis SETNX + TTL 幂等接入，并覆盖事件消费和步骤执行。
+- Redis 原子频控接入，覆盖单渠道日上限与跨渠道日总上限。
+- Redis 连接、事件积压、PEL、DLQ、Consumer 线程池指标已接入监控。
 
-**Redis Stream 生产拓扑（Phase 1 生产依赖；Redis 实现待接入 HANDOFF D1）**：
+Redis 完成 D1/D2 后，Phase 1 初始部署采用单活跃实例；Redis 使后续多实例扩容无需改变业务处理逻辑。实例数、Consumer 并发和 Redis 容量须按 [§1.5](#15-上线前容量校准清单) 完成 Pilot 校准后定版。
+
+### 1.2 线程职责与边界
+
+生产目标拓扑如下：
 
 ```mermaid
 flowchart LR
@@ -50,23 +63,31 @@ flowchart LR
   Daemon[Daemon\nPEL Scanner + Watchdog] -.->|兜底拾取 / 假死重启| Consumer
 ```
 
-Consumer / Cron / Daemon **三组线程互不共享线程池**，任何一组阻塞不影响其他组。参数与背压策略见下表。
+| 线程组 | 职责 | 禁止事项 |
+|---|---|---|
+| Cron | 扫描到期步骤或旧库，发布事件后返回 | 执行渠道调用、等待业务 I/O、与 Consumer 共用线程池 |
+| Consumer | 经 `XREADGROUP` 获取事件，执行业务管线并在成功后 `XACK` | 与 Cron 或 Daemon 共用线程池 |
+| Daemon | 扫描 PEL、认领超时消息、检测消费连接假死并恢复 | 执行业务管线或长期占用 Consumer 线程 |
 
-### Consumer 线程池规格
+Consumer / Cron / Daemon 三组线程互不共享线程池；任一组阻塞不得影响其他两组。Redis Stream 的 `XREADGROUP`、`XACK`、PEL、DLQ 和看门狗详细语义见 [§2](#2-事件总线redis-stream)。
+
+### 1.3 Consumer 线程池与背压
 
 | 参数 | 值 | 说明 |
 |---|---|---|
 | 类型 | `ThreadPoolExecutor` | 非 `ScheduledThreadPool`，调度由消费循环自驱 |
-| corePoolSize | `engine.consumer.thread_pool_size`（默认 8） | 等于消费并发度 |
+| corePoolSize | `engine.consumer.thread_pool_size`（初始值 8） | 等于消费并发度；上线前按容量校准结果确定 |
 | maximumPoolSize | = corePoolSize | 固定大小，不动态扩缩；突发流量由队列缓冲 |
-| workQueue | `LinkedBlockingQueue(engine.consumer.queue_capacity)`（默认 256） | 有界队列 |
+| workQueue | `LinkedBlockingQueue(engine.consumer.queue_capacity)`（初始值 256） | 有界队列；上线前按可接受排队时延和单任务内存确定 |
 | rejectedExecutionHandler | `CallerRunsPolicy` | 队列满时阻塞消费循环线程，XREADGROUP 暂停拉取，Redis Stream 自然积压但不丢消息 |
 | threadFactory | `NamedThreadFactory("engine-consumer-%d")` | 线程命名便于日志 / thread dump 定位 |
 | keepAliveTime | 0（core 不回收） | 固定池大小 |
 
+> `8` 线程与队列 `256` 是基于日均案件 1–2 万、峰值约 1–3 QPS 的 Pilot 初始值，不是历史生产实测结论。须在上线前按 §1.5 的事件量、时效、渠道限流和实例资源压测校准。
+
 > 拒绝策略选择 `CallerRunsPolicy` 而非 `AbortPolicy`（丢任务抛异常）或 `DiscardPolicy`（静默丢弃）：队列满 → Caller 阻塞 → XREADGROUP 停拉 → Stream 积压 → 上游感知背压。不丢消息、不 OOM、无需额外流控。
 
-### 降级日志防刷
+#### 降级日志防刷
 
 `CallerRunsPolicy` 触发时须输出 WARN 日志，但高负载下可能每秒触发数百次。**约束**：背压日志必须使用 `RateLimiter` 压制（每 5 秒最多一条），内容包含当前队列深度和 Stream 积压量：
 
@@ -76,18 +97,31 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 
 > Watchdog 检测心跳时须排除"Caller 线程正在执行被拒绝任务"的场景（通过原子标志位 `callerRunning` 区分），防止将背压误判为假死。
 
-### Daemon 线程组规格
+### 1.4 Daemon 恢复机制
 
 | 守护任务 | 线程模型 | 执行频率 | 安全约束 |
 |---|---|---|---|
-| PEL Scanner | `ScheduledThreadPoolExecutor(1)`，命名 `engine-pel-scanner` | 每 5 分钟（`engine.consumer.pel_scan_interval_minutes`） | 每次 XPENDING 必须携带 `COUNT`（`engine.consumer.pel_batch_size`，默认 100），防止崩溃重启后一次性捞出海量积压导致 OOM |
+| PEL Scanner | `ScheduledThreadPoolExecutor(1)`，命名 `engine-pel-scanner` | 初始值每 5 分钟（`engine.consumer.pel_scan_interval_minutes`） | 每次 XPENDING 必须携带 `COUNT`（`engine.consumer.pel_batch_size`，初始值 100），防止崩溃重启后一次性捞出海量积压导致 OOM |
 | Watchdog | `ScheduledThreadPoolExecutor(1)`，命名 `engine-watchdog` | 每 `engine.watchdog.heartbeat_interval_seconds`（默认 10s）检测一次 | 必须 catch **`Throwable`**（非仅 `Exception`），防止偶发 Redis 连接超时的 `Error` 导致看门狗线程退出 |
 
-> PEL 扫描是低频兜底机制（处理崩溃后遗留消息），5 分钟间隔足够。扫描频率不应高于看门狗超时阈值（60s），避免 PEL 消息在 idle 阈值（10min）内被误判为活跃。
+> PEL Scanner 是低频兜底机制，初始值为每 5 分钟扫描一次，仅认领 idle 超过 10 分钟的消息。因此消费者崩溃后的自动恢复时间通常为 10–15 分钟；该时效须与业务可接受恢复时间共同在 Pilot 校准。
 
-### 背压告警联动
+#### 背压与恢复告警
 
 Consumer 线程池必须注册 Micrometer `ExecutorServiceMetrics`，确保 [运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md) §1.2.2 定义的 `collection.event.consumer.thread.utilization` 和 `collection.event.stream.lag` 指标有数据来源。
+
+### 1.5 上线前容量校准清单
+
+下表中的初始值只用于 Pilot，不应以 L4 功能测试结果替代容量数据。旧系统配置、历史日志或监控数据取得后，应在本表回填来源、观测区间和结论，并据此调整 Nacos 参数与告警阈值。
+
+| 校准项 | 需取得的数据 | 用于确定 | 当前处理 |
+|---|---|---|---|
+| 事件量 | 平均/峰值 QPS、峰值持续时间、日事件量 | Consumer 线程数、队列容量、Stream 积压阈值 | 暂用峰值 1–3 QPS 作为 Pilot 初值 |
+| 时效目标 | 事件入队至开始处理的目标时长、故障消息最大恢复时长 | 队列容量、PEL idle、PEL 扫描周期、Watchdog 超时 | 待业务与运维确认 |
+| 渠道约束 | SMS、Push、Email、AI Call 的 QPS/并发上限、超时与重试要求 | Consumer 并发、每渠道限流、步骤超时与重试参数 | 待渠道方确认 |
+| 应用资源 | 单实例 CPU、内存、JVM 堆、首期实例数 | 线程池上限、队列内存预算、实例扩容阈值 | 待运维确认 |
+| Redis 拓扑 | 单机/主从/Cluster、是否共享旧系统、内存上限、持久化与淘汰策略 | Consumer Group 部署、key 隔离、容量与故障恢复设计 | 待运维确认；生产不得依赖内存实现 |
+| 观测证据 | 旧系统日志/监控入口、PubSub 速率与 lag、Redis 指标、渠道发送日志 | Pilot 压测基线、告警阈值与上线验收 | 待从运维/主架构获取 |
 
 ---
 
@@ -98,9 +132,9 @@ Consumer 线程池必须注册 Micrometer `ExecutorServiceMetrics`，确保 [运
 | 实现 | 何时用 | 切换键 |
 |---|---|---|
 | `InMemoryEventBus` | Phase 1 默认，本地/CI 链路验证 | `collection.eventbus=memory`（缺省） |
-| `RedisStreamEventBusImpl` | 切多实例前（HANDOFF D1，待实现） | `collection.eventbus=redis` |
+| `RedisStreamEventBusImpl` | 生产上线前（HANDOFF D1/D2，待完成） | `collection.eventbus=redis` |
 
-> **本节范围**：§2～§2.2 描述 **Redis Stream 生产语义**（XACK、PEL、DLQ、看门狗等）。Phase 1 内存版仅覆盖异步消费 + 背压，**不含**上述 Redis 能力（handler 异常仅 log，无 NACK/重投）；Phase 1 须配键见 [附录 A.2.1](#a21-phase-1-生效缺省即可)。
+> **本节范围**：§2～§2.2 描述 **Redis Stream 生产语义**（XACK、PEL、DLQ、看门狗等）。Phase 1 内存版仅覆盖异步消费 + 背压，**不含**上述 Redis 能力（handler 异常仅 log，无 NACK/重投）；当前默认键见 [附录 A.2.1](#a21-phase-1-生效缺省即可)，生产切换键见 [A.2.2](#a22-redis-生产切换预留)。
 
 **实现选型** ✅：技术栈为 Spring Boot 2.7.18，采用 Spring Data Redis 内置的 **`StreamMessageListenerContainer`**（Consumer Group 模式）承载消费循环，无需手写 Lettuce 轮询。容器负责订阅、反序列化分发与基础错误重启；PEL 拾取与看门狗作为崩溃/连接假死的兜底补充（下述）：
 
@@ -121,7 +155,7 @@ public interface CollectionEventBus {
 
 **PEL 拾取机制**
 
-消费者 `XREADGROUP` 后、`XACK` 前崩溃或假死 → 消息滞留 PEL，读 `>` 无法触达，须主动拾取。启动时扫一次，PEL Scanner 定期扫（频率见 [§1](#1-消费线程模型)）。
+消费者 `XREADGROUP` 后、`XACK` 前崩溃或假死 → 消息滞留 PEL，读 `>` 无法触达，须主动拾取。启动时扫一次，PEL Scanner 定期扫（频率见 [§1.4](#14-daemon-恢复机制)）。
 
 | 步骤 | 动作 | 判定 / 处置 |
 |---|---|---|
@@ -130,7 +164,7 @@ public interface CollectionEventBus {
 | 3. 毒消息 | `delivery_count > max_delivery_count` | XACK 移出 PEL → 写 DLQ → 告警，不再重投 |
 | 4. 正常重投 | 其余已认领消息 | 重新进入消费管线；引擎步骤幂等锁（`lock:plan:`）保证安全重试 |
 
-**看门狗机制**：`StreamMessageListenerContainer` 的轮询线程在连接假死（Lettuce 连接断开但无异常退出，容器 ErrorHandler 不触发）时可能静默停摆。线程规格见 [§1](#1-消费线程模型)，核心逻辑：
+**看门狗机制**：`StreamMessageListenerContainer` 的轮询线程在连接假死（Lettuce 连接断开但无异常退出，容器 ErrorHandler 不触发）时可能静默停摆。线程规格见 [§1.4](#14-daemon-恢复机制)，核心逻辑：
 
 | 组件 | 行为 |
 |---|---|
@@ -389,7 +423,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 ### A.2 引擎与事件总线
 
-**写代码 / 配 Nacos 时只看 [A.2.1](#a21-phase-1-生效缺省即可)**。Redis Stream、PEL、合规计数等生产切换项 Phase 1 未接线；键名与行为语义见正文 [§1～§2](#1-消费线程模型)、[§3](#3-运行时状态redis-kv)、[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)（实现切换 HANDOFF D1/D2）。
+**写代码 / 配 Nacos 时只看 [A.2.1](#a21-phase-1-生效缺省即可)**。Redis Stream、PEL、合规计数等生产切换项尚未完成 D1/D2；键名与行为语义见正文 [§1～§2](#1-运行模式消费线程与上线门槛)、[§3](#3-运行时状态redis-kv)、[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
 
 <a id="a21-phase-1-生效缺省即可"></a>
 
@@ -411,7 +445,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `engine.spi.step_resolver.timeout_ms` | `50` | Y | StepResolver 硬超时 | 引擎 §6.1 |
 | `engine.spi.advancement_policy.timeout_ms` | `10` | Y | AdvancementPolicy 硬超时 | 引擎 §6.1 |
 | `engine.spi.exhaustion_policy.timeout_ms` | `50` | Y | ExhaustionPolicy 硬超时 | 引擎 §6.1 |
-| `engine.consumer.thread_pool_size` | `8` | N | Consumer 线程池大小 | [§1](#1-消费线程模型) |
+| `engine.consumer.thread_pool_size` | `8` | N | Consumer 线程池大小 | [§1.3](#13-consumer-线程池与背压) |
 | `engine.consumer.queue_capacity` | `256` | N | Consumer 有界队列 | §1 |
 | `engine.consumer.scan_limit` | `1000` | Y | Cron 扫描单批上限；`count==limit` 触发积压告警 | [§4](#4-定时调度xxl-job) |
 | `engine.context.history_max_records` | `50` | Y | contactHistory 最大条数 | 引擎 §6.2 |
@@ -429,7 +463,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 |---|---|---|---|
 | `engine.consumer.poll_timeout_ms` | `2000` | Y | [§2](#2-事件总线redis-stream) |
 | `engine.consumer.batch_size` | `10` | Y | §2 |
-| `engine.consumer.pel_scan_interval_minutes` | `5` | Y | [§1](#1-消费线程模型) |
+| `engine.consumer.pel_scan_interval_minutes` | `5` | Y | [§1.4](#14-daemon-恢复机制) |
 | `engine.consumer.pel_idle_minutes` | `10` | Y-注意 | §2 |
 | `engine.consumer.pel_batch_size` | `100` | Y | §1 |
 | `engine.consumer.max_delivery_count` | `5` | Y | §2 |

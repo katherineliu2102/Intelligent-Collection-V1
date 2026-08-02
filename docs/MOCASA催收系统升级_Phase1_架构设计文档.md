@@ -398,7 +398,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 - Phase 1 落地：上述静默/降级分支打结构化日志，MDC 透传 `caseId`/`planId`/`eventId` 便于串联排障
 - 生产埋点（待实现）：引擎在决策点输出 Micrometer 指标（跳过率、SPI 超时率、对账补发量、Stream 延迟、线程利用率），统一接入 Prometheus；新增静默分支须同步加指标
 
-> 规格：[基础设施 §6.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#62-可观测性接入约束) · [§1 消费线程模型](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#1-消费线程模型) · 告警规则与 Grafana（**规划中**）
+> 规格：[基础设施 §6.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#62-可观测性接入约束) · [§1 运行模式、消费线程与上线门槛](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#1-运行模式消费线程与上线门槛) · 告警规则与 Grafana（**规划中**）
 
 #### 附：基础设施实现索引
 
@@ -410,7 +410,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 |---|---|
 | 事件总线可靠性（PEL 重投 + 看门狗重建） | [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream) |
 | 死信队列（三级恢复 + 合规时段校验） | [基础设施 §2.1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#21-dlq-重放redrive) · [§2.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#22-重放前合规时段校验) · [核心引擎 §7.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#73-l1-基础设施异常) |
-| 背压与线程隔离（Consumer 池 + CallerRunsPolicy） | [基础设施 §1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#1-消费线程模型) |
+| 背压与线程隔离（Consumer 池 + CallerRunsPolicy） | [基础设施 §1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#1-运行模式消费线程与上线门槛) |
 
 ---
 
