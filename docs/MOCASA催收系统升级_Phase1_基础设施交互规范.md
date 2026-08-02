@@ -8,50 +8,104 @@
 
 ## 目录
 
-- [1. 运行模式、消费线程与上线门槛](#1-运行模式消费线程与上线门槛)
-  - [1.1 运行模式与上线门槛](#11-运行模式与上线门槛)
-  - [1.2 线程职责与边界](#12-线程职责与边界)
-  - [1.3 Consumer 线程池与背压](#13-consumer-线程池与背压)
-  - [1.4 Daemon 恢复机制](#14-daemon-恢复机制)
-  - [1.5 上线前容量校准清单](#15-上线前容量校准清单)
-- [2. 事件总线（Redis Stream）](#2-事件总线redis-stream)
-- [3. 运行时状态（Redis KV）](#3-运行时状态redis-kv)
-- [4. 定时调度（XXL-Job）](#4-定时调度xxl-job)
-- [5. 持久层（Repository）](#5-持久层repository)
-- [6. 配置管理与可观测性](#6-配置管理与可观测性)
-- [附录：运行配置与环境](#附录运行配置与环境)
-  - [A.1 配置来源与热更](#a1-配置来源与热更)
+- [1. 文档定位与阅读导图](#1-文档定位与阅读导图)
+  - [1.1 文档定位与覆盖范围](#11-文档定位与覆盖范围)
+  - [1.2 全局运行链路](#12-全局运行链路)
+  - [1.3 阅读约定与 SSOT 索引](#13-阅读约定与-ssot-索引)
+- [2. 运行模式与事件消费模型](#2-运行模式与事件消费模型)
+  - [2.1 目的与边界](#21-目的与边界)
+  - [2.2 当前状态与生产切换条件](#22-当前状态与生产切换条件)
+  - [2.3 生产消费拓扑、线程职责与背压](#23-生产消费拓扑线程职责与背压)
+  - [2.4 Daemon 与故障恢复](#24-daemon-与故障恢复)
+- [3. 事件总线：Redis Stream](#3-事件总线redis-stream)
+  - [3.1 目的与边界](#31-目的与边界)
+  - [3.2 当前状态与生产目标](#32-当前状态与生产目标)
+  - [3.3 核心消费协议](#33-核心消费协议)
+  - [3.4 异常恢复与死信](#34-异常恢复与死信)
+  - [3.5 重放前合规时段校验](#35-重放前合规时段校验)
+- [4. 运行时状态：Redis KV](#4-运行时状态redis-kv)
+  - [4.1 目的与边界](#41-目的与边界)
+  - [4.2 当前状态与生产约束](#42-当前状态与生产约束)
+  - [4.3 Key 与生命周期规格](#43-key-与生命周期规格)
+  - [4.4 原子操作与内存保护](#44-原子操作与内存保护)
+- [5. 定时调度：XXL-Job](#5-定时调度xxl-job)
+  - [5.1 目的与边界](#51-目的与边界)
+  - [5.2 当前状态与生产切换](#52-当前状态与生产切换)
+  - [5.3 Job 规格](#53-job-规格)
+  - [5.4 调度一致性与积压处理](#54-调度一致性与积压处理)
+- [6. 持久层：Repository](#6-持久层repository)
+  - [6.1 目的、边界与读者指引](#61-目的边界与读者指引)
+  - [6.2 事件与调度场景映射](#62-事件与调度场景映射)
+  - [6.3 契约分工](#63-契约分工)
+  - [6.4 事务、行锁与并发约束](#64-事务行锁与并发约束)
+- [7. 配置管理与可观测性](#7-配置管理与可观测性)
+  - [7.1 配置职责与来源](#71-配置职责与来源)
+  - [7.2 配置热更新与静态参数](#72-配置热更新与静态参数)
+  - [7.3 指标与日志](#73-指标与日志)
+- [附录 A：配置键与环境索引](#附录-a配置键与环境索引)
+  - [A.1 配置来源与热更规则](#a1-配置来源与热更规则)
   - [A.2 引擎与事件总线](#a2-引擎与事件总线)
     - [A.2.1 Phase 1 生效（缺省即可）](#a21-phase-1-生效缺省即可)
-    - [A.2.2 Redis / 生产切换预留](#a22-redis-生产切换预留)
+    - [A.2.2 Redis 生产键](#a22-redis-生产键)
   - [A.3 接入与 PubSub](#a3-接入与-pubsub)
   - [A.4 迁移与触达](#a4-迁移与触达)
-  - [A.5 接入层 Redis 键](#a5-接入层-redis-键)
-  - [A.6 上线前联调签字（接入）](#a6-上线前联调签字接入)
+  - [A.5 接入层 Redis Key 索引](#a5-接入层-redis-key-索引)
+- [附录 B：上线准备、容量校准与联调签字](#附录-b上线准备容量校准与联调签字)
+  - [B.1 上线前容量校准清单](#b1-上线前容量校准清单)
+  - [B.2 生产切换门槛](#b2-生产切换门槛)
+  - [B.3 接入域联调签字索引](#b3-接入域联调签字索引)
 
 ---
 
-## 1. 运行模式、消费线程与上线门槛
+## 1. 文档定位与阅读导图
 
-[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) 定义了 Consumer Pool、Cron 与 Daemon 的线程隔离决策。本节先说明各环境实际运行的基础设施，再定义生产目标拓扑、线程规格及上线前校准要求。
+### 1.1 文档定位与覆盖范围
 
-### 1.1 运行模式与上线门槛
+本文定义 Redis Stream、Redis KV、定时调度、Repository 访问、配置与可观测性的基础设施交互规范。
+
+业务状态机以[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)为准，渠道协议以[渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)为准，数据接入协议与 PubSub 消费细节以[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)为准；本文仅覆盖它们与基础设施的交互边界。
+
+### 1.2 全局运行链路
+
+```mermaid
+flowchart LR
+  PubSub[PubSub] --> EventBus[EventBus]
+  Cron[Cron] --> EventBus
+  EventBus --> Consumer[Consumer]
+  Consumer --> Repository[Repository]
+  Consumer --> Channel[Channel]
+```
+
+> 图示用于说明本文档在全链路中的位置；PubSub 和 Channel 的协议细节不在本文展开。
+
+### 1.3 阅读约定与 SSOT 索引
+
+- **当前实现 / 生产目标**：正文明确区分已在 Phase 1 默认路径生效的能力和生产切换目标；`✅` 表示已确认的技术决策，**C 类上线前置**表示生产上线必须闭合的事项，`HANDOFF D1/D2` 表示 Redis 生产实现交接项。
+- **配置 SSOT**：配置键、默认值和热更属性以[附录 A](#附录-a配置键与环境索引)为准。
+- **运行时约定**：Redis Key 规范见 [§4](#4-运行时状态redis-kv)，指标和 MDC 规范见 [§7.3](#73-指标与日志)。
+
+---
+
+## 2. 运行模式与事件消费模型
+
+[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) 定义了 Consumer Pool、Cron 与 Daemon 的线程隔离决策。本节定义可靠投递、并发处理、背压和故障恢复的基础设施模型；不定义业务事件状态机或渠道重试细节。
+
+### 2.1 目的与边界
+
+本节处理事件的可靠传递、并发消费、背压和故障恢复。业务事件状态机以核心引擎规格为准，单次消费内的渠道重试以渠道编排与引擎规格为准。
+
+### 2.2 当前状态与生产切换条件
 
 | 运行环境 | 事件总线与幂等实现 | 用途与限制 |
 |---|---|---|
 | 本地开发 / CI / L4 联调 | `InMemoryEventBus`、`InMemoryIdempotencyService`、`ConfigurableExecutionGuard` 内存计数 | 用于功能链路验证；不具备跨实例幂等、PEL、可靠重投或 Redis 原子频控能力 |
 | 生产目标态 | `RedisStreamEventBusImpl`、Redis SETNX 幂等、Redis 原子频控计数 | 支持 Consumer Group、PEL、DLQ、跨实例幂等和跨渠道频控 |
 
-**当前 Phase 1 代码默认内存实现；生产上线前必须完成 Redis D1/D2。** 生产配置须使用 `collection.eventbus=redis` 与 `collection.idempotency=redis`，并完成下列验收：
+**当前 Phase 1 代码默认内存实现；生产上线前必须完成 Redis D1/D2。** 生产配置须使用 `collection.eventbus=redis` 与 `collection.idempotency=redis`，并满足[附录 B.2](#b2-生产切换门槛)。
 
-- `RedisStreamEventBusImpl` 接入 Consumer Group、PEL 拾取、DLQ 与看门狗。
-- Redis SETNX + TTL 幂等接入，并覆盖事件消费和步骤执行。
-- Redis 原子频控接入，覆盖单渠道日上限与跨渠道日总上限。
-- Redis 连接、事件积压、PEL、DLQ、Consumer 线程池指标已接入监控。
+Redis 完成 D1/D2 后，Phase 1 初始部署采用单活跃实例；Redis 使后续多实例扩容无需改变业务处理逻辑。实例数、Consumer 并发和 Redis 容量须按[附录 B.1](#b1-上线前容量校准清单)完成 Pilot 校准后定版。
 
-Redis 完成 D1/D2 后，Phase 1 初始部署采用单活跃实例；Redis 使后续多实例扩容无需改变业务处理逻辑。实例数、Consumer 并发和 Redis 容量须按 [§1.5](#15-上线前容量校准清单) 完成 Pilot 校准后定版。
-
-### 1.2 线程职责与边界
+### 2.3 生产消费拓扑、线程职责与背压
 
 生产目标拓扑如下：
 
@@ -69,9 +123,9 @@ flowchart LR
 | Consumer | 经 `XREADGROUP` 获取事件，执行业务管线并在成功后 `XACK` | 与 Cron 或 Daemon 共用线程池 |
 | Daemon | 扫描 PEL、认领超时消息、检测消费连接假死并恢复 | 执行业务管线或长期占用 Consumer 线程 |
 
-Consumer / Cron / Daemon 三组线程互不共享线程池；任一组阻塞不得影响其他两组。Redis Stream 的 `XREADGROUP`、`XACK`、PEL、DLQ 和看门狗详细语义见 [§2](#2-事件总线redis-stream)。
+Consumer / Cron / Daemon 三组线程互不共享线程池；任一组阻塞不得影响其他两组。Redis Stream 的 `XREADGROUP`、`XACK`、PEL、DLQ 和看门狗详细语义见 [§3](#3-事件总线redis-stream)。
 
-### 1.3 Consumer 线程池与背压
+#### Consumer 线程池与背压
 
 | 参数 | 值 | 说明 |
 |---|---|---|
@@ -83,7 +137,7 @@ Consumer / Cron / Daemon 三组线程互不共享线程池；任一组阻塞不�
 | threadFactory | `NamedThreadFactory("engine-consumer-%d")` | 线程命名便于日志 / thread dump 定位 |
 | keepAliveTime | 0（core 不回收） | 固定池大小 |
 
-> `8` 线程与队列 `256` 是基于日均案件 1–2 万、峰值约 1–3 QPS 的 Pilot 初始值，不是历史生产实测结论。须在上线前按 §1.5 的事件量、时效、渠道限流和实例资源压测校准。
+> `8` 线程与队列 `256` 是基于日均案件 1–2 万、峰值约 1–3 QPS 的 Pilot 初始值，不是历史生产实测结论。须在上线前按[附录 B.1](#b1-上线前容量校准清单)的事件量、时效、渠道限流和实例资源压测校准。
 
 > 拒绝策略选择 `CallerRunsPolicy` 而非 `AbortPolicy`（丢任务抛异常）或 `DiscardPolicy`（静默丢弃）：队列满 → Caller 阻塞 → XREADGROUP 停拉 → Stream 积压 → 上游感知背压。不丢消息、不 OOM、无需额外流控。
 
@@ -97,7 +151,7 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 
 > Watchdog 检测心跳时须排除"Caller 线程正在执行被拒绝任务"的场景（通过原子标志位 `callerRunning` 区分），防止将背压误判为假死。
 
-### 1.4 Daemon 恢复机制
+### 2.4 Daemon 与故障恢复
 
 | 守护任务 | 线程模型 | 执行频率 | 安全约束 |
 |---|---|---|---|
@@ -106,35 +160,24 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 
 > PEL Scanner 是低频兜底机制，初始值为每 5 分钟扫描一次，仅认领 idle 超过 10 分钟的消息。因此消费者崩溃后的自动恢复时间通常为 10–15 分钟；该时效须与业务可接受恢复时间共同在 Pilot 校准。
 
-#### 背压与恢复告警
-
-Consumer 线程池必须注册 Micrometer `ExecutorServiceMetrics`，确保 [运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md) §1.2.2 定义的 `collection.event.consumer.thread.utilization` 和 `collection.event.stream.lag` 指标有数据来源。
-
-### 1.5 上线前容量校准清单
-
-下表中的初始值只用于 Pilot，不应以 L4 功能测试结果替代容量数据。旧系统配置、历史日志或监控数据取得后，应在本表回填来源、观测区间和结论，并据此调整 Nacos 参数与告警阈值。
-
-| 校准项 | 需取得的数据 | 用于确定 | 当前处理 |
-|---|---|---|---|
-| 事件量 | 平均/峰值 QPS、峰值持续时间、日事件量 | Consumer 线程数、队列容量、Stream 积压阈值 | 暂用峰值 1–3 QPS 作为 Pilot 初值 |
-| 时效目标 | 事件入队至开始处理的目标时长、故障消息最大恢复时长 | 队列容量、PEL idle、PEL 扫描周期、Watchdog 超时 | 待业务与运维确认 |
-| 渠道约束 | SMS、Push、Email、AI Call 的 QPS/并发上限、超时与重试要求 | Consumer 并发、每渠道限流、步骤超时与重试参数 | 待渠道方确认 |
-| 应用资源 | 单实例 CPU、内存、JVM 堆、首期实例数 | 线程池上限、队列内存预算、实例扩容阈值 | 待运维确认 |
-| Redis 拓扑 | 单机/主从/Cluster、是否共享旧系统、内存上限、持久化与淘汰策略 | Consumer Group 部署、key 隔离、容量与故障恢复设计 | 待运维确认；生产不得依赖内存实现 |
-| 观测证据 | 旧系统日志/监控入口、PubSub 速率与 lag、Redis 指标、渠道发送日志 | Pilot 压测基线、告警阈值与上线验收 | 待从运维/主架构获取 |
-
 ---
 
-## 2. 事件总线（Redis Stream）
+## 3. 事件总线：Redis Stream
 
-**接口**：`CollectionEventBus`（`collection-common`），业务模块只依赖接口，不感知底层实现。
+### 3.1 目的与边界
+
+事件总线负责事件可靠传递；不负责业务幂等、步骤状态机或渠道重试。业务模块仅依赖 `collection-common` 的 `CollectionEventBus` 接口，不感知底层实现。
+
+### 3.2 当前状态与生产目标
 
 | 实现 | 何时用 | 切换键 |
 |---|---|---|
 | `InMemoryEventBus` | Phase 1 默认，本地/CI 链路验证 | `collection.eventbus=memory`（缺省） |
 | `RedisStreamEventBusImpl` | 生产上线前（HANDOFF D1/D2，待完成） | `collection.eventbus=redis` |
 
-> **本节范围**：§2～§2.2 描述 **Redis Stream 生产语义**（XACK、PEL、DLQ、看门狗等）。Phase 1 内存版仅覆盖异步消费 + 背压，**不含**上述 Redis 能力（handler 异常仅 log，无 NACK/重投）；当前默认键见 [附录 A.2.1](#a21-phase-1-生效缺省即可)，生产切换键见 [A.2.2](#a22-redis-生产切换预留)。
+> 本节描述 **Redis Stream 生产语义**（XACK、PEL、DLQ、看门狗等）。Phase 1 内存版仅覆盖异步消费 + 背压，**不含**上述 Redis 能力（handler 异常仅 log，无 NACK/重投）；当前默认键见 [附录 A.2.1](#a21-phase-1-生效缺省即可)，生产切换键见 [A.2.2](#a22-redis-生产键)。
+
+### 3.3 核心消费协议
 
 **实现选型** ✅：技术栈为 Spring Boot 2.7.18，采用 Spring Data Redis 内置的 **`StreamMessageListenerContainer`**（Consumer Group 模式）承载消费循环，无需手写 Lettuce 轮询。容器负责订阅、反序列化分发与基础错误重启；PEL 拾取与看门狗作为崩溃/连接假死的兜底补充（下述）：
 
@@ -153,9 +196,11 @@ public interface CollectionEventBus {
 | 事件重投上限 | 跨消费重投次数达 `engine.consumer.max_delivery_count`（默认 5）→ XACK 移出 PEL + 写 DLQ + 告警（毒消息防护） |
 | 渠道发送重试 | 单次消费内，渠道 dispatch 失败由 `StepExecutionOrchestrator` 按 `engine.step.max_retry_count`（默认 3）退避重试；**与事件重投计数无关** |
 
-**PEL 拾取机制**
+### 3.4 异常恢复与死信
 
-消费者 `XREADGROUP` 后、`XACK` 前崩溃或假死 → 消息滞留 PEL，读 `>` 无法触达，须主动拾取。启动时扫一次，PEL Scanner 定期扫（频率见 [§1.4](#14-daemon-恢复机制)）。
+#### PEL 拾取机制
+
+消费者 `XREADGROUP` 后、`XACK` 前崩溃或假死 → 消息滞留 PEL，读 `>` 无法触达，须主动拾取。启动时扫一次，PEL Scanner 定期扫（频率见 [§2.4](#24-daemon-与故障恢复)）。
 
 | 步骤 | 动作 | 判定 / 处置 |
 |---|---|---|
@@ -164,7 +209,9 @@ public interface CollectionEventBus {
 | 3. 毒消息 | `delivery_count > max_delivery_count` | XACK 移出 PEL → 写 DLQ → 告警，不再重投 |
 | 4. 正常重投 | 其余已认领消息 | 重新进入消费管线；引擎步骤幂等锁（`lock:plan:`）保证安全重试 |
 
-**看门狗机制**：`StreamMessageListenerContainer` 的轮询线程在连接假死（Lettuce 连接断开但无异常退出，容器 ErrorHandler 不触发）时可能静默停摆。线程规格见 [§1.4](#14-daemon-恢复机制)，核心逻辑：
+#### 看门狗机制
+
+`StreamMessageListenerContainer` 的轮询线程在连接假死（Lettuce 连接断开但无异常退出，容器 ErrorHandler 不触发）时可能静默停摆。线程规格见 [§2.4](#24-daemon-与故障恢复)，核心逻辑：
 
 | 组件 | 行为 |
 |---|---|
@@ -173,7 +220,7 @@ public interface CollectionEventBus {
 
 > 重启前必须先停止旧订阅，防止旧连接（网络卡顿非真死）与新连接并存导致双重消费。
 
-### 2.1 DLQ 重放（redrive）
+#### DLQ 重放（redrive）
 
 > 上文 ACK / PEL 机制定义消息**进入** DLQ 的条件（不可重试、重投递次数达上限）。本节定义消息**移出** DLQ 的重放路径，是 DLQ 三级恢复中"自动重放"一环的运行时唯一归属（架构 §1.6 附：基础设施实现索引登记此处）。
 
@@ -184,7 +231,7 @@ public interface CollectionEventBus {
 | 幂等保障 | 重放复用既有事件消费去重（`processed:{event_id}`，[§3](#3-运行时状态redis-kv)），保证重复投递安全 |
 | 人工兜底 | 不可恢复 / 重放仍失败的消息保留待人工处理，并告警（[运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md)，规划中） |
 
-### 2.2 重放前合规时段校验
+### 3.5 重放前合规时段校验
 
 > 重放可能发生在原触达时点之后较久，若直接重投会产生"业务时间毒丸"——在合规禁止时段（如夜间）触发触达。
 
@@ -193,11 +240,17 @@ public interface CollectionEventBus {
 
 ---
 
-## 3. 运行时状态（Redis KV）
+## 4. 运行时状态：Redis KV
 
-核心引擎涉及的 Redis 数据遵循统一的 key 设计和生命周期管理。
+### 4.1 目的与边界
 
-### Key 前缀约定
+Redis KV 负责幂等、步骤锁、频控和接入去重；Redis Stream 负责消息可靠传递，二者职责不可混用。
+
+### 4.2 当前状态与生产约束
+
+本地开发 / CI / L4 联调可使用内存幂等实现。生产环境必须使用 Redis SETNX + TTL 幂等与 Redis 原子频控，并满足与旧系统物理或前缀隔离、跨实例原子操作和明确淘汰边界的约束。
+
+### 4.3 Key 与生命周期规格
 
 | 前缀 | 用途 | 数据类型 | 示例 |
 |---|---|---|---|
@@ -205,11 +258,11 @@ public interface CollectionEventBus {
 | `processed:` | 事件消费去重标记 | String（标记） | `processed:{event_id}` |
 | `lock:plan:` | 分布式幂等锁（步骤级） | String（SETNX） | `lock:plan:{step_idempotency_key}` |
 | `idempotency:` | 渠道层二次去重 | String（SETNX） | `idempotency:channel:{idempotency_key}` |
-| `ingestion:` | 接入层 PubSub 幂等 / 日切 dedup（Phase 1 可内存实现） | String | 见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（[A.5](#a5-接入层-redis-键) 索引） |
+| `ingestion:` | 接入层 PubSub 幂等 / 日切 dedup（Phase 1 可内存实现） | String | 见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（[A.5](#a5-接入层-redis-key-索引) 索引） |
 
 > 接入层 key 须与旧催收 Redis **物理或前缀隔离**（新系统 `ingestion:*` / `ai:*`）。
 
-### TTL 策略
+#### TTL 策略
 
 | Key 类型 | TTL | 理由 |
 |---|---|---|
@@ -220,11 +273,13 @@ public interface CollectionEventBus {
 | 事件消费去重 | 24 小时 | At-least-once 消费去重 |
 | 看门狗心跳 | 无 TTL（持续覆写） | 守护线程主动检查，无需自动过期 |
 
-### 内存淘汰策略
+### 4.4 原子操作与内存保护
+
+#### 内存淘汰策略
 
 Redis 实例配置 ✅ `maxmemory-policy = volatile-lru`：仅淘汰设有 TTL 的 key，保护无 TTL 的 Stream 数据不被误驱逐。
 
-### 合规计数器实现约束
+#### 合规计数器实现约束
 
 `ExecutionGuard` 的硬超时为 20ms（[核心引擎规格 §6.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#61-接口总览)）。合规计数的读取 + 增加 + 设 TTL 必须在**单次 Redis 交互**内完成，使用 Lua 脚本或 Pipeline，目标延迟 < 5ms：
 
@@ -238,11 +293,19 @@ return current
 
 ---
 
-## 4. 定时调度（XXL-Job）
+## 5. 定时调度：XXL-Job
 
-核心引擎通过 XXL-Job 实现 Trigger-to-Event 模式（[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event)）。本节明确 Job Handler 定义及伪代码中 `register_job()` / `cancel_scheduled_jobs()` 的底层语义。
+核心引擎通过 XXL-Job 实现 Trigger-to-Event 模式（[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event)）。
 
-### Job Handler 定义
+### 5.1 目的与边界
+
+Cron 只扫描数据并发布事件，不执行业务 I/O；业务由引擎 Consumer 执行。
+
+### 5.2 当前状态与生产切换
+
+前两个 Handler 当前由 admin `TriggerScanner` 的 `@Scheduled`（`collection.scan.interval-ms`，默认 5s）驱动；生产须切换 XXL-Job 按 Cron 触发。`dailyRoll` 独立在 ingestion，生产注册 XXL-Job 前须完成运行环境与联调签字。触达精度 ±1min 可接受。
+
+### 5.3 Job 规格
 
 调度侧只扫表/扫旧库并发事件；业务在引擎 Consumer 执行。Phase 1 共 3 个 Handler（`ptpExpiredHandler` Phase 2 预留，不注册）。
 
@@ -252,11 +315,11 @@ return current
 | `callbackTimeoutHandler` | 同上 | 每分钟 | `timeout_time≤NOW`，`EXECUTING`，计划非终态 → `CALLBACK_TIMEOUT` | `onCallbackTimeout`（[§4.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout)） |
 | `dailyRoll` | `DpdStageRollHandler` · ingestion | 0:35 PHT | 并行期读取旧库 `overdue_days` → `STAGE_CHANGED` / `CASE_CEASED`；切量后再改 bill 重算 | `onStageChanged` / `onCaseCeased`（[接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)） |
 
-> **C 类上线前置**：前两个 Handler 当前由 admin `TriggerScanner` 的 `@Scheduled`（`collection.scan.interval-ms`，默认 5s）驱动；生产须切换 XXL-Job 按 Cron 触发。`dailyRoll` 独立在 ingestion，生产注册 XXL-Job 前须完成运行环境与联调签字。触达精度 ±1min 可接受。
+### 5.4 调度一致性与积压处理
 
 **扫描分页**：每批 `LIMIT N`（默认 1000，`engine.consumer.scan_limit`）；`count==LIMIT` 告警、等下轮 Cron，禁止单 Job 内递归扫完（[运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md)）。
 
-### 伪代码 → DB 调度（`register_job` / `cancel_scheduled_jobs`）
+#### 伪代码 → DB 调度（`register_job` / `cancel_scheduled_jobs`）
 
 引擎伪代码中的调度注册**不建独立 Job**，而是写 DB 字段，由上表 Cron 到期扫表拾取（[引擎 §4/§5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)）：
 
@@ -268,7 +331,7 @@ return current
 
 Cron 线程只做扫表→发事件→返回，**禁止业务 I/O**（[§3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event)）。
 
-### Cron 重复扫描与去重
+#### Cron 重复扫描与去重
 
 Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, stepId)`，且每次 `eventId` 新生成——**不靠** `processed:{event_id}` 去重，靠步骤幂等锁 `lock:plan:`（[引擎 §5 ①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)）在管线入口吸收；幂等锁在合规计数（§5 ③）之前，故重复 Cron 不会重复 INCR。
 
@@ -281,13 +344,15 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 ---
 
-## 5. 持久层（Repository）
+## 6. 持久层：Repository
 
-引擎与 admin Cron 经 `collection-common` 契约访问 MySQL。**方法全集** → 接口 Javadoc + [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)；**实现** → `collection-service`（MyBatis）。
+### 6.1 目的、边界与读者指引
 
-### 5.1 场景映射
+引擎与 admin Cron 经 `collection-common` 契约访问 MySQL。本节是 Repository 访问索引，不重复领域模型或接口 Javadoc；**方法全集** → 接口 Javadoc + [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)，**实现** → `collection-service`（MyBatis）。
 
-按**领域事件 / Cron 调度**（§4）聚合 Repository 读写；`Orchestrator` 由 `PLAN_STEP_DUE` 链式触发，不单列。
+### 6.2 事件与调度场景映射
+
+按**领域事件 / Cron 调度**（§5）聚合 Repository 读写；`Orchestrator` 由 `PLAN_STEP_DUE` 链式触发，不单列。
 
 | 触发 | Repository 访问 |
 |---|---|
@@ -297,11 +362,11 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
 | `REPAYMENT_RECEIVED` / `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase` / 写 `updatePlanStatus`→CANCELLED |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
-| Cron（§4） | 读 `findDueSteps`, `findTimeoutSteps` |
+| Cron（§5） | 读 `findDueSteps`, `findTimeoutSteps` |
 
-`CaseService` 不参与上表（建计划用 payload；守卫/兜底读库，见 §5.2）。`PTP_EXPIRED` Phase 2。
+`CaseService` 不参与上表（建计划用 payload；守卫/兜底读库，见 §6.3）。`PTP_EXPIRED` Phase 2。
 
-### 5.2 契约分工
+### 6.3 契约分工
 
 | 接口 | 调用方 | 读写 | 职责 |
 |---|---|---|---|
@@ -310,7 +375,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `DecisionLogRepository` | 引擎决策日志 | 只写 | `t_decision_log` |
 | `CaseService` | 守卫 / payload 兜底 | 只读 | 建计划→payload；守卫→旧库；兜底→`getContextSnapshot` |
 
-### 5.3 事务与行锁
+### 6.4 事务、行锁与并发约束
 
 | 约束 | 要求 | 典型 |
 |---|---|---|
@@ -323,11 +388,11 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 ---
 
-## 6. 配置管理与可观测性
+## 7. 配置管理与可观测性
 
-### 6.1 配置刷新机制
+### 7.1 配置职责与来源
 
-运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；GCP 凭证等走环境变量（[操作说明_Nacos本地启动.md](./操作说明_Nacos本地启动.md)）。**键名与默认值 SSOT** → [附录 A.2～A.4](#附录运行配置与环境)；Phase 2 可选 `t_system_property` DB 轮询。
+运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；GCP 凭证等走环境变量（[操作说明_Nacos本地启动.md](./操作说明_Nacos本地启动.md)）。**键名与默认值 SSOT** → [附录 A](#附录-a配置键与环境索引)；Phase 2 可选 `t_system_property` DB 轮询。
 
 | 前缀 | 配什么 | 举例（非完整清单） |
 |---|---|---|
@@ -335,13 +400,17 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `collection.*` | 接入开关、eventbus/idempotency 切换、Cron 间隔、迁移双写 | `collection.ingestion.enabled`、`collection.eventbus`、`collection.scan.interval-ms` |
 | `channel.*` | 渠道 API 密钥、endpoint、模板/号段（**同 Nacos YAML**，运维下发，不入 Git） | `channel.notification.app-key`、SendGrid API key → [渠道开发执行指南 §6](./channel/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) |
 
-完整键表与热更列 → [附录 A.1～A.4](#附录运行配置与环境)；**写代码绑配置**以 `EngineProperties` / `@ConfigurationProperties` 为准。
+完整键表与热更列 → [附录 A](#附录-a配置键与环境索引)；**写代码绑配置**以 `EngineProperties` / `@ConfigurationProperties` 为准。
 
-### 6.2 可观测性接入约束
+### 7.2 配置热更新与静态参数
 
-本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#122-应用入站)）或 DB 业务表（[§5](#5-持久层repository)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §1.6.8](./MOCASA催收系统升级_Phase1_架构设计文档.md#168-可观测性守卫)；告警/Dashboard → 《运维与协作》（待建）。
+配置热更分类、结构性参数的重启要求和窗口参数的生效语义以 [A.1](#a1-配置来源与热更规则) 为准。线程池、Redis 连接等结构性参数为静态参数，变更后须重启。
 
-#### 6.2.1 指标（Metrics）
+### 7.3 指标与日志
+
+本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#122-应用入站)）或 DB 业务表（[§6](#6-持久层repository)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §1.6.8](./MOCASA催收系统升级_Phase1_架构设计文档.md#168-可观测性守卫)；告警/Dashboard → 《运维与协作》（待建）。
+
+#### 指标（Metrics）
 
 经 Actuator `/actuator/prometheus` 暴露：
 
@@ -359,7 +428,9 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 > 引擎侧指标对应架构 §1.6.8 静默路径须可观测；总线类以生产实现为准，Phase 1 内存版可省略。
 
-#### 6.2.2 结构化日志（MDC）
+Consumer 线程池必须注册 Micrometer `ExecutorServiceMetrics`，确保 [运维与协作](./MOCASA催收系统升级_Phase1_运维与协作.md) §1.2.2 定义的 `collection.event.consumer.thread.utilization` 和 `collection.event.stream.lag` 指标有数据来源。
+
+#### 结构化日志（MDC）
 
 引擎关键路径日志必须通过 SLF4J MDC 携带以下字段（logback pattern 输出 `%X{caseId}` 等）：
 
@@ -379,11 +450,9 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 ---
 
-<a id="附录运行配置与环境"></a>
+## 附录 A：配置键与环境索引
 
-## 附录：运行配置与环境
-
-运维 / 联调检索 **键名、默认值、热更、签字** 的 SSOT。各键**行为语义**见对应模块正文；**未闭合项**见 [数据接入规格 附录 C](./MOCASA催收系统升级_Phase1_数据接入规格.md#附录-c联调与实现跟踪台账)。
+运维 / 联调检索**键名、默认值与热更属性**的 SSOT。各键行为语义见对应模块正文；上线准备与签字事项见[附录 B](#附录-b上线准备容量校准与联调签字)。
 
 | 分册 | 内容 |
 |---|---|
@@ -392,19 +461,16 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | **A.3** | 接入与 PubSub（`collection.ingestion.*`、GCP 环境变量） |
 | **A.4** | 迁移与触达（`collection.notification.owner`） |
 | **A.5** | 接入 dedup 键索引（SSOT → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)） |
-| **A.6** | 上线前联调签字索引（接入域） |
 
 > 渠道编排参数见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)。**凭证与连接串不入 Git 仓库**。
 
-<a id="a1-配置来源与热更"></a>
-
-### A.1 配置来源与热更
+### A.1 配置来源与热更规则
 
 | 来源 | 适用 | 说明 |
 |---|---|---|
 | **Nacos** | Phase 1 主路径 | `intelligent-collection-common.yml` / 环境 profile |
 | **环境变量** | GCP 凭证、本地联调 | 见 A.3「GCP 环境变量」 |
-| **`t_system_property`** | Phase 2 可选 | DB 轮询热更；见 [§6.1](#61-配置刷新机制) |
+| **`t_system_property`** | Phase 2 可选 | DB 轮询热更；见 [§7.1](#71-配置职责与来源) |
 
 **热更列含义**（A.2～A.4 各键「热更」列 SSOT）：
 
@@ -423,7 +489,7 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 ### A.2 引擎与事件总线
 
-**写代码 / 配 Nacos 时只看 [A.2.1](#a21-phase-1-生效缺省即可)**。Redis Stream、PEL、合规计数等生产切换项尚未完成 D1/D2；键名与行为语义见正文 [§1～§2](#1-运行模式消费线程与上线门槛)、[§3](#3-运行时状态redis-kv)、[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
+**写代码 / 配 Nacos 时只看 [A.2.1](#a21-phase-1-生效缺省即可)**。Redis Stream、PEL、合规计数等生产切换项尚未完成 D1/D2；键名与行为语义见正文 [§2～§4](#2-运行模式与事件消费模型)、[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
 
 <a id="a21-phase-1-生效缺省即可"></a>
 
@@ -445,15 +511,13 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 | `engine.spi.step_resolver.timeout_ms` | `50` | Y | StepResolver 硬超时 | 引擎 §6.1 |
 | `engine.spi.advancement_policy.timeout_ms` | `10` | Y | AdvancementPolicy 硬超时 | 引擎 §6.1 |
 | `engine.spi.exhaustion_policy.timeout_ms` | `50` | Y | ExhaustionPolicy 硬超时 | 引擎 §6.1 |
-| `engine.consumer.thread_pool_size` | `8` | N | Consumer 线程池大小 | [§1.3](#13-consumer-线程池与背压) |
-| `engine.consumer.queue_capacity` | `256` | N | Consumer 有界队列 | §1 |
-| `engine.consumer.scan_limit` | `1000` | Y | Cron 扫描单批上限；`count==limit` 触发积压告警 | [§4](#4-定时调度xxl-job) |
+| `engine.consumer.thread_pool_size` | `8` | N | Consumer 线程池大小 | [§2.3](#23-生产消费拓扑线程职责与背压) |
+| `engine.consumer.queue_capacity` | `256` | N | Consumer 有界队列 | §2 |
+| `engine.consumer.scan_limit` | `1000` | Y | Cron 扫描单批上限；`count==limit` 触发积压告警 | [§5](#5-定时调度xxl-job) |
 | `engine.context.history_max_records` | `50` | Y | contactHistory 最大条数 | 引擎 §6.2 |
-| `collection.eventbus` | `memory` | N | `memory` = `InMemoryEventBus` / `redis` = `RedisStreamEventBusImpl` | [§2](#2-事件总线redis-stream)、HANDOFF D1 |
-| `collection.idempotency` | `memory` | N | `memory` = 内存幂等 / `redis` = SETNX+TTL | [§3](#3-运行时状态redis-kv)、HANDOFF D2 |
-| `collection.scan.interval-ms` | `5000` | Y | Phase 1 `@Scheduled` 扫描间隔（ms）；生产改 XXL-Job 每分钟 | [§4](#4-定时调度xxl-job) |
-
-<a id="a22-redis-生产切换预留"></a>
+| `collection.eventbus` | `memory` | N | `memory` = `InMemoryEventBus` / `redis` = `RedisStreamEventBusImpl` | [§3](#3-事件总线redis-stream)、HANDOFF D1 |
+| `collection.idempotency` | `memory` | N | `memory` = 内存幂等 / `redis` = SETNX+TTL | [§4](#4-运行时状态redis-kv)、HANDOFF D2 |
+| `collection.scan.interval-ms` | `5000` | Y | Phase 1 `@Scheduled` 扫描间隔（ms）；生产改 XXL-Job 每分钟 | [§5](#5-定时调度xxl-job) |
 
 #### A.2.2 Redis 生产键（Phase 1 生产依赖）
 
@@ -461,17 +525,17 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 
 | 参数 Key | 默认值 | 热更 | 规格 |
 |---|---|---|---|
-| `engine.consumer.poll_timeout_ms` | `2000` | Y | [§2](#2-事件总线redis-stream) |
-| `engine.consumer.batch_size` | `10` | Y | §2 |
-| `engine.consumer.pel_scan_interval_minutes` | `5` | Y | [§1.4](#14-daemon-恢复机制) |
-| `engine.consumer.pel_idle_minutes` | `10` | Y-注意 | §2 |
-| `engine.consumer.pel_batch_size` | `100` | Y | §1 |
-| `engine.consumer.max_delivery_count` | `5` | Y | §2 |
-| `engine.watchdog.heartbeat_interval_seconds` | `10` | N | §2 |
-| `engine.watchdog.timeout_seconds` | `60` | Y | §2 |
-| `engine.redis.key_prefix` | `collection:` | N | [§3](#3-运行时状态redis-kv) |
-| `engine.consumer.group_name` | `collection-engine` | N | §2 |
-| `engine.consumer.stream_key` | `collection:event_stream` | N | §2 |
+| `engine.consumer.poll_timeout_ms` | `2000` | Y | [§3](#3-事件总线redis-stream) |
+| `engine.consumer.batch_size` | `10` | Y | §3 |
+| `engine.consumer.pel_scan_interval_minutes` | `5` | Y | [§2.4](#24-daemon-与故障恢复) |
+| `engine.consumer.pel_idle_minutes` | `10` | Y-注意 | §3 |
+| `engine.consumer.pel_batch_size` | `100` | Y | §2 |
+| `engine.consumer.max_delivery_count` | `5` | Y | §3 |
+| `engine.watchdog.heartbeat_interval_seconds` | `10` | N | §3 |
+| `engine.watchdog.timeout_seconds` | `60` | Y | §3 |
+| `engine.redis.key_prefix` | `collection:` | N | [§4](#4-运行时状态redis-kv) |
+| `engine.consumer.group_name` | `collection-engine` | N | §3 |
+| `engine.consumer.stream_key` | `collection:event_stream` | N | §3 |
 | `engine.step.executing_reaper_minutes` | `30` | Y | [引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复) |
 | `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | [领域 §4.3](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#43-contacthistory触达历史摘要) |
 | `engine.compliance.weekly_limit` | 未启用（Phase 2 预留） | Y | Phase 1 仅按自然日频控 |
@@ -511,19 +575,40 @@ Cron **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, 
 |---|---|---|---|---|
 | `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属 | [接入 §6.0～§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
 
-<a id="a5-接入层-redis-键"></a>
-
-### A.5 接入层 Redis 键
+### A.5 接入层 Redis Key 索引
 
 Phase 1：`IngestionDedupStore` **内存实现**；**L4b 不必配 Redis**，亦不必在 Nacos 写本节键。
 
 切 Redis 后：前缀 `ingestion:`，与引擎 `processed:` / `lock:plan:` **禁止混用**；须与旧催收 Redis **物理或前缀隔离**（`ingestion:*` / `ai:*`）。
 
-**键名、TTL、命中处置 SSOT** → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（本节仅索引，不重复 TTL 表）。前缀约定见 [§3 Key 前缀](#key-前缀约定)。
+**键名、TTL、命中处置 SSOT** → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（本节仅索引，不重复 TTL 表）。前缀约定见 [§4.3](#43-key-与生命周期规格)。
 
-<a id="a6-上线前联调签字接入"></a>
+---
 
-### A.6 上线前联调签字（接入）
+## 附录 B：上线准备、容量校准与联调签字
+
+### B.1 上线前容量校准清单
+
+下表是研发、业务和运维讨论后的回填位置；在数据确认前，不以 L4 功能测试结果替代容量结论。完成回填后据此调整 Nacos 参数、告警阈值和上线验收结论。
+
+| 校准项 | 待确认信息 | 用于确定 | 讨论结论 / 来源 / 观测区间 |
+|---|---|---|---|
+| 事件量 | 平均 QPS / 峰值 QPS / 峰值持续时间 / 日总量 | Consumer 线程数、队列容量、Stream 积压阈值 | 待研发讨论后回填 |
+| 时效 | 普通触达从事件入队到开始处理的目标时长；故障消息最大恢复时长 | 队列容量、PEL idle、PEL 扫描周期、Watchdog 超时 | 待研发讨论后回填 |
+| 渠道 | SMS、Push、Email、AI Call 的 QPS/并发上限及超时 | Consumer 并发、每渠道限流、步骤超时与重试参数 | 待研发讨论后回填 |
+| 资源 | 每实例 CPU 核数 / 内存 / JVM 堆 / 首期实例数 | 线程池上限、队列内存预算、实例扩容阈值 | 待研发讨论后回填 |
+| Redis | 单机、主从或 Cluster；是否与旧系统共用；maxmemory 与持久化策略 | Consumer Group 部署、Key 隔离、容量与故障恢复设计 | 待研发讨论后回填 |
+| 观测证据 | 旧系统日志/监控入口、PubSub 速率与 lag、Redis 指标、渠道发送日志 | Pilot 压测基线、告警阈值与上线验收 | 待研发讨论后回填 |
+
+### B.2 生产切换门槛
+
+- `RedisStreamEventBusImpl` 接入 Consumer Group、PEL 拾取、DLQ 与看门狗。
+- Redis SETNX + TTL 幂等接入，并覆盖事件消费和步骤执行。
+- Redis 原子频控接入，覆盖单渠道日上限与跨渠道日总上限。
+- Redis 连接、事件积压、PEL、DLQ、Consumer 线程池指标已接入监控。
+- [B.1](#b1-上线前容量校准清单)的容量数据完成回填并经相关方确认。
+
+### B.3 接入域联调签字索引
 
 明细与验收条件 → [数据接入 附录 C](./MOCASA催收系统升级_Phase1_数据接入规格.md#附录-c联调与实现跟踪台账)。签字后在 C 改 ✅ 并同步下表。
 
