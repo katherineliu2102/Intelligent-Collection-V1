@@ -49,6 +49,7 @@ public class StepExecutionOrchestrator {
     @Resource private ContactPlanRepository planRepository;
     @Resource private TimelineRepository timelineRepository;
     @Resource private StepOutcomeRecorder stepOutcomeRecorder;
+    @Resource private DeliveryAuditMetadata deliveryAuditMetadata;
     @Resource private DecisionLogRepository decisionLogRepository;
     @Resource private CollectionEventBus eventBus;
     @Resource private SpiInvoker spiInvoker;
@@ -59,7 +60,7 @@ public class StepExecutionOrchestrator {
 
         // ── ① 幂等锁 ──
         if (!idempotencyService.acquire(
-                idempotencyKey, props.getStep().getIdempotencyTtlMinutes())) {
+                idempotencyKey, props.getStep().effectiveIdempotencyTtlMinutes())) {
             log.info("[execStep] duplicate event, key={} skipped", idempotencyKey);
             return;
         }
@@ -159,7 +160,8 @@ public class StepExecutionOrchestrator {
                     step,
                     command.getChannelType(),
                     result.getContactResult(),
-                    result.getProviderMsgId());
+                    result.getProviderMsgId(),
+                    command);
             return; // 记录已发出触达，但不推进状态机
         }
 
@@ -186,6 +188,7 @@ public class StepExecutionOrchestrator {
 
         // ── ⑦ 渠道分流 ──
         if (command.getChannelType().isMessageChannel()) {
+            stepOutcomeRecorder.prepareAudit(command);
             // Phase 1：SMS/PUSH/EMAIL 均同步完成；SMS 忽略 observationMinutes（不进 WAITING）
             // 观察期仅保留给 Phase 2 消息渠道（如 VIBER/WHATSAPP）在 PlanFactory 显式配置时使用
             boolean useObservation =
@@ -284,7 +287,8 @@ public class StepExecutionOrchestrator {
             ContactPlanStep step,
             ChannelType channel,
             ContactResult result,
-            String providerMsgId) {
+            String providerMsgId,
+            StepCommand command) {
         ContactRecord r = new ContactRecord();
         r.setCaseId(plan.getCaseId());
         r.setUserId(plan.getUserId());
@@ -297,6 +301,9 @@ public class StepExecutionOrchestrator {
         r.setResult(result);
         r.setProviderMsgId(providerMsgId);
         r.setSource(DataSource.SYSTEM);
+        if (deliveryAuditMetadata != null) {
+            deliveryAuditMetadata.apply(r, command);
+        }
         timelineRepository.writeTimeline(r);
     }
 

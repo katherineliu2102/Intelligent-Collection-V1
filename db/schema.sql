@@ -37,18 +37,40 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     UNIQUE KEY uk_active_stage_key (active_stage_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划主表';
 
--- 既有环境迁移：同阶段 REBUILD 先把旧行置 renewal_pending=1，再插入新行、最后完成旧行。
-ALTER TABLE t_contact_plan
-    ADD COLUMN IF NOT EXISTS active_stage_key VARCHAR(128)
-    GENERATED ALWAYS AS (
-        CASE
-            WHEN renewal_pending = 0 AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')
-            THEN CONCAT(case_id, ':', stage)
-            ELSE NULL
-        END
-    ) STORED;
-ALTER TABLE t_contact_plan
-    ADD UNIQUE INDEX IF NOT EXISTS uk_active_stage_key (active_stage_key);
+-- 既有环境迁移：通过 information_schema 判定，兼容不支持 ALTER ... IF NOT EXISTS 的 MySQL。
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_active_stage_key;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_plan_active_stage_key()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 't_contact_plan'
+          AND COLUMN_NAME = 'active_stage_key'
+    ) THEN
+        ALTER TABLE t_contact_plan
+            ADD COLUMN active_stage_key VARCHAR(128)
+            GENERATED ALWAYS AS (
+                CASE
+                    WHEN renewal_pending = 0 AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')
+                    THEN CONCAT(case_id, ':', stage)
+                    ELSE NULL
+                END
+            ) STORED;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 't_contact_plan'
+          AND INDEX_NAME = 'uk_active_stage_key'
+    ) THEN
+        ALTER TABLE t_contact_plan
+            ADD UNIQUE INDEX uk_active_stage_key (active_stage_key);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_plan_active_stage_key();
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_active_stage_key;
 
 -- 7.1.2 触达计划步骤表
 CREATE TABLE IF NOT EXISTS t_contact_plan_step (
@@ -75,8 +97,23 @@ CREATE TABLE IF NOT EXISTS t_contact_plan_step (
     INDEX idx_timeout (timeout_time, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划步骤表';
 
-ALTER TABLE t_contact_plan_step
-    ADD UNIQUE INDEX IF NOT EXISTS uk_plan_step_order (plan_id, step_order);
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_step_index;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_plan_step_index()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 't_contact_plan_step'
+          AND INDEX_NAME = 'uk_plan_step_order'
+    ) THEN
+        ALTER TABLE t_contact_plan_step
+            ADD UNIQUE INDEX uk_plan_step_order (plan_id, step_order);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_plan_step_index();
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_step_index;
 
 -- 7.1.3 决策日志
 CREATE TABLE IF NOT EXISTS t_decision_log (
@@ -109,7 +146,13 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     channel             VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
     direction           VARCHAR(8)      NOT NULL DEFAULT 'OUT' COMMENT 'OUT/IN',
     template_id         BIGINT          NULL,
+    config_version      BIGINT          NULL COMMENT '发送时配置版本',
+    rendered_ref        VARCHAR(256)    NULL COMMENT '渲染内容无 PII 引用',
     content_summary     VARCHAR(500)    NULL,
+    script_slot         VARCHAR(64)     NULL COMMENT '解析后话术槽位（无 PII）',
+    template_version    VARCHAR(128)    NULL COMMENT '模板来源及发布版本',
+    content_hmac        CHAR(64)        NULL COMMENT '渲染正文 HMAC-SHA-256',
+    content_key_id      VARCHAR(64)     NULL COMMENT 'content_hmac 密钥版本标识',
     result              VARCHAR(32)     NULL,
     provider_msg_id     VARCHAR(128)    NULL,
     provider_callback   JSON            NULL,
@@ -122,11 +165,71 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     UNIQUE KEY uk_attempt_key (attempt_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
 
--- 既有环境迁移：MySQL 8.0.33 支持 IF NOT EXISTS，重复执行安全。
-ALTER TABLE t_contact_timeline
-    ADD COLUMN IF NOT EXISTS attempt_key VARCHAR(128) NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)';
-ALTER TABLE t_contact_timeline
-    ADD UNIQUE INDEX IF NOT EXISTS uk_attempt_key (attempt_key);
+-- 既有环境迁移：使用 information_schema 判定，避免依赖 ALTER ... IF NOT EXISTS。
+DROP PROCEDURE IF EXISTS sp_schema_add_timeline_columns;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_timeline_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'attempt_key'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN attempt_key VARCHAR(128) NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'config_version'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN config_version BIGINT NULL COMMENT '发送时配置版本';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'rendered_ref'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN rendered_ref VARCHAR(256) NULL COMMENT '渲染内容无 PII 引用';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'script_slot'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN script_slot VARCHAR(64) NULL COMMENT '解析后话术槽位（无 PII）';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'template_version'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN template_version VARCHAR(128) NULL COMMENT '模板来源及发布版本';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'content_hmac'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN content_hmac CHAR(64) NULL COMMENT '渲染正文 HMAC-SHA-256';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'content_key_id'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD COLUMN content_key_id VARCHAR(64) NULL COMMENT 'content_hmac 密钥版本标识';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND INDEX_NAME = 'uk_attempt_key'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD UNIQUE INDEX uk_attempt_key (attempt_key);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_timeline_columns();
+DROP PROCEDURE IF EXISTS sp_schema_add_timeline_columns;
 
 -- 7.2.2 供应商回调审计：原始回调证据，与 timeline 最终触达事实分层。
 CREATE TABLE IF NOT EXISTS t_channel_callback_audit (

@@ -29,4 +29,6 @@ scripts/test/l4b-env.local.sh
 deploy/secrets/*
 !deploy/secrets/.gitkeep
 deploy/nacos/nacos-publish.local.yml
+# 发布脚本拉取的现网快照，含 JDBC 口令与渠道密钥
+deploy/nacos/backup-*.yml
 node_modules/

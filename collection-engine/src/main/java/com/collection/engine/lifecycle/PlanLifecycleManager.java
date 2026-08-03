@@ -161,6 +161,15 @@ public class PlanLifecycleManager {
         if (step == null) {
             return StepDuePreparation.noop();
         }
+        // 至少一次投递下重复的 PLAN_STEP_DUE 不得把已终结步骤改回 EXECUTING：
+        // markStepExecuting 无状态前置且不清 completed_at，回退后该步骤再也不会收敛。
+        if (step.getStatus() != null && step.getStatus().isTerminal()) {
+            log.info(
+                    "[stepDue] duplicate due for terminal step {} ({}), skip",
+                    stepId,
+                    step.getStatus());
+            return StepDuePreparation.noop();
+        }
 
         if (plan.getStatus() == PlanStatus.PENDING
                 || plan.getStatus() == PlanStatus.STEP_SCHEDULED

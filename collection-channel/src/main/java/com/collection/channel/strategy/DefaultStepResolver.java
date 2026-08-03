@@ -47,6 +47,8 @@ public class DefaultStepResolver implements StepResolver {
 
     @Resource private ScriptLibrary scriptLibrary;
 
+    @Resource private ConfigTemplateProvider templateProvider;
+
     @Override
     public StepCommand resolve(ExecutionContext context) {
         ContactPlanStep step = context.getCurrentStep();
@@ -81,6 +83,12 @@ public class DefaultStepResolver implements StepResolver {
         }
         metadata.put(StepCommand.META_LANGUAGE, resolveLanguage(snapshot));
         metadata.put(StepCommand.META_SCRIPT_SLOT, scriptSlot);
+        long configVersion =
+                templateProvider != null ? templateProvider.getCurrentConfigVersion() : 0L;
+        metadata.put(StepCommand.META_CONFIG_VERSION, configVersion);
+        metadata.put(
+                StepCommand.META_TEMPLATE_VERSION,
+                resolveTemplateVersion(step.getChannelType(), scriptSlot));
 
         Long caseId = context.getPlan().getCaseId();
         if (caseId != null) {
@@ -113,6 +121,41 @@ public class DefaultStepResolver implements StepResolver {
                                 + step.getRetryCount())
                 .metadata(metadata)
                 .build();
+    }
+
+    /**
+     * 按<b>该槽位实际的内容来源</b>标记 {@code template_version}，而非「DB 配置源是否可用」。
+     *
+     * <p>{@link ScriptLibrary} 是逐槽位 DB→YAML 回落的：库里没有 ACTIVE 行的槽位仍会发出 YAML 文案。 若按全局 epoch
+     * 一律标 {@code db:N}，事后审计会指向错误的配置表，无法复原当时发的内容。
+     *
+     * <ul>
+     *   <li>SMS / PUSH 命中 DB → {@code db:<该行 config_version>}，未命中 → {@code nacos:<releaseVersion>}
+     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与
+     *       {@code SendGridEmailAdapter.resolveTemplateId} 同一份映射）
+     * </ul>
+     */
+    private String resolveTemplateVersion(ChannelType channel, String scriptSlot) {
+        if (channel == ChannelType.EMAIL) {
+            String templateId = channelProperties.getSendgrid().getTemplates().get(scriptSlot);
+            if (StringUtils.isNotBlank(templateId)) {
+                return "sendgrid:" + templateId;
+            }
+            return nacosScriptVersion();
+        }
+        Long dbVersion = null;
+        if (templateProvider != null) {
+            if (channel == ChannelType.SMS) {
+                dbVersion = templateProvider.getSmsVersion(scriptSlot);
+            } else if (channel == ChannelType.PUSH) {
+                dbVersion = templateProvider.getPushVersion(scriptSlot);
+            }
+        }
+        return dbVersion != null ? "db:" + dbVersion : nacosScriptVersion();
+    }
+
+    private String nacosScriptVersion() {
+        return "nacos:" + channelProperties.getScripts().getReleaseVersion();
     }
 
     private static String extractEmail(ContextSnapshot snapshot) {

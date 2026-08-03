@@ -96,6 +96,7 @@ channel:
       EMAIL: 1
       AI_CALL: 1
   scripts:
+    release-version: "2026.07.27.1"
     push-default-deep-link: https://app.mocasa.com/repay
     sms-default-repayment-link: https://mocasa.com/s/4cTu
     # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。
@@ -149,3 +150,9 @@ logging:
     com.collection: DEBUG
     org.mybatis: INFO
     org.springframework.web: INFO
+
+# 由部署 Secret 注入；空值时仍记录 slot/version，但不会生成 content_hmac。
+engine:
+  delivery-audit:
+    hmac-key: ${CONTENT_AUDIT_HMAC_KEY:}
+    content-key-id: ${CONTENT_AUDIT_KEY_ID:}

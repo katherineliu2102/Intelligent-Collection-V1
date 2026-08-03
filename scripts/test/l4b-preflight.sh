@@ -27,6 +27,7 @@ hdr()   { echo; printf '=== %s ===\n' "$1"; }
 pass() { PASS=$((PASS + 1)); grn "PASS: $1"; }
 warn() { WARN=$((WARN + 1)); ylw "WARN: $1"; }
 fail() { FAIL=$((FAIL + 1)); red "FAIL: $1"; [[ "$STRICT" -eq 1 ]] && exit 1 || true; }
+required() { [[ "$STRICT" -eq 1 ]] && fail "$1" || warn "$1"; }
 
 load_env() {
   if [[ -f "$ROOT/.env" ]]; then
@@ -59,6 +60,11 @@ check_service() {
 
 check_gcp_env() {
   hdr "PubSub 环境变量"
+  # Intel gcloud installations on Apple Silicon can retain an unusable x86_64 virtualenv.
+  # Prefer the native system Python for this read-only preflight invocation.
+  if [[ "$(uname -m)" == "arm64" && -z "${CLOUDSDK_PYTHON:-}" && -x /usr/bin/python3 ]]; then
+    export CLOUDSDK_PYTHON=/usr/bin/python3
+  fi
   [[ -n "${GCP_PUBSUB_PROJECT:-}" ]] && pass "GCP_PUBSUB_PROJECT 已设" || fail "GCP_PUBSUB_PROJECT 未设"
   if [[ -n "${GCP_PUBSUB_SUBSCRIPTION:-}" ]]; then
     if [[ "$GCP_PUBSUB_SUBSCRIPTION" == "$EXPECTED_SUB" ]]; then
@@ -79,11 +85,10 @@ check_gcp_env() {
     fail "GOOGLE_APPLICATION_CREDENTIALS 未设"
   fi
   if command -v gcloud >/dev/null 2>&1 && [[ -n "${GCP_PUBSUB_PROJECT:-}" ]]; then
-    sub="${GCP_PUBSUB_SUBSCRIPTION:-$EXPECTED_SUB}"
-    if gcloud pubsub subscriptions describe "$sub" --project="$GCP_PUBSUB_PROJECT" >/dev/null 2>&1; then
-      pass "GCP 订阅存在: $sub"
+    if gcloud pubsub subscriptions describe "${GCP_PUBSUB_SUBSCRIPTION:-$EXPECTED_SUB}" --project="$GCP_PUBSUB_PROJECT" >/dev/null 2>&1; then
+      pass "GCP 测试订阅存在"
     else
-      warn "gcloud 无法 describe 订阅 $sub（权限或尚未创建）"
+      required "gcloud 无法 describe 配置的测试订阅（权限、认证或资源不存在）"
     fi
   else
     warn "跳过 gcloud 订阅 describe（无 gcloud 或未设 project）"
@@ -112,6 +117,15 @@ fetch_nacos_yaml() {
 check_nacos_ingestion() {
   hdr "接入 / 渠道沙箱（Nacos）"
   fetch_nacos_yaml || return 0
+  # 重复顶层键会让 SnakeYAML 抛 DuplicateKeyException，Spring 报成「config does not exist」，
+  # 应用直接启动失败；在这里拦截比在启动日志里翻栈快得多。
+  local dup
+  dup="$(echo "$NACOS_YAML" | grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:' | sort | uniq -d | tr '\n' ' ')"
+  if [[ -n "${dup// /}" ]]; then
+    fail "Nacos YAML 存在重复顶层键: ${dup}— SnakeYAML 会拒绝解析，应用无法启动"
+  else
+    pass "Nacos YAML 顶层键无重复"
+  fi
   if echo "$NACOS_YAML" | grep -qE 'collection:[[:space:]]*$|ingestion:'; then
     if echo "$NACOS_YAML" | grep -qE 'enabled:[[:space:]]*true'; then
       pass "collection.ingestion.enabled=true（或 YAML 含 enabled: true）"
@@ -128,12 +142,12 @@ check_nacos_ingestion() {
   if echo "$NACOS_YAML" | grep -q 'push-test-token'; then
     pass "channel.notification.push-test-token 已配置"
   else
-    warn "未在 Nacos 发现 push-test-token — Push 可能触达真实用户"
+    required "未在 Nacos 发现 push-test-token — Push 可能触达真实用户"
   fi
   if echo "$NACOS_YAML" | grep -qE 'sms-test-mode:[[:space:]]*true'; then
     pass "channel.notification.sms-test-mode=true"
   else
-    warn "未确认 sms-test-mode=true"
+    required "未确认 sms-test-mode=true"
   fi
   if echo "$NACOS_YAML" | grep -q 'loan-id-whitelist'; then
     pass "collection.ingestion.loan-id-whitelist 已配置（可选 blast radius）"
@@ -145,29 +159,48 @@ check_nacos_ingestion() {
 check_db() {
   hdr "新库 DDL"
   if [[ -z "${DB_HOST:-}" || -z "${DB_USER:-}" ]]; then
-    warn "DB_HOST / DB_USER 未设 — 跳过 MySQL 检查"
+    required "DB_HOST / DB_USER 未设 — 无法确认 L4b 新库 DDL"
     return 0
   fi
   export DB_PASS="${DB_PASS:-${DB_PASSWORD:-}}"
   if [[ -z "${DB_NAME:-}" ]]; then
-    warn "DB_NAME 未设 — 跳过 MySQL 检查"
+    required "DB_NAME 未设 — 无法确认 L4b 新库 DDL"
     return 0
   fi
-  if python3 "$ROOT/scripts/dev/db-ping.py" 2>/dev/null | grep -q CONNECT_OK; then
+  # 优先用 mysql 客户端探活：Apple Silicon 上系统 python3 常缺 PyMySQL，db-ping.py 会假阴性。
+  if command -v mysql >/dev/null 2>&1; then
+    if MYSQL_PWD="$DB_PASS" mysql -N -B -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" "$DB_NAME" \
+      -e "SELECT 1" 2>/dev/null | grep -q 1; then
+      pass "MySQL 连通 ($DB_NAME)"
+    else
+      fail "MySQL 连接失败 — 检查 DB_HOST/DB_USER/DB_PASS 与网络白名单"
+      return 0
+    fi
+  elif python3 "$ROOT/scripts/dev/db-ping.py" 2>/dev/null | grep -q CONNECT_OK; then
     pass "MySQL 连通 ($DB_NAME)"
   else
-    fail "MySQL 连接失败 — 运行 scripts/dev/db-ping.py 排查"
+    fail "MySQL 连接失败 — 安装 arm64 mysql 客户端或运行 scripts/dev/db-ping.py 排查"
     return 0
   fi
   local tables=(t_contact_plan t_contact_plan_step t_contact_timeline t_user_device_token t_decision_log)
   for t in "${tables[@]}"; do
-    if mysql -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+    if MYSQL_PWD="$DB_PASS" mysql -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" "$DB_NAME" \
       -N -e "SHOW TABLES LIKE '$t'" 2>/dev/null | grep -q "$t"; then
       pass "表存在: $t"
     else
       fail "表缺失: $t — 请先执行 db/schema.sql"
     fi
   done
+  # L4b-3/L4b-4 通过改写 IC_TEST_% 行的 overdue_days 造升档/停催条件，无写权限则整段无法裁决。
+  # 事务内改后立即回滚，不留痕。
+  local affected
+  affected="$(MYSQL_PWD="$DB_PASS" mysql -N -B -h"$DB_HOST" -P"${DB_PORT:-3306}" -u"$DB_USER" "$DB_NAME" -e \
+    "START TRANSACTION; UPDATE t_collection SET overdue_days=overdue_days+1 WHERE id LIKE 'IC_TEST_%'; SELECT ROW_COUNT(); ROLLBACK;" 2>/dev/null | tail -1)"
+  if [[ -n "$affected" && "$affected" -ge 1 ]] 2>/dev/null; then
+    pass "t_collection 测试行可写（回滚验证，影响 $affected 行）"
+  else
+    required "t_collection 无 IC_TEST_% 写权限或未 seed — L4b-3/L4b-4 将无法造条件"
+  fi
 }
 
 check_manual_reminders() {

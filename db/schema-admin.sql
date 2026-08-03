@@ -234,6 +234,40 @@ DELIMITER ;
 CALL sp_admin_add_snapshot_columns();
 DROP PROCEDURE IF EXISTS sp_admin_add_snapshot_columns;
 
+-- 触达内容审计：仅保存可定位模板的元数据与 HMAC，不保存渲染正文或变量值。
+DROP PROCEDURE IF EXISTS sp_admin_add_delivery_audit_columns;
+DELIMITER //
+CREATE PROCEDURE sp_admin_add_delivery_audit_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'script_slot'
+    ) THEN
+        ALTER TABLE t_contact_timeline ADD COLUMN script_slot VARCHAR(64) NULL COMMENT '解析后话术槽位（无 PII）';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'template_version'
+    ) THEN
+        ALTER TABLE t_contact_timeline ADD COLUMN template_version VARCHAR(128) NULL COMMENT '模板来源及发布版本';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'content_hmac'
+    ) THEN
+        ALTER TABLE t_contact_timeline ADD COLUMN content_hmac CHAR(64) NULL COMMENT '渲染正文 HMAC-SHA-256';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'content_key_id'
+    ) THEN
+        ALTER TABLE t_contact_timeline ADD COLUMN content_key_id VARCHAR(64) NULL COMMENT 'content_hmac 密钥版本标识';
+    END IF;
+END //
+DELIMITER ;
+CALL sp_admin_add_delivery_audit_columns();
+DROP PROCEDURE IF EXISTS sp_admin_add_delivery_audit_columns;
+
 DROP PROCEDURE IF EXISTS sp_admin_add_change_log_columns;
 
 DELIMITER //

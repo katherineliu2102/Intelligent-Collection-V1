@@ -21,6 +21,7 @@ import com.collection.common.service.CaseService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.job.DpdStageRollHandler;
+import com.collection.ingestion.pubsub.IngestionFaultInjector;
 import com.collection.service.impl.MockCaseService;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -45,7 +46,8 @@ import org.springframework.web.bind.annotation.*;
 public class MockTriggerController {
 
     private static final long[] L4A_CASE_IDS = {
-        94999L, 94201L, 94101L, 94102L, 92001L, 93101L, 93201L, 95001L, 94801L, 94805L, 94804L
+        94999L, 94201L, 94101L, 94102L, 92001L, 92002L, 93101L, 93201L, 95001L, 94801L, 94805L,
+        94804L
     };
 
     @Resource private IngestionService ingestionService;
@@ -64,12 +66,43 @@ public class MockTriggerController {
 
     @Resource private JdbcTemplate jdbcTemplate;
 
+    @Resource private IngestionFaultInjector ingestionFaultInjector;
+
     /**
-     * 直连 SendGrid 发一封 Email（不经 plan/DB）。 用于 DB 不可用时的渠道冒烟；caseId 见
-     * docs/email-templates/email-e2e-test-cases.md。
+     * L4b-7：预约后续 {@code count} 条白名单 case_push 各失败一次 → 不 ack → PubSub 重投。
+     *
+     * <p>需 {@code collection.ingestion.fault-injection-enabled=true} 才生效；未启用时返回 armed=0。
+     */
+    @PostMapping("/ingestion-fault/arm")
+    public Map<String, Object> armIngestionFault(@RequestParam(defaultValue = "1") int count) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("armed", ingestionFaultInjector.arm(count));
+        return result;
+    }
+
+    /** L4b-7：撤销未触发的注入，返回被撤销的剩余次数。 */
+    @PostMapping("/ingestion-fault/disarm")
+    public Map<String, Object> disarmIngestionFault() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("cancelled", ingestionFaultInjector.disarm());
+        return result;
+    }
+
+    @GetMapping("/ingestion-fault")
+    public Map<String, Object> ingestionFaultStatus() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("remaining", ingestionFaultInjector.remaining());
+        return result;
+    }
+
+    /**
+     * 直连 SendGrid 发一封 Email，或只预览解析后的 scriptSlot（不经 plan/DB）。
+     *
+     * <p>{@code dryRun=true} 仅在 local/test profile 返回解析元数据，不调用渠道，用于 L4a 模板断言。
      */
     @PostMapping("/send-email")
-    public Map<String, Object> sendEmail(@RequestParam Long caseId) {
+    public Map<String, Object> sendEmail(
+            @RequestParam Long caseId, @RequestParam(defaultValue = "false") boolean dryRun) {
         ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
         if (snapshot.getUserProfile() == null
                 || snapshot.getUserProfile().getBasic() == null
@@ -100,16 +133,21 @@ public class MockTriggerController {
                         .build();
 
         StepCommand command = stepResolver.resolve(execCtx);
-        StepResult result = sendGridEmailAdapter.send(command);
+        StepResult result = dryRun ? null : sendGridEmailAdapter.send(command);
 
         Map<String, Object> m = new HashMap<>();
-        m.put("ok", result.isSuccess());
+        m.put("ok", dryRun || result.isSuccess());
         m.put("caseId", caseId);
+        m.put("dryRun", dryRun);
+        m.put("stage", plan.getStage());
         m.put("email", snapshot.getUserProfile().getBasic().getEmail());
+        m.put("templateId", step.getTemplateId());
         m.put("scriptSlot", command.getMetadata().get(StepCommand.META_SCRIPT_SLOT));
-        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
-        m.put("providerMsgId", result.getProviderMsgId());
-        if (!result.isSuccess()) {
+        m.put(
+                "result",
+                dryRun ? "PREVIEW" : result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("providerMsgId", result == null ? null : result.getProviderMsgId());
+        if (result != null && !result.isSuccess()) {
             m.put("message", result.getErrorCode());
         }
         return m;

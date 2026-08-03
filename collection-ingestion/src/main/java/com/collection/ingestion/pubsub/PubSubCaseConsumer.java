@@ -49,6 +49,7 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
     @Resource private IngestionService ingestionService;
     @Resource private CasePayloadMapper mapper;
     @Resource private IngestionDedupStore dedup;
+    @Resource private IngestionFaultInjector faultInjector;
 
     private volatile Subscriber subscriber;
     private volatile boolean running;
@@ -170,6 +171,8 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
                     replayed);
             return;
         }
+        // L4b-7：在落库与幂等标记之前注入瞬态失败，使重投能走完整路径（默认关闭，仅白名单案可命中）
+        faultInjector.failIfArmed(ci.caseId);
         try {
             ingestionService.ingestCase(ci.caseId, ci.userId, ci.stage, ci.snapshotFields);
         } catch (IllegalArgumentException e) {

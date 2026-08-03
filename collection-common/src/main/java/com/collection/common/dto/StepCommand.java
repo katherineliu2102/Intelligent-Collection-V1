@@ -23,6 +23,8 @@ public class StepCommand {
     public static final String META_CALLBACK_URL = "callbackUrl";
     public static final String META_TIMEOUT_MINUTES = "timeoutMinutes";
     public static final String META_SCRIPT_SLOT = "scriptSlot";
+    public static final String META_TEMPLATE_VERSION = "templateVersion";
+    public static final String META_CONFIG_VERSION = "configVersion";
     public static final String META_SMS_BODY = "sms_body";
     public static final String META_FALLBACK_SMS_BODY = "fallback_sms_body";
     public static final String META_TITLE = "title";

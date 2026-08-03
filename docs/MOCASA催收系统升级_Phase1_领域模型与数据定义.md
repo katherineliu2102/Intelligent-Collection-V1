@@ -601,7 +601,13 @@ flowchart TB
 | channel          | ChannelType   | 是   | 渠道枚举                                                            |
 | direction        | Direction     | 是   | OUT=系统发出，IN=用户响应（如用户回复 Viber 消息）                                |
 | templateId       | Long          | 否   | 使用的话术模板 ID                                                      |
-| contentSummary   | String        | 否   | 内容摘要，≤500 字符。SMS/Email 取前 500 字符；电话类取"呼叫 {phone}，时长 {seconds}s" |
+| configVersion    | Long          | 否   | DB 模板的发布配置版本；YAML/Nacos 回退时为 0                                |
+| renderedRef      | String        | 否   | `channel:scriptSlot@templateVersion` 形式的无 PII 定位引用                    |
+| contentSummary   | String        | 否   | 可选脱敏结构化摘要，≤500 字符。Phase 1 不落 SMS/Email 正文或变量值；未经过命令解析的记录可为 null |
+| scriptSlot       | String        | 否   | 已解析的话术槽位；不含用户变量或正文                                            |
+| templateVersion  | String        | 否   | 模板来源与发布版本；DB 模板为 `db:<config_version>`，Nacos/YAML 为 `nacos:<releaseVersion>` |
+| contentHmac      | String        | 否   | 最终渲染内容的 HMAC-SHA-256，仅用于完整性核验，不可逆推正文                       |
+| contentKeyId     | String        | 否   | 生成 `contentHmac` 的非秘密密钥版本；支持密钥轮换后的历史验证                       |
 | result           | ContactResult | 否   | 触达结果枚举。初次写入时可能为 null（如 SMS 发出但未收到回执），后续回调更新                     |
 | providerMsgId    | String        | 否   | 供应商消息 ID，用于回调关联和去重                                              |
 | providerCallback | String        | 否   | 供应商回调原始 JSON（调试用）                                               |

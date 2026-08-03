@@ -19,7 +19,7 @@ CASE_OBS=94102
 CASE_REPAY=94101
 CASE_STAGE=94101
 CASE_CEASE=94101
-CASE_IDEM=92001
+CASE_IDEM=92002
 CASE_GMAIL=95001
 CASE_GUARD=94801
 CASE_GUARD_FREQ=94805
@@ -133,6 +133,86 @@ sys.exit(0 if any(row.get('channel') == channel for row in json.load(sys.stdin))
       return 0
     fi
     echo "   [${elapsed}s] case=${uid} 尚无 ${channel} timeline"
+    sleep 10; elapsed=$((elapsed + 10))
+  done
+  return 1
+}
+
+assert_email_preview_slot() {
+  local cid="$1" stage="$2" expected_slot="$3"
+  post "$MOCK/send-email?caseId=$cid&dryRun=true" | python3 -c "
+import json,sys
+stage,expected=sys.argv[1],sys.argv[2]
+actual=json.load(sys.stdin)
+ok=(actual.get('ok') is True
+    and actual.get('dryRun') is True
+    and actual.get('stage') == stage
+    and actual.get('scriptSlot') == expected)
+print('preview:', actual.get('stage'), actual.get('scriptSlot'))
+sys.exit(0 if ok else 1)
+" "$stage" "$expected_slot"
+}
+
+has_stage_channel() {
+  local cid="$1" stage="$2" channel="$3"
+  HOST="$HOST" CASE_ID="$cid" EXPECTED_STAGE="$stage" EXPECTED_CHANNEL="$channel" python3 <<'PY'
+import json, os, sys, urllib.request
+
+host = os.environ["HOST"]
+case_id = os.environ["CASE_ID"]
+expected_stage = os.environ["EXPECTED_STAGE"]
+expected_channel = os.environ["EXPECTED_CHANNEL"]
+plans = json.loads(
+    urllib.request.urlopen(f"{host}/plans/by-case/{case_id}/history?limit=10").read()
+)
+stage_plan_ids = {plan["id"] for plan in plans if plan.get("stage") == expected_stage}
+timeline = json.loads(
+    urllib.request.urlopen(f"{host}/plans/timeline/{case_id}?limit=50").read()
+)
+records = [
+    row for row in timeline
+    if row.get("planId") in stage_plan_ids
+    and row.get("channel") == expected_channel
+    and row.get("providerMsgId")
+]
+if records:
+    print(
+        f"case={case_id} stage={expected_stage} "
+        f"channel={expected_channel} templateIds={[row.get('templateId') for row in records]} "
+        f"providerMsgIds={[row.get('providerMsgId') for row in records]}"
+    )
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+wait_stage_channel() {
+  local cid="$1" stage="$2" channel="$3" max="$4"
+  local elapsed=0
+  while [ "$elapsed" -lt "$max" ]; do
+    if has_stage_channel "$cid" "$stage" "$channel"; then
+      return 0
+    fi
+    echo "   [${elapsed}s] case=${cid} stage=${stage} 尚无带 providerMsgId 的 ${channel} timeline"
+    sleep 10; elapsed=$((elapsed + 10))
+  done
+  return 1
+}
+
+wait_guard_frequency() {
+  local cid="$1" max="$2"
+  local elapsed=0
+  while [ "$elapsed" -lt "$max" ]; do
+    local pid
+    pid=$(get "$PLANS/by-case/$cid/history?limit=1" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['id'] if ps else '')" 2>/dev/null)
+    if [ -n "$pid" ] && get "$PLANS/$pid/steps" | python3 -c "
+import json,sys
+steps=sorted(json.load(sys.stdin), key=lambda step: step.get('stepOrder', 0))
+sys.exit(0 if len(steps) >= 2 and steps[0].get('status') != 'SKIPPED' and steps[1].get('status') == 'SKIPPED' else 1)
+"; then
+      return 0
+    fi
+    echo "   [${elapsed}s] case=${cid} 第二步尚未进入 FREQUENCY SKIPPED"
     sleep 10; elapsed=$((elapsed + 10))
   done
   return 1
@@ -298,7 +378,7 @@ fi
 
 if should_run 7; then
 # =============================================================================
-# L4a-7 幂等（92001）
+# L4a-7 幂等（92002；不复用 L4a-8 的 S0 Email case）
 # =============================================================================
 hdr "L4a-7 重复 ingest 幂等 (case=$CASE_IDEM)"
 bl=$(timeline_baseline "$CASE_IDEM")
@@ -317,26 +397,26 @@ if should_run 8; then
 # L4a-8 Email scriptSlot × stage（126 vs Gmail）
 # =============================================================================
 hdr "L4a-8 scriptSlot x stage + 126 vs Gmail"
-for pair in "92001:S0" "93101:S1" "93201:S2"; do
-  cid="${pair%%:*}"; st="${pair##*:}"
+for item in "92001:S0:S0_DUE_TODAY_EMAIL" "93101:S1:S1_EMAIL_OVERDUE_NOTICE" "93201:S2:S2_EMAIL_ENTRY"; do
+  cid="${item%%:*}"
+  remainder="${item#*:}"
+  st="${remainder%%:*}"
+  expected_slot="${remainder#*:}"
+  assert_email_preview_slot "$cid" "$st" "$expected_slot" \
+    && pass "L4a-8 case=$cid stage=$st preview scriptSlot=$expected_slot" \
+    || fail "L4a-8 case=$cid stage=$st preview scriptSlot 不符"
   post "$MOCK/ingest?caseId=$cid&userId=$cid&stage=$st" | pp
 done
 post "$MOCK/ingest?caseId=$CASE_GMAIL&userId=$CASE_GMAIL&stage=S0" | pp
-for cid in 92001 93101 93201; do
-  wait_timeline_channel "$cid" "EMAIL" 210 && pass "L4a-8 case=$cid 已产生 EMAIL timeline" || fail "L4a-8 case=$cid EMAIL 未在时限内产生"
+wait_stage_channel 92001 S0 SMS 120 \
+  && pass "L4a-8 case=92001 stage=S0 SMS 已由渠道受理（S0 模板不含 Email 步骤）" \
+  || fail "L4a-8 case=92001 stage=S0 SMS 未在时限内被渠道受理"
+for pair in "93101:S1" "93201:S2"; do
+  cid="${pair%%:*}"; st="${pair##*:}"
+  wait_stage_channel "$cid" "$st" EMAIL 210 \
+    && pass "L4a-8 case=$cid stage=$st EMAIL 已由渠道受理" \
+    || fail "L4a-8 case=$cid stage=$st EMAIL 未在时限内被渠道受理"
 done
-HOST="$HOST" python3 <<'PY' && pass "L4a-8 126 跨 stage 有 EMAIL" || fail "L4a-8 126 EMAIL 缺失"
-import json, os, urllib.request
-host = os.environ.get("HOST", "http://localhost:8888")
-def email_tids(cid):
-    raw = urllib.request.urlopen(f"{host}/plans/timeline/{cid}?limit=15").read()
-    rows = json.loads(raw)
-    return {r.get("templateId") for r in rows if r.get("channel") == "EMAIL"}
-s0, s1, s2 = email_tids(92001), email_tids(93101), email_tids(93201)
-print("S0/S1/S2 templateIds:", s0, s1, s2)
-if not (s0 or s1 or s2):
-    raise SystemExit(1)
-PY
 get "$PLANS/timeline/$CASE_GMAIL?limit=3" | python3 -c "
 import json,sys
 rows=json.load(sys.stdin)
@@ -372,19 +452,9 @@ sleep 1
 # =============================================================================
 hdr "L4a-全 Guard FREQUENCY -> SKIPPED (case=$CASE_GUARD_FREQ)"
 post "$MOCK/ingest?caseId=$CASE_GUARD_FREQ&userId=$CASE_GUARD_FREQ&stage=S1" | pp
-sleep 45
-pidf=$(get "$PLANS/by-case/$CASE_GUARD_FREQ/history?limit=1" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['id'] if ps else '')" 2>/dev/null)
-if [ -n "$pidf" ]; then
-  get "$PLANS/$pidf/steps" | python3 -c "
-import json,sys
-steps=sorted(json.load(sys.stdin), key=lambda s: s.get('stepOrder',0))
-if len(steps)>=2 and steps[0].get('status')!='SKIPPED' and steps[1].get('status')=='SKIPPED':
-    sys.exit(0)
-print('steps:', [(s.get('stepOrder'), s.get('status')) for s in steps]); sys.exit(1)
-" && pass "L4a-全 Guard FREQUENCY 第二步 SKIPPED" || fail "L4a-全 FREQUENCY 断言失败"
-else
-  fail "L4a-全 FREQUENCY 无计划"
-fi
+wait_guard_frequency "$CASE_GUARD_FREQ" 120 \
+  && pass "L4a-全 Guard FREQUENCY 第二步 SKIPPED" \
+  || fail "L4a-全 FREQUENCY 第二步未在时限内 SKIPPED"
 sleep 1
 fi
 

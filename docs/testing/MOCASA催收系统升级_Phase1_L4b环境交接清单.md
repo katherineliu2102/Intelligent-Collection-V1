@@ -35,6 +35,13 @@
 
 ## 3. Nacos 与本地环境配置
 
+> ⚠️ 下面是**片段**，不是可直接追加的整份配置。`intelligent-collection-local.yml` 里 `channel:`
+> 与 `collection:` 各只能出现一次——现网已存在 `channel.sendgrid`，若把本片段的 `channel:` 块直接
+> 追加到文件尾部，就会产生重复顶层键，SnakeYAML 抛 `DuplicateKeyException`，Spring 报成
+> 「config data resource … does not exist」，应用直接启动失败（2026-07-27 已踩过一次）。
+> 正确做法是把 `sms-test-mode` / `push-test-token` **合并进已有的 `channel.notification` 下**。
+> 发布后跑 `./scripts/test/l4b-preflight.sh` 会自动检测重复顶层键。
+
 ```yaml
 collection:
   case-service: real
@@ -43,6 +50,8 @@ collection:
     project-id: fintech-all
     subscription: collection-cases-test1-sub
     loan-id-whitelist: [99000000, 99000001, 99000002, 99000003, 99000004, 99000005]
+    # L4b-7 受控 NACK 注入开关：仅联调环境为 true，生产必须 false（且端点只在 local/test profile 存在）
+    fault-injection-enabled: true
     case-push:
       field-map: { caseId: loanID, userId: userID, name: realName, product: appName }
 channel:

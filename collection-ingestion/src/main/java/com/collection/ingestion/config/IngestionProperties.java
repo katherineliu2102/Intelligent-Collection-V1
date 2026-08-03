@@ -47,6 +47,12 @@ public class IngestionProperties {
     /** 消息缺 jpushToken 时是否查新库 {@code t_user_device_token} 补全（B3，Phase 1 默认关）。 */
     private boolean enrichJpushToken = false;
 
+    /**
+     * 是否允许 L4b-7 受控 NACK 故障注入。**联调专用，生产必须 false**；为 true 时仍只能对白名单 loan_id 生效，
+     * 且需显式调用 {@code POST /mock/ingestion-fault/arm} 才会失败一次。
+     */
+    private boolean faultInjectionEnabled = false;
+
     private CasePush casePush = new CasePush();
 
     /** loan_id 是否在白名单内（空名单视为放行全部）。 */

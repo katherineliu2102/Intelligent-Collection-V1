@@ -22,6 +22,7 @@ public class EngineProperties {
     private final Context context = new Context();
     private final Spi spi = new Spi();
     private final DecisionLog decisionLog = new DecisionLog();
+    private final DeliveryAudit deliveryAudit = new DeliveryAudit();
 
     @Data
     public static class Step {
@@ -31,6 +32,14 @@ public class EngineProperties {
         private int retryMaxIntervalSeconds = 300;
         private int retryBackoffFactor = 2;
         private int callbackTimeoutMinutes = 60;
+
+        /**
+         * 幂等锁实际 TTL：不得短于回调等待窗口，否则异步渠道等回调期间收到重复 due 会重新拿锁并二次外呼。
+         * 退避重试不受影响——幂等 key 含 retryCount，重试后 key 已变。
+         */
+        public int effectiveIdempotencyTtlMinutes() {
+            return Math.max(idempotencyTtlMinutes, callbackTimeoutMinutes);
+        }
     }
 
     @Data
@@ -66,6 +75,13 @@ public class EngineProperties {
         private long stepResolverTimeoutMs = 50;
         private long advancementPolicyTimeoutMs = 10;
         private long exhaustionPolicyTimeoutMs = 50;
+    }
+
+    /** 触达审计 HMAC；密钥仅由环境变量/Secret 注入，绝不入库或入仓。 */
+    @Data
+    public static class DeliveryAudit {
+        private String hmacKey = "";
+        private String contentKeyId = "";
     }
 
     /**

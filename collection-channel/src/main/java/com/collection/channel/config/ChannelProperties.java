@@ -113,6 +113,9 @@ public class ChannelProperties {
     /** SMS/Push 文案库（按 scriptSlot 存放，{@code DefaultStepResolver} 注入变量）。 见 [渠道模板清单 §4.1/§5.1]。 */
     @Data
     public static class Scripts {
+        /** YAML/Nacos 文案发布版本；DB 模板命中时由 config_version 覆盖。 */
+        private String releaseVersion = "unversioned";
+
         private Map<String, String> sms = new HashMap<>();
         private Map<String, PushScript> push = new HashMap<>();
         /** repaymentUrl 缺失时的兜底深链（到 App 还款页，待 App 确认）。 */

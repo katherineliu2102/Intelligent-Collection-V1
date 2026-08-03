@@ -300,6 +300,7 @@ channel:
   callback:
     base-url: https://domain/webhook
   scripts:                        # SMS/Push 文案（§4.1/§5.1），DefaultStepResolver 按 scriptSlot 读取并注入变量
+    release-version: "2026.07.27.1" # YAML/Nacos 模板发布版本；DB 模板则记录 db:<config_version>
     push-default-deep-link: "https://app.mocasa.com/repay"   # repaymentUrl 缺失时 Push 兜底（到 App 还款页，待 App 确认）
     sms-default-repayment-link: "https://mocasa.com/s/4cTu"  # SMS 还款短链兜底（App 官方短链）
     sms:
@@ -323,7 +324,7 @@ channel:
       S4_PUSH_STANDARD: { title: "Final notice: {dpd} days overdue", body: "Resolve PHP {amount} now. View your options in the app." }
 ```
 
-> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}/{repaymentUrl}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。
+> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}/{repaymentUrl}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。每次 YAML/Nacos 文案发布必须递增 `scripts.release-version`；timeline 只保存 slot、版本和 HMAC，不保存正文或变量值。
 
 ---
 
