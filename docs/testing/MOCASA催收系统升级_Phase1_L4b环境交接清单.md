@@ -14,7 +14,7 @@
 | 测试数据 | `99000000`–`99000005`、`IC_TEST_*` | 批准后的灰度切片 |
 | SMS / Push | `sms-test-mode=true`、test token | 按批准配置 |
 | Email | 受控 126 测试邮箱 | 按批准配置 |
-| 日切 | `POST /mock/daily-roll` | XXL-Job `dailyRoll` |
+| 日切 | `POST /mock/daily-roll` | Cloud Scheduler → 调度 PubSub 主题（属性 `job=dailyRoll`）→ 应用侧调度订阅 |
 
 **红线**
 
@@ -105,7 +105,7 @@ export GCP_PUBSUB_TEST_TOPIC=collection-cases-test1
 
 ### 4.3 手动日切
 
-L4b 联调不接 XXL-Job。使用测试入口调用真实日切处理器：
+L4b 联调不接生产调度通道（`collection.scheduler.enabled=false`）。使用测试入口调用真实日切处理器：
 
 ```bash
 curl -X POST http://localhost:8888/mock/daily-roll
@@ -134,4 +134,4 @@ mysql ... < db/l4b-assert.sql
 1. 停止本地/联调消费者，确认测试订阅不再被错误使用。
 2. 如 Nacos 配置需要恢复，按已审批的环境配置恢复；不要把 L4b 测试订阅直接改为生产订阅。
 3. 清理或标记测试 seed，保留脱敏运行证据。
-4. Pilot/生产订阅、XXL-Job、切量与回滚仅按测试 SSOT T5/T6 的批准 Runbook 执行。
+4. Pilot/生产订阅、调度通道（Cloud Scheduler Job 与调度订阅）、切量与回滚仅按测试 SSOT T5/T6 的批准 Runbook 执行。

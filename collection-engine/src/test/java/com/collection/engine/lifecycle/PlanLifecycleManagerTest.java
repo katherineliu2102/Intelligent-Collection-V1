@@ -3,6 +3,8 @@ package com.collection.engine.lifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -31,7 +33,9 @@ import com.collection.common.service.PredictiveDialerService;
 import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
+import com.collection.common.util.JsonUtil;
 import com.collection.engine.spi.SpiInvoker;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -128,6 +132,24 @@ class PlanLifecycleManagerTest {
         verify(planRepository).updateCurrentStep(PLAN_ID, 2);
         verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
         assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("预排绝对槽位推进时保留下一步 trigger_time")
+    void onStepCompleted_advanceNext_preservesPreScheduledTriggerTime() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 2, ChannelType.PUSH, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 8, 12, 0));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository, never())
+                .updateStepTriggerTime(eq(NEXT_STEP_ID), any(), eq(StepStatus.PENDING));
+        verify(planRepository).updateCurrentStep(PLAN_ID, 2);
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
     }
 
     @Test
@@ -307,20 +329,22 @@ class PlanLifecycleManagerTest {
     // ───────────────────────── onRepaymentReceived（#24） ─────────────────────────
 
     @Test
-    @DisplayName("#24 还款到账 → 取消活跃计划(REPAID) + 过滤外呼名单")
+    @DisplayName("#24 整笔 loan 结清 → 取消该案活跃计划(REPAID) + 过滤该案外呼名单")
     void onRepaymentReceived_cancelsAndFilters() {
-        when(planRepository.findActivePlansByUser(USER_ID))
+        when(planRepository.findActivePlansByCase(CASE_ID))
                 .thenReturn(new ArrayList<>(Arrays.asList(plan)));
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
 
         CollectionEvent event =
                 CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
-                        .with(CollectionEvent.USER_ID, USER_ID);
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID);
         manager.onRepaymentReceived(event);
 
+        verify(planRepository, never()).findActivePlansByUser(USER_ID);
         verify(planRepository)
                 .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
-        verify(predictiveDialerService).filterRepaidUser(USER_ID);
+        verify(predictiveDialerService).filterRepaidCase(USER_ID, CASE_ID);
     }
 
     // ───────────────────────── onPlanExhausted（#25 三分支） ─────────────────────────
@@ -678,21 +702,86 @@ class PlanLifecycleManagerTest {
                         any());
     }
 
+    // ───────────────────────── onCaseBalanceUpdated（部分还款） ─────────────────────────
+
+    @Test
+    @DisplayName("部分还款 → 只刷新快照余额，计划状态与步骤不变")
+    void onCaseBalanceUpdated_refreshesOutstandingOnly() {
+        plan.setContextSnapshot(JsonUtil.toJson(snapshotWithOutstanding(new BigDecimal("5000"))));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.updateActivePlanContextSnapshot(eq(PLAN_ID), anyString()))
+                .thenReturn(true);
+
+        manager.onCaseBalanceUpdated(balanceEvent(new BigDecimal("3200.50")));
+
+        ArgumentCaptor<String> snapshotJson = ArgumentCaptor.forClass(String.class);
+        verify(planRepository).updateActivePlanContextSnapshot(eq(PLAN_ID), snapshotJson.capture());
+        ContextSnapshot updated = JsonUtil.fromJson(snapshotJson.getValue(), ContextSnapshot.class);
+        assertThat(updated.getCaseContext().getTotalOutstanding())
+                .isEqualByComparingTo(new BigDecimal("3200.50"));
+        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), any(), any());
+    }
+
+    @Test
+    @DisplayName("部分还款：终态计划不刷新余额")
+    void onCaseBalanceUpdated_skipsTerminalPlan() {
+        plan.setStatus(PlanStatus.PLAN_CANCELLED);
+        plan.setContextSnapshot(JsonUtil.toJson(snapshotWithOutstanding(new BigDecimal("5000"))));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        manager.onCaseBalanceUpdated(balanceEvent(new BigDecimal("100")));
+
+        verify(planRepository, never()).updateActivePlanContextSnapshot(anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("部分还款：金额缺失或为负直接忽略")
+    void onCaseBalanceUpdated_ignoresInvalidAmount() {
+        manager.onCaseBalanceUpdated(balanceEvent(new BigDecimal("-1")));
+        manager.onCaseBalanceUpdated(
+                CollectionEvent.of(EventType.CASE_BALANCE_UPDATED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID));
+
+        verify(planRepository, never()).findActivePlansByCase(CASE_ID);
+    }
+
+    private CollectionEvent balanceEvent(BigDecimal amount) {
+        return CollectionEvent.of(EventType.CASE_BALANCE_UPDATED)
+                .with(CollectionEvent.CASE_ID, CASE_ID)
+                .with(CollectionEvent.USER_ID, USER_ID)
+                .with(CollectionEvent.TOTAL_OUTSTANDING, amount);
+    }
+
+    private ContextSnapshot snapshotWithOutstanding(BigDecimal amount) {
+        CaseContext caseContext = new CaseContext();
+        caseContext.setCaseId(CASE_ID);
+        caseContext.setUserId(USER_ID);
+        caseContext.setTotalOutstanding(amount);
+        ContextSnapshot snapshot = new ContextSnapshot();
+        snapshot.setCaseContext(caseContext);
+        return snapshot;
+    }
+
     // ───────────────────────── 差集补全：链路⑤ 还款过滤失败/CASE_CEASED（D28/D29-L0） ─────────────────────────
 
     @Test
-    @DisplayName("⑤-D28 filterRepaidUser 抛异常 → 计划仍取消(REPAID)")
+    @DisplayName("⑤-D28 filterRepaidCase 抛异常 → 计划仍取消(REPAID)")
     void onRepaymentReceived_filterFails_stillCancels() {
-        when(planRepository.findActivePlansByUser(USER_ID))
+        when(planRepository.findActivePlansByCase(CASE_ID))
                 .thenReturn(new ArrayList<>(Arrays.asList(plan)));
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
         doThrow(new RuntimeException("dialer down"))
                 .when(predictiveDialerService)
-                .filterRepaidUser(USER_ID);
+                .filterRepaidCase(USER_ID, CASE_ID);
 
         CollectionEvent event =
                 CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
-                        .with(CollectionEvent.USER_ID, USER_ID);
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID);
         manager.onRepaymentReceived(event);
 
         verify(planRepository)

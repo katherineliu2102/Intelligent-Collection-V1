@@ -50,6 +50,11 @@ public class SpiInvoker {
     /** null 表示直连模式（不强制超时）。 */
     private final ExecutorService pool;
 
+    /** {@link #direct()} 场景无 Spring 容器，默认落本地注册表。 */
+    @Autowired(required = false)
+    private com.collection.engine.metrics.CollectionMetrics metrics =
+            com.collection.engine.metrics.CollectionMetrics.local();
+
     private final Map<SpiType, Long> timeoutsMs;
 
     @Autowired
@@ -110,6 +115,7 @@ public class SpiInvoker {
             log.warn(
                     "[SpiInvoker] {} rejected: spi pool saturated, shedding → timeout semantics",
                     type);
+            countTimeout(type);
             throw new SpiTimeoutException(type.name(), timeoutMs);
         }
         try {
@@ -117,6 +123,7 @@ public class SpiInvoker {
         } catch (TimeoutException e) {
             future.cancel(true);
             log.warn("[SpiInvoker] {} exceeded hard timeout {}ms", type, timeoutMs);
+            countTimeout(type);
             throw new SpiTimeoutException(type.name(), timeoutMs);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
@@ -132,6 +139,10 @@ public class SpiInvoker {
             future.cancel(true);
             throw new SpiTimeoutException(type.name(), timeoutMs);
         }
+    }
+
+    private void countTimeout(SpiType type) {
+        metrics.spiTimeout(type.name());
     }
 
     private static ExecutorService buildPool(int size) {

@@ -21,7 +21,7 @@
 | `collection-channel` | 5 个 SPI Mock + Mock ChannelGateway + Mock 外呼过滤 | Mock，待替换 |
 | `collection-ingestion` | 发布领域事件（Mock 入案）、DPD 日切 Job 占位 | Mock，待替换 |
 | `collection-admin` | Spring Boot 启动入口、REST 触发/查询、Webhook、Trigger-to-Event 扫描调度 | 骨架，待补全 |
-| `db/schema.sql` | 引擎核心表 DDL（t_contact_plan / t_contact_plan_step / t_decision_log / t_contact_timeline / t_user_profile_ext） | ✅ 已在测试库执行 |
+| `db/schema.sql` | 引擎核心表 DDL（t_contact_plan / t_contact_plan_step / t_decision_log / t_contact_timeline / t_user_profile_ext / t_event_dlq） | ✅ 已在催收库执行，含 2026-08-05 的 `t_event_dlq` redrive 列迁移 |
 
 ### 已测试通过
 
@@ -34,13 +34,15 @@
 
 | 项 | 当前（本地/CI 替身） | 生产实现（Phase 1 依赖） |
 |---|---|---|
-| 事件总线 | `InMemoryEventBus`（local/CI） | Pilot `RedisStreamEventBus`：Consumer Group、PEL reclaim、超阈值 DLQ stream；需 Redis 环境验收 |
+| 事件总线 | `InMemoryEventBus`（local/CI） | Pilot `RedisStreamEventBus`：Consumer Group、PEL reclaim、有界 Consumer 池 + 背压、`collection:processed:{eventId}` 消费去重、DLQ 双写 Redis 与 `t_event_dlq`；线程数/队列阈值待压测定版 |
+| DLQ 重放 | 无（内存总线不产生 DLQ） | `POST /ops/dlq/redrive`：显式 eventId + 必填原因，3 次上限，触达窗口外的 `PLAN_STEP_DUE` 延后 |
 | 幂等锁 | `InMemoryIdempotencyService`（local/CI） | Pilot `RedisIdempotencyService`：Redis SETNX + TTL |
-| 合规频控 | `ConfigurableExecutionGuard` 内存计数 | Redis 原子计数（单渠道日上限 + 跨渠道日总上限） |
-| 调度 | Spring `@Scheduled`（仅 local/test） | Pilot 官方 XXL-Job：`planStepDueHandler` / `callbackTimeoutHandler` / `dailyRoll` |
+| 合规频控 | `InMemoryComplianceCounterService` | `RedisComplianceCounterService`：Lua 原子双计数（单渠道日上限 + 跨渠道日总上限），断连 fail-close |
+| 接入去重 | `InMemoryIngestionDedupStore`（重启即清空） | `RedisIngestionDedupStore`：`dedup:msg` 7d、`last-seen` 90d（Lua 仅当更大才写）、`ingested` 90d，跨重启与跨实例一致 |
+| 调度 | Spring `@Scheduled`（仅 local/test） | Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅（`PubSubScheduleConsumer`），按消息属性 `job` 路由 `planStepDue` / `callbackTimeout` / `dailyRoll`；无执行器、无固定端口、无入站网络 |
 | SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | I/O 型 SPI（Redis Lua 等）另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
-| 可观测性 | 无 | Micrometer + MDC 跨线程（基础设施规范 §6） |
+| 可观测性 | 本地 `SimpleMeterRegistry`（指标不外发） | `/actuator/prometheus` 暴露事件/PEL/Stream/DLQ/线程池/跳过原因/SPI 超时；消费入口统一写 MDC。抓取、告警与 Dashboard 由运维配置 |
 
 ### Phase 1 生产拓扑与 Redis 依赖
 
@@ -150,7 +152,7 @@ curl -s "http://localhost:8080/plans/timeline/1001"
 - **方法签名**：`GuardVerdict evaluate(ExecutionContext)`
 - **关键约束**
   - 硬超时 20ms（单次 Redis Lua 脚本完成计数器读取+增加+TTL）
-  - Redis key 前缀：`compliance:daily:{userId}:{channel}:{date}`
+  - Redis key 前缀：`collection:compliance:daily:{userId}:{channel}:{date}`
   - 默认允许窗口为 08:00–21:00 PHT；时段外返回带 `deferUntil` 的裁定并重排
   - 空地址/频控等正常拦截返回 `GuardVerdict.block(reason, NO_EMAIL/NO_PHONE/NO_TOKEN/FREQUENCY_LIMIT)`；引擎写 `COMPLIANCE_BLOCKED` timeline 后推进
   - SPI 异常/超时才 fail-close 为 `SKIPPED`
@@ -215,13 +217,13 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 - 接 GCP PubSub，消费上游信贷系统推送（`case_push` / `repayment_push_and_load`；`assign_signal` Phase 1 不路由）
 - 校验 → 组装 `CASE_INGESTED` payload → publish 领域事件；payload 优先，缺 `dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate` 时可经 CaseService **只读**回填；不回写任何库，不自行组装快照（见 [数据接入 §3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
-- 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load` 仅 publish `REPAYMENT_RECEIVED`
+- 同一 `loan_id` 本周期仅首次 publish `CASE_INGESTED`；`repayment_push_and_load`：全额结清 publish `REPAYMENT_RECEIVED`，部分还款 publish `CASE_BALANCE_UPDATED`
 - `context_snapshot` 由**引擎**据完整 `CASE_INGESTED` payload 组装并写入 plan（[§3.1](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；引擎不在建快照时补库
 - 现有 `IngestionService` 骨架方法在此替换为真实 PubSub Consumer
 
 #### B2. `DpdStageRollHandler.dailyRoll()` → 实现日切逻辑
 
-- 每日 0:35 PHT（XXL-Job；账务数据落库至少 30 分钟后）在并行期读取旧库 `t_collection.overdue_days`；切量后才按 bill 级 Max DPD 重算（均只读）
+- 每日 0:35 PHT 起（Cloud Scheduler 在 00:35–02:55 PHT 每 5 分钟发一条 `job=dailyRoll` 调度消息，每次推进一页 keyset；账务数据落库至少 30 分钟后）在并行期读取旧库 `t_collection.overdue_days`；切量后才按 bill 级 Max DPD 重算（均只读）
 - DPD 1–90 且 Stage 变化 → 发 `STAGE_CHANGED`（含 Stage 回退）
 - DPD ≥ 91 → **仅**发 `CASE_CEASED`（不写旧库 CEASED 列）
 - **不改引擎 Consumer，引擎只消费事件**
@@ -259,7 +261,8 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 - 实现 `CollectionEventBus` 接口：`publish()`（XADD）、`subscribe()`（XREADGROUP Consumer Group）
 - 配置切换：`collection.eventbus=redis`，业务代码**零改动**
-- 须实现：Consumer 线程池（8 线程）、PEL 拾取（防崩溃丢消息）、看门狗（防连接假死）、DLQ（死信队列）
+- 已实现：有界 Consumer 线程池 + CallerRuns 背压、PEL 拾取、DLQ 双写（Redis stream + `t_event_dlq`）与受控重放接口
+- 待 Pilot：线程数与队列容量压测定版、连接假死观察
 
 #### D2. `RedisIdempotencyService` → 替换内存幂等
 
@@ -270,14 +273,15 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 #### D3. SPI 硬超时强制执行 ✅ 已完成（2026-06-11）
 
 - 引擎调用 5 个 SPI 经 `SpiInvoker`（`engine.spi`）用 `Future.get(timeoutMs)` 强制超时（核心引擎规格 §4.1）
-- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 20ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms（`engine.spi.*-timeout-ms` 可配）
+- 各接口超时阈值：PlanFactory 50ms / ExecutionGuard 50ms / StepResolver 50ms / AdvancementPolicy 10ms / ExhaustionPolicy 50ms（`engine.spi.*-timeout-ms` 可配）
 - 单个共享有界线程池（大小=Consumer 池，预热）+ `MdcTaskDecorator` 语义跨线程传递 MDC；超时转 `SpiTimeoutException`，失败语义沿用调用方 try-catch（Guard fail-close、Resolver FAILED、其余 NACK）
 - ⚠ 遗留：`Future.cancel` 掐不断卡死 I/O，I/O 型 SPI（ExecutionGuard Redis Lua 等）真实化时须自带 client 级超时
 
-#### D4. 可观测性
+#### D4. 可观测性 ✅ 代码侧已完成（2026-08-05）
 
-- 注册 Micrometer 指标（事件发布/消费/耗时/Consumer 线程利用率/Stream 积压量/DLQ 大小）
-- 关键路径日志加 SLF4J MDC（caseId / planId / stepId / eventType / eventId），Consumer 跨线程用 `MdcTaskDecorator`
+- `CollectionMetrics` 统一注册：事件发布/消费/耗时、PEL 深度、Stream 长度、DLQ 入列与大小、Consumer 线程池（`ExecutorServiceMetrics`）、跳过原因、SPI 超时；经 `/actuator/prometheus` 暴露
+- 消费入口写 MDC（eventId / caseId / planId / stepId）并跨工作线程传递，logback pattern 已输出
+- 剩余：Prometheus 抓取、Alertmanager 路由与 Dashboard 属运维交付物（见 T5 手册 §3.1）
 
 ---
 
@@ -285,11 +289,13 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 
 **负责人参考文档：《架构设计文档》§1.7**
 
-#### E1. `TriggerScanner` → XXL-Job Handler
+#### E1. `TriggerScanner` → 调度订阅 ✅ 代码侧已完成（2026-08-06）
 
-- 把 `@Scheduled` 替换为 XXL-Job Handler（`planStepDueHandler` / `callbackTimeoutHandler` / `ptpExpiredHandler`）
-- 语义不变：仅扫表发事件，毫秒级返回，禁止业务 I/O
-- 扫描超出 LIMIT=1000 时触发告警
+- 生产调度入口为 Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅：`PubSubScheduleConsumer`（`SmartLifecycle` 流式拉取，与 `PubSubCaseConsumer` 同款）按消息属性 `job` 路由到 `ScheduledJobRunner`，复用 `PlanStepTriggerPublisher.publishDueSteps()/publishTimeoutSteps()` 与 `DpdStageRollHandler.dailyRoll()`
+- 语义不变：仅扫表发事件，毫秒级返回，禁止业务 I/O；调度消费者不得直接调渠道
+- 这条链路特有的三条纪律（不可省）：按 `publishTime` 丢弃陈旧消息（默认 60s，`dailyRoll` 300s）、触发后一律 ack 不 nack 重投、按任务进程内单飞
+- `@Scheduled` 的 `TriggerScanner` 仅保留给 `local`/`test`；`SchedulerEntrypointValidator` 保证生产只有一个调度入口生效
+- 剩余：调度主题/订阅、双向 IAM、Scheduler Job、告警属运维 GCP 交付（见 T5 手册 §3.2 O1–O8）
 
 #### E2. `WebhookController` → 加鉴权
 
@@ -341,7 +347,7 @@ collection-common/src/main/java/com/collection/common/enums/      # 所有枚举
 | 2 | 架构设计文档 | 分层、SPI 边界、关键机制、技术栈 |
 | 3 | 核心引擎规格 | 事件路由、状态机、步骤管线、SPI 接口完整定义 |
 | 4 | 领域模型与数据定义 | 模型字段、枚举值、DDL |
-| 5 | 基础设施交互规范 | Redis / XXL-Job / Repository、配置、可观测性 |
+| 5 | 基础设施交互规范 | Redis / 定时调度（Cloud Scheduler → Pub/Sub → 应用订阅）/ Repository、配置、可观测性 |
 | 6 | 渠道编排规格 | 计划状态机、决策规则、合规检查、渠道适配器、模板 |
 | 7 | 数据接入规格 | PubSub 消费、消息路由、清洗写库、DPD 日切、迁移双写（事件 payload→领域 §9；总线运行时→基础设施 §2） |
 | 8 | 运维与协作 | 指标、告警、Grafana Dashboard |

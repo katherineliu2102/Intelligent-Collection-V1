@@ -15,7 +15,7 @@
 | [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) | ✅ | 分层、SPI 边界、关键机制、技术栈 |
 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 事件路由、状态机、七步管线、SPI 定义 |
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
-| [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis/XXL-Job/Repository、**运行配置附录 A**、可观测性（生产目标） |
+| [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis / **定时调度（Cloud Scheduler → Pub/Sub → 应用订阅，SSOT §5）** / Repository、**运行配置附录 A**、可观测性（生产目标） |
 | [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域 §9、配置键见 infra 附录 A |
 
 ### collection-common 契约查阅
@@ -55,6 +55,7 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [操作说明 Nacos 本地启动](./操作说明_Nacos本地启动.md) | ✅ | 本地/Docker 启动；与根 `../README.md` 互补 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis 资源申请、Pilot 配置/演练、证据归档与回滚；测试用例 SSOT 仍是测试主文档 |
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 

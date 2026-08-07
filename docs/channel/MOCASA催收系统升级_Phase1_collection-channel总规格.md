@@ -168,7 +168,7 @@ collection-channel/
 
 `ChannelGatewayImpl.dispatch`：
 
-1. 渠道幂等（Redis `idempotency:channel:{idempotencyKey}`，TTL 24h，见基础设施规范 §3）
+1. 渠道幂等（Redis `collection:idempotency:channel:{idempotencyKey}`，TTL 24h，见基础设施规范 §3）
 2. 路由 Adapter
 3. 熔断 / fallback 在 Adapter 或 Gateway 内完成，**只返回最终** `StepResult`
 

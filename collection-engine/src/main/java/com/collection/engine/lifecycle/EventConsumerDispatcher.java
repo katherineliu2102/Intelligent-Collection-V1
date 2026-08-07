@@ -31,6 +31,8 @@ public class EventConsumerDispatcher {
         eventBus.subscribe(EventType.STAGE_CHANGED, e -> publishAll(manager.onStageChanged(e)));
         eventBus.subscribe(
                 EventType.REPAYMENT_RECEIVED, e -> publishAll(manager.onRepaymentReceived(e)));
+        eventBus.subscribe(
+                EventType.CASE_BALANCE_UPDATED, e -> publishAll(manager.onCaseBalanceUpdated(e)));
         eventBus.subscribe(EventType.CASE_CEASED, e -> publishAll(manager.onCaseCeased(e)));
         eventBus.subscribe(EventType.STEP_COMPLETED, e -> publishAll(manager.onStepCompleted(e)));
         eventBus.subscribe(

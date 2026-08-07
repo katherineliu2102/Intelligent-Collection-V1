@@ -13,6 +13,9 @@ target/
 logs/
 *.log
 .env
+# 各环境的填充版（.env.pilot 等）含真实地址与口令，只保留 .env.example 模板
+.env.*
+!.env.example
 notification配置
 nacos-publish.local.yml
 

@@ -33,7 +33,7 @@ public class CasePayloadMapper {
     private static final String REPAY_LOAN_ID = "loanId";
     private static final String REPAY_FULL_REPAY_TIME = "fullRepayTime";
     private static final String REPAY_STATUS = "STATUS";
-    /** repayment STATUS / t_user_repayment_plan.status 码值：4 = 结清（1待还/2逾期/3已分期/4结清/5已结转）。 */
+    /** 新催收系统范围内 repayment STATUS 码值：4 = 结清。 */
     private static final int REPAY_STATUS_SETTLED = 4;
 
     @Resource private IngestionProperties props;
@@ -70,6 +70,15 @@ public class CasePayloadMapper {
     /** repayment_push_and_load 的 loan_id（真实键 {@code loanId}，不经 field-map；供全额结清 DEL）。 */
     public Long repaymentLoanId(JSONObject json) {
         return getLong(json, REPAY_LOAN_ID);
+    }
+
+    /** 部分还款后的剩余待还金额；上游真实键保留既有拼写 {@code currentAmmout}。 */
+    public java.math.BigDecimal repaymentTotalOutstanding(JSONObject json) {
+        return json.getBigDecimal("currentAmmout");
+    }
+
+    public Integer repaymentStatus(JSONObject json) {
+        return json.getInteger(REPAY_STATUS);
     }
 
     /**

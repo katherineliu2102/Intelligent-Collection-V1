@@ -256,13 +256,55 @@ CREATE TABLE IF NOT EXISTS t_event_dlq (
     payload             JSON            NOT NULL,
     failure_reason      VARCHAR(256)    NOT NULL,
     delivery_count      INT             NOT NULL DEFAULT 1,
+    redrive_count       INT             NOT NULL DEFAULT 0,
     first_failed_at     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_failed_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING',
+    redrive_reason      VARCHAR(256)    NULL,
+    redriven_at         DATETIME        NULL,
+    terminated_at       DATETIME        NULL,
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_event_dlq_event_id (event_id),
     INDEX idx_event_dlq_status_last (status, last_failed_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='事件死信队列';
+
+-- 既有环境迁移：受控 redrive 所需的计数、原因与状态时间列。
+DROP PROCEDURE IF EXISTS sp_schema_add_event_dlq_redrive_columns;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_event_dlq_redrive_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_dlq' AND COLUMN_NAME = 'redrive_count'
+    ) THEN
+        ALTER TABLE t_event_dlq
+            ADD COLUMN redrive_count INT NOT NULL DEFAULT 0 COMMENT '受控重放次数，上限 3';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_dlq' AND COLUMN_NAME = 'redrive_reason'
+    ) THEN
+        ALTER TABLE t_event_dlq
+            ADD COLUMN redrive_reason VARCHAR(256) NULL COMMENT '操作者填写的重放原因';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_dlq' AND COLUMN_NAME = 'redriven_at'
+    ) THEN
+        ALTER TABLE t_event_dlq
+            ADD COLUMN redriven_at DATETIME NULL COMMENT '最近一次重放发布时间';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_dlq' AND COLUMN_NAME = 'terminated_at'
+    ) THEN
+        ALTER TABLE t_event_dlq
+            ADD COLUMN terminated_at DATETIME NULL COMMENT '终止处置时间';
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_event_dlq_redrive_columns();
+DROP PROCEDURE IF EXISTS sp_schema_add_event_dlq_redrive_columns;
 
 -- 7.2.4 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
 CREATE TABLE IF NOT EXISTS t_user_device_token (

@@ -8,11 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * L4b-7 受控 NACK 故障注入：让下一条（或下 N 条）白名单 case_push 在落库前抛异常，
- * 从而不 ack、由 PubSub 重投，用于验证「重投一次 + 幂等收敛」。
+ * L4b-7 受控 NACK 故障注入：让下一条（或下 N 条）白名单 case_push 在落库前抛异常， 从而不 ack、由 PubSub 重投，用于验证「重投一次 + 幂等收敛」。
  *
- * <p>三重约束，防止误伤真实链路：{@code collection.ingestion.fault-injection-enabled} 必须为 true；
- * 只对白名单 loan_id 生效（调用点已在白名单判断之后）；必须显式 arm，且每 arm 一次只失败一次。
+ * <p>三重约束，防止误伤真实链路：{@code collection.ingestion.fault-injection-enabled} 必须为 true； 只对白名单 loan_id
+ * 生效（调用点已在白名单判断之后）；必须显式 arm，且每 arm 一次只失败一次。
  */
 @Component
 public class IngestionFaultInjector {

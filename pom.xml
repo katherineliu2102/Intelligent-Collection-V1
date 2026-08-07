@@ -41,8 +41,6 @@
         <lombok.version>1.18.42</lombok.version>
         <commons-lang3.version>3.12.0</commons-lang3.version>
         <mysql.version>8.0.33</mysql.version>
-        <!-- 2.5.0 是 Java 8 / Spring Boot 2.7 可用的最新 XXL-Job 线；3.x 迁至 Jakarta/JDK17。 -->
-        <xxl-job.version>2.5.0</xxl-job.version>
     </properties>
 
     <dependencyManagement>
@@ -117,11 +115,6 @@
                 <groupId>com.mysql</groupId>
                 <artifactId>mysql-connector-j</artifactId>
                 <version>${mysql.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.xuxueli</groupId>
-                <artifactId>xxl-job-core</artifactId>
-                <version>${xxl-job.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

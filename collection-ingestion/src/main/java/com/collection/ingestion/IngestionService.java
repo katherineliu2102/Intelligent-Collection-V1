@@ -199,12 +199,33 @@ public class IngestionService {
         log.info("[Ingestion] publish STAGE_CHANGED case={} stage={}", caseId, newStage);
     }
 
-    /** 还款到账 → 发布 REPAYMENT_RECEIVED。 */
-    public void repayment(Long userId) {
+    /** 整笔 loan 全额结清 → 发布案件级 REPAYMENT_RECEIVED。 */
+    public void repayment(Long caseId, Long userId) {
         eventBus.publish(
                 CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
-                        .with(CollectionEvent.USER_ID, userId));
-        log.info("[Ingestion] publish REPAYMENT_RECEIVED user={}", userId);
+                        .with(CollectionEvent.CASE_ID, caseId)
+                        .with(CollectionEvent.USER_ID, userId)
+                        .with(CollectionEvent.CANCEL_REASON, com.collection.common.enums.CancelReason.REPAID.name())
+                        .with(CollectionEvent.CANCEL_SCOPE, "CASE"));
+        log.info(
+                "[Ingestion] publish REPAYMENT_RECEIVED case={} user={} reason=REPAID",
+                caseId,
+                userId);
+    }
+
+    /** 部分还款只刷新后续渲染金额，不取消计划或改变渠道话术。 */
+    public void balanceUpdated(
+            Long caseId, Long userId, java.math.BigDecimal totalOutstanding, Integer status) {
+        eventBus.publish(
+                CollectionEvent.of(EventType.CASE_BALANCE_UPDATED)
+                        .with(CollectionEvent.CASE_ID, caseId)
+                        .with(CollectionEvent.USER_ID, userId)
+                        .with(CollectionEvent.TOTAL_OUTSTANDING, totalOutstanding)
+                        .with(CollectionEvent.REPAY_STATUS, status));
+        log.info(
+                "[Ingestion] publish CASE_BALANCE_UPDATED case={} amount={}",
+                caseId,
+                totalOutstanding);
     }
 
     /** D+91 完全停催 → 发布 CASE_CEASED（引擎 cancel plan，不再 create）。 */

@@ -220,7 +220,7 @@ Voice **终态**由 `CHANNEL_CALLBACK` + `AdvancementPolicy` 处理；Adapter di
 `ChannelGatewayImpl.dispatch`（总规格 §5.2）：
 
 ```
-1. 渠道幂等 Redis GET/SET idempotency:channel:{idempotencyKey} TTL 24h
+1. 渠道幂等 Redis GET/SET collection:idempotency:channel:{idempotencyKey} TTL 24h
 2. switch(channelType) → adapter.send(command)
    HUMAN_CALL → 禁止路由（抛 IllegalStateException，对齐 E4）
 3. 返回最终 StepResult（熔断/fallback 在 adapter 内消化）
@@ -292,7 +292,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 
 | 规则 | 行为 | 依据 |
 |------|------|------|
-| 日限额 | Redis `compliance:daily:{userId}:{channel}:{date}` | §7.11 |
+| 日限额 | Redis `collection:compliance:daily:{userId}:{channel}:{date}` | §7.11 |
 | **`{date}` 时区** | **必须** `ZoneId.of("Asia/Manila")` 格式化为 `yyyy-MM-dd`；**禁止**用服务器默认时区（UTC/CST） | 与触达窗 PHT 一致 |
 | 触达窗 | **08:00–21:00 PHT**（与 `quiet-hours` 21:00–08:00 对称） | §7.11 |
 | 无邮箱 | EMAIL 步骤 → `BLOCK`，reason=`NO_EMAIL` | §3.5 |
@@ -304,7 +304,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 // 日限额 key 示例（PHT 自然日）
 ZoneId PHT = ZoneId.of("Asia/Manila");
 String date = LocalDate.now(PHT).format(DateTimeFormatter.ISO_LOCAL_DATE);
-String key = "compliance:daily:" + userId + ":SMS:" + date;
+String key = "collection:compliance:daily:" + userId + ":SMS:" + date;
 ```
 
 ### 4.4 `MockAdvancementPolicy` → `DefaultAdvancementPolicy`

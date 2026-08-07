@@ -415,7 +415,8 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#31 幂等 key 含 retryCount：key = planId:stepOrder:retryCount（保证重试不被自身幂等拦截）")
+    @DisplayName(
+            "#31 幂等 key 含 retryCount：key = lock:plan:planId:stepOrder:retryCount（保证重试不被自身幂等拦截）")
     void idempotencyKey_includesRetryCount() {
         stubResolver(ChannelType.SMS);
         stubDispatch(ok(ContactResult.DELIVERED));
@@ -425,7 +426,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(idempotencyService).acquire(eq(PLAN_ID + ":1:2"), anyInt());
+        verify(idempotencyService).acquire(eq("lock:plan:" + PLAN_ID + ":1:2"), anyInt());
     }
 
     @Test

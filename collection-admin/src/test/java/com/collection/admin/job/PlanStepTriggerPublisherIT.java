@@ -40,8 +40,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * L3-5：真实 MySQL 已提交步骤经 scan → event bus → dispatcher 的持久化验证。
  *
- * <p>测试只调用 publisher（与 TriggerScanner / XXL handler 相同的委托），不启动 @Scheduled 扫描。 数据以专用 caseId 提交后在每例
- * finally 删除，避免共享测试库残留。
+ * <p>测试只调用 publisher（与 TriggerScanner / ScheduledJobRunner 相同的委托），不启动 @Scheduled 扫描。 数据以专用 caseId
+ * 提交后在每例 finally 删除，避免共享测试库残留。
  */
 @EnabledIfEnvironmentVariable(named = "L3_IT_DB_URL", matches = ".+")
 @Tag("integration")

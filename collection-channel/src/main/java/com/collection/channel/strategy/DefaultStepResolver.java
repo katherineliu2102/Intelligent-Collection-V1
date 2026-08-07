@@ -126,13 +126,13 @@ public class DefaultStepResolver implements StepResolver {
     /**
      * 按<b>该槽位实际的内容来源</b>标记 {@code template_version}，而非「DB 配置源是否可用」。
      *
-     * <p>{@link ScriptLibrary} 是逐槽位 DB→YAML 回落的：库里没有 ACTIVE 行的槽位仍会发出 YAML 文案。 若按全局 epoch
-     * 一律标 {@code db:N}，事后审计会指向错误的配置表，无法复原当时发的内容。
+     * <p>{@link ScriptLibrary} 是逐槽位 DB→YAML 回落的：库里没有 ACTIVE 行的槽位仍会发出 YAML 文案。 若按全局 epoch 一律标 {@code
+     * db:N}，事后审计会指向错误的配置表，无法复原当时发的内容。
      *
      * <ul>
      *   <li>SMS / PUSH 命中 DB → {@code db:<该行 config_version>}，未命中 → {@code nacos:<releaseVersion>}
-     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与
-     *       {@code SendGridEmailAdapter.resolveTemplateId} 同一份映射）
+     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与 {@code
+     *       SendGridEmailAdapter.resolveTemplateId} 同一份映射）
      * </ul>
      */
     private String resolveTemplateVersion(ChannelType channel, String scriptSlot) {

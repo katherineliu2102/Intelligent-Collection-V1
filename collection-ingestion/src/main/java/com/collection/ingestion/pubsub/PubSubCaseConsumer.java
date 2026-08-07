@@ -190,13 +190,22 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
             log.debug("[Ingestion] repayment 重复消息 msgId={} 跳过", bizMsgId);
             return;
         }
-        ingestionService.repayment(userId);
         if (mapper.fullySettled(json)) {
             Long loanId = mapper.repaymentLoanId(json);
-            if (loanId != null) {
-                dedup.clearIngested(loanId);
-                log.info("[Ingestion] 全额结清 DEL ingested loanId={}", loanId);
+            if (loanId == null) {
+                throw new PoisonMessageException("全额结清消息缺 loanId");
             }
+            ingestionService.repayment(loanId, userId);
+            dedup.clearIngested(loanId);
+            log.info("[Ingestion] 全额结清 DEL ingested loanId={}", loanId);
+        } else {
+            Long loanId = mapper.repaymentLoanId(json);
+            java.math.BigDecimal totalOutstanding = mapper.repaymentTotalOutstanding(json);
+            if (loanId == null || totalOutstanding == null || totalOutstanding.signum() < 0) {
+                throw new PoisonMessageException("部分还款缺有效 loanId/currentAmmout");
+            }
+            ingestionService.balanceUpdated(
+                    loanId, userId, totalOutstanding, mapper.repaymentStatus(json));
         }
         dedup.markMessageProcessed(repaymentDedupKey);
     }

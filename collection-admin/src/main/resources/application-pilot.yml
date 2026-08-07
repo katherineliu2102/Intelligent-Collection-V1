@@ -4,21 +4,36 @@ spring:
     port: ${COLLECTION_REDIS_PORT:6379}
     password: ${COLLECTION_REDIS_PASSWORD:}
     ssl: ${COLLECTION_REDIS_SSL:false}
+    connect-timeout: 200ms
+    # 命令超时必须大于 XREADGROUP 的 BLOCK 1s，否则消费轮询每次都抛 RedisCommandTimeoutException。
+    # 合规频控等短命令的延迟上界由 SpiInvoker 的 50ms 硬超时兜底（超时按 fail-close 处理）。
+    timeout: 2s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
 
 collection:
+  compliance:
+    counter: redis
   eventbus: redis
   idempotency: redis
   case-service: real
-  xxl:
-    enabled: true
-    admin-addresses: ${XXL_JOB_ADMIN_ADDRESSES}
-    app-name: ${XXL_JOB_EXECUTOR_APP_NAME:collection-pilot}
-    access-token: ${XXL_JOB_ACCESS_TOKEN}
-    executor-address: ${XXL_JOB_EXECUTOR_ADDRESS:}
-    executor-ip: ${XXL_JOB_EXECUTOR_IP:}
-    executor-port: ${XXL_JOB_EXECUTOR_PORT:9999}
+  # 生产调度入口：Cloud Scheduler → 调度专用 Pub/Sub 主题 → 本应用专用订阅（基础设施规范 §5）。
+  # 无入站网络、无固定端口、无执行器注册；鉴权由 GCP 服务账号与订阅权限承担。
+  # 缺 project-id / subscription 时 SchedulerEntrypointValidator 会拒绝启动，不会静默不消费。
+  scheduler:
+    enabled: ${COLLECTION_SCHEDULER_ENABLED:true}
+    project-id: ${GCP_PUBSUB_PROJECT:}
+    subscription: ${GCP_SCHEDULER_SUBSCRIPTION:}
+    # 阈值上界为任务自身周期；日切每 5 分钟一轮，沿用 60s 会让重启延迟吃掉整轮 tick。
+    stale-threshold-seconds: 60
+    daily-roll-stale-threshold-seconds: 300
+    max-concurrency: 1
   redis:
-    stream: ${COLLECTION_REDIS_STREAM:collection:pilot:events}
+    stream: ${COLLECTION_REDIS_STREAM:collection:events}
     consumer-group: ${COLLECTION_REDIS_CONSUMER_GROUP:collection-engine-pilot}
     consumer-name: ${HOSTNAME:engine-pilot-1}
   webhook:
@@ -26,7 +41,12 @@ collection:
     hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET}
   ingestion:
     enabled: true
+    # 案件接入订阅，与上面的调度订阅各走各的；缺值时 PubSubCaseConsumer 启动即失败。
+    project-id: ${GCP_PUBSUB_PROJECT:}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:}
     redis-dedup-enabled: true
+    daily-roll-full-scan-enabled: false
+    daily-roll-batch-size: 1000
     # 白名单由 Nacos/环境下发；空名单会扩大处理范围，Pilot 启动校验必须拒绝。
     loan-id-whitelist: ${COLLECTION_PILOT_LOAN_IDS:}
 

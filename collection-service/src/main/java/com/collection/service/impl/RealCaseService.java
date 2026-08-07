@@ -12,6 +12,7 @@ import com.collection.service.mapper.CollectionCaseRow;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -147,6 +148,11 @@ public class RealCaseService implements CaseService {
     public boolean isRepaid(Long caseId) {
         CollectionCaseRow row = caseMapper.selectByLoanId(String.valueOf(caseId));
         return row != null && isRepaidRow(row);
+    }
+
+    @Override
+    public List<Long> findActiveCaseIdsAfter(Long lastCaseId, int limit) {
+        return caseMapper.selectActiveLoanIdsAfter(lastCaseId == null ? 0L : lastCaseId, limit);
     }
 
     // ───────────────────────── helpers ─────────────────────────

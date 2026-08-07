@@ -39,6 +39,7 @@ import org.springframework.stereotype.Component;
 public class StepExecutionOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(StepExecutionOrchestrator.class);
+    private static final String STEP_LOCK_PREFIX = "lock:plan:";
 
     @Resource private IdempotencyService idempotencyService;
     @Resource private PreFlightChecker preFlightChecker;
@@ -53,6 +54,11 @@ public class StepExecutionOrchestrator {
     @Resource private DecisionLogRepository decisionLogRepository;
     @Resource private CollectionEventBus eventBus;
     @Resource private SpiInvoker spiInvoker;
+    /** 字段默认值保证手工构造（纯逻辑单测）时不为 null；Spring 环境由容器覆盖为共享注册表。 */
+    @Resource
+    private com.collection.engine.metrics.CollectionMetrics metrics =
+            com.collection.engine.metrics.CollectionMetrics.local();
+
     @Resource private com.collection.engine.config.EngineProperties props;
 
     public void executeStep(ContactPlan plan, ContactPlanStep step) {
@@ -60,7 +66,8 @@ public class StepExecutionOrchestrator {
 
         // ── ① 幂等锁 ──
         if (!idempotencyService.acquire(
-                idempotencyKey, props.getStep().effectiveIdempotencyTtlMinutes())) {
+                STEP_LOCK_PREFIX + idempotencyKey,
+                props.getStep().effectiveIdempotencyTtlMinutes())) {
             log.info("[execStep] duplicate event, key={} skipped", idempotencyKey);
             return;
         }
@@ -138,6 +145,8 @@ public class StepExecutionOrchestrator {
 
         // ── ⑤ 渠道调度（熔断/fallback 对引擎透明；抛异常一律视为 retryable） ──
         StepResult result;
+        long dispatchStartNanos = System.nanoTime();
+        metrics.touch(command.getChannelType().name());
         try {
             result = channelGateway.dispatch(command);
         } catch (RuntimeException e) {
@@ -150,6 +159,8 @@ public class StepExecutionOrchestrator {
                             .retryable(true)
                             .build();
         }
+        metrics.stepDuration(
+                command.getChannelType().name(), System.nanoTime() - dispatchStartNanos);
 
         // ── ⑤½ 回写前取消检测 ──
         ContactPlan reloaded = planRepository.findById(plan.getId());
@@ -238,6 +249,7 @@ public class StepExecutionOrchestrator {
 
     private void markSkipped(
             ContactPlan plan, ContactPlanStep step, ContactResult result, String rule) {
+        metrics.stepSkipped(rule == null ? "UNKNOWN" : rule);
         if (stepOutcomeRecorder.recordTerminal(
                 plan,
                 step,

@@ -5,10 +5,14 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 扫描触发器（Trigger-to-Event）。对应基础设施规范 §4 planStepDueHandler / callbackTimeoutHandler。
+ * 扫描触发器（Trigger-to-Event）。对应基础设施规范 §5 的 planStepDue / callbackTimeout 两个调度任务。
  *
- * <p>Phase 1 骨架用 Spring {@code @Scheduled} 代替 XXL-Job：仅"扫表 → 发事件"，毫秒级返回， 不跑业务逻辑（业务由 Consumer
- * 线程池执行）。生产替换为 XXL-Job Handler，保持本类语义。
+ * <p>仅"扫表 → 发事件"，毫秒级返回，不跑业务逻辑（业务由 Consumer 线程池执行）。
+ *
+ * <p><b>仅 local / test 生效</b>：生产调度入口是 Cloud Scheduler → 调度专用 Pub/Sub 主题 → {@link
+ * PubSubScheduleConsumer} → {@link ScheduledJobRunner}，两者调用同一个 {@link
+ * PlanStepTriggerPublisher}，语义一致。 调度入口必须唯一，本类与生产调度不得同时激活，由 {@code SchedulerEntrypointValidator}
+ * 在启动时强制。
  */
 @Component
 @Profile({"local", "test"})

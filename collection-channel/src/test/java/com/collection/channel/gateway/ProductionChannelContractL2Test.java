@@ -88,6 +88,10 @@ class ProductionChannelContractL2Test {
 
         guard = new ConfigurableExecutionGuard();
         ReflectionTestUtils.setField(guard, "channelProperties", properties);
+        ReflectionTestUtils.setField(
+                guard,
+                "complianceCounterService",
+                new com.collection.channel.compliance.InMemoryComplianceCounterService());
 
         NotificationClient notificationClient = new NotificationClient();
         ReflectionTestUtils.setField(notificationClient, "properties", properties);

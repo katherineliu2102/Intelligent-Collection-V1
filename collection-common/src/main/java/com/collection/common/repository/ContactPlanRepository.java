@@ -50,6 +50,11 @@ public interface ContactPlanRepository {
 
     void updateCurrentStep(Long planId, int currentStep);
 
+    /** 更新仍处于活跃态计划的快照余额。仅允许 {@code totalOutstanding} 这个明确的可变例外； 调用方必须先读取快照并保留其他决策字段。 */
+    default boolean updateActivePlanContextSnapshot(Long planId, String contextSnapshot) {
+        return false;
+    }
+
     // ── 步骤 ──
     ContactPlanStep findStepById(Long stepId);
 

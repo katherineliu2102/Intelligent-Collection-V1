@@ -76,7 +76,7 @@ DpdStageRollHandler 每日 0:35 PHT
 | 读库 | 入案以 `case_push` 为主；缺 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 时，允许接入经 CaseService **只读**旧库回填。`jpushToken` 主路径来自消息体，缺失时可降级读新库 `t_user_device_token`。 |
 | payload | 快照字段随 `CASE_INGESTED` payload 带出（[§3.1](#34-与-caseservice--profileservice-的调用边界)）；冻结写入由引擎完成（[§4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）。 |
 | `CASE_INGESTED` | **本催收周期**内首次 publish；同周期增量 ack 跳过；全额结清后 key 清除（§2.2 / §3.3）。 |
-| `REPAYMENT_RECEIVED` | 校验通过即 publish；**不写**库；全额结清时 DEL `ingestion:ingested:{loan_id}`。 |
+| 还款事件 | 整笔 loan 结清（`fullRepayTime` 非空或 loan 级 `STATUS=4`）publish 案件级 `REPAYMENT_RECEIVED` 并清除 `collection:ingestion:ingested:{loan_id}`；单期 bill 还款及其他有效还款 publish `CASE_BALANCE_UPDATED`；均**不写**库。 |
 
 #### DPD 日切
 
@@ -133,7 +133,7 @@ DpdStageRollHandler 每日 0:35 PHT
 | `dataType` | 处理 | 领域事件 |
 |---|---|---|
 | `case_push` | 校验 → 组装 payload → 条件 publish | `CASE_INGESTED` |
-| `repayment_push_and_load` | 校验 → publish | `REPAYMENT_RECEIVED` |
+| `repayment_push_and_load` | 按结清状态校验 → 条件 publish | 全额结清 → `REPAYMENT_RECEIVED`；部分还款 → `CASE_BALANCE_UPDATED` |
 | `assign_signal` | ack 跳过 | — |
 | 其他 | ack 跳过 | — |
 
@@ -152,7 +152,7 @@ DpdStageRollHandler 每日 0:35 PHT
 
 | publish 条件 | 动作 |
 |---|---|
-| 无 `ingestion:ingested:{loan_id}` | publish `CASE_INGESTED` |
+| 无 `collection:ingestion:ingested:{loan_id}` | publish `CASE_INGESTED` |
 | 已有 ingested key | ack |
 | 同周期增量 | ack；阶段 → §4 日切 |
 
@@ -162,9 +162,9 @@ DpdStageRollHandler 每日 0:35 PHT
 
 | 项 | 约定 |
 |---|---|
-| 字段 | [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段) `REPAYMENT_RECEIVED` 行 |
-| 处置 | publish `REPAYMENT_RECEIVED`；不写库 → [核心引擎 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理) |
-| 全额结清 | DEL `ingestion:ingested:{loan_id}`（+ 可选 `dedup:ceased`）→ §3.3、[A.6 #3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入) |
+| 字段 | 全额结清 → [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段) `REPAYMENT_RECEIVED`；部分还款 → `CASE_BALANCE_UPDATED` 行 |
+| 处置 | `fullRepayTime` 非空或**整笔 loan** `STATUS=4` → 携带 `caseId=loanId` publish `REPAYMENT_RECEIVED`；其他有效还款（包括单期 bill 结清）→ publish `CASE_BALANCE_UPDATED`；均不写库 |
+| 全额结清 | DEL `collection:ingestion:ingested:{loan_id}`（+ 可选 `dedup:ceased`）→ §3.3、[A.6 #3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a6-上线前联调签字接入) |
 | 部分还款 | 不清 ingested key |
 
 幂等 → §3.3
@@ -268,7 +268,7 @@ DpdStageRollHandler 每日 0:35 PHT
 |---|---|
 | **必填 / 格式** | 缺必填或格式不可修复 → **ack + poison/DLQ** + 告警（**不 nack**，避免毒丸重投） |
 | **null 防御** | 非关键字段缺失 → payload 记缺省；下游 null 防御 → [HANDOFF C2](../HANDOFF.md) |
-| **乱序** | `repayment_push_and_load` 先于 `case_push` → 仍 publish（引擎无活跃计划 noop）；过期 `case_push`（`publish_time` < `ingestion:last_seen:{loan_id}`）→ ack 跳过 |
+| **乱序** | `repayment_push_and_load` 先于 `case_push` → 仍 publish（引擎无活跃计划 noop）；过期 `case_push`（`publish_time` < `collection:ingestion:last_seen:{loan_id}`）→ ack 跳过 |
 | **迟到** | `publish_time` 超 24h 的 `case_push` → 审计 + 实时 CaseService 核验；仅白名单、未结清、未停催且当前仍应在催的案件受控 replay `CASE_INGESTED`，其余 ack 跳过 |
 | **瞬态失败** | 下游超时 / DB 不可达等 → nack 重投；超 N 次 → poison（§2.3） |
 
@@ -286,23 +286,24 @@ DpdStageRollHandler 每日 0:35 PHT
 | `last_seen:{loan_id}` | 同 loan 更旧 `publish_time` 的乱序消息（§3.2） |
 | `ingested:{loan_id}` | 本催收周期已 publish 过 `CASE_INGESTED` 后的增量推送（阶段靠 §4 日切） |
 
-| 场景 | Redis / 内存 key | TTL | 命中处置 |
+| 场景 | Redis key | TTL | 命中处置 |
 |---|---|---|---|
-| `case_push` 同 message 重投 | `ingestion:dedup:case_push:{message_id}` | 7d | ack 跳过 |
-| `case_push` 乱序（旧 `publish_time`） | `ingestion:last_seen:{loan_id}` | 90d | ack 跳过 |
-| `case_push` 周期内重复入催 | `ingestion:ingested:{loan_id}` | 90d | ack 跳过；全额结清 DEL（§2.2.2） |
-| `repayment_push_and_load` 同 message 重投 | `ingestion:dedup:repayment:{user_id}:{message_id}` | 7d | ack 跳过 |
-| `repayment_push_and_load` 全额结清 | （清除）`ingestion:ingested:{loan_id}`、`dedup:ceased:{loan_id}`（可选） | — | 允许下一周期再 `CASE_INGESTED` |
-| 日切阶段变更 | `ingestion:dedup:stage:{loan_id}:{target_stage}:{yyyyMMdd}` | 2d | 同日同目标 stage 不重复 publish |
-| 日切停催 | `ingestion:dedup:ceased:{loan_id}` | 90d | 不重复 `CASE_CEASED`；结清时可 DEL |
+| `case_push` 同 message 重投 | `collection:ingestion:dedup:msg:{message_id}` | 7d | ack 跳过 |
+| `case_push` 乱序（旧 `publish_time`） | `collection:ingestion:last-seen:{loan_id}` | 90d | ack 跳过；水位用 Lua「仅当更大才写」，并发乱序不会把水位改小 |
+| `case_push` 周期内重复入催 | `collection:ingestion:ingested:{loan_id}` | 90d | ack 跳过；全额结清 DEL（§2.2.2） |
+| `repayment_push_and_load` 同 message 重投 | `collection:ingestion:dedup:msg:{user_id}:{message_id}` | 7d | ack 跳过（与 `case_push` 同一命名空间，key 内含 `user_id` 区分） |
+| `repayment_push_and_load` 全额结清 | （清除）`collection:ingestion:ingested:{loan_id}`、`collection:ingestion:dedup:ceased:{loan_id}`（可选） | — | 允许下一周期再 `CASE_INGESTED` |
+| 日切阶段变更 | `collection:ingestion:dedup:stage:{loan_id}:{target_stage}:{yyyyMMdd}` | 2d | 同日同目标 stage 不重复 publish |
+| 日切停催 | `collection:ingestion:dedup:ceased:{loan_id}` | 90d | 不重复 `CASE_CEASED`；结清时可 DEL |
 
-- 生产切 Redis 后 key 前缀挂 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-运行时状态redis-kv) 同一实例；**键名 / TTL / 命中处置 SSOT = 本节下表**（[A.5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a5-接入层-redis-键) 仅索引）。**须与旧催收 Redis 物理或前缀隔离**（新系统 `ingestion:*` / `ai:*`）。对账指标见 [附录 B](#附录-b可观测与对账)。
+- 实现：`collection.ingestion.redis-dedup-enabled=true`（Pilot / 生产）时全部走 `RedisIngestionDedupStore` + `RedisDailyRollDeduplicator`，跨重启保留、跨实例共享；缺省 false 时用内存实现，仅供本地与 CI。
+- key 前缀挂 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-运行时状态redis-kv) 同一实例；**键名 / TTL / 命中处置 SSOT = 本节下表**（[A.5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a5-接入层-redis-键) 仅索引）。**须与旧催收 Redis 物理或前缀隔离**（新系统 `collection:*` / `ai:*`）。对账指标见 [附录 B](#附录-b可观测与对账)。
 
 ---
 
 ## 4. 阶段变更与 DPD 日切
 
-`DpdStageRollHandler` 每日 **0:35 PHT** 读取并行期旧库已计算的 `t_collection.overdue_days`，发布阶段事件；切量后才改为 bill 级 Max DPD 重算（生产经 XXL-Job，见 [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#4-定时调度xxl-job)）。
+`DpdStageRollHandler` 自每日 **0:35 PHT** 起读取并行期旧库已计算的 `t_collection.overdue_days`，发布阶段事件；切量后才改为 bill 级 Max DPD 重算（生产由 Cloud Scheduler 在 00:35–02:55 PHT 每 5 分钟发调度消息，经调度专用 Pub/Sub 主题与应用侧专用订阅触发，每次只推进一页 keyset，见 [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)）。
 
 > **Phase 1 日切交付（B2）**：在 [§4.2 并行期读库](#42-读库与演进) 上读取已计算的 `overdue_days`，产出 [§4.4](#44-产出事件) 事件，[§4.5](#45-幂等与重跑) 可重跑。切量后才启用 bill 级 Max DPD 重算；`strategyTone` Phase 1 固定 `STANDARD`。
 
@@ -388,7 +389,8 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 | 事件 | 触发点 | 来源章节 |
 |---|---|---|
 | `CASE_INGESTED` | `case_push` 首次入催且校验通过后 | §2.2 / §3 |
-| `REPAYMENT_RECEIVED` | `repayment_push_and_load` 校验通过（不写库） | §2.2 |
+| `REPAYMENT_RECEIVED` | `repayment_push_and_load` 判定全额结清后（不写库） | §2.2 |
+| `CASE_BALANCE_UPDATED` | `repayment_push_and_load` 判定部分还款后（不写库） | §2.2 |
 | `STAGE_CHANGED` | 日切 Stage 变化（含回退） | §4.4 |
 | `CASE_CEASED` | 日切 DPD≥91 | §4.4 |
 
@@ -471,7 +473,7 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 
 ## 附录 B：可观测与对账
 
-命名约束见 [基础设施 §6.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#62-可观测性接入约束)。
+命名约束见 [基础设施 §7.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#73-指标与日志)。
 
 ### B.1 指标
 
@@ -572,8 +574,9 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 真实 key：`userId`（小写）、`loanId`（小写 d）、`fullRepayTime`、`STATUS`、`overdue`、`currentAmmout`。
 
 - **⚠️ 键大小写差异**：`case_push` 用 `userID`/`loanID`（大写 D），repayment 用 `userId`/`loanId`（小写 d）。故 **repayment 不套用 `case_push` 的 `field-map`**，直接按契约同名读（`CasePayloadMapper.repaymentUserId` / `repaymentLoanId`）。
-- **全额结清判定**：`fullRepayTime` 非空 **或** `STATUS==4`（4=结清；码值 `1待还/2逾期/3已分期/4结清/5已结转`）。样例 `STATUS:1` 靠 `fullRepayTime` 非空命中。`CasePayloadMapper.fullySettled()` 已按此实现。
-- DEL `ingestion:ingested:{loan_id}` 已用 `repaymentLoanId(json)` 读真实 `loanId`。
+- **全额结清判定**：`fullRepayTime` 非空 **或** loan 级 `STATUS==4`（4=整笔 loan 结清）。样例 `STATUS:1` 靠 `fullRepayTime` 非空命中。命中时发布带 `caseId=loanId` 的 `REPAYMENT_RECEIVED`，取消该案件活跃计划。
+- **部分还款**：未结清时读取 `loanId`、`userId`、`currentAmmout`（上游原始拼写）和 `STATUS`，发布 `CASE_BALANCE_UPDATED`。金额必须存在且非负；引擎仅更新该 loan/case 活跃计划快照的 `caseContext.totalOutstanding`，不换模板、不改话术、不取消计划。
+- DEL `collection:ingestion:ingested:{loan_id}` 已用 `repaymentLoanId(json)` 读真实 `loanId`。
 
 <a id="c-d-日切与-dpd"></a>
 
@@ -584,11 +587,11 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 | C-D-01 | **Max DPD 公式** | ✅ SSOT：[渠道编排 §6.3.1](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) | — | — | §4.3 |
 | C-D-02 | **`DpdStageRollHandler`** | ✅ 2026-07-06 并行期实现：白名单内逐 loan 读 `overdue_days`→比对活跃计划 stage 发 `STAGE_CHANGED`；`dpd≥91` 发 `CASE_CEASED` | 生产全量扫描（[C-X-02](#c-x-phase-2跟踪占位不阻塞)）| 接入 | `DpdStageRollHandler.java`、[C-B-02](#c-b-代码实现) |
 | C-D-03 | **并行期 hybrid 算法** | ✅ **并行期不重算**：直接读 `t_collection.overdue_days`（旧系统每日已算）；bill 重算推迟至切量后（[C-X-03](#c-x-phase-2跟踪占位不阻塞)） | — | 接入 + 信贷 | §4.3、下方 C-D 联调确认 |
-| C-D-04 | **`t_user_repayment_plan`** | ✅ **并行期非硬依赖**：DPD 取自 `overdue_days`，不读 bill 表；status 码值 `1待还/2逾期/3已分期/4结清/5已结转`（切量后 bill 重算用） | 切量后 bill 表迁入新库（[C-X-03](#c-x-phase-2跟踪占位不阻塞)） | DBA + 信贷 | §4.2 |
+| C-D-04 | **`t_user_repayment_plan`** | ✅ **并行期非硬依赖**：DPD 取自 `overdue_days`，不读 bill 表；新催收系统只识别 `STATUS=4` 为结清 | 切量后 bill 表迁入新库（[C-X-03](#c-x-phase-2跟踪占位不阻塞)） | DBA + 信贷 | §4.2 |
 | C-D-05 | **在催扫描 SQL** | ✅ 口径：`full_repay_time IS NULL AND total_not_paid > 0`；同 `loan_id` 多行取 **`create_time DESC` 最新行** | — | 信贷 + DBA | §4.2、下方 C-D 联调确认 |
 | C-D-06 | **日切 `old_max_dpd`** | ✅ 直接取 `t_collection.overdue_days`（与 C-D-03 同源，无需重算缓存） | — | 接入 | §4.3 |
 | C-D-07 | **`strategyTone` / FIRM** | Phase 1 固定 `STANDARD`（§3.1 / 渠道 §6.3.1） | 难催子条件入案/日切/还款何时计算 | 接入 + service | 渠道 §6.3.1 |
-| C-D-08 | **XXL-Job `dailyRoll`** | 规格 0:35 PHT（账务落库 ≥30min 后） | Job 注册、环境、与 B2 联调 | 运维 + 接入 | [基础设施 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
+| C-D-08 | **`dailyRoll` 调度** | 规格 00:35–02:55 PHT 每 5 分钟（账务落库 ≥30min 后）；入口为 Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅 | 调度主题/订阅、双向 IAM、两条 Scheduler cron 表达式、与 B2 联调 | 运维 + 接入 | [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅) |
 
 #### C-D 联调确认（2026-07-06，主架构拍板）
 
@@ -599,7 +602,7 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 | **Max DPD 来源** | 直接读 `t_collection.overdue_days`（C-D-03/04/06 一并闭合） |
 | **在催名单扫描** | `full_repay_time IS NULL AND total_not_paid > 0` |
 | **同 loan 去重** | `create_time DESC` 取最新行（与 `CollectionCaseMapper.selectByLoanId` 一致） |
-| **`t_user_repayment_plan.status` 码值** | `1 待还款 / 2 逾期 / 3 已分期 / 4 结清 / 5 已结转`（并行期用不到；切量后 bill 重算与 `REPAYMENT_RECEIVED` 结清判定复用，"未结清"= status ∉ {4,5}，5 已结转是否停催待信贷终确） |
+| **`t_user_repayment_plan.status` 码值** | 新催收系统仅以 `4=结清` 判断全额结清；`STATUS=5` 不在本系统输入范围，也不触发停催逻辑 |
 
 **B2 并行期流程（据此实现）**：
 
@@ -620,7 +623,7 @@ payload 字段 → [领域 §6.2](./MOCASA催收系统升级_Phase1_领域模型
 | C-P-02 | **Topic 终态生命周期** | ⬜ | 旧系统下线后是否仍 publish（A.6 #9） | 信贷 + 架构 | A.6 #9 |
 | C-P-03 | **Redis 隔离与切生产** | 内存版 Phase 1 | 切 Redis 时点；与旧系统 `db_collection` key 隔离验收 | 运维 + 接入 | §3.3 |
 | C-P-04 | **结清 DEL `dedup:ceased`** | 规格写「可选」 | 全额结清是否必须 DEL；结清后再 DPD≥91 边界 | 接入 + 信贷 | §3.3 |
-| C-P-05 | **毒丸阈值 N=5 / DLQ** | 建议值 | 是否采纳；DLQ 表结构；与 [基础设施 §2.1 DLQ](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#21-dlq-重放redrive) 对齐 | 接入 + 运维 | §2.3 |
+| C-P-05 | **毒丸阈值 N=5 / DLQ** | 建议值 | 是否采纳；DLQ 表结构；与 [基础设施 §3.3 DLQ](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#33-异常恢复与死信) 对齐 | 接入 + 运维 | §2.3 |
 | C-P-06 | **ACK 单元** | 规格：publish 成功后 ack | B1 读库失败仍 publish 时是否在同事务写 dedup key | 接入 | §2.3、§3.1 |
 | C-P-07 | **`ack-deadline` 调优** | 默认 60s（§2.1） | 长耗时读库 / 重试场景是否需加大 | 接入 + 运维 | §2.1 |
 | C-P-08 | **联调 whitelist** | 可选配置项 | 生产关闭流程与审计 | 接入 + 运维 | §6.0、[基础设施 A.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a3-接入与-pubsub) |

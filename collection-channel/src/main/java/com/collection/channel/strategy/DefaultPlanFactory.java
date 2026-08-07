@@ -37,6 +37,8 @@ public class DefaultPlanFactory implements PlanFactory {
 
     @Resource private ConfigTemplateProvider templateProvider;
 
+    @Resource private PhtSlotScheduleCalculator slotScheduleCalculator;
+
     @Override
     public ContactPlan create(CaseInfo caseInfo, Stage stage, ContextSnapshot snapshot) {
         if (MockPlanFactory.shouldRejectPlan(caseInfo, snapshot)) {
@@ -48,7 +50,7 @@ public class DefaultPlanFactory implements PlanFactory {
                 caseInfo.getCaseId(),
                 stage);
 
-        List<ContactPlanStep> steps = buildSteps(stage, caseInfo.getCaseId());
+        List<ContactPlanStep> steps = buildSteps(stage, caseInfo.getCaseId(), snapshot);
         if (steps.isEmpty()) {
             log.warn("[DefaultPlanFactory] no steps resolved for stage {}, skip", stage);
             return null;
@@ -62,7 +64,8 @@ public class DefaultPlanFactory implements PlanFactory {
         return plan;
     }
 
-    private List<ContactPlanStep> buildSteps(Stage stage, Long caseId) {
+    private List<ContactPlanStep> buildSteps(
+            Stage stage, Long caseId, ContextSnapshot snapshot) {
         String singleStep = channelProperties.getDebug().getSingleStep();
         if (StringUtils.isNotBlank(singleStep)) {
             return buildSingleStep(singleStep.trim().toUpperCase(Locale.ROOT));
@@ -88,7 +91,7 @@ public class DefaultPlanFactory implements PlanFactory {
         if (channelProperties.getDebug().isLegacyThreeStep()) {
             return buildLegacyThreeStep();
         }
-        return buildFromTemplate(stage);
+        return buildFromTemplate(stage, snapshot);
     }
 
     private boolean isGuardFrequencyCase(Long caseId) {
@@ -109,9 +112,18 @@ public class DefaultPlanFactory implements PlanFactory {
         return caseId != null && caseId == l4a.getObservationCaseId() && stage == Stage.S1;
     }
 
-    private List<ContactPlanStep> buildFromTemplate(Stage stage) {
+    private List<ContactPlanStep> buildFromTemplate(Stage stage, ContextSnapshot snapshot) {
         String key = stage != null ? stage.name() : "S1";
-        List<ChannelProperties.PlanStepDef> defs = resolveTemplateDefs(key);
+        ChannelProperties.PlanTemplate template = resolvePlanTemplate(key);
+        if (template != null
+                && template.getDayBlocks() != null
+                && !template.getDayBlocks().isEmpty()) {
+            List<ContactPlanStep> scheduled = buildDayBlockSteps(snapshot, template.getDayBlocks());
+            // 配置绝对槽位后不允许退回 delayMin 补发：晚进案/已过槽位必须静默跳过。
+            return scheduled;
+        }
+        List<ChannelProperties.PlanStepDef> defs =
+                template == null ? null : template.getSteps();
         if (defs == null || defs.isEmpty()) {
             log.info("[DefaultPlanFactory] no template for stage={}, fallback PUSH→EMAIL", key);
             return buildFallbackFlow();
@@ -135,12 +147,15 @@ public class DefaultPlanFactory implements PlanFactory {
         return steps;
     }
 
-    /** DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。 */
-    private List<ChannelProperties.PlanStepDef> resolveTemplateDefs(String stageKey) {
-        List<ChannelProperties.PlanStepDef> dbDefs =
-                templateProvider != null ? templateProvider.getPlanSteps(stageKey) : null;
-        if (dbDefs != null && !dbDefs.isEmpty()) {
-            return dbDefs;
+    /**
+     * DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。
+     * DayBlock 是生产绝对槽位模型；扁平 steps 保留给 local/L4 相对延迟回退。
+     */
+    private ChannelProperties.PlanTemplate resolvePlanTemplate(String stageKey) {
+        ChannelProperties.PlanTemplate dbTemplate =
+                templateProvider != null ? templateProvider.getPlanTemplate(stageKey) : null;
+        if (dbTemplate != null) {
+            return dbTemplate;
         }
         Map<String, ChannelProperties.PlanTemplate> templates =
                 channelProperties.getPlanTemplates();
@@ -148,7 +163,33 @@ public class DefaultPlanFactory implements PlanFactory {
         if (tpl == null) {
             tpl = templates.get("S1");
         }
-        return tpl == null ? null : tpl.getSteps();
+        return tpl;
+    }
+
+    private List<ContactPlanStep> buildDayBlockSteps(
+            ContextSnapshot snapshot, List<ChannelProperties.DayBlock> dayBlocks) {
+        List<PhtSlotScheduleCalculator.ScheduledSlot> scheduledSlots =
+                slotScheduleCalculator.futureSlots(
+                        snapshot, dayBlocks, java.time.LocalDateTime.now(PhtSlotScheduleCalculator.PHT));
+        List<ContactPlanStep> steps = new ArrayList<>();
+        int order = 1;
+        for (PhtSlotScheduleCalculator.ScheduledSlot scheduled : scheduledSlots) {
+            ChannelProperties.Slot slot = scheduled.getSlot();
+            ChannelType channelType = parseChannel(slot.getChannel());
+            if (channelType == null || channelType == ChannelType.HUMAN_CALL) {
+                continue;
+            }
+            ContactPlanStep step =
+                    buildStep(
+                            order++,
+                            channelType,
+                            0,
+                            slot.getObserveMin(),
+                            slot.getTemplateId());
+            step.setTriggerTime(scheduled.getTriggerTime());
+            steps.add(step);
+        }
+        return steps;
     }
 
     private static ChannelType parseChannel(String name) {

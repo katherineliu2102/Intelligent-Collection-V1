@@ -16,7 +16,7 @@
 |---|---|---|---|
 | `spi/PlanFactory.java` | SPI | **实现** | 入案/升阶/续建建什么计划；null=不建计划；禁副作用；硬超时 50ms |
 | `spi/StepResolver.java` | SPI | **实现** | 读快照产出 `StepCommand`（channelType/targetAddress/templateId）；`null` 仅表示策略性跳过→SKIPPED，异常→FAILED；零 DB I/O；硬超时 50ms；**Phase 1 永不输出 HUMAN_CALL**（E4） |
-| `spi/ExecutionGuard.java` | SPI | **实现** | 合规放行/拦截；抛异常→fail-close(SKIPPED)；硬超时 20ms |
+| `spi/ExecutionGuard.java` | SPI | **实现** | 合规放行/拦截；抛异常→fail-close(SKIPPED)；硬超时 50ms |
 | `spi/AdvancementPolicy.java` | SPI | **实现** | 推进/完成/穷尽；不许 null；硬超时 10ms |
 | `spi/ExhaustionPolicy.java` | SPI | **实现** | 续建/升档/完成；REBUILD 填 templateId、ESCALATE 填 targetStage；硬超时 50ms |
 | `channel/ChannelGateway.java` | 技术管道 | **实现** | `dispatch(StepCommand)→StepResult`；熔断/fallback 对引擎透明；抛异常一律 retryable |

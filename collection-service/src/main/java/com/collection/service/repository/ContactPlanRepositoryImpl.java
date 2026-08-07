@@ -109,6 +109,11 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     }
 
     @Override
+    public boolean updateActivePlanContextSnapshot(Long planId, String contextSnapshot) {
+        return planMapper.updateActiveContextSnapshot(planId, contextSnapshot) > 0;
+    }
+
+    @Override
     public ContactPlanStep findStepById(Long stepId) {
         return stepMapper.selectById(stepId);
     }

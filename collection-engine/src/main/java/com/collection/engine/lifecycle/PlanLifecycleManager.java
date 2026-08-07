@@ -129,19 +129,54 @@ public class PlanLifecycleManager {
     @Transactional
     public List<CollectionEvent> onRepaymentReceived(CollectionEvent event) {
         Long userId = event.getLong(CollectionEvent.USER_ID);
-        List<ContactPlan> plans = planRepository.findActivePlansByUser(userId);
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        if (caseId == null) {
+            log.warn("[repayment] ignore event without caseId, user={}", userId);
+            return noEvents();
+        }
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
         plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
         for (ContactPlan p : plans) {
             planRepository.findPlanWithLock(p.getId());
-            planRepository.updatePlanStatus(
-                    p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+            planRepository.updatePlanStatus(p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
             log.info("[repayment] cancelled plan {} (REPAID)", p.getId());
         }
         try {
-            predictiveDialerService.filterRepaidUser(userId);
+            predictiveDialerService.filterRepaidCase(userId, caseId);
         } catch (Exception e) {
             // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5）
-            log.warn("[repayment] filterRepaidUser failed for user {}: {}", userId, e.getMessage());
+            log.warn(
+                    "[repayment] filterRepaidCase failed for user {} case {}: {}",
+                    userId,
+                    caseId,
+                    e.getMessage());
+        }
+        return noEvents();
+    }
+
+    /** 部分还款的唯一计划变更：更新活跃计划快照中的余额。DPD、阶段、模板、渠道和话术决策字段保持原值。 */
+    @Transactional
+    public List<CollectionEvent> onCaseBalanceUpdated(CollectionEvent event) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        java.math.BigDecimal amount = event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING);
+        if (caseId == null || amount == null || amount.signum() < 0) {
+            log.warn("[balanceUpdated] ignore invalid event case={} amount={}", caseId, amount);
+            return noEvents();
+        }
+        for (ContactPlan plan : planRepository.findActivePlansByCase(caseId)) {
+            ContactPlan locked = planRepository.findPlanWithLock(plan.getId());
+            ContextSnapshot snapshot = snapshotFromPlan(locked);
+            if (locked == null
+                    || locked.isTerminal()
+                    || snapshot == null
+                    || snapshot.getCaseContext() == null) {
+                continue;
+            }
+            snapshot.getCaseContext().setTotalOutstanding(amount);
+            if (planRepository.updateActivePlanContextSnapshot(
+                    locked.getId(), JsonUtil.toJson(snapshot))) {
+                log.info("[balanceUpdated] plan={} amount={}", locked.getId(), amount);
+            }
         }
         return noEvents();
     }
@@ -223,9 +258,13 @@ public class PlanLifecycleManager {
                     log.info("[advance] plan {} no next step → PLAN_EXHAUSTED", planId);
                     return single(planExhaustedEvent(plan));
                 }
-                LocalDateTime triggerTime =
-                        LocalDateTime.now().plusMinutes(Math.max(0, next.getDelayMinutes()));
-                planRepository.updateStepTriggerTime(next.getId(), triggerTime, StepStatus.PENDING);
+                LocalDateTime triggerTime = next.getTriggerTime();
+                if (triggerTime == null) {
+                    triggerTime =
+                            LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
+                                    .plusMinutes(Math.max(0, next.getDelayMinutes()));
+                    planRepository.updateStepTriggerTime(next.getId(), triggerTime, StepStatus.PENDING);
+                }
                 planRepository.updateCurrentStep(planId, next.getStepOrder());
                 planRepository.updatePlanStatus(planId, PlanStatus.STEP_SCHEDULED, null);
                 log.info(
@@ -464,12 +503,15 @@ public class PlanLifecycleManager {
         plan.setCurrentStep(0);
         plan.setIdempotencyKey(caseId + ":" + stage + ":" + System.currentTimeMillis());
 
-        // 首步设置 trigger_time（相对计划创建时间）；其余步骤等推进时再注册
+        // Factory 预写的 DayBlock 绝对槽位必须保留；相对 delayMinutes 仅作 local/L4 回退。
         if (!plan.getSteps().isEmpty()) {
             ContactPlanStep first = plan.getSteps().get(0);
             first.setStepOrder(1);
-            first.setTriggerTime(
-                    LocalDateTime.now().plusMinutes(Math.max(0, first.getDelayMinutes())));
+            if (first.getTriggerTime() == null) {
+                first.setTriggerTime(
+                        LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
+                                .plusMinutes(Math.max(0, first.getDelayMinutes())));
+            }
             first.setStatus(StepStatus.PENDING);
         }
         planRepository.savePlan(plan);

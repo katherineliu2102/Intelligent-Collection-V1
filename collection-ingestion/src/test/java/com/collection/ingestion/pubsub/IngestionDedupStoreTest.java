@@ -6,14 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** {@link IngestionDedupStore} §3.3 三道检查单测。 */
+/** {@link IngestionDedupStore} §3.3 三道检查单测（内存实现）。 */
 class IngestionDedupStoreTest {
 
     private IngestionDedupStore store;
 
     @BeforeEach
     void setUp() {
-        store = new IngestionDedupStore();
+        store = new InMemoryIngestionDedupStore();
     }
 
     @Test

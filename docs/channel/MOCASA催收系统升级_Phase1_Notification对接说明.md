@@ -328,7 +328,7 @@ collection-channel/
 
 通知中心 API **无** `idempotencyKey` 字段。collection-channel 侧：
 
-- Redis `idempotency:channel:{idempotencyKey}`（Gateway 已有）
+- Redis `collection:idempotency:channel:{idempotencyKey}`（Gateway 已有）
 - 日志关联 `planId`、`stepOrder`、`requestId`（SMS 同步返回）
 
 合规（静默时段、日上限）在 `ComplianceExecutionGuard`，**调用通知中心之前**执行。

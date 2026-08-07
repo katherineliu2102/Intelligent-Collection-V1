@@ -496,16 +496,43 @@ public class ConfigController {
 
     private String buildPlanJson(PlanTemplateRequest body) {
         List<Map<String, Object>> steps = new ArrayList<>();
-        for (PlanTemplateRequest.Step s : body.getSteps()) {
-            Map<String, Object> step = new LinkedHashMap<>();
-            step.put("channel", s.getChannel().trim().toUpperCase());
-            step.put("delayMin", s.getDelayMin());
-            step.put("observeMin", s.getObserveMin());
-            step.put("templateId", s.getTemplateId());
-            steps.add(step);
+        if (body.getSteps() != null) {
+            for (PlanTemplateRequest.Step s : body.getSteps()) {
+                Map<String, Object> step = new LinkedHashMap<>();
+                step.put("channel", s.getChannel().trim().toUpperCase());
+                step.put("delayMin", s.getDelayMin());
+                step.put("observeMin", s.getObserveMin());
+                step.put("templateId", s.getTemplateId());
+                steps.add(step);
+            }
         }
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("steps", steps);
+        List<Map<String, Object>> dayBlocks = new ArrayList<>();
+        if (body.getDayBlocks() != null) {
+            for (PlanTemplateRequest.DayBlock block : body.getDayBlocks()) {
+                List<Map<String, Object>> slots = new ArrayList<>();
+                if (block.getSlots() != null) {
+                    for (PlanTemplateRequest.Slot slot : block.getSlots()) {
+                        Map<String, Object> value = new LinkedHashMap<>();
+                        value.put("channel", slot.getChannel().trim().toUpperCase());
+                        value.put("time", slot.getTime());
+                        value.put("observeMin", slot.getObserveMin());
+                        value.put("templateId", slot.getTemplateId());
+                        slots.add(value);
+                    }
+                }
+                Map<String, Object> value = new LinkedHashMap<>();
+                value.put("dpdDay", block.getDpdDay());
+                value.put("slots", slots);
+                dayBlocks.add(value);
+            }
+        }
+        if (steps.isEmpty() && dayBlocks.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "steps or dayBlocks is required");
+        }
+        root.put("dayBlocks", dayBlocks);
         try {
             return objectMapper.writeValueAsString(root);
         } catch (Exception e) {

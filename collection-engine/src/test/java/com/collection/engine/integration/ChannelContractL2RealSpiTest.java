@@ -66,10 +66,9 @@ import org.junit.jupiter.api.Test;
 /**
  * L2 引擎↔渠道执行契约测试（C1–C7）——<b>真实 SPI 版</b>。
  *
- * <p>与 {@link ChannelContractL2Test}（契约替身基线）互补：本类用编排同事的真实实现 {@code
- * DefaultPlanFactory / ConfigurableExecutionGuard / DefaultStepResolver / ChannelGatewayImpl +
- * Adapter} 驱动真实引擎组件，只把供应商 HTTP（Notification / SendGrid）换成 WireMock，因此断言覆盖
- * “真实渠道决策 → 引擎状态推进 → timeline 落库”的完整链路。
+ * <p>与 {@link ChannelContractL2Test}（契约替身基线）互补：本类用编排同事的真实实现 {@code DefaultPlanFactory /
+ * ConfigurableExecutionGuard / DefaultStepResolver / ChannelGatewayImpl + Adapter} 驱动真实引擎组件，只把供应商
+ * HTTP（Notification / SendGrid）换成 WireMock，因此断言覆盖 “真实渠道决策 → 引擎状态推进 → timeline 落库”的完整链路。
  *
  * <p>与 {@code ProductionChannelContractL2Test}（collection-channel）的差别：那里只断言渠道子图产出的
  * StepCommand/StepResult，本类断言引擎侧的步骤/计划状态机与 timeline 溯源字段。
@@ -189,7 +188,7 @@ class ChannelContractL2RealSpiTest {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) userId -> {});
+        inject(manager, "predictiveDialerService", (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
@@ -216,9 +215,7 @@ class ChannelContractL2RealSpiTest {
         assertThat(steps)
                 .extracting(ContactPlanStep::getChannelType)
                 .containsExactly(ChannelType.SMS, ChannelType.PUSH, ChannelType.EMAIL);
-        assertThat(steps)
-                .extracting(ContactPlanStep::getStatus)
-                .containsOnly(StepStatus.COMPLETED);
+        assertThat(steps).extracting(ContactPlanStep::getStatus).containsOnly(StepStatus.COMPLETED);
         assertThat(onlyPlan().getStatus()).isEqualTo(PlanStatus.PLAN_COMPLETED);
 
         assertThat(timelineRepo.records).hasSize(3);

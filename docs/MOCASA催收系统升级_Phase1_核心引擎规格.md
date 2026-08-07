@@ -23,8 +23,9 @@
   - [4.3 步骤执行循环](#43-步骤执行循环)
   - [4.4 中断处理](#44-中断处理)
   - [4.5 穷尽续建](#45-穷尽续建)
-  - [4.6 PTP 到期处理（Phase 2 预留）](#46-ptp-到期处理)
-  - [4.7 状态转换](#47-状态转换)
+  - [4.6 部分还款余额更新](#46-部分还款余额更新)
+  - [4.7 PTP 到期处理（Phase 2 预留）](#47-ptp-到期处理)
+  - [4.8 状态转换](#48-状态转换)
 - [5. 步骤执行管线](#5-步骤执行管线)
 - [6. SPI 接口契约](#6-spi-接口契约)
   - [6.1 接口总览](#61-接口总览)
@@ -62,41 +63,30 @@
 
 ### 1.2 模块边界与调用全景
 
-核心引擎与渠道编排层的模块边界：`StepExecutionOrchestrator`（非 `EventConsumerDispatcher`）经 SPI / `ChannelGateway` 串联策略子层与执行子层（接口契约见 [§6](#6-spi-接口契约)）。下图突出 [§5](#5-步骤执行管线) 跨模块步骤 ③④⑤——`StepCommand` 由策略子层 `StepResolver` 产出、引擎持有后再传入执行子层（签名见 [§6.1](#61-接口总览)，DTO 见 [§6.2](#62-共享-dto-定义)）；引擎内 ①②⑥⑦ 仅作轻量标注：
+`StepExecutionOrchestrator` 按 [§5](#5-步骤执行管线) 七步顺序执行；③④⑤ 经 SPI / `ChannelGateway` 进入渠道编排，①②⑥⑦ 在引擎内完成（契约见 [§6](#6-spi-接口契约)）：
 
 ```mermaid
 flowchart LR
-    subgraph engine["核心引擎 · StepExecutionOrchestrator（§5）"]
-        I12["① 幂等 · ② PreFlight"]
-        O["execute_step"]
-        I67["⑥ 降级 · ⑦ 分流"]
-        I12 -.-> O
-        O -.-> I67
+    subgraph engine["核心引擎 · StepExecutionOrchestrator"]
+        S1["① 幂等"]
+        S2["② PreFlight"]
+        S6["⑥ 降级"]
+        S7["⑦ 分流"]
     end
 
     subgraph strategy["渠道编排 · 策略子层 (engine.strategy)"]
-        EG["ExecutionGuard<br/>③ 合规守卫"]
-        SR["StepResolver<br/>④ 生成 StepCommand"]
+        S3["③ 合规<br/>ExecutionGuard"]
+        S4["④ 解析<br/>StepResolver"]
     end
 
     subgraph exec["渠道编排 · 执行子层 (collection-channel)"]
-        CG["ChannelGateway<br/>⑤ 渠道调度"]
+        S5["⑤ 渠道<br/>ChannelGateway"]
     end
 
-    O -->|"③ evaluate()"| EG
-    EG -->|"GuardVerdict"| O
-    O -->|"④ resolve()"| SR
-    SR -->|"StepCommand"| O
-    O -->|"⑤ dispatch(command)"| CG
-    CG -->|"StepResult"| O
-
-    style I12 fill:transparent,stroke-dasharray: 3 3
-    style I67 fill:transparent,stroke-dasharray: 3 3
+    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
 ```
 
-
-
-> **读图**：**实线**＝跨模块 ③④⑤；**虚线灰标**＝引擎内 ①②⑥⑦（不穿边界）。细节见 [§5](#5-步骤执行管线)。
+> 七步顺序与 [§5](#5-步骤执行管线) 一致；⑤ 与 ⑥ 之间另有 ⑤½ 取消复检（引擎内，本图从略）。
 
 ---
 
@@ -108,14 +98,15 @@ flowchart LR
 
 ### 2.1 事件路由表（SSOT）
 
-下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 9 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②步骤循环 / ③收尾 / ④中断）。
+下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 10 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
 
 
 | 事件                   | 生命周期域       | 引擎侧处理动作                                 | 详见                                 |
 | -------------------- | ----------- | --------------------------------------- | ---------------------------------- |
 | `CASE_INGESTED`      | ① 创建        | 匹配模板 → 创建计划（PENDING）→ 注册首步 Job          | [§4.2](#42-计划创建)                   |
 | `STAGE_CHANGED`      | ① 创建 + ④ 中断 | 取消旧阶段活跃计划 → 为新阶段创建计划                    | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
-| `REPAYMENT_RECEIVED` | ④ 中断        | 取消该用户所有活跃计划 + 清理已注册 Job                 | [§4.4](#44-中断处理)                   |
+| `REPAYMENT_RECEIVED` | ④ 中断        | **整笔 loan 全额结清**：取消该案件活跃计划 + 清理已注册 Job  | [§4.4](#44-中断处理)                   |
+| `CASE_BALANCE_UPDATED` | ② 运行中更新 | **部分还款**：仅刷新该案件活跃计划快照的 `totalOutstanding` | [§4.6](#46-部分还款余额更新) |
 | `PLAN_STEP_DUE`      | ② 步骤循环      | 按状态分流：到期执行 / 观察期结转 → 触达                 | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
 | `CHANNEL_CALLBACK`   | ② 步骤循环      | 更新步骤结果 → 发布 `STEP_COMPLETED`            | [§4.3.3](#433-channel_callback)    |
 | `CALLBACK_TIMEOUT`   | ② 步骤循环      | 回调超时 → 标 `FAILED` → 发布 `STEP_COMPLETED` | [§4.3.4](#434-callback_timeout)    |
@@ -128,7 +119,7 @@ flowchart LR
 
 ### 2.2 生命周期派生总览
 
-下图把路由表 9 行按其**生命周期域**压缩为四类协作关系，并用边表达正常推进顺序与横切关系，仅作全景导览（引擎侧视角，不涉及上游产生方式）；事件归属与处理动作以路由表为准，此处不展开单个事件语义。
+下图把路由表 10 行按其**生命周期域**压缩为四类协作关系，并用边表达正常推进顺序与横切关系，仅作全景导览（引擎侧视角，不涉及上游产生方式）；事件归属与处理动作以路由表为准，此处不展开单个事件语义。
 
 ```mermaid
 flowchart TB
@@ -136,7 +127,7 @@ flowchart TB
 
     subgraph plan["PlanLifecycleManager · 计划级 §4"]
         P1["① 创建：CASE_INGESTED / STAGE_CHANGED"]
-        P3["② 步骤循环：PLAN_STEP_DUE / CHANNEL_CALLBACK / CALLBACK_TIMEOUT / STEP_COMPLETED"]
+        P3["② 运行中：PLAN_STEP_DUE / CHANNEL_CALLBACK / CALLBACK_TIMEOUT / STEP_COMPLETED / CASE_BALANCE_UPDATED"]
         P4["③ 收尾：PLAN_EXHAUSTED"]
         P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED"]
     end
@@ -155,7 +146,7 @@ flowchart TB
 
 
 
-> 读图：**实线**＝正常生命周期推进（入口 → ①创建 → ②循环 → ③收尾）与进入步骤管线；**虚线**＝横切中断（④可作用于任意非终态计划）。完整状态流转与竞态见 [§4.7](#47-状态转换)，本图不重复。
+> 读图：**实线**＝正常生命周期推进（入口 → ①创建 → ②循环 → ③收尾）与进入步骤管线；**虚线**＝横切中断（④可作用于任意非终态计划）。完整状态流转与竞态见 [§4.8](#48-状态转换)，本图不重复。
 
 ---
 
@@ -176,7 +167,7 @@ Cron 扫表 ──XADD──→ Redis Stream ──XREADGROUP──→ Consumer 
 
 | 维度   | **Cron 调度线程**          | **Consumer 业务线程**       |
 | ---- | ---------------------- | ----------------------- |
-| 线程池  | XXL-Job Handler        | Redis Stream 消费线程池      |
+| 线程池  | 调度订阅消费线程（Cloud Scheduler → Pub/Sub） | Redis Stream 消费线程池      |
 | 职责   | 扫表发现到期步骤 → `XADD` 发事件  | `XREADGROUP` 消费 → 引擎全链路 |
 | 耗时约束 | 毫秒级返回；**禁止**渠道 I/O 等阻塞 | 允许阻塞；供应商变慢仅占用本池         |
 
@@ -188,10 +179,10 @@ Cron 扫表 ──XADD──→ Redis Stream ──XREADGROUP──→ Consumer 
 | ------------------------- | ------------------------ | ----------------------------------- |
 | `PLAN_STEP_DUE`           | **生产**（扫 `trigger_time`） | **消费**（分流 → `execute_step`）         |
 | `CALLBACK_TIMEOUT`        | **生产**（扫 `timeout_time`） | **消费**（标 FAILED → `STEP_COMPLETED`） |
-| 其余 7 种（`CASE_INGESTED` 等） | 不参与                      | 消费 + 执行                             |
+| 其余 8 种（`CASE_INGESTED` 等） | 不参与                      | 消费 + 执行                             |
 
 
-> 两池不共享线程（详见 [基础设施 §1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#1-运行模式消费线程与上线门槛)）。Consumer 并行消费正是 [§3.2](#32-并发与一致性模型) 的前提。
+> 两池不共享线程；生产线程池、背压与 PEL 的实现参数以 [基础设施 §2.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#22-生产消费拓扑线程职责与背压) 为准。Consumer 并行消费正是 [§3.2](#32-并发与一致性模型) 的前提。
 
 
 
@@ -262,9 +253,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 
 ## 4. 计划生命周期与状态机
 
-本节先定义状态词汇表，再按时间顺序展示计划从创建到终态的完整一生，最后以状态转换总表和转换图作为形式化总结。
-
-> **§4 与 §5 的关系**：§4 是计划级的纵向视角（一个计划经历了什么），§5 是步骤级的横向视角（一次步骤执行内部怎么协作）。§4.3 中"执行步骤"的内部展开见 §5。
+本节从计划级纵向视角说明一个计划经历什么：先定义状态词汇表，再按时间顺序展示从创建到终态的完整生命周期，最后以状态转换总表和转换图作形式化总结。步骤级横向协作见 [§5](#5-步骤执行管线)，即 §4.3「执行步骤」的内部展开；部分还款的余额快照更新不构成状态迁移，见 [§4.6](#46-部分还款余额更新)。
 
 
 
@@ -283,19 +272,17 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 | `PLAN_CANCELLED` | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因) |
 
 
-> **带外取消（Phase 2）**：`COMPLAINT` / `MANUAL` 不经事件总线、由管理后台写 `PLAN_CANCELLED` 终态；枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)（Phase 2 预留）。Phase 1 引擎仅写入 `REPAID` / `STAGE_UPGRADE` / `CEASED`；投诉/争议冻结及其后台操作同属 Phase 2。
->
-> **不含** `PLAN_PAUSED`：人工外呼等待坐席等暂停态归渠道编排层，非引擎状态机。
+> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
 
 
 
 ### 4.2 计划创建
 
-**入/出态**：入态 — / 出态 `PENDING`；`STEP_SCHEDULED` 的进入见 [§4.3](#43-步骤执行循环)。
+**状态影响**：创建新计划为 `PENDING`；首步已预排或回退写入 `trigger_time` 后由扫描器进入 `STEP_SCHEDULED`。
 **触发事件**：`CASE_INGESTED` / `STAGE_CHANGED`（链 [§2.1](#21-事件路由表ssot)）。
 **关联 SPI**：`PlanFactory`（链 [§6.1](#61-接口总览)）。
 
-数据接入流程见 ingestion 规格；引擎消费 `CASE_INGESTED` 后执行如下伪代码：
+数据接入流程见 ingestion 规格；`CASE_INGESTED` 与 `STAGE_CHANGED` 均复用下方创建逻辑。`dpd≥91` / `collectionStatus=CEASED` 时拒建计划。
 
 ```python
 def on_case_ingested(event):
@@ -307,18 +294,20 @@ def on_case_ingested(event):
     if plan is None:
         return                        # 该案件不需要创建计划
 
+    plan.status = PENDING
+    first_step = plan.steps[0]
+    # DayBlock 模板已写 PHT 绝对槽位则保留；扁平 delayMinutes 模板才回退计算。
+    if first_step.trigger_time is None:
+        first_step.trigger_time = now(PHT) + max(0, first_step.delay_minutes)
     with transaction():               # 计划+步骤+首步 trigger_time 原子落盘
         save(plan)                    # 持久化计划 + 步骤序列
-        first_step = plan.steps[0]
-        first_step.trigger_time = calculate_trigger_time(first_step)
-    plan.status = PENDING
 ```
 
-**幂等约束**：同一 `case_id + stage` 不得重复建计划，且任一时刻仅一个非终态计划（升档 [§4.4](#44-中断处理) / 续建 [§4.5](#45-穷尽续建) 时先终态旧计划）。`find_active_plan(case_id)` 因此唯一；`find_active_plans(user_id)` 多条仅当用户多笔贷款。
+**幂等约束**：同一 `case_id + stage` 不得重复建计划，且任一时刻仅一个非终态计划（升档 [§4.4](#44-中断处理) / 续建 [§4.5](#45-穷尽续建) 时先终态旧计划）。
 
 ### 4.3 步骤执行循环
 
-**入/出态**：场景 A：`PENDING` / `STEP_SCHEDULED`（重试时 `STEP_EXECUTING`）→ `STEP_EXECUTING` → 消息类同步完成或 AI_CALL 挂起。场景 B（Phase 2 预留）：`STEP_WAITING` → 结转 `STEP_COMPLETED`（不触达）。推进下一步 → `STEP_SCHEDULED`（见 [§4.3.2](#432-step_completed)）；回调/超时经 `STEP_COMPLETED` 再分流。
+**状态影响**：`PENDING` / `STEP_SCHEDULED`（重试时 `STEP_EXECUTING`）→ `STEP_EXECUTING` → 消息类同步完成或 AI_CALL 挂起；`STEP_WAITING`（Phase 2）结转 `STEP_COMPLETED`（不触达）。推进下一步为 `STEP_SCHEDULED`；回调/超时经 `STEP_COMPLETED` 再分流。
 **触发事件**：`PLAN_STEP_DUE` / `CHANNEL_CALLBACK` / `STEP_COMPLETED`（及 Cron 产生的 `CALLBACK_TIMEOUT` 哨兵；事件名均非计划状态，链 [§2.1](#21-事件路由表ssot)）。
 **关联 SPI**：`ExecutionGuard` / `StepResolver` / `ChannelGateway` / `AdvancementPolicy`（链 [§6.1](#61-接口总览)）。
 
@@ -331,21 +320,26 @@ def on_case_ingested(event):
 | [§4.3.4](#434-callback_timeout) | `CALLBACK_TIMEOUT` | 回调超时 → 标 `FAILED` → 发 `STEP_COMPLETED` |
 
 
-下方流程图按「入口 → 汇聚 → 推进」分层：四条入口汇入 `publish(STEP_COMPLETED)` 后再进 §4.3.2。线程隔离见 [§3.1](#31-线程隔离trigger-to-event)，锁外触达见 [§5](#5-步骤执行管线)。
+下方流程图按「入口 → 执行/回环 → 汇聚 → 推进」分层：多数路径经 `STEP_COMPLETED` 进入 §4.3.2；Guard defer 与渠道退避重试不经汇聚，直接重排 `trigger_time` 后回到 Cron。线程隔离见 [§3.1](#31-线程隔离trigger-to-event)，单步分支详见 [§5](#5-步骤执行管线)。
 
 ```mermaid
-flowchart LR
-    subgraph sources["入口（生产）"]
+flowchart TB
+    subgraph in["入口（生产）"]
         C1["Cron · 扫 trigger_time"]
         C2["Cron · 扫 timeout_time"]
         WH["admin Webhook"]
     end
 
-    subgraph due["§4.3.1 PLAN_STEP_DUE"]
-        S1["锁内分流"]
+    subgraph s431["§4.3.1 PLAN_STEP_DUE"]
+        S1["锁内分流 · 终态/重复步吸收"]
         EX["execute_step（§5）"]
         S1 -->|"A · PENDING / SCHEDULED / EXECUTING（重试）"| EX
         S1 -->|"B · STEP_WAITING 观察期满"| HUB
+    end
+
+    subgraph s5out["§5 出口（节选）"]
+        LOOP["Guard defer / 渠道退避重试<br/>重排 trigger_time → SCHEDULED 或保持 EXECUTING"]
+        SYNC["同步完成 · SKIPPED · FAILED"]
     end
 
     CB["§4.3.3 CHANNEL_CALLBACK"]
@@ -357,29 +351,35 @@ flowchart LR
     C2 --> TO
     WH --> CB
 
-    EX -->|"同步完成（SMS/PUSH/EMAIL）"| HUB
-    EX -.->|"挂起：AI_CALL→EXECUTING"| hang["等回调 / 超时"]
-    hang --> CB
-    hang --> TO
+    EX --> LOOP
+    EX --> SYNC
+    EX -.->|"AI_CALL 挂起"| ASYNC["等回调 / 超时"]
+    LOOP -.->|"到期再扫"| C1
+    SYNC --> HUB
+    ASYNC --> CB
+    ASYNC --> TO
     CB --> HUB
     TO --> HUB
 
     HUB --> ADV
-    ADV -->|ADVANCE_NEXT| NEXT["STEP_SCHEDULED<br/>trigger=now+delay"]
+    ADV -->|"ADVANCE_NEXT · 有下一步"| NEXT["STEP_SCHEDULED<br/>保留预排 trigger_time<br/>否则 now(PHT)+delayMin"]
+    ADV -->|"ADVANCE_NEXT · 无下一步"| EXH["§4.5 PLAN_EXHAUSTED"]
     ADV -->|PLAN_COMPLETED| DONE["终态 ✓"]
-    ADV -->|PLAN_EXHAUSTED| EXH["§4.5"]
-    NEXT -.->|扫描器发 PLAN_STEP_DUE| C1
+    ADV -->|PLAN_EXHAUSTED| EXH
+    NEXT -.->|"到期"| C1
 ```
 
 
 
-> **读图**：实线＝同步完成汇入；虚线＝AI_CALL 挂起后再经回调/超时汇入。场景 B（`STEP_WAITING`）为 Phase 2 消息渠道预留，Phase 1 SMS/PUSH/EMAIL 不进 WAITING。A/B 详见 [§4.3.1](#431-plan_step_due)。
+> **读图**：实线＝步骤终态汇入 `STEP_COMPLETED`；虚线＝不经汇聚的回环（defer/重试重排 `trigger_time`，或 AI_CALL 异步回调/超时）。场景 B（`STEP_WAITING`）为 Phase 2 预留，Phase 1 SMS/PUSH/EMAIL 不进 WAITING。横切中断（还款/升档/停催）见 [§4.4](#44-中断处理)，未在本图展开。
 
 
 
 #### 4.3.1 PLAN_STEP_DUE
 
 锁内按计划态分流（场景 A/B）：**A 到期执行**（`PENDING` / `STEP_SCHEDULED` / 退避重试时的 `STEP_EXECUTING` → 置或保持 `STEP_EXECUTING`，COMMIT 后锁外 `execute_step`）/ **B 观察期结转**（`STEP_WAITING` → 标记步骤完成；事务提交后由 Dispatcher 投递 `STEP_COMPLETED`，不触达）。
+
+**Guard defer**（§5 ③）：若落在 PHT 静默窗（默认 21:00–08:00，`TIME_WINDOW`），将当前步 `trigger_time` 重排至 `deferUntil`（通常次日 08:00），计划回 `STEP_SCHEDULED` 后直接返回——不触达、不写 timeline、不经 `STEP_COMPLETED`；到期 Cron 重入场景 A。区别于 Guard block（跳过并推进）与渠道退避重试（保持 `EXECUTING`），见 [§5 ③](#5-步骤执行管线)。
 
 ```python
 def on_plan_step_due(event):
@@ -404,6 +404,8 @@ def on_plan_step_due(event):
 
     # ── 非事务上下文：渠道 I/O（允许耗时数百毫秒~数秒） ──
     execute_step(plan, step)                       # 展开见 §5
+    # Guard defer（§5 ③）：step.trigger_time ← deferUntil，plan ← STEP_SCHEDULED，直接 return
+    # 不经 STEP_COMPLETED；Cron 到期后再投递 PLAN_STEP_DUE → 重入本函数场景 A
 ```
 
 
@@ -416,9 +418,13 @@ def on_step_completed(plan, completed_step):
 
     if decision == ADVANCE_NEXT:
         next_step = get_next_step(plan, completed_step)
-        # 任意 delay（含 0）：统一 STEP_SCHEDULED + trigger=now+max(0,delay)；
-        # delay=0 表示即刻到期，由 Cron 扫描器发 PLAN_STEP_DUE 驱动（非同步递归 execute_step）
-        register_job(PLAN_STEP_DUE, delay_minutes=max(0, next_step.delay_minutes))
+        if next_step is None:
+            publish(PLAN_EXHAUSTED)                # 本计划已无后续步骤 → §4.5
+            return
+        # DayBlock 已预排绝对 trigger_time 时保留；否则按 delayMinutes 回退。
+        if next_step.trigger_time is None:
+            next_step.trigger_time = now(PHT) + max(0, next_step.delay_minutes)
+        # 均由 Cron 在 trigger_time 到期后发 PLAN_STEP_DUE（非同步递归 execute_step）
         plan.status = STEP_SCHEDULED
 
     elif decision == PLAN_COMPLETED:
@@ -482,15 +488,17 @@ def on_callback_timeout(event):
 
 ### 4.4 中断处理
 
-**入/出态**：入态 任意非终态 / 出态 `PLAN_CANCELLED`（`REPAID` / `STAGE_UPGRADE` / `CEASED`）。
+**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划。
 **触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`，见 [§7.3](#73-l1-基础设施异常)）。
 
-`CASE_CEASED` 边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)；DPD≥91 拒建见 §4.2。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.7 状态图](#47-状态转换)。
+`REPAYMENT_RECEIVED` 仅由**整笔 loan** 全额结清发布（`caseId=loanId`，`fullRepayTime` 非空或 loan 级 `STATUS=4`）；单期 bill 还款发布 `CASE_BALANCE_UPDATED`，仅刷新余额快照，不进入本节取消流程。
+
+`CASE_CEASED` 边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)；DPD≥91 拒建见 §4.2。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
 
 ```python
-def on_repayment_received(user_id):
-    plans = find_active_plans(user_id)             # status NOT IN 终态
+def on_repayment_received(case_id, user_id):
+    plans = find_active_plans_by_case(case_id)     # status NOT IN 终态
     for plan in sorted(plans, key=lambda p: p.id): # 按 plan_id 升序加锁，防止死锁
         lock(plan)                                 # SELECT FOR UPDATE
         if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
@@ -498,7 +506,7 @@ def on_repayment_received(user_id):
         plan.status = PLAN_CANCELLED
         plan.cancel_reason = REPAID
         cancel_scheduled_jobs(plan)
-    PredictiveDialerService.filter_repaid_user(user_id)  # 失败 → 告警 + 继续（§7.3）
+    PredictiveDialerService.filter_repaid_case(user_id, case_id)  # 失败 → 告警 + 继续（§7.3）
 
 def on_stage_changed(case_id, new_stage):
     old_plans = find_active_plans_by_case(case_id)
@@ -528,7 +536,7 @@ def on_case_ceased(case_id):                        # D+91 完全停催：取消
 
 ### 4.5 穷尽续建
 
-**入/出态**：入态非终态 → 本计划出态恒 `PLAN_COMPLETED`；`REBUILD` / `ESCALATE` 另建新计划从 `PENDING` 起（首步靠 Cron，非 case Pub/Sub）。
+**状态影响**：当前非终态计划恒转 `PLAN_COMPLETED`；`REBUILD` / `ESCALATE` 另建 `PENDING` 新计划（首步靠 Cron，非 case Pub/Sub）。
 **触发事件**：`PLAN_EXHAUSTED`（所有步骤执行完毕但用户未还款；链 [§2.1](#21-事件路由表ssot)）。
 **关联 SPI**：`ExhaustionPolicy` / `PlanFactory`（链 [§6.1](#61-接口总览)）。
 
@@ -576,11 +584,32 @@ def on_plan_exhausted(event):
 
 
 
-### 4.6 PTP 到期处理
+### 4.6 部分还款余额更新
+
+**触发事件**：`CASE_BALANCE_UPDATED`（`repayment_push_and_load` 的非结清有效还款；链 [§2.1](#21-事件路由表ssot)）。
+**状态影响**：无。该事件只更新活跃计划的快照金额，不属于计划状态迁移。
+
+```python
+def on_case_balance_updated(case_id, total_outstanding):
+    if case_id is None or total_outstanding is None or total_outstanding < 0:
+        return                                      # 脏事件静默忽略
+
+    plans = find_active_plans_by_case(case_id)
+    for plan in sorted(plans, key=lambda p: p.id):
+        lock(plan)                                  # SELECT FOR UPDATE
+        if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
+            continue                                # 取锁后复检终态
+        plan.context_snapshot.caseContext.totalOutstanding = total_outstanding
+        save_context_snapshot(plan)
+```
+
+**边界**：不修改计划/步骤状态、模板、渠道决策字段或已注册 Job，**不调用** `PlanFactory.create()`、`ExhaustionPolicy` 或 `create_plan_for_stage()`；后续步骤沿用原计划与话术，仅在渲染时读取更新后的金额。
+
+### 4.7 PTP 到期处理
 
 **Phase 2 预留**：Phase 1 不做 PTP，不生产/不消费 `PTP_EXPIRED`（枚举仅前向兼容，见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)）。实时还款仍走 [§5 ②](#5-步骤执行管线) / [§4.4](#44-中断处理)。
 
-### 4.7 状态转换
+### 4.8 状态转换
 
 本节为计划状态机**唯一完整 SSOT**；穷尽续建细节见 [§4.5](#45-穷尽续建)。
 
@@ -905,7 +934,7 @@ SPI 异常按**失败影响域**决定恢复动作；表内同时标出调用组
 
 **设计原则**：同一基础设施异常在不同管线位置后果不同，故**按位置分层定策**而非一刀切；核心权衡是**一致性 / 合规优先于可用性**：
 
-- **Dispatcher（事件消费）**：可重试故障（Stream 读失败 / 锁等待 / 死锁）看门狗重连或 NACK 重投；**不可重试**故障（payload 畸形）直接 DLQ，不污染重试队列。
+- **Dispatcher（事件消费）**：可重试故障（Stream 读失败 / 锁等待 / 死锁）轮询下一轮自愈或 NACK 重投（2026-08-03 确认消费模型为轮询式，不需要看门狗，见[基础设施 §3.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议)）；**不可重试**故障（payload 畸形）直接 DLQ，不污染重试队列。
 - **Manager（计划事务内）**：写库失败一律 NACK——事务回滚保证状态未落盘，重投可安全重跑（下游幂等）。
 - **Orchestrator（步骤执行）**：以 ⑤ 为界（见 [§7.4](#74-跨存储一致性修复)）；一致性 / 合规优先——① 幂等锁 Redis 不可达时宁可 **fail-close 静默不发**（防重复触达 ＞ 可用性），③ 合规计数器不可达时 **SKIP**（宁漏勿误），而非放行。
 - **兜底**：可重试但持续失败的毒消息达 `max_delivery_count` 隔离进 DLQ + 告警；SPI 线程池满即拒（[§6.1](#61-接口总览)），避免不可中断 I/O 拖垮持行锁的调用线程引发雪崩。
@@ -917,7 +946,7 @@ SPI 异常按**失败影响域**决定恢复动作；表内同时标出调用组
 
 | 异常场景                 | 恢复策略                                                                     | fail 策略 |
 | -------------------- | ------------------------------------------------------------------------ | ------- |
-| Redis Stream 读取失败    | 看门狗重建连接（[基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)） | —       |
+| Redis Stream 读取失败    | 轮询模型下一轮自动重连，无需看门狗（[基础设施 §3.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议)） | —       |
 | 事件反序列化失败（payload 畸形） | DLQ + 告警（不可重试）                                                           | 不可重试    |
 | MySQL 锁等待超时          | NACK → 重消费                                                               | —       |
 | MySQL 死锁             | 自动回滚重试一次，再失败 NACK                                                        | —       |

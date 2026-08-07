@@ -31,7 +31,8 @@ import org.springframework.stereotype.Component;
  * <p><b>范围</b>：仅扫 {@code collection.ingestion.loan-id-whitelist} 名单（Phase 1 / L4b 隔离，避免对全量
  * 真实在催案件发事件）。名单为空时跳过全量扫描（生产全量扫 {@code t_collection} 属切量后，见 C-X-02）。
  *
- * <p>由 XXL-Job 每日 0:35 PHT（账务数据落库至少 30 分钟后）调 {@link #dailyRoll()}（注册见 L4b 交接清单 O3）。
+ * <p>生产由 Cloud Scheduler 在 00:35–02:55 PHT 每 5 分钟发一条调度消息到调度专用 Pub/Sub 主题（账务数据落库至少 30 分钟后），
+ * 应用侧调度订阅消费后调 {@link #dailyRoll()}；每次触发只推进一页 keyset，续跑依赖 Redis 游标与当日完成标记，不依赖消息重投。
  */
 @Component
 public class DpdStageRollHandler {
@@ -46,17 +47,52 @@ public class DpdStageRollHandler {
     @Autowired(required = false)
     private RedisDailyRollDeduplicator dailyRollDeduplicator;
 
-    /** 供 XXL-Job / 调度器调用。 */
-    public void dailyRoll() {
+    /**
+     * 供调度入口（生产：Cloud Scheduler → Pub/Sub 调度订阅；本地：{@code POST /mock/daily-roll}）调用。
+     *
+     * @return 本次处理的 loan_id 条数（供调度指标记录）；跳过时为 0
+     */
+    public int dailyRoll() {
         List<Long> whitelist = props.getLoanIdWhitelist();
         if (whitelist == null || whitelist.isEmpty()) {
-            log.warn(
-                    "[DpdStageRollHandler] loan-id-whitelist 为空，Phase 1 / L4b 跳过全量扫描"
-                            + "（生产全量扫 t_collection 见 C-X-02）");
-            return;
+            return dailyRollFullScan();
         }
+        rollBatch(whitelist, false);
+        return whitelist.size();
+    }
+
+    private int dailyRollFullScan() {
+        if (!props.isDailyRollFullScanEnabled()) {
+            log.warn(
+                    "[DpdStageRollHandler] loan-id-whitelist 为空且 daily-roll-full-scan-enabled=false，跳过全量扫描");
+            return 0;
+        }
+        if (dailyRollDeduplicator == null) {
+            throw new IllegalStateException("全量日切需要 Redis 去重与游标存储");
+        }
+        if (dailyRollDeduplicator.completedToday()) {
+            log.info("[DpdStageRollHandler] full scan already completed today; skip");
+            return 0;
+        }
+        int limit = Math.max(1, props.getDailyRollBatchSize());
+        List<Long> loanIds =
+                caseService.findActiveCaseIdsAfter(dailyRollDeduplicator.currentCursor(), limit);
+        if (loanIds.isEmpty()) {
+            dailyRollDeduplicator.markCompletedToday();
+            log.info("[DpdStageRollHandler] full scan reached end; marked completed");
+            return 0;
+        }
+        rollBatch(loanIds, true);
+        dailyRollDeduplicator.advanceCursor(loanIds.get(loanIds.size() - 1));
+        if (loanIds.size() < limit) {
+            dailyRollDeduplicator.markCompletedToday();
+        }
+        return loanIds.size();
+    }
+
+    private void rollBatch(List<Long> loanIds, boolean fullScan) {
         int[] counters = new int[2]; // [0]=stageChanged, [1]=ceased
-        for (Long loanId : whitelist) {
+        for (Long loanId : loanIds) {
             try {
                 rollOne(loanId, counters);
             } catch (Exception e) {
@@ -64,8 +100,9 @@ public class DpdStageRollHandler {
             }
         }
         log.info(
-                "[DpdStageRollHandler] daily roll 完成 scanned={} stageChanged={} ceased={}",
-                whitelist.size(),
+                "[DpdStageRollHandler] daily roll completed fullScan={} scanned={} stageChanged={} ceased={}",
+                fullScan,
+                loanIds.size(),
                 counters[0],
                 counters[1]);
     }

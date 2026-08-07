@@ -103,10 +103,12 @@
 
 3. **权限现状**：GCP 凭证 `keliu@indiacashgo.com`（ADC）具备 topic publish 与 subscription consume（pull/streaming），但**无 `subscriptions.get`（describe）**——不影响消费，仅无法查订阅元数据。
 
-4. **XXL-Job 未接**：日切 L4b-3/4/8 通过 `POST /mock/daily-roll` 手动触发验证（读真实旧库 dpd）。上线前需由运维注册 XXL-Job 每日 0:35 PHT（账务落库至少 30 分钟后）调 `DpdStageRollHandler.dailyRoll()`。
+4. **生产调度未接**：日切 L4b-3/4/8 通过 `POST /mock/daily-roll` 手动触发验证（读真实旧库 dpd）。上线前需由运维交付日切调度。
+
+> **2026-08-06 补记（报告本体为当日快照，不改；仅修正对后续动作的指引）**：调度入口已由 XXL-Job 改为 Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅。本条与下节「注册 XXL-Job 日切任务」一律以 [T5 手册 §3.2 O1–O8](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 为准：日切改为 00:35–02:55 PHT 每 5 分钟发一条 `job=dailyRoll` 消息、每次推进一页 keyset，不再是每日单次触发。
 
 ## 六、距正式上线的后续（除 AI Call 外）
 - 运维分配独占订阅 / 确认订阅唯一消费方，并将生产订阅回切 `collection-cases-ai-v1-sub`。
-- 注册 XXL-Job 日切任务。
+- 交付日切调度（见上方 2026-08-06 补记：Cloud Scheduler + 调度专用主题/订阅，非 XXL-Job）。
 - 渠道 sandbox / 白名单收口，避免误触真实用户。
 - Nacos 生产命名空间配置固化（当前为 local）。

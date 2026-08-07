@@ -208,7 +208,7 @@ check_manual_reminders() {
   ylw "  • L4a 8 条已通过（见 logs/run/l4a.last.log）"
   ylw "  • 运维已建 PubSub 订阅 collection-cases-ai-v1-sub（挂 topic collection-cases）"
   ylw "  • loan_id 白名单清单（不入仓）"
-  ylw "  • XXL-Job dailyRoll 已注册（B2）"
+  ylw "  • L4b 日切走 POST /mock/daily-roll，不接生产调度；真实调度通道（Cloud Scheduler → 调度 PubSub → 应用订阅）在 T5 交付验收"
   ylw "  • /actuator/beans 核对 A1–A6 薄/全"
   ylw "  • SendGrid 测试收件人 / 内部邮箱"
 }

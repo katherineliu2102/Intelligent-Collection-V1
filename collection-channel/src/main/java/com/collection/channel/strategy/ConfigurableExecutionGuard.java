@@ -6,13 +6,12 @@ import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
+import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.spi.ExecutionGuard;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.annotation.Primary;
@@ -29,7 +28,7 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
 
     @Resource private ChannelProperties channelProperties;
 
-    private final ConcurrentHashMap<String, AtomicInteger> frequencyMap = new ConcurrentHashMap<>();
+    @Resource private ComplianceCounterService complianceCounterService;
 
     @Override
     public GuardVerdict evaluate(ExecutionContext context) {
@@ -139,34 +138,32 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
             }
         }
         Long userId = context.getPlan().getUserId();
-        String dateKey =
+        java.time.LocalDate date =
                 ZonedDateTime.now(ZoneId.of(channelProperties.getCompliance().getTimezone()))
-                        .toLocalDate()
-                        .toString();
-        if (limit != null && limit > 0) {
-            String channelKey = userId + ":" + channel.name() + ":" + dateKey;
-            int channelCount = increment(channelKey);
-            if (channelCount > limit) {
+                        .toLocalDate();
+        int channelLimit = limit == null ? 0 : limit;
+        int totalLimit = channelProperties.getCompliance().getDailyTotalLimit();
+        if (channelLimit > 0 || totalLimit > 0) {
+            ComplianceCounterService.Counts counts =
+                    complianceCounterService.tryConsume(
+                            userId, channel.name(), date, channelLimit, totalLimit);
+            if (channelLimit > 0 && counts.channel > channelLimit) {
                 return GuardVerdict.block(
-                        "DAILY_LIMIT_EXCEEDED " + channel.name() + " " + channelCount + "/" + limit,
+                        "DAILY_LIMIT_EXCEEDED "
+                                + channel.name()
+                                + " "
+                                + counts.channel
+                                + "/"
+                                + channelLimit,
                         "FREQUENCY_LIMIT");
             }
-        }
-
-        int totalLimit = channelProperties.getCompliance().getDailyTotalLimit();
-        if (totalLimit > 0) {
-            int totalCount = increment(userId + ":ALL:" + dateKey);
-            if (totalCount > totalLimit) {
+            if (totalLimit > 0 && counts.total > totalLimit) {
                 return GuardVerdict.block(
-                        "DAILY_TOTAL_LIMIT_EXCEEDED " + totalCount + "/" + totalLimit,
+                        "DAILY_TOTAL_LIMIT_EXCEEDED " + counts.total + "/" + totalLimit,
                         "FREQUENCY_LIMIT");
             }
         }
         return null;
-    }
-
-    private int increment(String key) {
-        return frequencyMap.computeIfAbsent(key, k -> new AtomicInteger(0)).incrementAndGet();
     }
 
     private static LocalTime parseTime(String timeStr, LocalTime fallback) {

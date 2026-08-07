@@ -34,8 +34,8 @@ public class EngineProperties {
         private int callbackTimeoutMinutes = 60;
 
         /**
-         * 幂等锁实际 TTL：不得短于回调等待窗口，否则异步渠道等回调期间收到重复 due 会重新拿锁并二次外呼。
-         * 退避重试不受影响——幂等 key 含 retryCount，重试后 key 已变。
+         * 幂等锁实际 TTL：不得短于回调等待窗口，否则异步渠道等回调期间收到重复 due 会重新拿锁并二次外呼。 退避重试不受影响——幂等 key 含 retryCount，重试后
+         * key 已变。
          */
         public int effectiveIdempotencyTtlMinutes() {
             return Math.max(idempotencyTtlMinutes, callbackTimeoutMinutes);
@@ -71,7 +71,7 @@ public class EngineProperties {
     public static class Spi {
         private boolean timeoutEnabled = true;
         private long planFactoryTimeoutMs = 50;
-        private long executionGuardTimeoutMs = 20;
+        private long executionGuardTimeoutMs = 50;
         private long stepResolverTimeoutMs = 50;
         private long advancementPolicyTimeoutMs = 10;
         private long exhaustionPolicyTimeoutMs = 50;

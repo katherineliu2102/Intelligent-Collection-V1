@@ -559,7 +559,7 @@ strategyTone =
 |------|----------------|-----------------|
 | 入案 / 首次建 plan | PlanFactory 读 snapshot 匹配 `Stage × Tone` | ingestion 写 snapshot + `PlanFactory.create` |
 | 难催硬化 → FIRM | 下一批触达用 FIRM 模板 | ingestion 重算 snapshot → **取消当前 plan** → 同 Stage 重建 plan |
-| 投诉/争议冻结 | ExecutionGuard **BLOCK** 全部机器触达 | 同上 + 可选 `PLAN_PAUSED` |
+| 投诉/争议冻结 | ExecutionGuard **BLOCK** 全部机器触达 | 同上，取消活跃计划（Phase 2） |
 | Override（§7.2） | 不通过改 snapshot 字段「绕过」互斥 | **事件中断**：取消当日 pending AI steps；案件表写 `human_dial_override` 等标签供 LTH 读 |
 
 **禁止**：在 Orchestrator 执行线程内直接 UPDATE snapshot 或 plan 上的 tone 字段。
@@ -619,7 +619,8 @@ step 到期 → ExecutionGuard.evaluate(context)
 
 ```
 PlanTemplate { match:{ stage, tone }, dayBlocks:[ DayBlock ], exhaustion }
-DayBlock { dpd_day, slots:[ Slot ] }     # 自然日 0:00 PHT 切日
+DayBlock { dpdDay, slots:[ Slot ] }       # 自然日 0:00 PHT 切日；DB JSON 使用 camelCase
+Slot { channel, time:"HH:mm", observeMin, templateId }
 Slot { time, channel(主+fallback), scriptSlot, trigger?, offer_eligible }
 VoiceQueue { dial_window, max_concurrent, per_case_daily_cap, retry_min_interval }
 ```
@@ -643,7 +644,7 @@ VoiceQueue { dial_window, max_concurrent, per_case_daily_cap, retry_min_interval
 | **一 Stage 一 plan** | 进入 Stage 时 `PlanFactory.create` **一次**，将该 Stage 内全部 `DayBlock` 展开为带绝对 `trigger_time` 的 step 序列 |
 | **日切不靠 PLAN_EXHAUSTED** | DPD 变阶段由 ingestion 发布 **`STAGE_CHANGED`**（见 [基础设施交互规范 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)），非「每日步骤跑完 → REBUILD」 |
 | **REBUILD 语义** | 仅用于 **同 Stage 内**模板轮换/续建；`max_rebuild_count=2` **不**表示「每天可重建 2 次」。S4（约 60 个日块）须在 **单次 create** 中铺完全部未过期步骤 |
-| **晚进案** | create 时跳过已过期 `dpd_day` 对应日块，从当前日首槽起算 `trigger_time` |
+| **晚进案** | create 时跳过已过期 `dpdDay` 对应日块及**当日已过 PHT 槽位**，不追溯补发；仅保留 `trigger_time >= create_time(PHT)` 的未来槽位 |
 
 ### 7.2 跨 Stage 机制
 

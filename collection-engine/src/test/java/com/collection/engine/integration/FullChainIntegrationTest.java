@@ -133,7 +133,7 @@ class FullChainIntegrationTest {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) userId -> {});
+        inject(manager, "predictiveDialerService", (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
@@ -194,7 +194,8 @@ class FullChainIntegrationTest {
 
         bus.publish(
                 CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
-                        .with(CollectionEvent.USER_ID, USER_ID));
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID));
         bus.drainAll();
 
         ContactPlan plan = planRepo.plans.values().iterator().next();

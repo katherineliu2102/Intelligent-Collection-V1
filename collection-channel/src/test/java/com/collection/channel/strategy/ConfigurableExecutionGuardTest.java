@@ -1,7 +1,9 @@
 package com.collection.channel.strategy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.collection.channel.compliance.InMemoryComplianceCounterService;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
@@ -10,6 +12,7 @@ import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
+import com.collection.common.service.ComplianceCounterService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -27,6 +30,22 @@ class ConfigurableExecutionGuardTest {
 
         guard = new ConfigurableExecutionGuard();
         ReflectionTestUtils.setField(guard, "channelProperties", properties);
+        ReflectionTestUtils.setField(
+                guard, "complianceCounterService", new InMemoryComplianceCounterService());
+    }
+
+    @Test
+    void failsCloseWhenCounterUnavailable() {
+        ReflectionTestUtils.setField(
+                guard,
+                "complianceCounterService",
+                (ComplianceCounterService)
+                        (userId, channel, date, channelLimit, totalLimit) -> {
+                            throw new IllegalStateException("redis down");
+                        });
+
+        assertThatThrownBy(() -> guard.evaluate(context(ChannelType.SMS)))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

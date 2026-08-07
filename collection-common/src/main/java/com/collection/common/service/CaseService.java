@@ -4,6 +4,8 @@ import com.collection.common.model.CaseContext;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactHistory;
 import com.collection.common.model.ContextSnapshot;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 数据服务层 — 案件服务。对应架构设计文档 §1.5.2 领域服务 Service、领域模型 §4.1/§4.3。
@@ -26,4 +28,9 @@ public interface CaseService {
 
     /** 实时还款状态（PreFlightChecker 使用）。 */
     boolean isRepaid(Long caseId);
+
+    /** 日切全量扫描的有界 keyset 页。默认实现用于 Mock/未接入旧库的环境，明确返回空页而非加载全量案件。 */
+    default List<Long> findActiveCaseIdsAfter(Long lastCaseId, int limit) {
+        return Collections.emptyList();
+    }
 }

@@ -13,7 +13,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-/** 仅执行扫表和 Trigger-to-Event，可被 local scheduler 与 Pilot XXL handler 共同调用。 */
+/**
+ * 仅执行扫表和 Trigger-to-Event，由 {@code local}/{@code test} 的 {@link TriggerScanner} 与生产的 {@link
+ * ScheduledJobRunner}（Cloud Scheduler → Pub/Sub 调度订阅）共同调用。
+ */
 @Component
 public class PlanStepTriggerPublisher {
 
@@ -23,7 +26,8 @@ public class PlanStepTriggerPublisher {
     @Resource private CollectionEventBus eventBus;
     @Resource private EngineProperties props;
 
-    public void publishDueSteps() {
+    /** @return 本次扫描发布的事件条数（供调度指标记录） */
+    public int publishDueSteps() {
         int limit = props.getConsumer().getScanLimit();
         List<ContactPlanStep> due = planRepository.findDueSteps(LocalDateTime.now(), limit);
         for (ContactPlanStep step : due) {
@@ -33,9 +37,11 @@ public class PlanStepTriggerPublisher {
                             .with(CollectionEvent.STEP_ID, step.getId()));
         }
         logScan("due-step", due.size(), limit);
+        return due.size();
     }
 
-    public void publishTimeoutSteps() {
+    /** @return 本次扫描发布的事件条数（供调度指标记录） */
+    public int publishTimeoutSteps() {
         int limit = props.getConsumer().getScanLimit();
         List<ContactPlanStep> timeout = planRepository.findTimeoutSteps(LocalDateTime.now(), limit);
         for (ContactPlanStep step : timeout) {
@@ -45,6 +51,7 @@ public class PlanStepTriggerPublisher {
                             .with(CollectionEvent.STEP_ID, step.getId()));
         }
         logScan("callback-timeout", timeout.size(), limit);
+        return timeout.size();
     }
 
     private void logScan(String scanType, int count, int limit) {

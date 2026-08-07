@@ -35,5 +35,15 @@ spring:
     import:
       - nacos:${spring.application.name}-local.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
 
+---
+# Pilot 专属配置（Redis / 调度订阅 / 白名单等）可集中放 Nacos 覆盖 application-pilot.yml 的占位缺省，
+# 便于改地址或口令时无需重新构建；optional 保证 Nacos 上尚未创建该配置时不阻塞启动。
+spring:
+  config:
+    activate:
+      on-profile: pilot
+    import:
+      - optional:nacos:${spring.application.name}-pilot.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
+
 logging:
   config: classpath:logback-spring.xml

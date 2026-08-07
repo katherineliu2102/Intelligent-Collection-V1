@@ -101,6 +101,7 @@
 | SPI | `SpiInvokerTest` | 硬超时、异常透传、MDC 传递正确 |
 | 内存闭环 | `FullChainIntegrationTest`、`AsyncCallbackChainL1Test` | 事件到计划/步骤推进闭环正确 |
 | 渠道逻辑 | channel `strategy/*`、`adapter/*` | 映射与本地策略断言通过 |
+| 调度入口 | `ScheduledJobRunnerTest`（8）、`PubSubScheduleConsumerTest`（11）、`SchedulerEntrypointValidatorTest`（8） | 按 `job` 属性路由、陈旧消息按 `publishTime` 丢弃（含停机 30 分钟积压只放行当前 tick）、重复投递均 ack、并发单飞、失败不上抛且闸门释放、缺订阅配置启动失败、阈值 ≤ 任务周期、调度入口唯一 |
 
 ### 出口
 
@@ -136,8 +137,12 @@
 
 | AI_CALL 回调差集 | 当前结论 | 后续闭合 |
 |---|---|---|
-| Adapter | 仅 SMS/PUSH/EMAIL 三个真实 Adapter；AI_CALL 只能落 Mock，不能以 Mock 改绿 | 编排补 AI_CALL/LTH 下单与回调签名；主架构补超时、幂等、终态断言 |
+| Adapter | 仅 SMS/PUSH/EMAIL 三个真实 Adapter（`collection-channel/adapter/`：`NotificationSmsAdapter`、`NotificationPushAdapter`、`SendGridEmailAdapter`）；**AI_CALL 无真实 Adapter**，只能落 Mock，不能以 Mock 改绿 | 编排补 AI_CALL/LTH 下单与回调签名；主架构补超时、幂等、终态断言 |
+| 回调端点 | 仅有通用 `POST /webhook/channel-callback`，**无 AI_CALL 专属回调对接与供应商签名实现** | 同上，随 Adapter 一并闭合 |
+| `callbackTimeout` 调度入口 | **保留且已迁到新调度通道**（`job=callbackTimeout`，每分钟）。本轮 Pilot 只跑 SMS/PUSH/EMAIL，三者按渠道受理成功同步完成步骤、不需回调即可推进，因此该任务扫描结果预期为空——`collection.schedule.scan.rows{job=callbackTimeout}` 长期为 0 属正常，不作为故障信号 | AI_CALL 真实化后本任务才承载实际负载 |
 | 受理证据 | SMS/PUSH/Email 以 `DELIVERED + providerMsgId` 为证据，不要求回调审计行 | AI_CALL 的异步回调由 L2-CB 单独闭合，L4a/L4b 不可替代 |
+
+> **范围声明**：本轮调度迁移**不改变** AI 外呼的就绪状态。入口与领域模型（`CALLBACK_TIMEOUT` 事件、超时哨兵、`STEP_EXECUTING` 等回调语义）全部保留，但 AI 外呼**尚未生产可用**，不得因调度迁移完成而推断其可用。
 
 ### 出口
 
@@ -206,7 +211,8 @@ L4a 使用 `MockTriggerController`/`*CaseRegistry` 的合成案件驱动真实�
 |---|---|---|---|---|
 | L4a-1 | 三渠道顺序完成 | SMS→PUSH→EMAIL、providerMsgId、计划完成 | ✅ | 2026-07-27 `restart-and-l4a.sh`（timeline 三渠道） |
 | L4a-2 | PUSH 无 token → SMS fallback | fallback 元数据、SMS 投递、步骤完成 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-3 | 还款取消 | `PLAN_CANCELLED(REPAID)`，后续不触达 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
+| L4a-3 | 整笔 loan 结清取消 | `fullRepayTime` 非空或 loan 级 `STATUS=4`，携带 `caseId=loanId` → 仅该案 `PLAN_CANCELLED(REPAID)`，后续不触达 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
+| L4a-3b | 部分还款金额刷新 | 非结清还款携带有效非负 `currentAmmout` → 仅活跃计划快照 `totalOutstanding` 更新；模板、步骤、计划状态不变（[核心 §4.6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新)） | 单测已覆盖，待真实 PubSub 回归 | `PlanLifecycleManagerTest`（刷新 / 终态跳过 / 脏值忽略）、`CasePayloadMapperTest` |
 | L4a-4 | 升档取消并新建 | 旧计划 `STAGE_UPGRADE`、新计划正确 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
 | L4a-5 | 停催 | `PLAN_CANCELLED(CEASED)`，不重建 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
 | L4a-6 | SMS 同步完成冒烟 | 同步 `COMPLETED`，不进入 `WAITING` | ✅ | 2026-07-27 `restart-and-l4a.sh` |
@@ -248,7 +254,7 @@ L4b 将 L4a 的合成入口替换为**真实 PubSub 消费 + 真实旧库 seed +
 | **应用白名单** | Nacos `loan-id-whitelist: 99000000–99000005` | Consumer 只处理合成案 |
 | **触达沙箱** | `sms-test-mode`、`push-test-token`、受控测试邮箱/手机号 | 真实 adapter 代码、受控投递地址 |
 
-旧库 `t_collection` 用 `db/seed-test-cases.sql` 造数；日切在 L4b 用手动 `POST /mock/daily-roll` 调真实 `DpdStageRollHandler`（XXL-Job 留到 T5/T6）。
+旧库 `t_collection` 用 `db/seed-test-cases.sql` 造数；日切在 L4b 用手动 `POST /mock/daily-roll` 调真实 `DpdStageRollHandler`（真实调度通道留到 T5/T6）。
 
 ### 是否最佳方案
 
@@ -261,7 +267,7 @@ L4b 将 L4a 的合成入口替换为**真实 PubSub 消费 + 真实旧库 seed +
 | Mock PubSub / 继续 `/mock/ingest` | 无运维依赖 | 不算“真实来源”，不能替代 L4b |
 | 信贷改发布逻辑只发测试案 | 可共用生产 topic | Phase 1 **不可行** |
 
-因此 L4b 的“隔离”是**环境级隔离**（独立 topic + 白名单 + 沙箱），不是 mock ingestion。生产等价拓扑（含真实 topic 扇出、XXL-Job）在 **T5** 再验。
+因此 L4b 的“隔离”是**环境级隔离**（独立 topic + 白名单 + 沙箱），不是 mock ingestion。生产等价拓扑（含真实 topic 扇出、Cloud Scheduler → Pub/Sub 调度通道）在 **T5** 再验。
 
 ### 订阅与快照
 
@@ -396,7 +402,7 @@ L4B_RESET=0 ./scripts/test/l4b-official-test.sh      # 保留历史落库（默�
 |---|---|
 | 清空白名单案的 `t_contact_plan`/`_step`/`_timeline` | 上轮遗留的终态计划与旧快照会污染 L4b-1 建计划判定与 L4b-5 逐字段溯源 |
 | 重放 `db/seed-test-cases.sql` | L4b-3/L4b-4 会改写 `t_collection.overdue_days`（S2→20、S3→95），不重放则第二轮 dpd 起点已被污染 |
-| 重启应用 | `IngestionDedupStore` 的 `messageId`/`ingested` 标记是内存态，不重启则本轮 `case_push` 被上轮标记直接跳过 |
+| 清除上轮去重标记 | `messageId`/`ingested` 标记会让本轮 `case_push` 被直接跳过。L4b（`redis-dedup-enabled=false`）重启应用即可清空内存标记；Pilot 起用 `RedisIngestionDedupStore` 后重启无效，须显式删除 `collection:ingestion:dedup:msg:*` / `ingested:*` |
 | L4b-4 紧跟 L4b-1 执行 | `onCaseCeased` 只取消 `findActivePlansByCase` 的结果；测试环境步骤延迟被压缩，S3 案 3 步计划约 90s 即转终态，放到 L4b-6 之后将无活跃计划可取消 |
 | L4b-8 先等测试案件全部收敛终态 | TriggerScanner 每 5s 独立扫描，若仍有未跑完步骤，timeline 会在观察窗内自然增长，使"重复触达"断言假失败 |
 
@@ -439,17 +445,68 @@ L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn tes
 
 在不影响真实客户的前提下，验证生产等价拓扑、并行消费、调度与告警。T5 必须等待 T4 通过。
 
+> 环境申请、Secret/Nacos 配置、演练顺序、证据归档和回滚操作见 [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。本文只维护用例、证据与出口。
+
 | ID | 准入/用例 | 允许替身 | 证据 | Owner | 状态 |
 |---|---|---|---|---|---|
 | T5-1 | T4 全部出口已通过 | 无 | T4 证据包 | 主架构 | ⬜ |
 | T5-2 | 生产订阅 `collection-cases-ai-v1-sub` 独立扇出 | 测试白名单 | 运维拓扑/消费证据 | 运维 | ⬜ |
-| T5-3 | XXL-Job `dailyRoll` 0:35 PHT 注册与演练 | 可用白名单数据 | 调度日志/告警 | 运维 + 主架构 | ⬜ |
+| T5-3 | 调度通道生产化，见 [T5-S](#t5-s-调度通道专项用例) | 可用白名单数据 | T5-S1…S7 证据 | 运维 + 主架构 | ⬜ |
 | T5-4 | 渠道 sandbox、白名单、脱敏、限频 | 测试地址 | 配置审查 | 编排同事 + 运维 | ⬜ |
-| T5-5 | 多实例事件总线/幂等拓扑评审 | 不允许 memory-only 假设 | 架构评审 | 主架构 | ⬜ |
+| T5-5 | Redis 事件总线/幂等专项用例组，见 [T5-R](#t5-r-redis-专项用例) | 不允许 memory-only 假设 | T5-R1…R10 证据 | 主架构 | ⬜ |
+
+### T5-S 调度通道专项用例
+
+> T5-3 的展开。对应实现：`collection-admin/job/PubSubScheduleConsumer.java`、`ScheduledJobRunner.java`、`config/SchedulerEntrypointValidator.java`。机制 SSOT 为[基础设施 §5](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)，运维交付与配置模板见 [T5 手册 §3.2 / §5.1](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8)。
+>
+> **触发方式的变化**：迁出 XXL-Job 后不再有调度控制台的「手动执行」按钮。本组所有手动触发一律改为**向调度专用主题发布一条带 `job` 属性的消息**：
+>
+> ```bash
+> gcloud pubsub topics publish <SCHEDULE_TOPIC> --project=<PROJECT_ID> \
+>   --message="manual-tick" --attribute=job=dailyRoll
+> ```
+>
+> **断言方式的变化**：没有执行记录页面，证据一律取自应用侧 `collection.schedule.*` 指标与日志（[基础设施 §7.3](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#调度指标的人工巡检口径)）。Cloud Scheduler 的执行记录只能证明消息已发出，**不可**作为「扫描跑过」的证据。
+
+| ID | 场景 | 触发方式 | 断言 | 状态 | Owner |
+|---|---|---|---|---|---|
+| T5-S1 | 调度链路连通 | 四条 Scheduler Job 启用后静置 5 分钟 | `collection.schedule.triggered{job=planStepDue}` 与 `{job=callbackTimeout}` 各约 +5；日志有 `[Scheduler] job=... 扫描完成`；`failed` 为 0 | ⬜ | 运维 + 主架构 |
+| T5-S2 | 按属性路由 | 分别发布 `job=planStepDue` / `callbackTimeout` / `dailyRoll` 各一条 | 三个任务各自触发一次，互不串扰；`scan.rows` 按对应任务累加 | ⬜ | 主架构 |
+| T5-S3 | 未知 job 取值 | 发布 `job=ptpExpired` 一条 | 记录 WARN 并 ack 不重投；`skipped{reason=UNKNOWN_JOB}` +1；无任何扫描发生；订阅未确认数不增长 | ⬜ | 主架构 |
+| T5-S4 | **陈旧消息丢弃** | 停应用 10 分钟使消息累积，再启动 | 启动后 `stale.discarded{job=planStepDue}` 出现约 +9 的一次性尖峰后归零；`triggered` 增量 ≤ 1；**不得**出现连续多轮扫描（扫描风暴） | ⬜ | 主架构 |
+| T5-S5 | **重复投递** | 连发两条相同 `job=planStepDue`（间隔 >1s，串行到达） | 两条均 ack；扫描各跑一次；因步骤幂等锁与步骤状态迁出，**不产生重复触达**（无新增 `provider_msg_id`） | ⬜ | 主架构 |
+| T5-S6 | **并发单飞** | 制造一次耗时较长的 `dailyRoll`（大批量），执行中再发一条 `job=dailyRoll` | 第二条被单飞跳过，`skipped{reason=IN_FLIGHT}` +1；Redis 游标只推进一页，不出现重复推进 | ⬜ | 主架构 |
+| T5-S7 | 日切窗口续跑与完成标记 | 让两条 `dailyRoll` Job 按 00:35–02:55 自然运行一夜 | 窗口内 `triggered{job=dailyRoll}` 约 29 次；游标逐页推进；完成后写当日完成标记并跳过后续触发；03:00 前完成，未触发 O8 告警 | ⬜ | ingestion + 运维 |
+
+> 单测已覆盖的等价语义（`ScheduledJobRunnerTest` 8 例、`PubSubScheduleConsumerTest` 11 例、`SchedulerEntrypointValidatorTest` 8 例）验证的是**逻辑正确**；本组验证的是**真实 Cloud Scheduler + Pub/Sub 上的投递与累积行为**，单测结果不能替代本组任何一条。
+
+### T5-R Redis 专项用例
+
+> T5-5 的展开。对应实现：`collection-engine/bus/RedisStreamEventBus.java`、`RedisIdempotencyService.java`、`collection-ingestion/job/RedisDailyRollDeduplicator.java`（均为 Pilot 配置路径，激活 `application-pilot.yml` / `collection.eventbus=redis` + `collection.idempotency=redis`）。基础设施规范 [附录 C 生产就绪差集登记](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-c生产就绪差集登记)是差集权威来源；这里只维护验证方式和证据。
+>
+> **与内存版测试的边界**：L0–L4b 验证的是业务语义在内存实现下正确；本组验证的是 Redis 实现特有的失败模式（崩溃恢复、PEL、DLQ、跨实例幂等），内存版测试结果不能替代本组任何一条。
+
+| ID | 场景 | 触发方式 | 断言 | 状态 | Owner |
+|---|---|---|---|---|---|
+| T5-R1 | Consumer Group 初始化 | 应用启动/重启，Stream/Group 已存在 | `initConsumerGroup()` 幂等，不因 `BUSYGROUP` 报错阻塞启动 | ⬜ | 主架构 |
+| T5-R2 | 正常消费与 XACK | `publish()` 一个事件 | 1s 内被 `consume()` 轮询到并处理成功，`XPENDING` 为空 | ⬜ | 主架构 |
+| T5-R3 | handler 异常 → 消息滞留 PEL | 注入 handler 抛异常 | 不 XACK；`XPENDING` 可见该消息；日志含 `leaving pending` | ⬜ | 主架构 |
+| T5-R4 | PEL 认领与重投 | R3 场景，验证 120s 内不认领；超过 `pel-min-idle-seconds`（默认 120s）后触发 `reclaimPending()` | 处理未结束时不发生 `XCLAIM`；超时消息被认领后重新处理，handler 恢复正常则最终 XACK 成功 | ⬜ | 主架构 |
+| T5-R5 | 毒消息进 DLQ | 令 handler 持续失败直到 `deliveryCount ≥ max-delivery-count`（默认 5） | 原消息从 PEL 移除（XACK）；`{stream}:dlq` 出现对应记录，含 `reason=MAX_DELIVERY_EXCEEDED` | ⬜ | 主架构 |
+| T5-R6 | DLQ 持久化与受控重放 | R5 后查 `t_event_dlq`，用 `POST /ops/dlq/redrive` 对可恢复消息执行一次重放；另在触达窗口外重放一条 `PLAN_STEP_DUE` | MySQL 记录原始信封、原因、投递次数与失败时间；重放置 `REDRIVEN` 且事件回到原 Stream；不可恢复原因置 `TERMINATED` 并告警；窗口外触达型事件计入 `deferred` 且保持 `PENDING`（状态机与门控已由 `DlqControllerTest` 单测覆盖，本项验收真实库与告警） | ⬜ | 主架构 |
+| T5-R7 | 幂等锁跨实例互斥 | 两个应用实例（或两条并发线程）对同一 `idempotencyKey` 调 `acquire()` | 仅一次返回 `true`；`TTL` 到期后 key 消失，之后可再次 `acquire` 成功 | ⬜ | 主架构 |
+| T5-R8 | Redis 合规频控连续性 | 触发单渠道与跨渠道计数后重启任一实例，并并发触发上限边界请求 | 计数不因应用重启清零；仅允许一个请求占用最后名额；Redis 不可用时 fail-close 并告警（键名、PHT 过期与 fail-close 已由 `RedisComplianceCounterServiceTest` 单测覆盖，本项验收跨实例与真实断连） | ⬜ | 主架构 |
+| T5-R11 | 指标与 MDC 抓取 | Pilot 起服务后抓 `/actuator/prometheus`，并制造一次 Guard fail-close 与一次 DLQ 入列 | 出现 `collection.event.published/consumed/pending/stream.length/dlq.size`、`executor.*`、`collection.step.skipped{reason=GUARD_ERROR}`、`collection.spi.timeout`；相关日志带 `event=`/`case=`/`plan=`/`step=` | ⬜ 手工抓取即可通过；Prometheus/告警接入可后置至 T6 前（2026-08-05 决定） | 主架构 + 运维 |
+| T5-R12 | 接入去重跨重启连续性 | 处理一条 `case_push` 后重启应用，重投同一条消息；再发全额结清消息后重投 | 重启后重复消息仍被 `dedup:msg` 拦截、`ingested` 仍拦截重复入案；结清清除 `ingested` 后允许再次 `CASE_INGESTED`；乱序旧 `publish_time` 仍被 `last-seen` 判定为旧 | ⬜ | 主架构 |
+| T5-R13 | 事件消费去重 | 让一条事件的 handler 处理成功但延迟 ACK 触发 PEL 认领重投；再对一条已成功处理的事件执行一次 DLQ 重放 | 重投与重放都不再次执行业务，直接 ACK 并计入 `collection.event.deduped`；`collection:processed:{event_id}` 存在且 TTL 约 24h；handler 失败的事件没有该标记，仍可重投重试（四条路径已由 `RedisStreamEventBusDedupTest` 单测覆盖，本项验收真实 Redis 行为） | ⬜ | 主架构 |
+| T5-R9 | Redis 断连恢复 | 联调环境短暂阻断 Redis 网络后恢复 | 恢复后 `consume()`/`reclaimPending()` 的下一轮调度自愈，无需重启应用；期间未处理事件在恢复后仍可被消费，不丢失 | ⬜ | 主架构 + 运维 |
+| T5-R10 | Consumer 并发与背压 | 并发 publish 数十个事件，其中一个 handler 人为 sleep 较长时间模拟慢渠道调用 | 其余事件可由空闲工作线程处理；队列有界；满载时触发 CallerRuns 背压而不丢消息；MDC 不丢失 | ⬜ | 主架构 |
+
+**设计选型（已确认，2026-08-03）**：`RedisStreamEventBus` 用 `@Scheduled` 轮询 `XREADGROUP` + 定期 `XCLAIM`，正式替代基础设施规范 §3.2 原规格的 `StreamMessageListenerContainer` 长连接监听；因此**没有独立看门狗线程**，也没有"连接假死"这一失败模式需要覆盖。规格文档已同步更新（[§3.2 决策记录](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议)），T5-R9 用于实测验证这一自愈假设。
 
 ### 出口
 
-生产等价拓扑经演练，监控与回滚机制可操作，且所有真实触达均在白名单/沙箱范围内。
+生产等价拓扑经演练，监控与回滚机制可操作，且所有真实触达均在白名单/沙箱范围内。T5-R1…R10 与 T5-S1…S7 全部 ✅ 方可进入 T6。
 
 ---
 
@@ -462,7 +519,7 @@ L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn tes
 | T6-1 | T5 已通过 | T5 证据包完整 | 主架构 | ⬜ |
 | T6-2 | 切量白名单/比例/观察窗口 | 已批准、可审计、可停止 | 业务 + 运维 | ⬜ |
 | T6-3 | 回滚开关与责任人 | subscription、路由、渠道开关、恢复步骤已演练 | 运维 + 主架构 | ⬜ |
-| T6-4 | 幂等/事件总线生产化 | 多实例方案不依赖内存 EventBus/幂等 | 主架构 | ⬜ |
+| T6-4 | 幂等/事件总线生产化 | [T5-R](#t5-r-redis-专项用例) 全部闭合（含 R6 DLQ 落库、R8 合规频控 Redis 化） | 主架构 | ⬜ |
 | T6-5 | 供应商额度与合规 | 限频、模板、审计、投诉处理就绪 | 编排同事 | ⬜ |
 
 ### 回滚原则
@@ -481,7 +538,7 @@ L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn tes
 | T3a | 集成 MySQL | 不允许内存持久化替代 | integration Maven tests（待补） | SQL + JUnit | 服务+主架构 | L3 持久化语义通过 |
 | T3b | 合成案+渠道沙箱 | 仅合成事件源/临时策略实现 | `l4a-official-test.sh` | 脚本、终端、API | 主架构+编排 | L4a 用例完成 |
 | T4 | 隔离 PubSub/旧库/DB/渠道 | 不允许 mock ingress；旧库仅兜底/对账 | `l4b-preflight.sh --strict` + `l4b-official-test.sh` | PubSub、SQL、日志 | 主架构+服务+运维 | L4b-1…8、独占订阅、official 脚本 |
-| T5 | Pilot/预发等价拓扑 | 仅白名单/沙箱 | Runbook 演练 | 监控、调度、拓扑 | 全员 | T4 已过且演练通过 |
+| T5 | Pilot/预发等价拓扑 | 仅白名单/沙箱 | Runbook 演练 + T5-R Redis 专项 + T5-S 调度专项 | 监控、调度、拓扑、T5-R 与 T5-S 证据 | 全员 | T4 已过且演练通过 |
 | T6 | 生产受控切量 | 不允许测试替身 | 批准的切量/回滚 Runbook | 变更记录、监控 | 业务+运维+主架构 | 可切、可停、可回滚 |
 
 **依赖关系：**

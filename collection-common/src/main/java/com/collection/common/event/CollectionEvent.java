@@ -38,6 +38,9 @@ public class CollectionEvent {
     public static final String PENALTY_AMOUNT = "penaltyAmount";
     public static final String DUE_DATE = "dueDate";
     public static final String FULL_REPAY_TIME = "fullRepayTime";
+    public static final String REPAY_STATUS = "repayStatus";
+    public static final String CANCEL_REASON = "cancelReason";
+    public static final String CANCEL_SCOPE = "cancelScope";
     public static final String NAME = "name";
     public static final String PHONE = "phone";
     public static final String EMAIL = "email";

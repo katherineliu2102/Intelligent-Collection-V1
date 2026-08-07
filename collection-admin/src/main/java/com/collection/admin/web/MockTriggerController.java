@@ -498,15 +498,15 @@ public class MockTriggerController {
         return result;
     }
 
-    /** 模拟还款到账：标记 mock 案件已还款 + 发布 REPAYMENT_RECEIVED（应取消该用户活跃计划）。 */
+    /** 模拟整笔 loan 结清：标记 mock 案件已还款 + 发布案件级 REPAYMENT_RECEIVED。 */
     @PostMapping("/repayment")
     public Map<String, Object> repayment(
-            @RequestParam Long userId, @RequestParam(required = false) Long caseId) {
-        if (caseId != null && caseService instanceof MockCaseService) {
+            @RequestParam Long userId, @RequestParam Long caseId) {
+        if (caseService instanceof MockCaseService) {
             ((MockCaseService) caseService).markRepaid(caseId);
         }
-        ingestionService.repayment(userId);
-        return ok("REPAYMENT_RECEIVED published, userId=" + userId);
+        ingestionService.repayment(caseId, userId);
+        return ok("REPAYMENT_RECEIVED published, caseId=" + caseId + " userId=" + userId);
     }
 
     /** 模拟阶段变更：取消旧阶段计划 + 创建新阶段计划。 */

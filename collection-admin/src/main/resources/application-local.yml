@@ -22,6 +22,10 @@ mybatis:
 collection:
   scan:
     interval-ms: 5000
+  # 生产调度入口（Cloud Scheduler → Pub/Sub 调度订阅）。本地/CI 关闭，由 TriggerScanner(@Scheduled) 驱动扫描；
+  # 两者不得同时生效，SchedulerEntrypointValidator 会在启动时拒绝双入口。
+  scheduler:
+    enabled: ${COLLECTION_SCHEDULER_ENABLED:false}
   idempotency: memory
   eventbus: memory
   webhook:
@@ -62,6 +66,7 @@ channel:
     guard-frequency-case-id: 94805
     guard-frequency-daily-limit: 1
   plan-templates:
+    # local/L4 相对延迟回退模板；生产请在 dayBlocks 配置 PHT 固定槽位。
     S0:
       steps:
         - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }

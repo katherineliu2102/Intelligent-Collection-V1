@@ -44,12 +44,18 @@ public class IngestionProperties {
     /** 仅处理名单内 loan_id；空 = 全量（§6.0 联调隔离，名单不入仓）。 */
     private List<Long> loanIdWhitelist = new ArrayList<>();
 
+    /** 白名单为空时是否启用旧库全量日切；默认关闭，避免未经审批扫描全表。 */
+    private boolean dailyRollFullScanEnabled = false;
+
+    /** 全量日切每次调度触发最多处理的 keyset 页大小。 */
+    private int dailyRollBatchSize = 1000;
+
     /** 消息缺 jpushToken 时是否查新库 {@code t_user_device_token} 补全（B3，Phase 1 默认关）。 */
     private boolean enrichJpushToken = false;
 
     /**
-     * 是否允许 L4b-7 受控 NACK 故障注入。**联调专用，生产必须 false**；为 true 时仍只能对白名单 loan_id 生效，
-     * 且需显式调用 {@code POST /mock/ingestion-fault/arm} 才会失败一次。
+     * 是否允许 L4b-7 受控 NACK 故障注入。**联调专用，生产必须 false**；为 true 时仍只能对白名单 loan_id 生效， 且需显式调用 {@code POST
+     * /mock/ingestion-fault/arm} 才会失败一次。
      */
     private boolean faultInjectionEnabled = false;
 

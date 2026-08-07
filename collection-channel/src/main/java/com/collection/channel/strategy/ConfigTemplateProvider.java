@@ -30,8 +30,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>热更新：管理后台写配置时 bump {@code t_config_version_seq.current_version}，本类按 TTL 轮询版本号失效缓存。
  *
- * <p><b>零 DB I/O 约定</b>：{@code getSms/getPush/getPlanSteps} 在 {@code StepResolver}/{@code PlanFactory}
- * 热路径上被调用，二者硬超时仅 50ms（核心引擎规格 §4.1），而跨区域 MySQL 单次往返即可达数百毫秒。 因此读方法只读 volatile 缓存，TTL
+ * <p><b>零 DB I/O 约定</b>：{@code getSms/getPush/getPlanSteps} 在 {@code StepResolver}/{@code
+ * PlanFactory} 热路径上被调用，二者硬超时仅 50ms（核心引擎规格 §4.1），而跨区域 MySQL 单次往返即可达数百毫秒。 因此读方法只读 volatile 缓存，TTL
  * 到期时把版本号轮询与 reload 交给后台线程；缓存未就绪时返回 {@code null} 由调用方回落 YAML， 而非让引擎线程等待 JDBC。
  *
  * <p>{@link JdbcTemplate} 经 {@link ObjectProvider} 可选注入：宿主应用（collection-admin）存在 DataSource 时启用
@@ -57,6 +57,8 @@ public class ConfigTemplateProvider {
     private volatile Map<String, String> smsCache = Collections.emptyMap();
     private volatile Map<String, ChannelProperties.PushScript> pushCache = Collections.emptyMap();
     private volatile Map<String, List<ChannelProperties.PlanStepDef>> planCache =
+            Collections.emptyMap();
+    private volatile Map<String, ChannelProperties.PlanTemplate> planTemplateCache =
             Collections.emptyMap();
     // 逐槽位 config_version：供审计标记「这条话术来自 DB 的哪一版」，区别于全局 epoch loadedVersion。
     private volatile Map<String, Long> smsVersionCache = Collections.emptyMap();
@@ -115,11 +117,19 @@ public class ConfigTemplateProvider {
         return planCache.get(stageKey);
     }
 
+    /** DB 中该 stage 的完整计划模板，含可选 DayBlock 绝对槽位。 */
+    public ChannelProperties.PlanTemplate getPlanTemplate(String stageKey) {
+        if (stageKey == null || !cacheReady()) {
+            return null;
+        }
+        return planTemplateCache.get(stageKey);
+    }
+
     /**
      * 该 SMS 槽位在 DB 中的 {@code config_version}；{@code null} 表示本槽位不由 DB 供源（调用方应标记为 YAML/Nacos 来源）。
      *
-     * <p>与 {@link #getCurrentConfigVersion()} 的区别：后者是全局 epoch（进程加载了第几代配置）， 本方法是这一条话术自身的版本，用于
-     * {@code t_contact_timeline.template_version} 精确溯源。
+     * <p>与 {@link #getCurrentConfigVersion()} 的区别：后者是全局 epoch（进程加载了第几代配置）， 本方法是这一条话术自身的版本，用于 {@code
+     * t_contact_timeline.template_version} 精确溯源。
      */
     public Long getSmsVersion(String scriptSlot) {
         if (scriptSlot == null || !cacheReady()) {
@@ -140,8 +150,8 @@ public class ConfigTemplateProvider {
      * 启动预热：在 bean 初始化阶段<b>阻塞</b>加载一次。
      *
      * <p>刻意不用 {@code ApplicationReadyEvent}——那样 PubSub consumer 可能先于预热完成而开始消费， 首批案件会静默回落 YAML
-     * 计划模板，建出结构不符预期的计划。放在 {@code @PostConstruct} 可保证 任何依赖方拿到本 bean 时缓存已就绪；DB 不可用时
-     * {@link #refreshBlocking()} 内部吞异常，退化为 YAML 供源而不阻断启动。
+     * 计划模板，建出结构不符预期的计划。放在 {@code @PostConstruct} 可保证 任何依赖方拿到本 bean 时缓存已就绪；DB 不可用时 {@link
+     * #refreshBlocking()} 内部吞异常，退化为 YAML 供源而不阻断启动。
      */
     @PostConstruct
     public void warmUp() {
@@ -215,8 +225,8 @@ public class ConfigTemplateProvider {
     /**
      * 当前<b>已生效</b>的 DB 配置版本；0 表示未启用或缓存尚未就绪。
      *
-     * <p>返回缓存版本而非现查 DB：一是本方法在 {@code StepResolver} 热路径上（50ms 硬超时，见类注释的零 DB I/O 约定）；
-     * 二是审计字段 {@code template_version} 要记录「本次渲染实际用的配置版本」，现查到的最新版本可能还没被本进程加载。
+     * <p>返回缓存版本而非现查 DB：一是本方法在 {@code StepResolver} 热路径上（50ms 硬超时，见类注释的零 DB I/O 约定）； 二是审计字段 {@code
+     * template_version} 要记录「本次渲染实际用的配置版本」，现查到的最新版本可能还没被本进程加载。
      */
     public long getCurrentConfigVersion() {
         if (!dbEnabled) {
@@ -265,6 +275,7 @@ public class ConfigTemplateProvider {
                 });
 
         Map<String, List<ChannelProperties.PlanStepDef>> plans = new HashMap<>();
+        Map<String, ChannelProperties.PlanTemplate> planTemplates = new HashMap<>();
         jdbcTemplate.query(
                 "SELECT stage, plan_json FROM t_contact_plan_template "
                         + "WHERE tenant_id = ? AND status = 'ACTIVE' "
@@ -272,17 +283,19 @@ public class ConfigTemplateProvider {
                 new Object[] {TENANT},
                 rs -> {
                     String stage = rs.getString("stage");
-                    List<ChannelProperties.PlanStepDef> steps =
-                            parsePlanSteps(rs.getString("plan_json"));
-                    if (stage != null && steps != null) {
+                    ChannelProperties.PlanTemplate template =
+                            parsePlanTemplate(rs.getString("plan_json"));
+                    if (stage != null && template != null) {
                         // 同 stage 多模板时，按 config_version/updated_at 升序遍历，后者覆盖 → 取最新 ACTIVE
-                        plans.put(stage, steps);
+                        plans.put(stage, template.getSteps());
+                        planTemplates.put(stage, template);
                     }
                 });
 
         smsCache = sms;
         pushCache = push;
         planCache = plans;
+        planTemplateCache = planTemplates;
         smsVersionCache = smsVersions;
         pushVersionCache = pushVersions;
         log.info(
@@ -292,26 +305,51 @@ public class ConfigTemplateProvider {
                 plans.keySet());
     }
 
-    private List<ChannelProperties.PlanStepDef> parsePlanSteps(String planJson) {
+    private ChannelProperties.PlanTemplate parsePlanTemplate(String planJson) {
         if (planJson == null || planJson.isEmpty()) {
             return null;
         }
         try {
             JsonNode root = objectMapper.readTree(planJson);
+            ChannelProperties.PlanTemplate template = new ChannelProperties.PlanTemplate();
             JsonNode stepsNode = root.get("steps");
-            if (stepsNode == null || !stepsNode.isArray()) {
-                return null;
-            }
             List<ChannelProperties.PlanStepDef> steps = new ArrayList<>();
-            for (JsonNode node : stepsNode) {
-                ChannelProperties.PlanStepDef def = new ChannelProperties.PlanStepDef();
-                def.setChannel(node.path("channel").asText(null));
-                def.setDelayMin(node.path("delayMin").asInt(0));
-                def.setObserveMin(node.path("observeMin").asInt(0));
-                def.setTemplateId(node.path("templateId").asLong(0L));
-                steps.add(def);
+            if (stepsNode != null && stepsNode.isArray()) {
+                for (JsonNode node : stepsNode) {
+                    ChannelProperties.PlanStepDef def = new ChannelProperties.PlanStepDef();
+                    def.setChannel(node.path("channel").asText(null));
+                    def.setDelayMin(node.path("delayMin").asInt(0));
+                    def.setObserveMin(node.path("observeMin").asInt(0));
+                    def.setTemplateId(node.path("templateId").asLong(0L));
+                    steps.add(def);
+                }
             }
-            return steps;
+            template.setSteps(steps);
+
+            List<ChannelProperties.DayBlock> dayBlocks = new ArrayList<>();
+            JsonNode dayBlocksNode = root.get("dayBlocks");
+            if (dayBlocksNode != null && dayBlocksNode.isArray()) {
+                for (JsonNode blockNode : dayBlocksNode) {
+                    ChannelProperties.DayBlock block = new ChannelProperties.DayBlock();
+                    block.setDpdDay(blockNode.path("dpdDay").asInt());
+                    List<ChannelProperties.Slot> slots = new ArrayList<>();
+                    JsonNode slotsNode = blockNode.get("slots");
+                    if (slotsNode != null && slotsNode.isArray()) {
+                        for (JsonNode slotNode : slotsNode) {
+                            ChannelProperties.Slot slot = new ChannelProperties.Slot();
+                            slot.setChannel(slotNode.path("channel").asText(null));
+                            slot.setTime(slotNode.path("time").asText(null));
+                            slot.setObserveMin(slotNode.path("observeMin").asInt(0));
+                            slot.setTemplateId(slotNode.path("templateId").asLong(0L));
+                            slots.add(slot);
+                        }
+                    }
+                    block.setSlots(slots);
+                    dayBlocks.add(block);
+                }
+            }
+            template.setDayBlocks(dayBlocks);
+            return template;
         } catch (Exception e) {
             log.warn("[ConfigTemplateProvider] bad plan_json skipped: {}", e.getMessage());
             return null;

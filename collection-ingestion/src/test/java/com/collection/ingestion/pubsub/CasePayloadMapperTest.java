@@ -121,6 +121,17 @@ class CasePayloadMapperTest {
     }
 
     @Test
+    void partialRepayment_readsOutstandingAndStatus() {
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"userId\":1,\"loanId\":88,\"currentAmmout\":1234.56,\"STATUS\":2}");
+        assertEquals(
+                0, mapper.repaymentTotalOutstanding(json).compareTo(new BigDecimal("1234.56")));
+        assertEquals(Integer.valueOf(2), mapper.repaymentStatus(json));
+        assertNull(mapper.repaymentTotalOutstanding(JSON.parseObject("{\"userId\":1}")));
+    }
+
+    @Test
     void repaymentUserId_missing_throwsPoison() {
         assertThrows(
                 PoisonMessageException.class,

@@ -42,6 +42,13 @@ public interface ContactPlanMapper {
                     + "ORDER BY id ASC")
     List<ContactPlan> selectActiveByCase(@Param("caseId") Long caseId);
 
+    @Update(
+            "UPDATE t_contact_plan SET context_snapshot = #{contextSnapshot}, updated_at = NOW() "
+                    + "WHERE id = #{planId} AND renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')")
+    int updateActiveContextSnapshot(
+            @Param("planId") Long planId, @Param("contextSnapshot") String contextSnapshot);
+
     @Select(
             "SELECT * FROM t_contact_plan "
                     + "WHERE case_id = #{caseId} AND stage = #{stage} "
