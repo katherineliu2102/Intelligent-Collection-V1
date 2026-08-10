@@ -144,7 +144,10 @@ class ChannelContractL2Test {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) (userId, caseId) -> {});
+        inject(
+                manager,
+                "predictiveDialerService",
+                (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();

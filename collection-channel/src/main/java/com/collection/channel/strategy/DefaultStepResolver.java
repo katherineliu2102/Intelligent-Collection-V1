@@ -119,6 +119,7 @@ public class DefaultStepResolver implements StepResolver {
                                 + step.getStepOrder()
                                 + ":"
                                 + step.getRetryCount())
+                .providerIdempotencyKey(context.getPlan().getId() + ":" + step.getStepOrder())
                 .metadata(metadata)
                 .build();
     }

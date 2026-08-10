@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 /**
  * Phase 1 Mock 实现 —— 预测式外呼名单过滤占位。对应 {@link PredictiveDialerService}。
  *
- * <p>真实实现：渠道编排负责人对接 LTH，把已结清借据移出排队名单。
+ * <p>真实实现：渠道编排负责人对接 AI Call 合作方，把已结清借据移出排队名单（不绑定具体拨号线路）。
  */
 @Component
 public class MockPredictiveDialerService implements PredictiveDialerService {

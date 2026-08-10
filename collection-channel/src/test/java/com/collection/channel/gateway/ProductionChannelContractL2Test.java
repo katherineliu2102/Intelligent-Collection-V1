@@ -189,15 +189,27 @@ class ProductionChannelContractL2Test {
     }
 
     @Test
-    void c4_realGateway_mapsTransportFailureToRetryable() {
+    void c4_realGateway_mapsUnknownOutcomeToNonRetryable() {
         properties.getDebug().setSingleStep("SMS");
         stubFor(post(urlEqualTo("/v1/sms/send")).willReturn(aResponse().withStatus(503)));
 
         StepResult result = gateway.dispatch(resolvedSmsCommand("+639171234567"));
 
         assertFalse(result.isSuccess());
+        assertFalse(result.isRetryable());
+        assertEquals("NOTIFICATION_503_OUTCOME_UNKNOWN", result.getErrorCode());
+    }
+
+    @Test
+    void c4b_realGateway_mapsRateLimitToRetryable() {
+        properties.getDebug().setSingleStep("SMS");
+        stubFor(post(urlEqualTo("/v1/sms/send")).willReturn(aResponse().withStatus(429)));
+
+        StepResult result = gateway.dispatch(resolvedSmsCommand("+639171234567"));
+
+        assertFalse(result.isSuccess());
         assertTrue(result.isRetryable());
-        assertEquals("NOTIFICATION_TIMEOUT", result.getErrorCode());
+        assertEquals("NOTIFICATION_429_NOT_SENT", result.getErrorCode());
     }
 
     @Test
@@ -311,6 +323,11 @@ class ProductionChannelContractL2Test {
         @Override
         public boolean acquire(String key, int ttlMinutes) {
             return keys.putIfAbsent(key, Boolean.TRUE) == null;
+        }
+
+        @Override
+        public void release(String key) {
+            keys.remove(key);
         }
     }
 }

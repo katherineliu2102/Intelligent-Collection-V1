@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.enums.Stage;
+import com.collection.common.model.CaseContext;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
-import com.collection.common.model.CaseContext;
 import com.collection.common.model.ContextSnapshot;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -29,14 +29,12 @@ class PhtSlotScheduleCalculatorTest {
 
         List<PhtSlotScheduleCalculator.ScheduledSlot> slots =
                 calculator.futureSlots(
-                        snapshot,
-                        Arrays.asList(d1, d2),
-                        LocalDateTime.of(2026, 8, 7, 11, 0));
+                        snapshot, Arrays.asList(d1, d2), LocalDateTime.of(2026, 8, 7, 11, 0));
 
-        assertThat(slots).extracting(PhtSlotScheduleCalculator.ScheduledSlot::getTriggerTime)
+        assertThat(slots)
+                .extracting(PhtSlotScheduleCalculator.ScheduledSlot::getTriggerTime)
                 .containsExactly(
-                        LocalDateTime.of(2026, 8, 7, 12, 0),
-                        LocalDateTime.of(2026, 8, 8, 8, 0));
+                        LocalDateTime.of(2026, 8, 7, 12, 0), LocalDateTime.of(2026, 8, 8, 8, 0));
     }
 
     @Test
@@ -89,8 +87,7 @@ class PhtSlotScheduleCalculatorTest {
         return snapshot;
     }
 
-    private static ChannelProperties.DayBlock block(
-            int dpdDay, ChannelProperties.Slot... slots) {
+    private static ChannelProperties.DayBlock block(int dpdDay, ChannelProperties.Slot... slots) {
         ChannelProperties.DayBlock block = new ChannelProperties.DayBlock();
         block.setDpdDay(dpdDay);
         block.setSlots(Arrays.asList(slots));

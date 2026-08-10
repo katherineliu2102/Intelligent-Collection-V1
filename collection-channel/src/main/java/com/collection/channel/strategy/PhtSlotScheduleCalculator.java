@@ -21,10 +21,7 @@ public class PhtSlotScheduleCalculator {
     public static final ZoneId PHT = ZoneId.of("Asia/Manila");
     private static final Logger log = LoggerFactory.getLogger(PhtSlotScheduleCalculator.class);
 
-    /**
-     * 只展开当前 DPD 及未来日块；已过日块或已过时段不补发。
-     * 返回值按绝对 trigger_time 排序，供 PlanFactory 写成有序步骤。
-     */
+    /** 只展开当前 DPD 及未来日块；已过日块或已过时段不补发。 返回值按绝对 trigger_time 排序，供 PlanFactory 写成有序步骤。 */
     public List<ScheduledSlot> futureSlots(
             ContextSnapshot snapshot,
             List<ChannelProperties.DayBlock> dayBlocks,

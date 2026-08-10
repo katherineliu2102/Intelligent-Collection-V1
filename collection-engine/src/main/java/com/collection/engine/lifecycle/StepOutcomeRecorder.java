@@ -12,20 +12,31 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContactRecord;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.TimelineRepository;
+import com.collection.engine.outbox.OutboxEventSink;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 外部渠道 I/O 完成后的短事务：只在状态迁移成功时记录最终触达事实。 事件由调用者在本事务提交返回后发布，避免消费者读取到未提交状态。 */
+/**
+ * 外部渠道 I/O 完成后的短事务：只在状态迁移成功时记录最终触达事实。 事件由调用者在本事务提交返回后发布，避免消费者读取到未提交状态。
+ *
+ * <p>步骤转终态即意味着 STEP_COMPLETED 已产生，因此该事件在本事务内一并入发件箱（核心引擎规格 §7.4）： 调用者随后的即时发布若失败，重投的原事件会因步骤已是终态而按
+ * no-op 返回，事件不会被重新推导。 调用者用 {@link EngineEvents#stepCompleted} 构造要发布的事件，与入箱记录共享确定性 eventId。
+ */
 @Component
 public class StepOutcomeRecorder {
 
     @Resource private ContactPlanRepository planRepository;
     @Resource private TimelineRepository timelineRepository;
     @Resource private DeliveryAuditMetadata deliveryAuditMetadata;
+
+    @Autowired(required = false)
+    private OutboxEventSink outboxEventSink;
+
     private final ThreadLocal<StepCommand> pendingAuditCommand = new ThreadLocal<>();
 
     /** 在同一执行线程中暂存已解析命令，供后续状态落库时写入无 PII 审计字段。 */
@@ -89,6 +100,9 @@ public class StepOutcomeRecorder {
             deliveryAuditMetadata.apply(record, command);
         }
         timelineRepository.writeTimeline(record);
+        if (outboxEventSink != null) {
+            outboxEventSink.enqueue(EngineEvents.stepCompleted(plan, step));
+        }
         return true;
     }
 
@@ -132,6 +146,19 @@ public class StepOutcomeRecorder {
                 providerMsgId,
                 providerCallback,
                 command);
+    }
+
+    /** 策略未选择该步骤：不代表一次触达或合规拦截，故不写 timeline。 但状态迁移与 STEP_COMPLETED 入箱仍须同事务，否则跳过成功、事件丢失，计划照样停摆。 */
+    @Transactional
+    public boolean recordStrategySkipped(ContactPlan plan, ContactPlanStep step) {
+        if (!planRepository.transitionStepStatus(
+                step.getId(), StepStatus.EXECUTING, StepStatus.SKIPPED, ContactResult.SKIPPED)) {
+            return false;
+        }
+        if (outboxEventSink != null) {
+            outboxEventSink.enqueue(EngineEvents.stepCompleted(plan, step));
+        }
+        return true;
     }
 
     /** 消息观察期：投递事实、默认推进结果与计划等待态必须一起提交。 */

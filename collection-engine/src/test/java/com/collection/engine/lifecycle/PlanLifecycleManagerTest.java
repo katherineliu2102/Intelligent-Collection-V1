@@ -347,6 +347,25 @@ class PlanLifecycleManagerTest {
         verify(predictiveDialerService).filterRepaidCase(USER_ID, CASE_ID);
     }
 
+    @Test
+    @DisplayName("#24 并发终态先写：还款取锁后发现已完成 → 不覆写计划状态")
+    void onRepaymentReceived_lockedPlanAlreadyTerminal_doesNotOverwrite() {
+        ContactPlan stale = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);
+        ContactPlan completed = newPlan(PLAN_ID, PlanStatus.PLAN_COMPLETED, Stage.S2);
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(stale)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(completed);
+
+        manager.onRepaymentReceived(
+                CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID));
+
+        verify(planRepository, never())
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+        verify(predictiveDialerService).filterRepaidCase(USER_ID, CASE_ID);
+    }
+
     // ───────────────────────── onPlanExhausted（#25 三分支） ─────────────────────────
 
     @Test

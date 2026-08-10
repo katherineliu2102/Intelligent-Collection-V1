@@ -38,4 +38,12 @@ public interface ContactTimelineMapper {
             @Param("userId") Long userId,
             @Param("fromInclusive") java.time.LocalDateTime fromInclusive,
             @Param("limit") int limit);
+
+    @Select(
+            "SELECT * FROM t_contact_timeline WHERE case_id = #{caseId} "
+                    + "AND created_at >= #{fromInclusive} ORDER BY created_at DESC LIMIT #{limit}")
+    List<ContactRecord> selectRecentByCaseSince(
+            @Param("caseId") Long caseId,
+            @Param("fromInclusive") java.time.LocalDateTime fromInclusive,
+            @Param("limit") int limit);
 }

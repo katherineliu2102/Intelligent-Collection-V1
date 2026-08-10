@@ -3,11 +3,13 @@ package com.collection.engine.lifecycle;
 import com.collection.common.enums.EventType;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.engine.outbox.OutboxEventSink;
 import java.util.List;
 import javax.annotation.PostConstruct;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,6 +26,9 @@ public class EventConsumerDispatcher {
     @Resource private CollectionEventBus eventBus;
     @Resource private PlanLifecycleManager manager;
     @Resource private StepExecutionOrchestrator orchestrator;
+
+    @Autowired(required = false)
+    private OutboxEventSink outboxEventSink;
 
     @PostConstruct
     public void registerHandlers() {
@@ -57,12 +62,30 @@ public class EventConsumerDispatcher {
         }
     }
 
+    /**
+     * 提交后发布。事件已由 {@link PlanLifecycleManager} 在同一事务内写入发件箱（核心引擎规格 §7.4），
+     * 这里成功即销账；抛错或进程被杀只是留下一条待重发记录，由 {@code OutboxPublisher} 兜底。
+     *
+     * <p>逐条独立 try：一条发布失败不应连带丢掉同批次其余事件的销账。
+     */
     private void publishAll(List<CollectionEvent> events) {
         if (events == null) {
             return;
         }
         for (CollectionEvent e : events) {
-            eventBus.publish(e);
+            try {
+                eventBus.publish(e);
+            } catch (Exception ex) {
+                log.error(
+                        "[Dispatcher] publish failed, left to outbox republish: {} eventId={}",
+                        e.getEventType(),
+                        e.getEventId(),
+                        ex);
+                continue;
+            }
+            if (outboxEventSink != null) {
+                outboxEventSink.markDelivered(e);
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.collection.engine.lifecycle;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -124,6 +125,7 @@ class StepExecutionOrchestratorTest {
                         any(),
                         any()))
                 .thenReturn(true);
+        when(stepOutcomeRecorder.recordStrategySkipped(any(), any())).thenReturn(true);
     }
 
     private void stubResolver(ChannelType ch) {
@@ -222,6 +224,37 @@ class StepExecutionOrchestratorTest {
                 .updateStepStatus(eq(STEP_ID), eq(StepStatus.SKIPPED), any());
         verify(eventBus, never()).publish(any());
         verify(channelGateway, never()).dispatch(any());
+        verify(idempotencyService).release(eq("lock:plan:" + PLAN_ID + ":1:0"));
+    }
+
+    @Test
+    @DisplayName("#6b dispatch 前 PreFlight 读取异常 → 释放执行锁并上抛，供 NACK 重投")
+    void preFlightFailure_releasesExecutionLockBeforeRethrow() {
+        when(preFlightChecker.blockingReason(CASE_ID)).thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> orchestrator.executeStep(plan, step))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verify(idempotencyService).release(eq("lock:plan:" + PLAN_ID + ":1:0"));
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
+    @DisplayName("#6c dispatch 后写库异常 → 保留执行锁，避免不确定结果重复触达")
+    void postDispatchFailure_keepsExecutionLock() {
+        stubResolver(ChannelType.SMS);
+        stubDispatch(ok(ContactResult.DELIVERED));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(planRepository)
+                .markStepDispatched(STEP_ID);
+
+        assertThatThrownBy(() -> orchestrator.executeStep(plan, step))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verify(channelGateway).dispatch(any());
+        verify(idempotencyService, never()).release(anyString());
     }
 
     @Test
@@ -255,25 +288,25 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .transitionStepStatus(
-                        STEP_ID, StepStatus.EXECUTING, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        // 状态迁移与 STEP_COMPLETED 入箱必须同事务，故走 recordStrategySkipped 而非裸 transitionStepStatus
+        verify(stepOutcomeRecorder).recordStrategySkipped(plan, step);
         verify(eventBus).publish(any());
         verify(timelineRepository, never()).writeTimeline(any());
         verify(channelGateway, never()).dispatch(any());
     }
 
     @Test
-    @DisplayName("#9 ChannelGateway 抛异常 → 视为 retryable → 退避重试")
-    void channelException_retryable() {
+    @DisplayName("#9 ChannelGateway 抛异常 → 结果未知，FAILED 推进")
+    void channelException_unknownOutcomeFailed() {
         stubResolver(ChannelType.SMS);
         when(channelGateway.dispatch(any())).thenThrow(new RuntimeException("gateway down"));
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).incrementRetryCount(STEP_ID);
-        verify(planRepository).updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
-        verify(planRepository, never()).updateStepStatus(eq(STEP_ID), eq(StepStatus.FAILED), any());
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
+        verify(planRepository, never()).incrementRetryCount(STEP_ID);
+        verify(planRepository, never())
+                .updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
     }
 
     @Test
@@ -348,6 +381,7 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         verify(planRepository).updateStepTimeoutTime(eq(STEP_ID), any());
+        verify(timelineRepository).writeTimeline(any());
         verify(eventBus, never()).publish(any());
         verify(planRepository, never())
                 .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());

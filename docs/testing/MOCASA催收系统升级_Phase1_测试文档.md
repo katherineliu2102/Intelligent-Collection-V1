@@ -87,7 +87,7 @@
 
 | 层 | 覆盖 | 必跑命令 | 当前状态 | Owner |
 |---|---|---|---|---|
-| L0 | 生命周期、管线、PreFlight、SPI 超时 | `mvn -pl collection-common,collection-engine -am test -Dsurefire.failIfNoSpecifiedTests=false` | ✅ 59 例 | 主架构 |
+| L0 | 生命周期、管线、PreFlight、SPI 超时、发件箱与停摆巡检 | `mvn -pl collection-common,collection-engine -am test -Dsurefire.failIfNoSpecifiedTests=false` | ✅（含新增发件箱 12 例、巡检 5 例） | 主架构 |
 | L0c | 渠道 Adapter 映射与策略 | `mvn -pl collection-channel -am test` | ✅ 27 例 | 编排同事 |
 | L1 | 内存总线/仓储的全链路和回调 | 同 L0 命令 | ✅ 6 例 | 主架构 |
 | CI 全仓 | 格式门禁与全仓单测 | `mvn -B -ntp clean test` | ✅ | 各模块 owner |
@@ -100,6 +100,8 @@
 | 七步管线 | `StepExecutionOrchestratorTest`、`PreFlightCheckerTest` | Guard/Resolver/Gateway 的 fail-close、retryable、终态拦截正确 |
 | SPI | `SpiInvokerTest` | 硬超时、异常透传、MDC 传递正确 |
 | 内存闭环 | `FullChainIntegrationTest`、`AsyncCallbackChainL1Test` | 事件到计划/步骤推进闭环正确 |
+| 事件不丢（[引擎 §7.4 A](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | `OutboxConsistencyTest`（5）、`OutboxPublisherTest`（7） | 步骤转终态与 `STEP_COMPLETED` 入箱同调用完成；CAS 失败不入箱；策略性跳过不写 timeline 但仍入箱；入箱与即时发布共享确定性 `eventId`、不同 `retryCount` 为不同事件；到期未销账重发并置 `PUBLISHED`；发布失败按退避推迟、耗尽转 `FAILED`；payload 不可反序列化直接 `FAILED`；关闭开关与扫描抛错均不影响主链 |
+| 停摆巡检（[引擎 §7.4](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | `StuckPlanReaperTest`（5） | 检出即计数告警且**不写库、不重发触达**；只看静默超 `idle-minutes` 的计划；开关与批次上限取自配置；扫描抛错不影响下一轮 |
 | 渠道逻辑 | channel `strategy/*`、`adapter/*` | 映射与本地策略断言通过 |
 | 调度入口 | `ScheduledJobRunnerTest`（8）、`PubSubScheduleConsumerTest`（11）、`SchedulerEntrypointValidatorTest`（8） | 按 `job` 属性路由、陈旧消息按 `publishTime` 丢弃（含停机 30 分钟积压只放行当前 tick）、重复投递均 ack、并发单飞、失败不上抛且闸门释放、缺订阅配置启动失败、阈值 ≤ 任务周期、调度入口唯一 |
 
@@ -165,6 +167,8 @@
 | L3-3 | 取消/完成状态与 `completed_at` | 同上 | `ContactPlanMapperIT` 2026-07-25 受控 MySQL：plan/step 时间戳断言通过 | ✅ | 服务同事 |
 | L3-4 | 单活跃计划、并发串行化 | 同上 | 2026-07-25：唯一约束、REBUILD handoff、两连接 `FOR UPDATE` 阻塞/释放断言通过 | ✅ | 服务同事 + 主架构 |
 | L3-5 | due scanner 查询与状态推进 | 同上 | 2026-07-25：Mapper 查询 + `PlanStepTriggerPublisherIT` scan→event bus→dispatcher 的 due/timeout 状态断言通过 | ✅ | 主架构 + 服务同事 |
+| L3-6 | 发件箱与状态迁移的**真实事务**原子性：业务事务回滚时 `t_event_outbox` 不留记录；同 `eventId` 重入不重置重发进度（唯一键 + `ON DUPLICATE KEY UPDATE id=id`）；脱离事务调用 `enqueue` 因 `Propagation.MANDATORY` 失败 | `mvn -pl collection-admin -am test -Dgroups=integration` | ⬜ 待补 `EventOutboxMapperIT` | ⬜ | 主架构 |
+| L3-7 | 排期审计列与停摆判定 SQL：`original_trigger_time` 在 `updateTriggerTime`（退避/defer）后保持不变、`dispatched_at` 只记首次；`selectStuckPlanIds` 与 `selectDueSteps`/`selectTimeoutSteps` 严格互补（能被扫描拾取的计划不得被判停摆） | 同上 | ⬜ 待补 `ContactPlanMapperIT` 新增用例 | ⬜ | 主架构 + 服务同事 |
 
 ### 当前技术障碍
 
@@ -174,9 +178,9 @@
 |---|---|---|
 | 专用环境依赖 | 2026-07-25 受控 MySQL：`ContactPlanMapperIT` 9 tests、`PlanStepTriggerPublisherIT` 2 tests 全绿；Surefire 默认排除 `integration` | 默认 CI 保持不连库；后续变更仍须在专用环境复跑并保存 JUnit/SQL 证据 |
 | 环境依赖 | 需可达 MySQL；连接信息不入仓，CI 默认不连库 | 本地/专用集成环境可跑，默认 CI 不能代替 L3 出口 |
-| 用例缺口 | L3-1…5 自动化已覆盖；真实渠道回调、PubSub NACK 与跨存储故障不属于 L3 | 分别由 T2/L4b/T5 覆盖，不得以 L3 替代 |
+| 用例缺口 | L3-1…5 自动化已覆盖；L3-6/L3-7 随发件箱与排期审计列新增，尚未补 IT；真实渠道回调、PubSub NACK 与跨存储故障不属于 L3 | 分别由 T2/L4b/T5 覆盖，不得以 L3 替代 |
 
-**结论**：L3-1…5 已在受控 MySQL 自动化收口。仅 L4b 手工 SQL 证据不能替代 L3 出口，但可作为后续 T4 的附加证据。
+**结论**：L3-1…5 已在受控 MySQL 自动化收口。L3-6/L3-7 的逻辑分支已由 `OutboxConsistencyTest` / `OutboxPublisherTest` / `StuckPlanReaperTest` 在 L0 覆盖，但**事务边界与 SQL 语义只有真实 MySQL 能证明**，须补 IT 后才算收口。仅 L4b 手工 SQL 证据不能替代 L3 出口，但可作为后续 T4 的附加证据。
 
 ### 受控 MySQL 执行
 
@@ -501,12 +505,14 @@ L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn tes
 | T5-R13 | 事件消费去重 | 让一条事件的 handler 处理成功但延迟 ACK 触发 PEL 认领重投；再对一条已成功处理的事件执行一次 DLQ 重放 | 重投与重放都不再次执行业务，直接 ACK 并计入 `collection.event.deduped`；`collection:processed:{event_id}` 存在且 TTL 约 24h；handler 失败的事件没有该标记，仍可重投重试（四条路径已由 `RedisStreamEventBusDedupTest` 单测覆盖，本项验收真实 Redis 行为） | ⬜ | 主架构 |
 | T5-R9 | Redis 断连恢复 | 联调环境短暂阻断 Redis 网络后恢复 | 恢复后 `consume()`/`reclaimPending()` 的下一轮调度自愈，无需重启应用；期间未处理事件在恢复后仍可被消费，不丢失 | ⬜ | 主架构 + 运维 |
 | T5-R10 | Consumer 并发与背压 | 并发 publish 数十个事件，其中一个 handler 人为 sleep 较长时间模拟慢渠道调用 | 其余事件可由空闲工作线程处理；队列有界；满载时触发 CallerRuns 背压而不丢消息；MDC 不丢失 | ⬜ | 主架构 |
+| T5-R14 | 发件箱兜底重发（[引擎 §7.4 A](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | 一个步骤转终态**提交后**阻断 Redis，使 `STEP_COMPLETED` 的即时发布失败；恢复 Redis 后等待宽限期 | 步骤终态与 `t_event_outbox` 的 `PENDING` 记录同时存在（证明同事务落盘）；宽限期后 `OutboxPublisher` 重发，计划继续推进至下一步；`collection.outbox.republished` +1；**全程只发出一次触达**（确定性 `eventId` 被消费侧去重吸收） | ⬜ | 主架构 |
+| T5-R15 | 停摆巡检（只告警） | 手工构造一个非终态计划，其步骤 `trigger_time`/`timeout_time` 均为空，等待超过 `engine.reaper.idle-minutes` | `collection.plan.stuck` +1 且日志给出 planId；**库中状态未被任何自动修复改写、无新增触达**；正常在跑的计划不被误报 | ⬜ | 主架构 + 运维 |
 
 **设计选型（已确认，2026-08-03）**：`RedisStreamEventBus` 用 `@Scheduled` 轮询 `XREADGROUP` + 定期 `XCLAIM`，正式替代基础设施规范 §3.2 原规格的 `StreamMessageListenerContainer` 长连接监听；因此**没有独立看门狗线程**，也没有"连接假死"这一失败模式需要覆盖。规格文档已同步更新（[§3.2 决策记录](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议)），T5-R9 用于实测验证这一自愈假设。
 
 ### 出口
 
-生产等价拓扑经演练，监控与回滚机制可操作，且所有真实触达均在白名单/沙箱范围内。T5-R1…R10 与 T5-S1…S7 全部 ✅ 方可进入 T6。
+生产等价拓扑经演练，监控与回滚机制可操作，且所有真实触达均在白名单/沙箱范围内。T5-R1…R15 与 T5-S1…S7 全部 ✅ 方可进入 T6。
 
 ---
 

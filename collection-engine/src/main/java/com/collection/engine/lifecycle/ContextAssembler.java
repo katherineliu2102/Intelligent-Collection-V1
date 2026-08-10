@@ -10,7 +10,11 @@ import com.collection.common.util.JsonUtil;
 import com.collection.engine.config.EngineProperties;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Resource;
 import org.springframework.stereotype.Component;
 
@@ -27,25 +31,53 @@ public class ContextAssembler {
     public ExecutionContext assemble(ContactPlan plan, ContactPlanStep step) {
         ContextSnapshot snapshot =
                 JsonUtil.fromJson(plan.getContextSnapshot(), ContextSnapshot.class);
-        LocalDateTime windowStart =
+        LocalDateTime todayStart =
                 LocalDateTime.now(ZoneId.of("Asia/Manila")).toLocalDate().atStartOfDay();
+        LocalDateTime stageEntry = todayStart;
         if (snapshot != null
                 && snapshot.getContactHistory() != null
                 && snapshot.getContactHistory().getStageEntryDate() != null) {
-            LocalDateTime stageEntry =
-                    snapshot.getContactHistory().getStageEntryDate().atStartOfDay();
-            if (stageEntry.isAfter(windowStart)) {
-                windowStart = stageEntry;
-            }
+            stageEntry = snapshot.getContactHistory().getStageEntryDate().atStartOfDay();
         }
-        List<ContactRecord> recent =
-                timelineRepository.getContactHistory(
-                        plan.getUserId(), windowStart, props.getContext().getHistoryMaxRecords());
+        int limit = props.getContext().getHistoryMaxRecords();
+        List<ContactRecord> userToday =
+                timelineRepository.getContactHistory(plan.getUserId(), todayStart, limit);
+        List<ContactRecord> caseSinceStage =
+                timelineRepository.getContactHistoryByCase(plan.getCaseId(), stageEntry, limit);
+        List<ContactRecord> recent = mergeByRecordId(userToday, caseSinceStage, limit);
         return ExecutionContext.builder()
                 .plan(plan)
                 .currentStep(step)
                 .contextSnapshot(snapshot)
                 .recentTimeline(recent)
                 .build();
+    }
+
+    private List<ContactRecord> mergeByRecordId(
+            List<ContactRecord> userToday, List<ContactRecord> caseSinceStage, int limit) {
+        Map<String, ContactRecord> merged = new LinkedHashMap<>();
+        addDistinct(merged, userToday);
+        addDistinct(merged, caseSinceStage);
+        List<ContactRecord> records = new ArrayList<>(merged.values());
+        records.sort(
+                Comparator.comparing(
+                        ContactRecord::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder())));
+        return records.subList(0, Math.min(records.size(), Math.max(1, limit)));
+    }
+
+    private void addDistinct(Map<String, ContactRecord> target, List<ContactRecord> records) {
+        if (records == null) {
+            return;
+        }
+        for (ContactRecord record : records) {
+            String key =
+                    record.getId() != null
+                            ? "id:" + record.getId()
+                            : record.getAttemptKey() != null
+                                    ? "attempt:" + record.getAttemptKey()
+                                    : "transient:" + System.identityHashCode(record);
+            target.putIfAbsent(key, record);
+        }
     }
 }

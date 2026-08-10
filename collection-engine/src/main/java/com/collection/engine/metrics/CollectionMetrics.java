@@ -51,6 +51,27 @@ public class CollectionMetrics {
                 .increment();
     }
 
+    /** 发件箱兜底重发数。这是「提交后即时发布失败」的唯一应用侧证据：正常链路恒为 0， 持续非 0 说明事件总线在抖动，事件正靠发件箱救回。 */
+    public void outboxRepublished(String type) {
+        Counter.builder("collection.outbox.republished")
+                .tag("type", type)
+                .register(registry)
+                .increment();
+    }
+
+    /** 重发次数耗尽、已转人工的事件数。任何非 0 都必须告警——对应一个停摆的计划。 */
+    public void outboxFailed(String type) {
+        Counter.builder("collection.outbox.failed")
+                .tag("type", type)
+                .register(registry)
+                .increment();
+    }
+
+    /** 非终态但不会再被任何扫描拾取的计划数。恒应为 0。 */
+    public void planStuck(int count) {
+        Counter.builder("collection.plan.stuck").register(registry).increment(count);
+    }
+
     public void eventDuration(String type, long nanos) {
         registry.timer("collection.event.consume.duration", "type", type)
                 .record(nanos, TimeUnit.NANOSECONDS);

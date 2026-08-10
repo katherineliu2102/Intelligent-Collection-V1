@@ -87,6 +87,9 @@ public interface ContactPlanRepository {
     /** 观察期的预置最终结果，不改变步骤状态或完成时间。 */
     default void updateStepResult(Long stepId, ContactResult result) {}
 
+    /** 渠道受理成功后写 dispatched_at（IF NULL THEN SET），不改变步骤状态。 */
+    default void markStepDispatched(Long stepId) {}
+
     void updateStepTriggerTime(Long stepId, LocalDateTime triggerTime, StepStatus status);
 
     void updateStepTimeoutTime(Long stepId, LocalDateTime timeoutTime);
@@ -99,4 +102,16 @@ public interface ContactPlanRepository {
 
     /** timeout_time <= now 且 status=EXECUTING、关联计划非终态。带 LIMIT。 */
     List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit);
+
+    // ── 存活性巡检（安全网） ──
+    /**
+     * 停摆计划：非终态，但没有任何步骤会被 due / timeout 扫描再次拾取，因此不会自行推进。
+     *
+     * <p>只做检测与告警，不自动重发触达——触达是不可回滚的外部动作，误判的代价由用户承担。
+     *
+     * @param idleBefore 计划 updated_at 早于该时刻才纳入，避开正在处理中的计划
+     */
+    default List<Long> findStuckPlanIds(LocalDateTime idleBefore, int limit) {
+        return java.util.Collections.emptyList();
+    }
 }

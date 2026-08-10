@@ -7,6 +7,7 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.engine.config.EngineProperties;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 public class PlanStepTriggerPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(PlanStepTriggerPublisher.class);
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
 
     @Resource private ContactPlanRepository planRepository;
     @Resource private CollectionEventBus eventBus;
@@ -29,7 +31,7 @@ public class PlanStepTriggerPublisher {
     /** @return 本次扫描发布的事件条数（供调度指标记录） */
     public int publishDueSteps() {
         int limit = props.getConsumer().getScanLimit();
-        List<ContactPlanStep> due = planRepository.findDueSteps(LocalDateTime.now(), limit);
+        List<ContactPlanStep> due = planRepository.findDueSteps(LocalDateTime.now(PHT), limit);
         for (ContactPlanStep step : due) {
             eventBus.publish(
                     CollectionEvent.of(EventType.PLAN_STEP_DUE)
@@ -43,7 +45,8 @@ public class PlanStepTriggerPublisher {
     /** @return 本次扫描发布的事件条数（供调度指标记录） */
     public int publishTimeoutSteps() {
         int limit = props.getConsumer().getScanLimit();
-        List<ContactPlanStep> timeout = planRepository.findTimeoutSteps(LocalDateTime.now(), limit);
+        List<ContactPlanStep> timeout =
+                planRepository.findTimeoutSteps(LocalDateTime.now(PHT), limit);
         for (ContactPlanStep step : timeout) {
             eventBus.publish(
                     CollectionEvent.of(EventType.CALLBACK_TIMEOUT)

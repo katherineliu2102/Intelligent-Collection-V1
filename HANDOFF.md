@@ -42,7 +42,10 @@
 | 调度 | Spring `@Scheduled`（仅 local/test） | Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅（`PubSubScheduleConsumer`），按消息属性 `job` 路由 `planStepDue` / `callbackTimeout` / `dailyRoll`；无执行器、无固定端口、无入站网络 |
 | SPI 硬超时 | ✅ 已实现：`SpiInvoker` 线程级强制超时（`Future.get`，默认 50/20/50/10/50ms，可配） | I/O 型 SPI（Redis Lua 等）另配 client 级超时作第一道防线 |
 | 案件/画像服务 | 合成 Mock 数据 | 映射真实旧库（t_collection 等） |
-| 可观测性 | 本地 `SimpleMeterRegistry`（指标不外发） | `/actuator/prometheus` 暴露事件/PEL/Stream/DLQ/线程池/跳过原因/SPI 超时；消费入口统一写 MDC。抓取、告警与 Dashboard 由运维配置 |
+| 派生事件不丢 | ✅ 已实现：`t_event_outbox` 随状态迁移同事务落盘 + `OutboxPublisher` 兜底重发（[引擎 §7.4 A](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)）。**需真实 MySQL 验证事务边界**（测试文档 L3-6） | 同实现；`collection.outbox.failed` / `pending` 接入告警 |
+| 停摆巡检 | ✅ 已实现：`StuckPlanReaper` 检测「非终态但无步骤可被扫描拾取」并计数告警，**不自动修复** | 同实现；`collection.plan.stuck` 接入告警 + 运维处置 SOP |
+| 渠道对账 | 无（Phase 2） | 查供应商补 `t_contact_timeline`，覆盖「触达已发出但状态未落盘」这类不可自动修复的残留（[引擎 §7.4 B](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） |
+| 可观测性 | 本地 `SimpleMeterRegistry`（指标不外发） | `/actuator/prometheus` 暴露事件/PEL/Stream/DLQ/线程池/跳过原因/SPI 超时/发件箱/停摆；消费入口统一写 MDC。抓取、告警与 Dashboard 由运维配置 |
 
 ### Phase 1 生产拓扑与 Redis 依赖
 
@@ -199,7 +202,7 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 - **机器轨渠道（Phase 1）**：SMS / PUSH / EMAIL / AI_CALL（TTS / HUMAN_CALL 由 LTH 域外独立编排）
 - **关键约束**
   - SMS / PUSH / EMAIL 成功 dispatch 即 `success=true, DELIVERED`，`observationMinutes=0`；异步类（AI_CALL）真实结果等 Webhook 回调
-  - 渠道内部熔断/fallback 对引擎完全透明；抛异常引擎一律视为 `retryable`
+  - 渠道内部 fallback 对引擎完全透明；`retryable` 的判定依据是**请求字节是否已写给供应商**：熔断未调用、凭证缺失、DNS/连接被拒、供应商显式 429 拒绝受理 → `retryable=true`；读超时、写后中断、5xx、抛异常 → `retryable=false`（结果未知，重试即重复触达）
   - 供应商错误码统一映射为 `StepResult.errorCode`
   - channel 只返回 `StepResult`，不写 `t_contact_timeline`
 
@@ -323,8 +326,11 @@ Guard 通过后决定具体渠道 + 模板 + 目标地址，组装 `StepCommand`
 | `collection-channel` | `StepResolver=null` 仅策略性跳过；空地址由 `ExecutionGuard` 返回 `NO_EMAIL` / `NO_PHONE` / `NO_TOKEN`，引擎写 `COMPLIANCE_BLOCKED` 后推进 | 在真实 Guard 实现该规则；Resolver 不得用 null 表达空地址 |
 | `collection-channel` | SMS / PUSH / EMAIL 均成功 dispatch 即完成，`observationMinutes=0`；AI_CALL 等回调 | 确认 PlanFactory 不为三消息渠道生成观察期或 DLR 完成路径 |
 | `collection-channel` | `t_contact_timeline` 只由核心引擎写；channel 只返回 `StepResult` | 移除/禁止 channel 对 timeline 的直接写入 |
+| `collection-channel` | **渠道失败三分类**：可证明未发出（`retryable=true`）／结果未知（`retryable=false`）／确定性失败（`retryable=false`）。判定边界是请求字节是否已写给供应商，不是「返回还是抛异常」。`NotificationClient` 的渠道侧短重试已收窄到只重可证明未发出的故障——读超时与 5xx 不再重试 | 新增渠道 / Adapter 按 `HttpFailureClassifier.provablyNotSent` 分档；不得把 socket 超时或 5xx 判为可重试 |
+| `collection-channel` | **新增 `StepCommand.providerIdempotencyKey`** = `{planId}:{stepOrder}`，跨引擎重试稳定；尝试级 `idempotencyKey` 保持 `{planId}:{stepOrder}:{retryCount}` 不变 | 确认通知中心 / SendGrid / AI Call 合作方是否提供幂等或去重字段及字段名，确认后把该键透传给供应商。**Phase 1 只建键，不据此放开「结果未知后重试」** |
 | `collection-service` | `caseId` 统一是信贷 `loan_id`（Long）；旧库关联使用 `t_collection.loan_id` | 确认 Mapper、CaseService 查询和对账不使用 `t_collection.id` 作为 caseId |
 | `collection-service` | CaseService 为 ingestion 提供缺失金融字段的只读回填（`dpd` / `product` / `totalOutstanding` / `penaltyAmount` / `dueDate`），并为引擎提供实时还款守卫 | 暴露或确认只读查询能力；回填不得覆盖 payload 的 phone / email / jpushToken |
+| `collection-channel` | **`AI_CALL` 供应商解绑 LTH**：`AI_CALL` 由独立 AI Call 合作方承接，其底层是否复用 LTH SIP 线路属该合作方内部实现，对引擎与契约不可见；`PredictiveDialerService` javadoc 已同步去除 LTH 绑定 | Adapter / Webhook / 配置键命名不以 LTH 为前提；dispatch 成功须回传合作方任务标识并落 `t_contact_timeline.provider_msg_id`，否则 Phase 2 对账无锚点（[引擎 §4.3.4](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout)）；`metadata.timeoutMinutes` 按合作方实际回调时延校准，不沿用 LTH 口径 |
 
 ```
 collection-common/src/main/java/com/collection/common/spi/        # 5 个 SPI 接口

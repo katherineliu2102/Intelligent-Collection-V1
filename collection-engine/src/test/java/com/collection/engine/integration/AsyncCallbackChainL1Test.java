@@ -106,7 +106,10 @@ class AsyncCallbackChainL1Test {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) (userId, caseId) -> {});
+        inject(
+                manager,
+                "predictiveDialerService",
+                (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();

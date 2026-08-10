@@ -37,6 +37,15 @@ public class StepCommand {
     private final ChannelType channelType;
     private final String targetAddress;
     private final String templateId;
+    /** 尝试级键 {@code {planId}:{stepOrder}:{retryCount}}：渠道内去重、timeline 审计。每次重试都变。 */
     private final String idempotencyKey;
+    /**
+     * 供应商侧去重键 {@code {planId}:{stepOrder}}：同一逻辑触达内稳定，跨引擎重试不变。
+     *
+     * <p>Phase 1 只建键、不据此放开「结果未知后重试」——供应商去重能力未确认前，重试仍等于重复发送 （见 {@link
+     * StepResult#isRetryable()}）。渠道侧确认供应商支持后传给供应商，才可评估放开。
+     */
+    private final String providerIdempotencyKey;
+
     @Builder.Default private final Map<String, Object> metadata = new HashMap<>();
 }

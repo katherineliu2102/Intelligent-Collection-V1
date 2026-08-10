@@ -188,7 +188,10 @@ class ChannelContractL2RealSpiTest {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) (userId, caseId) -> {});
+        inject(
+                manager,
+                "predictiveDialerService",
+                (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
@@ -271,10 +274,26 @@ class ChannelContractL2RealSpiTest {
     // ───────────────────────── C4 ─────────────────────────
 
     @Test
-    @DisplayName("C4 真实 Adapter 传输故障 → NOTIFICATION_TIMEOUT retryable → 步骤退避重试，不落 timeline")
-    void c4_realAdapterTransportFailure_schedulesBackoffRetry() {
+    @DisplayName("C4 真实 Adapter 供应商 5xx → 结果未知不可重试 → 步骤 FAILED 且 timeline 记终态")
+    void c4_realAdapterServerError_failsStepWithoutRetry() {
         channelProperties.getDebug().setSingleStep("SMS");
         stubFor(post(urlEqualTo(SMS_PATH)).willReturn(aResponse().withStatus(503)));
+
+        drive(0);
+
+        ContactPlanStep step = onlyStep();
+        assertThat(step.getStatus()).isEqualTo(StepStatus.FAILED);
+        assertThat(step.getRetryCount()).isZero();
+        assertThat(timelineRepo.records).hasSize(1);
+        // 5xx 下请求可能已被受理，渠道侧与引擎侧均不得重发
+        verify(1, postRequestedFor(urlEqualTo(SMS_PATH)));
+    }
+
+    @Test
+    @DisplayName("C4b 真实 Adapter 供应商 429 拒绝受理 → 可证明未发出 → 步骤退避重试，不落 timeline")
+    void c4b_realAdapterRateLimited_schedulesBackoffRetry() {
+        channelProperties.getDebug().setSingleStep("SMS");
+        stubFor(post(urlEqualTo(SMS_PATH)).willReturn(aResponse().withStatus(429)));
 
         drive(0);
 

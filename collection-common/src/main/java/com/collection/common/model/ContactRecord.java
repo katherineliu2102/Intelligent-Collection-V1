@@ -17,7 +17,7 @@ public class ContactRecord {
     private Long userId;
     private Long planId;
     private Long stepId;
-    /** 单次触达尝试的稳定幂等键：planId:stepId:retryCount。 */
+    /** 单次触达尝试的稳定幂等键：planId:stepOrder:retryCount。 */
     private String attemptKey;
 
     private ChannelType channel;

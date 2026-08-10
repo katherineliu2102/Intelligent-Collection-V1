@@ -137,8 +137,12 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 | 守护任务 | 线程模型 | 执行频率 | 安全约束 |
 |---|---|---|---|
 | PEL Scanner | 由独立 `@Scheduled` 任务驱动 | `collection.redis.pel-scan-interval-ms`（初始值 30s） | 每次 `XPENDING` 必须携带 `COUNT`（`collection.redis.pel-batch-size`，初始值 50），防止崩溃重启后一次性捞出海量积压导致 OOM |
+| Outbox Publisher | 引擎内独立 `@Scheduled` 任务 | `engine.outbox.poll-interval-ms`（初始值 2s） | 单批 `engine.outbox.batch-size`（初始值 200）；只捞 `next_retry_at <= now` 的 `PENDING`，入箱时该值 = `now + grace-seconds`（初始值 30s），使正常链路的即时发布先完成销账、轮询扫不到行 |
+| Stuck Plan Reaper | 引擎内独立 `@Scheduled` 任务 | `engine.reaper.interval-ms`（初始值 5min） | 只读检测 + 计数告警，**不得写库、不得重发触达**；仅纳入 `updated_at` 静默超过 `engine.reaper.idle-minutes`（初始值 30min）的计划，避开正在处理中的计划 |
 
 > PEL Scanner 仅认领 idle 超过 `collection.redis.pel-min-idle-seconds`（初始值 120s）的消息。该值必须覆盖一次同步处理的最长时长（渠道 HTTP 重试、DB 写入和调度抖动）并保留安全裕量；恢复时间约为 `minIdle + 一个扫描周期`，而非固定秒数。
+
+> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务清单与-cron) 调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
 
 ---
 
@@ -413,14 +417,14 @@ Cloud Scheduler + Pub/Sub 是**至少一次投递且会累积**：应用停机 3
 | `PLAN_STEP_DUE` | **prepareStepDue**（事务）：读并锁计划/步骤，写计划→EXECUTING、`markStarted`、清 `trigger_time`；**executeStep**：`PreFlightChecker` 经 `CaseService.getCaseInfo` 实时查还款状态，读 `getContactHistory`，写步骤状态、timeline、`timeout_time` |
 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
-| `REPAYMENT_RECEIVED`（整笔 loan `status`=全额结清） | 按 `caseId=loanId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)` |
-| `CASE_BALANCE_UPDATED`（部分还款） | 按 case 读并锁活跃计划；仅写回 `context_snapshot.caseContext.totalOutstanding`，不变更计划/步骤/模板/渠道决策字段 |
+| `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) |
+| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；仅写回 `context_snapshot.caseContext.totalOutstanding`，不变更计划/步骤/模板/渠道决策字段；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) |
 | `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED` |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
 | `planStepDueHandler` / `callbackTimeoutHandler` | 分页读 `findDueSteps` / `findTimeoutSteps`，只发布事件 |
 | `dailyRoll` | keyset 分页读 `CaseService.findActiveCaseIdsAfter`，逐笔读 `getCaseInfo` 与 `findActivePlansByCase`；Redis 记录日切游标和完成状态 |
 
-> `repayment_push_and_load` 在任意还款时到达；`fullRepayTime` 非空或**整笔 loan** `STATUS=4` 才发布带 `caseId=loanId` 的 `REPAYMENT_RECEIVED` 并取消该案件计划。其他有效还款（含单期 bill 结清）发布 `CASE_BALANCE_UPDATED`：仅更新活跃计划快照的 `totalOutstanding`，以同一模板渲染后续触达；不取消计划、不变更话术。`PTP_EXPIRED` Phase 2。
+> `repayment_push_and_load` 的结清判定、`caseId=loanId` 映射与事件分流以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
 
 ### 6.2 契约分工
 
@@ -505,6 +509,8 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 引擎 | `StepExecutionOrchestrator` | `collection.touch.total`, `collection.step.duration` | Counter / Timer（channel tag） |
 | 引擎 | 守卫 fail-close | `collection.step.skipped` | Counter（reason tag，`GUARD_ERROR` 为告警信号） |
 | 引擎 | `SpiInvoker` | `collection.spi.timeout` | Counter（spi tag） |
+| 引擎 | `OutboxPublisher` | `collection.outbox.republished`（兜底重发，type tag）、`collection.outbox.failed`（重发耗尽转人工）、`collection.outbox.pending`（待投递积压） | Counter / Counter / Gauge |
+| 引擎 | `StuckPlanReaper` | `collection.plan.stuck` | Counter |
 | 调度 | `ScheduledJobRunner` / `PubSubScheduleConsumer` | `collection.schedule.triggered`, `collection.schedule.scan.rows`, `collection.schedule.stale.discarded`, `collection.schedule.failed`, `collection.schedule.skipped` | Counter（job tag；`skipped` 另带 reason tag） |
 
 > 引擎侧指标对应架构 §1.6.8 静默路径须可观测；本节指标均为生产最低要求。
@@ -552,6 +558,9 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | Consumer 队列 / 背压 | 队列持续满载或 CallerRuns 频繁触发 | 降低触发批量，检查渠道延迟并按容量结论扩容 |
 | 合规 fail-close | Redis 计数器、Guard 或静默时段异常激增 | 停止相关触达，排查 Redis、配置和时区 |
 | 调度积压 | 扫描批次连续命中上限 | 检查扫描 SQL、锁等待和事件积压 |
+| **发件箱兜底重发** | `collection.outbox.republished` 任意增长 | 正常链路恒为 0。增长即说明提交后的即时发布在失败、事件正靠发件箱救回；查事件总线连通性与 Consumer 存活 |
+| **发件箱转人工** | `collection.outbox.failed` 任意增长，或 `collection.outbox.pending` 持续不归零 | 每一条对应一个停摆的计划。按 `t_event_outbox.last_error` 定位后手工重放 |
+| **计划停摆** | `collection.plan.stuck` 任意增长 | 计划非终态却已无步骤可被 due/timeout 扫描拾取。**不会自愈**，须人工确认后决定重建步骤或终结计划 |
 | **调度静默** | `collection.schedule.triggered{job=planStepDue}` 连续 5 分钟无增长 | 最高优先级：整条触达链路已停摆。依次查 Cloud Scheduler Job 状态、调度订阅未确认消息数、应用调度消费者存活 |
 | **调度扫描失败** | `collection.schedule.failed` 任意增长 | 调度消息已 ack 不会重投，须人工介入；确认失败原因后可等下一 tick 自愈或手工补发调度消息 |
 | **陈旧消息堆积** | `collection.schedule.stale.discarded` 在稳态（非重启后）持续增长 | 消费跟不上或订阅积压；查 ack deadline、消费者线程与扫描耗时 |
@@ -600,6 +609,14 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `collection.redis.max-delivery-count` | `5` | Y | 达上限进入 DLQ |
 | `collection.redis.processed-ttl-hours` | `24` | Y | `collection:processed:{event_id}` 消费去重标记 TTL |
 | `engine.spi.execution-guard-timeout-ms` | `50` | Y-注意 | Guard 硬超时；Redis 客户端命令超时必须更短 |
+| `engine.outbox.enabled` | `true` | N | 关闭即退回"提交后发布"语义，派生事件可能因发布失败而丢失；仅供本地调试 |
+| `engine.outbox.poll-interval-ms` | `2000` | Y | 发件箱兜底重发轮询间隔 |
+| `engine.outbox.grace-seconds` | `30` | Y-注意 | 入箱到可兜底重发的宽限期。过短会把正常事件重发一遍，过长则拉长故障恢复时间；须大于一次提交后发布的最长耗时 |
+| `engine.outbox.batch-size` | `200` | Y | 单轮兜底重发上限 |
+| `engine.outbox.max-retry-count` | `8` | Y | 超过即置 `FAILED` 转人工（告警信号） |
+| `engine.reaper.enabled` | `true` | N | 停摆巡检开关 |
+| `engine.reaper.interval-ms` | `300000` | Y | 停摆巡检周期 |
+| `engine.reaper.idle-minutes` | `30` | Y-注意 | 计划静默多久才判定停摆；须大于一次正常步骤执行的最长耗时，否则误报 |
 | `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限 |
 | `engine.compliance.quiet_hours_start` / `end` | `21:00` / `08:00` | Y | PHT 静默时段 |
 

@@ -80,15 +80,17 @@ CREATE TABLE IF NOT EXISTS t_contact_plan_step (
     channel_type        VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
     template_id         BIGINT          NULL     COMMENT '话术模板ID',
     delay_minutes       INT             NOT NULL DEFAULT 0 COMMENT '相对上一步的延迟（分钟）',
-    trigger_time        DATETIME        NULL     COMMENT '绝对触发时间（引擎计算写入）',
+    trigger_time        DATETIME        NULL     COMMENT '绝对触发时间（引擎计算写入）；被扫描拾取后清空',
+    original_trigger_time DATETIME      NULL     COMMENT '建计划时的原始排期（只写一次，永不更新）：供计划 vs 实际偏差分析',
     timeout_time        DATETIME        NULL     COMMENT '异步回调超时时间',
     trigger_condition   VARCHAR(256)    NULL     COMMENT '前置条件表达式（Phase 1 未启用）',
     status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/EXECUTING/COMPLETED/SKIPPED/FAILED',
     observation_minutes INT             NOT NULL DEFAULT 0 COMMENT '观察期（分钟），0=无观察期',
     retry_count         INT             NOT NULL DEFAULT 0 COMMENT '已重试次数',
     result              VARCHAR(32)     NULL     COMMENT '步骤最终结果（ContactResult）',
-    idempotency_key     VARCHAR(128)    NULL     COMMENT '幂等键 plan_id:step_order:attempt',
-    executed_at         DATETIME        NULL     COMMENT '步骤开始执行时间',
+    idempotency_key     VARCHAR(128)    NULL     COMMENT '幂等键 plan_id:step_order:retry_count',
+    executed_at         DATETIME        NULL     COMMENT '步骤开始执行时间（引擎开始尝试）',
+    dispatched_at       DATETIME        NULL     COMMENT '渠道受理时间（供应商已接单）：区分"卡在调用前"与"已发出未回写"',
     completed_at        DATETIME        NULL     COMMENT '步骤完成时间',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -114,6 +116,36 @@ END //
 DELIMITER ;
 CALL sp_schema_add_plan_step_index();
 DROP PROCEDURE IF EXISTS sp_schema_add_plan_step_index;
+
+-- 既有环境迁移：排期审计列。trigger_time 被扫描拾取后会被清空、重试/延后时会被改写，
+-- 因此「原始排期」与「渠道受理时刻」必须独立成列，否则无法回答"计划几点打、实际几点发出"。
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_step_audit_columns;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_plan_step_audit_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_plan_step'
+          AND COLUMN_NAME = 'original_trigger_time'
+    ) THEN
+        ALTER TABLE t_contact_plan_step
+            ADD COLUMN original_trigger_time DATETIME NULL COMMENT '建计划时的原始排期（只写一次，永不更新）'
+                AFTER trigger_time;
+        UPDATE t_contact_plan_step SET original_trigger_time = trigger_time
+        WHERE original_trigger_time IS NULL AND trigger_time IS NOT NULL;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_plan_step'
+          AND COLUMN_NAME = 'dispatched_at'
+    ) THEN
+        ALTER TABLE t_contact_plan_step
+            ADD COLUMN dispatched_at DATETIME NULL COMMENT '渠道受理时间（供应商已接单）' AFTER executed_at;
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_plan_step_audit_columns();
+DROP PROCEDURE IF EXISTS sp_schema_add_plan_step_audit_columns;
 
 -- 7.1.3 决策日志
 CREATE TABLE IF NOT EXISTS t_decision_log (
@@ -142,7 +174,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     user_id             BIGINT          NOT NULL,
     plan_id             BIGINT          NULL,
     step_id             BIGINT          NULL,
-    attempt_key         VARCHAR(128)    NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)',
+    attempt_key         VARCHAR(128)    NULL COMMENT '单次触达尝试幂等键(planId:stepOrder:retryCount)',
     channel             VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
     direction           VARCHAR(8)      NOT NULL DEFAULT 'OUT' COMMENT 'OUT/IN',
     template_id         BIGINT          NULL,
@@ -160,6 +192,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
     source              VARCHAR(16)     NOT NULL DEFAULT 'SYSTEM' COMMENT 'SYSTEM/ETL_SYNC/PUBSUB_SYNC',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_case_time (case_id, created_at),
+    INDEX idx_user_time (user_id, created_at),
     INDEX idx_user_channel (user_id, channel),
     INDEX idx_plan (plan_id),
     UNIQUE KEY uk_attempt_key (attempt_key)
@@ -175,7 +208,7 @@ BEGIN
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND COLUMN_NAME = 'attempt_key'
     ) THEN
         ALTER TABLE t_contact_timeline
-            ADD COLUMN attempt_key VARCHAR(128) NULL COMMENT '单次触达尝试幂等键(planId:stepId:retryCount)';
+            ADD COLUMN attempt_key VARCHAR(128) NULL COMMENT '单次触达尝试幂等键(planId:stepOrder:retryCount)';
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.COLUMNS
@@ -225,6 +258,13 @@ BEGIN
     ) THEN
         ALTER TABLE t_contact_timeline
             ADD UNIQUE INDEX uk_attempt_key (attempt_key);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_contact_timeline' AND INDEX_NAME = 'idx_user_time'
+    ) THEN
+        ALTER TABLE t_contact_timeline
+            ADD INDEX idx_user_time (user_id, created_at);
     END IF;
 END //
 DELIMITER ;
@@ -305,6 +345,28 @@ END //
 DELIMITER ;
 CALL sp_schema_add_event_dlq_redrive_columns();
 DROP PROCEDURE IF EXISTS sp_schema_add_event_dlq_redrive_columns;
+
+-- 7.2.5 领域事件发件箱（Transactional Outbox）。
+-- 状态迁移与派生事件写在同一事务：提交后的即时发布若失败（总线抖动、进程被杀），
+-- 原事件重投时状态已是终态、派生事件不会被重新推导，计划就此静默停摆。
+-- 发件箱把"事件已产生"这个事实和状态一起落盘，由 OutboxPublisher 兜底重发。
+CREATE TABLE IF NOT EXISTS t_event_outbox (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    event_id            VARCHAR(64)     NOT NULL COMMENT '与 CollectionEvent.eventId 一致，消费侧据此去重',
+    event_type          VARCHAR(64)     NOT NULL,
+    plan_id             BIGINT          NULL     COMMENT '来源计划（排障用）',
+    case_id             BIGINT          NULL     COMMENT '来源案件（排障用）',
+    payload             JSON            NOT NULL COMMENT '完整 CollectionEvent 信封 JSON',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PUBLISHED/FAILED',
+    retry_count         INT             NOT NULL DEFAULT 0 COMMENT '兜底重发次数',
+    next_retry_at       DATETIME        NOT NULL COMMENT '兜底重发时间；入库时 = now + 宽限期，让即时发布先赢',
+    published_at        DATETIME        NULL     COMMENT '确认已投递到总线的时间',
+    last_error          VARCHAR(512)    NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_event_outbox_event_id (event_id),
+    INDEX idx_event_outbox_due (status, next_retry_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='领域事件发件箱（状态与事件同事务）';
 
 -- 7.2.4 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
 CREATE TABLE IF NOT EXISTS t_user_device_token (

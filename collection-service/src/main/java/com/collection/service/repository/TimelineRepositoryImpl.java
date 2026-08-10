@@ -28,4 +28,10 @@ public class TimelineRepositoryImpl implements TimelineRepository {
             Long userId, LocalDateTime fromInclusive, int limit) {
         return timelineMapper.selectRecentByUserSince(userId, fromInclusive, limit);
     }
+
+    @Override
+    public List<ContactRecord> getContactHistoryByCase(
+            Long caseId, LocalDateTime fromInclusive, int limit) {
+        return timelineMapper.selectRecentByCaseSince(caseId, fromInclusive, limit);
+    }
 }

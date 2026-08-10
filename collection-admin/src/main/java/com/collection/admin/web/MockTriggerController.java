@@ -500,8 +500,7 @@ public class MockTriggerController {
 
     /** 模拟整笔 loan 结清：标记 mock 案件已还款 + 发布案件级 REPAYMENT_RECEIVED。 */
     @PostMapping("/repayment")
-    public Map<String, Object> repayment(
-            @RequestParam Long userId, @RequestParam Long caseId) {
+    public Map<String, Object> repayment(@RequestParam Long userId, @RequestParam Long caseId) {
         if (caseService instanceof MockCaseService) {
             ((MockCaseService) caseService).markRepaid(caseId);
         }

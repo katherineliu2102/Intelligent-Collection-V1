@@ -23,6 +23,8 @@ public class EngineProperties {
     private final Spi spi = new Spi();
     private final DecisionLog decisionLog = new DecisionLog();
     private final DeliveryAudit deliveryAudit = new DeliveryAudit();
+    private final Outbox outbox = new Outbox();
+    private final Reaper reaper = new Reaper();
 
     @Data
     public static class Step {
@@ -75,6 +77,47 @@ public class EngineProperties {
         private long stepResolverTimeoutMs = 50;
         private long advancementPolicyTimeoutMs = 10;
         private long exhaustionPolicyTimeoutMs = 50;
+    }
+
+    /**
+     * 事件发件箱（Transactional Outbox）。派生事件与状态迁移同事务落盘，提交后仍由原路径即时发布；
+     * 发件箱只在即时发布没能确认时兜底重发，因此正常链路的延迟与投递量都不受影响。
+     */
+    @Data
+    public static class Outbox {
+        /** 关闭时引擎不落发件箱、不轮询（退回"提交后发布"语义，仅供本地调试）。 */
+        private boolean enabled = true;
+
+        /** 轮询间隔。@Scheduled 需要字面量占位符，实际读取见 OutboxPublisher。 */
+        private long pollIntervalMs = 2000;
+
+        /** 宽限期：入库时 next_retry_at = now + 该值。即时发布通常在毫秒级确认， 宽限期过短会让轮询器把正常事件重发一遍，过长则拉长故障恢复时间。 */
+        private int graceSeconds = 30;
+
+        /** 单轮兜底重发上限。 */
+        private int batchSize = 200;
+
+        /** 重发退避：nextRetryAt = now + min(grace * factor^retryCount, maxBackoffSeconds)。 */
+        private int backoffFactor = 3;
+
+        private int maxBackoffSeconds = 900;
+
+        /** 超过该次数标记 FAILED，转人工（告警信号，不再自动重发）。 */
+        private int maxRetryCount = 8;
+    }
+
+    /** 停摆巡检。只检测并告警"非终态但不会再被任何扫描拾取"的计划，不自动重发触达—— 触达是不可回滚的外部动作，误判的代价由用户承担。 */
+    @Data
+    public static class Reaper {
+        private boolean enabled = true;
+
+        /** 巡检间隔。@Scheduled 需要字面量占位符，实际读取见 StuckPlanReaper。 */
+        private long intervalMs = 300000;
+
+        /** 计划 updated_at 早于 now - 该值才纳入，避开正在处理中的计划。 */
+        private int idleMinutes = 30;
+
+        private int batchSize = 200;
     }
 
     /** 触达审计 HMAC；密钥仅由环境变量/Secret 注入，绝不入库或入仓。 */

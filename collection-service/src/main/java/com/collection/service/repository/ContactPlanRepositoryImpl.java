@@ -153,6 +153,11 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     }
 
     @Override
+    public void markStepDispatched(Long stepId) {
+        stepMapper.markDispatched(stepId);
+    }
+
+    @Override
     public void updateStepTriggerTime(Long stepId, LocalDateTime triggerTime, StepStatus status) {
         stepMapper.updateTriggerTime(stepId, triggerTime, status);
     }
@@ -175,6 +180,11 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     @Override
     public List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit) {
         return stepMapper.selectTimeoutSteps(now, limit);
+    }
+
+    @Override
+    public List<Long> findStuckPlanIds(LocalDateTime idleBefore, int limit) {
+        return planMapper.selectStuckPlanIds(idleBefore, limit);
     }
 
     private ContactPlan attachSteps(ContactPlan plan) {

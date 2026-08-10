@@ -64,8 +64,7 @@ public class DefaultPlanFactory implements PlanFactory {
         return plan;
     }
 
-    private List<ContactPlanStep> buildSteps(
-            Stage stage, Long caseId, ContextSnapshot snapshot) {
+    private List<ContactPlanStep> buildSteps(Stage stage, Long caseId, ContextSnapshot snapshot) {
         String singleStep = channelProperties.getDebug().getSingleStep();
         if (StringUtils.isNotBlank(singleStep)) {
             return buildSingleStep(singleStep.trim().toUpperCase(Locale.ROOT));
@@ -122,8 +121,7 @@ public class DefaultPlanFactory implements PlanFactory {
             // 配置绝对槽位后不允许退回 delayMin 补发：晚进案/已过槽位必须静默跳过。
             return scheduled;
         }
-        List<ChannelProperties.PlanStepDef> defs =
-                template == null ? null : template.getSteps();
+        List<ChannelProperties.PlanStepDef> defs = template == null ? null : template.getSteps();
         if (defs == null || defs.isEmpty()) {
             log.info("[DefaultPlanFactory] no template for stage={}, fallback PUSH→EMAIL", key);
             return buildFallbackFlow();
@@ -148,8 +146,8 @@ public class DefaultPlanFactory implements PlanFactory {
     }
 
     /**
-     * DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。
-     * DayBlock 是生产绝对槽位模型；扁平 steps 保留给 local/L4 相对延迟回退。
+     * DB(t_contact_plan_template) 优先，未命中回落 YAML plan-templates（含 S1 兜底）。 DayBlock 是生产绝对槽位模型；扁平
+     * steps 保留给 local/L4 相对延迟回退。
      */
     private ChannelProperties.PlanTemplate resolvePlanTemplate(String stageKey) {
         ChannelProperties.PlanTemplate dbTemplate =
@@ -170,7 +168,9 @@ public class DefaultPlanFactory implements PlanFactory {
             ContextSnapshot snapshot, List<ChannelProperties.DayBlock> dayBlocks) {
         List<PhtSlotScheduleCalculator.ScheduledSlot> scheduledSlots =
                 slotScheduleCalculator.futureSlots(
-                        snapshot, dayBlocks, java.time.LocalDateTime.now(PhtSlotScheduleCalculator.PHT));
+                        snapshot,
+                        dayBlocks,
+                        java.time.LocalDateTime.now(PhtSlotScheduleCalculator.PHT));
         List<ContactPlanStep> steps = new ArrayList<>();
         int order = 1;
         for (PhtSlotScheduleCalculator.ScheduledSlot scheduled : scheduledSlots) {
@@ -180,12 +180,7 @@ public class DefaultPlanFactory implements PlanFactory {
                 continue;
             }
             ContactPlanStep step =
-                    buildStep(
-                            order++,
-                            channelType,
-                            0,
-                            slot.getObserveMin(),
-                            slot.getTemplateId());
+                    buildStep(order++, channelType, 0, slot.getObserveMin(), slot.getTemplateId());
             step.setTriggerTime(scheduled.getTriggerTime());
             steps.add(step);
         }

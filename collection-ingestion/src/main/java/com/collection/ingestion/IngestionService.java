@@ -205,7 +205,9 @@ public class IngestionService {
                 CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
                         .with(CollectionEvent.CASE_ID, caseId)
                         .with(CollectionEvent.USER_ID, userId)
-                        .with(CollectionEvent.CANCEL_REASON, com.collection.common.enums.CancelReason.REPAID.name())
+                        .with(
+                                CollectionEvent.CANCEL_REASON,
+                                com.collection.common.enums.CancelReason.REPAID.name())
                         .with(CollectionEvent.CANCEL_SCOPE, "CASE"));
         log.info(
                 "[Ingestion] publish REPAYMENT_RECEIVED case={} user={} reason=REPAID",

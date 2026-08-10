@@ -45,7 +45,7 @@
 
 ```
 上游 PubSub (case_push / repayment)
-  → 接入：校验 / 组装 payload → EventBus：CASE_INGESTED | REPAYMENT_RECEIVED
+  → 接入：校验 / 组装 payload → EventBus：CASE_INGESTED | REPAYMENT_RECEIVED | CASE_BALANCE_UPDATED
   → 引擎：建计划 / 状态机 / 触达（非本文）
 
 DpdStageRollHandler 每日 0:35 PHT
@@ -75,7 +75,7 @@ DpdStageRollHandler 每日 0:35 PHT
 |---|---|
 | 读库 | 入案以 `case_push` 为主；缺 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 时，允许接入经 CaseService **只读**旧库回填。`jpushToken` 主路径来自消息体，缺失时可降级读新库 `t_user_device_token`。 |
 | payload | 快照字段随 `CASE_INGESTED` payload 带出（[§3.1](#34-与-caseservice--profileservice-的调用边界)）；冻结写入由引擎完成（[§4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）。 |
-| `CASE_INGESTED` | **本催收周期**内首次 publish；同周期增量 ack 跳过；全额结清后 key 清除（§2.2 / §3.3）。 |
+| `CASE_INGESTED` | **本催收周期**内首次 publish；同周期增量 ack 跳过；全额结清后 key 清除（§2.2 / §3.3）。入案停催资格见 [§3.2](#32-上游字段校验与防御)。 |
 | 还款事件 | 整笔 loan 结清（`fullRepayTime` 非空或 loan 级 `STATUS=4`）publish 案件级 `REPAYMENT_RECEIVED` 并清除 `collection:ingestion:ingested:{loan_id}`；单期 bill 还款及其他有效还款 publish `CASE_BALANCE_UPDATED`；均**不写**库。 |
 
 #### DPD 日切
@@ -234,6 +234,17 @@ DpdStageRollHandler 每日 0:35 PHT
 
 > PubSub→payload 完整映射表、各字段上游来源及 B1/B2 实现缺口 → [附录 C](#附录-c联调与实现跟踪台账)。
 
+**入案资格与停催边界**
+
+`case_push` 是候选入催消息，不等于引擎必然创建计划。以下是上游事实到领域事件、再到计划创建的统一边界：
+
+| 上游 / payload 事实 | 接入职责 | 引擎效果 |
+|---|---|---|
+| 正常在催，`dpd < 91` 且非 `CEASED` | 校验、组装并在本周期首次 publish `CASE_INGESTED` | 按 [引擎 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) 创建计划 |
+| `dpd ≥ 91`（引擎快照将衍生为 `collectionStatus=CEASED`） | `case_push` **不在接入层按此丢弃**，仍按通常校验与去重处理；但日切的正常停催路径必须产出 `CASE_CEASED`（见 [§4.4](#44-产出事件)），不得靠 `CASE_INGESTED` 续建 | 引擎以快照 `collectionStatus=CEASED` 拒绝创建计划；`CaseInfo.caseStatus=CEASED` 仅是无快照时的兼容兜底。这道防御性闸门覆盖迟到、重放或错误投递的 `CASE_INGESTED` |
+
+> `CASE_CEASED` 是「取消已有活跃计划且不再续建」的状态机事件；`CASE_INGESTED` 不是其替代品。接入不写 plan，最终拒建由引擎执行，避免上游乱序时接入层与引擎各自维护一套计划状态。
+
 **模块职责**（同一维度：各模块在入案链路中的分工）
 
 | 模块 | 路径 | 职责 |
@@ -268,6 +279,8 @@ DpdStageRollHandler 每日 0:35 PHT
 |---|---|
 | **必填 / 格式** | 缺必填或格式不可修复 → **ack + poison/DLQ** + 告警（**不 nack**，避免毒丸重投） |
 | **null 防御** | 非关键字段缺失 → payload 记缺省；下游 null 防御 → [HANDOFF C2](../HANDOFF.md) |
+| **停催资格** | `dpd ≥ 91` 的候选入催消息不得导致新计划创建：引擎据此衍生 `collectionStatus=CEASED`；日切按 §4 产出 `CASE_CEASED`，迟到/重放 `CASE_INGESTED` 由引擎防御性拒建（[引擎 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)） |
+| **还款余额** | 非结清 `repayment_push_and_load` 缺 `loanId`、`currentAmmout` 或金额为负 → ack + poison/DLQ，不发布 `CASE_BALANCE_UPDATED`；引擎对已进入总线的同类脏事件仅 warn + noop，形成「接入拒脏、引擎防御」两层保障 |
 | **乱序** | `repayment_push_and_load` 先于 `case_push` → 仍 publish（引擎无活跃计划 noop）；过期 `case_push`（`publish_time` < `collection:ingestion:last_seen:{loan_id}`）→ ack 跳过 |
 | **迟到** | `publish_time` 超 24h 的 `case_push` → 审计 + 实时 CaseService 核验；仅白名单、未结清、未停催且当前仍应在催的案件受控 replay `CASE_INGESTED`，其余 ack 跳过 |
 | **瞬态失败** | 下游超时 / DB 不可达等 → nack 重投；超 N 次 → poison（§2.3） |

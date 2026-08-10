@@ -13,6 +13,7 @@
   - [1.2 表级契约矩阵](#12-表级契约矩阵)
   - [1.3 对象关系与分类](#13-对象关系与分类)
   - [1.4 命名·类型·序列化·关联键约定](#14-命名类型序列化关联键约定)
+  - [1.5 计划生命周期关联键](#15-计划生命周期关联键)
 - [2. 枚举与常量定义](#2-枚举与常量定义)
 - [3. 持久化实体模型](#3-持久化实体模型)
   - [3.1 ContactPlan](#31-contactplan触达计划)
@@ -143,6 +144,7 @@ flowchart LR
 | `t_user_device_token` | NEW                 | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`）      | collection-ingestion（enrichment 只读，**降级**） | 附录 A A.2.3              |
 | `t_user_profile_ext`  | **NEW（Phase 2 押后）** | service        | ProfileService, 坐席后台                | 决策引擎(画像输入)                                 | 附录 A A.2.2（Phase 1 不建表） |
 | `t_event_dlq`         | NEW                 | 主架构 / common   | collection-engine（事件总线）             | 运维重放接口 `/ops/dlq/redrive`                  | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
+| `t_event_outbox`      | NEW                 | 主架构 / common   | collection-engine（状态迁移所在事务）         | `OutboxPublisher` 兜底重发（[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
 
 
 #### C. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
@@ -250,7 +252,101 @@ flowchart TB
 
 > **Model JSON 列补充**：MySQL `JSON` 列读回可能规范化键序/空格，断言**语义等价**即可（不按字节相等）。
 
----
+### 1.5 计划生命周期关联键
+
+> **用途**：梳理业务主键、计划/步骤实体键与幂等去重键的分层关系，供引擎 / 接入 / 数仓对齐。行为语义见 [核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)；接入层 Redis 键见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)。
+
+#### 实体关系
+
+```mermaid
+erDiagram
+    USER ||--o{ LOAN_CASE : owns
+    LOAN_CASE ||--o{ CONTACT_PLAN : has
+    CONTACT_PLAN ||--|{ CONTACT_PLAN_STEP : contains
+    CONTACT_PLAN_STEP ||--o{ CONTACT_TIMELINE : executes
+    CONTACT_PLAN_STEP ||--o{ DECISION_LOG : decides
+
+    USER {
+        bigint user_id PK
+    }
+    LOAN_CASE {
+        bigint loan_id "上游 PubSub 名"
+        bigint case_id "系统内名，同值"
+    }
+    CONTACT_PLAN {
+        bigint plan_id PK
+        bigint case_id FK
+        bigint user_id FK
+        string stage
+    }
+    CONTACT_PLAN_STEP {
+        bigint step_id PK
+        bigint plan_id FK
+        int step_order
+        int retry_count
+    }
+```
+
+#### 业务主键
+
+| 出现位置 | 字段名 | 含义 |
+|---|---|---|
+| 信贷 PubSub | `loan_id` / `loanID` / `loanId` | 上游原始 key（大小写因消息类型而异） |
+| 领域事件 payload | `caseId` | 事件总线 SSOT |
+| 新库表 | `case_id` | `t_contact_plan` / `t_contact_timeline` 等 |
+| 旧库 | `t_collection.loan_id` | 日切扫描、CaseService 查询 |
+
+**同一笔 loan 全链路必须用同一数字标识**；**不是**旧库 `t_collection.id`（hex 行主键）。关系：**1 user : N loan(case)**；Phase 1 按 loan 粒度催收。
+
+#### 计划与步骤
+
+| 键 | 含义 | 关系 |
+|---|---|---|
+| `user_id` / `userId` | 用户标识 | 合规频控（日触达上限、接通即停）按 **user 维度** 统计 |
+| `plan_id` | 一次触达计划实例（`t_contact_plan.id` 自增） | 1 case 可有多条 plan 历史；**同一 `case_id + stage` 同时最多 1 个非终态 plan** |
+| `step_id` | 步骤行主键（DB 内部 ID） | 1 plan : N step |
+| `step_order` | 计划内步骤序号（从 1 开始） | 幂等语义用 `step_order`，不用 `step_id` |
+| `retry_count` | 当前步骤退避重试次数 | 与 `step_order` 共同构成步骤幂等维度 |
+
+#### 幂等 / 去重键（分层，禁止混用）
+
+| 键 | 格式 | 作用层 | 防什么 |
+|---|---|---|---|
+| `ingested:{loan_id}` | Redis | 接入 | 同催收周期重复 `CASE_INGESTED` |
+| `dedup:stage:{loan_id}:{stage}:{date}` | Redis | 接入 | 日切重复 `STAGE_CHANGED` |
+| `dedup:ceased:{loan_id}` | Redis | 接入 | 重复 `CASE_CEASED` |
+| 计划创建 | `case_id:stage`（DB `active_stage_key`） | 引擎 | 同 case+stage 重复建 plan |
+| 步骤幂等 | `{planId}:{stepOrder}:{retryCount}` | 引擎 + 渠道 | 同一步骤重复执行 / 重复触达 |
+| `attempt_key` | 同上 | timeline | 同一次触达尝试只落一条最终事实 |
+| `providerIdempotencyKey` | `{planId}:{stepOrder}` | 渠道 → 供应商 | 跨引擎重试稳定，供作供应商侧去重锚点（Phase 1 只建键，待编排接入） |
+| `event_id` | 如 `STEP_COMPLETED:{planId}:{stepOrder}:{retryCount}` | 事件总线 + outbox | 派生事件去重、发件箱销账 |
+| `collection:processed:{event_id}` | Redis | 引擎消费 | 同一事件信封重复消费 |
+| `collection:lock:plan:{idempotencyKey}` | Redis | 引擎执行 | 并发重复执行同一步 |
+
+#### 生命周期键流转
+
+```
+loan_id（上游）
+  → caseId（接入 payload）
+    → CASE_INGESTED / STAGE_CHANGED / REPAYMENT_RECEIVED / CASE_CEASED
+      → plan_id（引擎建 plan，写入 case_id + user_id + stage）
+        → step_id + step_order（预排步骤）
+          → PLAN_STEP_DUE(planId, stepId)
+            → idempotencyKey = planId:stepOrder:retryCount
+              → timeline.attempt_key = 同上
+              → STEP_COMPLETED eventId = STEP_COMPLETED:planId:stepOrder:retryCount
+```
+
+#### 各表键分布
+
+| 表 | 主要关联键 |
+|---|---|
+| `t_contact_plan` | `plan_id`(PK), `case_id`, `user_id`, `stage`, `idempotency_key`, `renewal_pending` |
+| `t_contact_plan_step` | `step_id`(PK), `plan_id`, `step_order`, `retry_count`, `idempotency_key` |
+| `t_contact_timeline` | `case_id`, `user_id`, `plan_id`, `step_id`, `attempt_key`(UK) |
+| `t_decision_log` | `case_id`, `plan_id`, `step_id` |
+| `t_channel_callback_audit` | `plan_id`, `step_id`, `case_id`, `provider_msg_id` |
+| `t_event_outbox` | `event_id`(UK), `plan_id`, `case_id` |
 
 ---
 
@@ -291,7 +387,7 @@ flowchart TB
 | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PUSH    | App 推送   | —（经内部通知中心异步入队，无独立供应商）                                                                                                                                         |
 | SMS     | 短信       | 内部通知中心（具体短信通道由通知中心路由）                                                                                                                                         |
-| AI_CALL | AI 机器人外呼 | LTH                                                                                                                                                           |
+| AI_CALL | AI 机器人外呼 | **独立 AI Call 合作方**（该合作方底层复用哪条拨号线路对引擎不可见；不等同于 LTH）                                                                                                          |
 | EMAIL   | 邮件       | SendGrid（[渠道总规格](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[SendGrid 对接说明](./channel/MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)；Phase 1 无备用供应商） |
 
 
@@ -537,7 +633,8 @@ flowchart TB
 | channelType        | ChannelType   | channel_type        | 是   | 渠道类型（枚举 §2.1）                                              |
 | templateId         | Long          | template_id         | 否   | 话术模板 ID                                                    |
 | delayMinutes       | int           | delay_minutes       | 是   | 扁平模板回退的相对延迟（分钟）；DayBlock 绝对槽位步骤为 0                       |
-| triggerTime        | LocalDateTime | trigger_time        | 否   | PHT 绝对触发时间；DayBlock 由 PlanFactory 写入，扁平模板由引擎回退计算 |
+| triggerTime        | LocalDateTime | trigger_time        | 否   | **待触发**的 PHT 绝对时间；DayBlock 由 PlanFactory 写入，扁平模板由引擎回退计算。被扫描拾取后置空、退避重试与 Guard defer 会改写，**不可用于排期分析** |
+| originalTriggerTime | LocalDateTime | original_trigger_time | 否   | 建计划时的原始排期，仅插入时写入、永不更新。与 `t_contact_timeline.created_at` 对比即得「计划 vs 实际」偏差 |
 | timeoutTime        | LocalDateTime | timeout_time        | 否   | 异步回调超时时间（由引擎在执行时写入）                                        |
 | triggerCondition   | String        | trigger_condition   | 否   | 前置条件表达式（如"前一步未响应"）。**Phase 1 未启用**，引擎不求值；预留 Phase 2 条件跳过逻辑 |
 | status             | StepStatus    | status              | 是   | 步骤状态（枚举 §2.4）                                              |
@@ -545,7 +642,8 @@ flowchart TB
 | retryCount         | int           | retry_count         | 是   | 已重试次数                                                      |
 | result             | ContactResult | result              | 否   | 步骤最终结果（枚举 §2.2）                                            |
 | idempotencyKey     | String        | idempotency_key     | 否   | 步骤幂等键，由引擎生成（口径见下方说明）                                       |
-| executedAt         | LocalDateTime | executed_at         | 否   | 步骤开始执行时间                                                   |
+| executedAt         | LocalDateTime | executed_at         | 否   | 引擎开始尝试的时间                                                  |
+| dispatchedAt       | LocalDateTime | dispatched_at       | 否   | 渠道受理时间（供应商已接单），仅记首次。与 `executedAt` 的差值区分「卡在调用前」与「已发出未回写」 |
 | completedAt        | LocalDateTime | completed_at        | 否   | 步骤完成时间                                                     |
 | createdAt          | LocalDateTime | created_at          | 是   | 创建时间                                                       |
 | updatedAt          | LocalDateTime | updated_at          | 是   | 最后更新时间                                                     |
@@ -554,7 +652,9 @@ flowchart TB
 > **幂等键**：统一格式 `{planId}:{stepOrder}:{retryCount}`，同一个值在两处去重：
 >
 > - **引擎侧**——消费 `PLAN_STEP_DUE` 时拦截重复事件，避免同一步骤被执行两次（`StepExecutionOrchestrator.buildIdempotencyKey`）。
-> - **渠道侧**——透传为 `StepCommand.idempotencyKey`（§5.4），供应商 dispatch 去重（`DefaultStepResolver`）。
+> - **渠道侧**——透传为 `StepCommand.idempotencyKey`（§5.4），渠道层 dispatch 去重（`DefaultStepResolver`）。
+>
+> 供应商侧去重用另一个键 `StepCommand.providerIdempotencyKey` = `{planId}:{stepOrder}`（不含 `retryCount`，跨引擎重试稳定）。两者不可互换：含 `retryCount` 的键在重试时必变，无法作为供应商去重锚点。
 >
 > 键里含 `retryCount` 是为了让每次重试（`retryCount+1`）生成新键，从而不被上一次的幂等记录拦住。口径已与代码、`contracts/README`、`.cursor/rules/ic-v1-channel-contract.mdc` 对齐（2026-06-17；旧写法 `…:attempt` 的 `attempt` 即 `retryCount`）。详见审计 K3。
 
@@ -599,7 +699,7 @@ flowchart TB
 | userId           | Long          | 是   | 用户 ID                                                           |
 | planId           | Long          | 否   | 关联触达计划 ID。历史迁移数据（source=ETL_SYNC）无计划 ID，传 null                  |
 | stepId           | Long          | 否   | 关联步骤 ID。人工渠道的坐席录入和历史迁移数据无步骤 ID                                  |
-| attemptKey       | String        | 否   | 系统触达为 `planId:stepId:retryCount`，唯一约束确保每次尝试仅一条最终事实；迁移/人工记录可为 null |
+| attemptKey       | String        | 否   | 系统触达为 `planId:stepOrder:retryCount`，唯一约束确保每次尝试仅一条最终事实；迁移/人工记录可为 null |
 | channel          | ChannelType   | 是   | 渠道枚举                                                            |
 | direction        | Direction     | 是   | OUT=系统发出，IN=用户响应（如用户回复 Viber 消息）                                |
 | templateId       | Long          | 否   | 使用的话术模板 ID                                                      |
@@ -808,11 +908,11 @@ flowchart TB
 | 层          | 消费方                               | 数据来源与维度                                                                              | Phase 1 落地                                                                                                                                                                        |
 | ---------- | --------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **① 合规频控** | `ExecutionGuard`（单渠道日上限 / 跨渠道日总上限）     | 用户维 · 渠道 · 自然日(PHT)，以及用户维 · 自然日(PHT)总计数；默认各渠道 1 次、跨渠道合计 3 次                   | 每步**实时**取数；计数器接口化，Phase 1 内存版（后续切 Redis）；接通即停为 Phase 2；**不读**冻结快照内 `contactHistory`（会 stale），**不靠**数最近 50 条 |
-| **② 决策统计** | `DecisionEngine` / `StepResolver` | 案件维聚合（`totalTouchCount` / `channelTouchCounts` / `currentPlanAiBotFailCount`）+ 用户维今日 | 每步由 SPI 从 `recentTimeline` 的**对应窗口**聚合得出（见 ③）；不复用冻结快照，符合 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)「步骤决策读 `recentTimeline`、不读快照内 `contactHistory`」                   |
+| **② 决策统计** | 未来 `StepResolver` 策略 | 案件维聚合（`totalTouchCount` / `channelTouchCounts` / `currentPlanAiBotFailCount`）+ 用户维今日 | Phase 1 尚无消费实现，**不新增聚合表**；只允许用 `recentTimeline` 推导「最近行为」类启发式，不能当精确基数。需要完整周期统计时，后续新增只读聚合 DTO / 查询，不能回写 timeline。 |
 | **③ 事件明细** | 需逐条事件序列的规则（前步是否已读/回复、AI Bot 连拨未接） | `recentTimeline` 原始事件                                                                | 按 [§5.2](#52-executioncontext执行上下文) 的**时间窗 + 上限**组装：用户维今日 ∪ 案件维本阶段，叠加上限护栏                                                                                                         |
 
 
-> **要点**：`recentTimeline` 的窗口化取数（用户维今日 + 案件维本阶段）同时为 ①频控计数、②决策聚合、③事件明细提供**正确基数**——规避「高频 stage 50 条只覆盖 1–2 天、低频 stage 覆盖数月」的基数漂移。冻结快照内 `contactHistory`（§4.4）仅记录**建计划时点**，不作运行时频控/决策依据。
+> **要点**：`recentTimeline` 的窗口化取数只服务 ③ 最近事件明细；其上限 50 条意味着它不提供 ①频控或②完整统计的正确基数。频控使用独立计数器；需要完整周期统计时，后续新增只读聚合 DTO / 查询。冻结快照内 `contactHistory`（§4.4）仅记录**建计划时点**，不作运行时频控/决策依据。
 > **Redis 演进**：切 Redis 原子计数仅为 ① 的**实现替换**（key = `user:channel:自然日`），维度/语义不变，不影响 ②③；属跨模块契约，改前按 [HANDOFF](../HANDOFF.md) 通知服务/编排同事。
 
 ### 4.4 ContextSnapshot（决策上下文快照）
@@ -895,7 +995,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 
 > **Java**：`com.collection.common.dto.ExecutionContext`  
 > **载体**：不落表；引擎每步组装后传入 SPI  
-> **用途**：所有 SPI 调用的统一只读入参（plan + step + snapshot + recentTimeline）。SPI 实现方只读，不得 setter。
+> **用途**：SPI 的统一只读入参（plan + step + snapshot + recentTimeline）。`ExecutionGuard` / `StepResolver` 可取得近期行为上下文；`AdvancementPolicy` 只取得轻量上下文，`recentTimeline` 固定为空。SPI 实现方只读，不得 setter。
 
 
 | 字段              | 类型                | 必填  | 说明                                                                                                                                                                                                                                    |
@@ -903,7 +1003,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | plan            | ContactPlan       | 是   | 当前计划（状态、阶段、案件引用）。引擎内部实体的引用。                                                                                                                                                                                                           |
 | currentStep     | ContactPlanStep   | 是   | 当前待执行步骤                                                                                                                                                                                                                               |
 | contextSnapshot | ContextSnapshot   | 是   | 案件入库快照，决策唯一输入（零 DB I/O）                                                                                                                                                                                                               |
-| recentTimeline  | ListContactRecord | 是   | 近期触达记录，按**时间窗 + 上限**组装（非纯条数）：用户维 `created_at ≥ 今日0点(PHT)`（供合规频控/接通即停）∪ 案件维 `case_id AND created_at ≥ stageEntryDate`（供本阶段决策），叠加上限护栏 `engine.context.history_max_records`（默认 50）防撑爆 payload。三层数据来源分工见 [§4.3](#43-contacthistory触达历史摘要) |
+| recentTimeline  | ListContactRecord | 是   | 近期触达记录，按**时间窗 + 上限**组装：用户维 `created_at ≥ 今日0点(PHT)` ∪ 案件维 `case_id AND created_at ≥ stageEntryDate`，去重后按时间倒序取最多 `engine.context.history_max_records`（默认 50）条。仅供最近行为类策略上下文，**不得**用于精确频控或完整周期统计；三层数据来源分工见 [§4.3](#43-contacthistory触达历史摘要)。 |
 
 
 ### 5.3 GuardVerdict（守卫裁定）
@@ -935,7 +1035,8 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | channelType    | ChannelType       | 是   | Phase 1：SMS / PUSH / EMAIL / AI_CALL（Phase 2：VIBER / WHATSAPP） |
 | targetAddress  | String            | 是   | 手机号 / Token / 邮箱（按渠道解释）；必填仅指 Guard 已放行后，空地址不得进入 Resolver/dispatch |
 | templateId     | String            | 是   | 模板 ID（策略选定，执行层渲染）                                              |
-| idempotencyKey | String            | 是   | 透传 step.idempotencyKey，渠道层供应商去重                                |
+| idempotencyKey | String            | 是   | 尝试级键，透传 step.idempotencyKey（含 retryCount），渠道层去重与 timeline 审计     |
+| providerIdempotencyKey | String    | 是   | 供应商侧去重键 `{planId}:{stepOrder}`，同一逻辑触达内稳定（不含 retryCount）；Phase 1 只建键，供应商去重能力待编排确认后才透传 |
 | metadata       | MapString, Object | 否   | 扩展字段，已知 key 见下表                                                |
 
 
@@ -973,11 +1074,18 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | success       | boolean       | 是   | 渠道层是否成功接受并处理了请求                                                 |
 | contactResult | ContactResult | 是   | DELIVERED / ANSWERED / NO_ANSWER / REJECTED / FAILED 等（枚举 §2.2） |
 | errorCode     | String        | 否   | 失败时统一错误码（success=true 时为 null）                                  |
-| retryable     | boolean       | 是   | 网络超时=true；号码无效=false（仅 success=false 时有意义）                      |
+| retryable     | boolean       | 是   | 仅渠道能证明请求未写给供应商时为 true；结果未知或确定性失败均为 false（仅 success=false 时有意义） |
 | providerMsgId | String        | 否   | 供应商消息/通话 ID，回调关联与对账                                             |
 
 
-> **success 判定规则**：发送受理为 `success=true/contactResult=DELIVERED/retryable=false`；网络超时、供应商 5xx、限流和熔断为 `success=false/FAILED/retryable=true`；地址无效、退订和其他确定性异常为 `success=false/FAILED/retryable=false`。引擎仅读 success 决定故障降级；AdvancementPolicy 读 contactResult 做业务决策。StepResult 不承担空地址语义，该路径在 Guard 截断。
+> **success 判定规则**：分档依据是**请求字节是否已写给供应商**，不是渠道「返回了还是抛了异常」。
+>
+> - 发送受理 → `success=true / DELIVERED / retryable=false`
+> - **可证明未发出** → `success=false / CHANNEL_DOWN / retryable=true`：熔断未调用、凭证缺失、DNS 失败、连接被拒、TLS 握手失败、供应商显式 429 拒绝受理
+> - **结果未知** → `success=false / FAILED / retryable=false`：socket 超时（含读超时）、写请求后连接中断、供应商 5xx
+> - **确定性失败** → `success=false / FAILED 或 REJECTED / retryable=false`：地址无效、退订、业务码失败
+>
+> 结果未知时不重试的原因：引擎重试会让 `idempotencyKey` 的 `retryCount` 加一，供应商即便有去重也不会命中，重试等价于重复发送。引擎仅读 success 决定故障降级；AdvancementPolicy 读 contactResult 做业务决策。StepResult 不承担空地址语义，该路径在 Guard 截断。
 
 ### 5.6 AdvancementDecision（推进决策）
 
@@ -1106,15 +1214,17 @@ CREATE TABLE IF NOT EXISTS t_contact_plan_step (
     channel_type        VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
     template_id         BIGINT          NULL     COMMENT '话术模板ID',
     delay_minutes       INT             NOT NULL DEFAULT 0 COMMENT '相对上一步的延迟（分钟），首步为相对计划创建时间',
-    trigger_time        DATETIME        NULL     COMMENT '绝对触发时间（由引擎计算写入）',
+    trigger_time        DATETIME        NULL     COMMENT '待触发的绝对时间（由引擎计算写入）；被扫描拾取后清空',
+    original_trigger_time DATETIME      NULL     COMMENT '建计划时的原始排期（只写一次，永不更新）：供计划 vs 实际偏差分析',
     timeout_time        DATETIME        NULL     COMMENT '异步回调超时时间（由引擎在执行时写入）',
     trigger_condition   VARCHAR(256)    NULL     COMMENT '前置条件表达式（如"前一步未响应"）',
     status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/EXECUTING/COMPLETED/SKIPPED/FAILED',
     observation_minutes INT             NOT NULL DEFAULT 0 COMMENT '观察期（分钟），0=无观察期',
     retry_count         INT             NOT NULL DEFAULT 0 COMMENT '已重试次数',
     result              VARCHAR(32)     NULL     COMMENT '步骤最终结果（ContactResult 枚举值）',
-    idempotency_key     VARCHAR(128)    NULL     COMMENT '幂等键（plan_id:step_order:retryCount，由引擎生成）',
-    executed_at         DATETIME        NULL     COMMENT '步骤开始执行时间',
+    idempotency_key     VARCHAR(128)    NULL     COMMENT '幂等键（plan_id:step_order:retry_count，由引擎生成）',
+    executed_at         DATETIME        NULL     COMMENT '步骤开始执行时间（引擎开始尝试）',
+    dispatched_at       DATETIME        NULL     COMMENT '渠道受理时间（供应商已接单）：区分"卡在调用前"与"已发出未回写"',
     completed_at        DATETIME        NULL     COMMENT '步骤完成时间',
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

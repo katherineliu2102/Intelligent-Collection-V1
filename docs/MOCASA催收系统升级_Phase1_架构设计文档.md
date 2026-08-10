@@ -161,7 +161,7 @@
 
 | 代码模块 | 入 | 出 | 边界 |
 |---|---|---|---|
-| `collection-ingestion` | 案件 PubSub：`case_push` / `repayment`；`dailyRoll` 由 admin 调度订阅触发 | `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` | 不做业务决策、不直接调用渠道、不回写旧库 |
+| `collection-ingestion` | 案件 PubSub：`case_push` / `repayment`；`dailyRoll` 由 admin 调度订阅触发 | `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` / `STAGE_CHANGED` / `CASE_CEASED` | 不做业务决策、不直接调用渠道、不回写旧库 |
 | `collection-admin` | 供应商 Webhook / REST / 调度 PubSub 订阅 | `CHANNEL_CALLBACK` / `PLAN_STEP_DUE` / `CALLBACK_TIMEOUT` / HTTP 响应 | Webhook 与调度订阅仅发布事件；REST 不直接执行催收业务逻辑 |
 
 #### 1.2.1 上游数据接入
@@ -284,7 +284,7 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 | `CaseService` | 提供案件存在/还款状态实时校验及可选快照兜底（引擎） | `t_collection` + 快照反序列化 | `collection-service`：`MockCaseService`（默认）/ `RealCaseService`（`case-service=real`） |
 | `ProfileService` | 画像兜底读库（引擎经 `CaseService` 降级调用；主链路靠 payload，不依赖本服务） | 旧库 `t_user_*` 画像 | `collection-service`：联调 `MockProfileService`；上线前须替真（HANDOFF C2） |
 | `IdempotencyService` | 为步骤与渠道提供重复执行拦截（引擎骨架① / 渠道执行层） | 幂等键 + TTL（[§1.6.3](#163-幂等键契约)） | `collection-engine`：生产 Redis SETNX / 本地 `InMemoryIdempotencyService`（见 [§3.1](#31-容量扩展)） |
-| `PredictiveDialerService` | 整笔 loan 结清后请求 LTH 将该案件移出 AI Call 排队名单（引擎） | AI Call 供应商桥接（`filterRepaidCase`） | `collection-channel`：`MockPredictiveDialerService`（失败仅告警） |
+| `PredictiveDialerService` | 整笔 loan 结清后请求 AI Call 合作方将该案件移出排队名单（引擎） | AI Call 合作方桥接（`filterRepaidCase`）；不绑定具体拨号线路 | `collection-channel`：`MockPredictiveDialerService`（失败仅告警） |
 
 > 边界：`engine.lifecycle` 经 Repository（§1.5.1）读写计划域表、经 Service（§1.5.2）做案件/画像/幂等/AI Call 供应商桥接，**一律不直连 Mapper**。MyBatis 映射与旧库对接由服务同事维护。
 
@@ -338,7 +338,8 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 **约束**：
 - 三层去重（Redis）：消费层事件去重（`collection:processed:`）→ 步骤级分布式锁（`collection:lock:plan:`）→ 渠道 SETNX 二次去重（`collection:idempotency:channel:`）
 - 每步生成唯一 `idempotency_key`；key 前缀与 TTL 见基础设施 §3
-- 残余边界：「外部渠道已发出但本地落记录失败」——`AI_CALL` 由 [§1.6.7](#167-异步回调对账) 回调/哨兵兜底；同步渠道（SMS/PUSH/EMAIL）接受极低概率残余，靠幂等键 + 日志可观测，Phase 1 不做回调对账
+- 残余边界：「外部渠道已发出但本地落记录失败」——`AI_CALL` 由 [§1.6.7](#167-异步回调对账) 回调/哨兵兜底；同步渠道（SMS/PUSH/EMAIL）接受极低概率残余，靠幂等键 + `StuckPlanReaper` 停摆巡检告警可观测，Phase 1 不做回调对账
+- 另一类「状态已落盘但派生事件没发出去」不属于残余边界：由 `t_event_outbox` 同事务落盘 + 兜底重发完整消除（[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)）
 - 本地 CI 用 `InMemoryIdempotencyService` 替身，语义等价但不跨实例/不持久（见 [§3.1](#31-容量扩展)）
 
 > 规格：[核心引擎规格 §5 步骤①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线) · [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-运行时状态redis-kv)
@@ -360,13 +361,14 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 #### 1.6.5 事务边界：状态前置与渠道 I/O 隔离
 
-**不变量**：行锁事务仅覆盖获锁与状态前置写入；渠道 I/O 在事务外执行。
+**不变量**：行锁事务仅覆盖获锁与状态前置写入；渠道 I/O 在事务外执行。状态迁移一旦提交，其派生事件必须已随同一事务落盘。
 
 **约束**：
 - 调用链：`Dispatcher → Manager`（短事务）→ COMMIT → `Orchestrator`（七步管线，含全部渠道 I/O）
 - 渠道变慢仅占用 Consumer 线程，不膨胀锁窗口
+- 事件仍在 COMMIT 后发布（消费者不得读到未提交状态），但派生事件在事务内写入 `t_event_outbox`：重投只能重放「还没发生的事」，无法重新推导「已经发生但没广播出去的事」
 
-> 规格：[核心引擎规格 §1.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#11-核心组件与职责)
+> 规格：[核心引擎规格 §1.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#11-核心组件与职责) · [§7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)
 
 #### 1.6.6 SPI 硬超时与失败分级处置
 
@@ -384,9 +386,11 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 **不变量**：仅异步语音渠道（`AI_CALL`）有回调——dispatch 成功后保持 `STEP_EXECUTING`，供应商通话结束后回调引擎带回结果；回调丢失时计划可自愈退出，不永久卡死。（SMS/PUSH/EMAIL 为同步发送，无回调对账。）
 
+**供应商抽象**：`AI_CALL` 由**独立 AI Call 合作方**承接，其底层复用哪条拨号线路（LTH / SIP / 其他）对引擎与渠道适配层均不可见，接口设计不得绑定 LTH。对齐要求：dispatch 返回并持久化合作方的任务标识（`call_task_id` / `request_id`），Webhook 用合作方签名 + 该标识做幂等。
+
 **约束**：
 - Phase 1：供应商 Webhook 仅鉴权并发布 `CHANNEL_CALLBACK`；引擎写回调 timeline、发布 `STEP_COMPLETED`。超时未回调则引擎哨兵 `CALLBACK_TIMEOUT` 写 FAILED timeline 后自愈
-- Phase 2：渠道对账扫描（查供应商补发）作运维兜底，Phase 1 不实现
+- Phase 2：渠道对账扫描（查供应商补发）作运维兜底，Phase 1 不实现。**该能力有前置条件**——只有合作方提供「按任务标识查询终态」的 API 时对账才可能自动完成；若无查询 API，只能保留回调审计 + 超时置失败 + 告警，不得自行重拨或凭推测改写真实结果
 - Webhook 入站见 [§1.2.2 应用入站](#122-应用入站)
 
 > 规格：[核心引擎规格 §4.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout) · [§7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)
@@ -483,7 +487,7 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 | WizAI AI 机器人 | **废弃** | 代码已停用 |
 | Microsip 自动拨打 | **废弃** | 功能合并到统一触达引擎 |
 | 到期前通知（信贷主系统） | **接管** | 新系统接管发送，信贷系统仅推送案件数据 |
-| LTH 平台 | **保留** | TTS / 人工外呼由 LTH 现网独立编排，与本系统无交互。机器轨 `AI_CALL` 经 AI Call 供应商对接（Phase 1 Mock，复用 LTH 线路） |
+| LTH 平台 | **保留** | TTS / 人工外呼由 LTH 现网独立编排，与本系统无交互。机器轨 `AI_CALL` 经**独立 AI Call 合作方**对接（Phase 1 Mock）；该合作方可能复用 LTH 线路，但这属于其内部实现，接口不得绑定 LTH |
 | WSCRM WhatsApp | **Phase 2** | WhatsApp Phase 1 不做；Phase 1 仅 ChannelAdapter 接口预留；Phase 2 接入统一渠道适配层 |
 | collection_rebuild | **升级** | 保留数据模型，重构架构 |
 
@@ -494,6 +498,8 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 | Pre-flight 竞态空窗 | **Phase 1 接受** | 概率极低（空窗 < 500ms），后置补偿可覆盖。Phase 2 方向：Redis 临界标记 + 紧急拦截 Stream |
 | Lettuce 连接假死 | **Phase 1 已消除（2026-08-03）** | 消费模型改为轮询式 `@Scheduled`+`XREADGROUP`（非长连接监听），该风险的前提"长连接假死但进程不退出"不存在，因此不需要看门狗机制去兜底；决策依据见[基础设施交互规范 §3.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议) |
 | Webhook 回调丢失 | **Phase 1 加固** | Phase 1 靠 Webhook + `CALLBACK_TIMEOUT` 哨兵自愈；渠道对账扫描属 Phase 2（详见 §1.6.7） |
+| 派生事件因发布失败而丢失 | **Phase 1 已消除** | 状态迁移提交后发布失败时，原事件重投会因状态已是终态而按幂等 no-op 返回，派生事件不会被重新推导，计划静默停摆。改为事件与状态迁移同事务写 `t_event_outbox` + `OutboxPublisher` 兜底重发；正常链路仍是提交后即时发布，延迟不变（详见[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） |
+| 计划静默停摆 | **Phase 1 只检测不修复** | `StuckPlanReaper` 巡检「非终态但已无步骤可被 due/timeout 扫描拾取」的计划并告警。不自动重建步骤或重发触达——那是在依据不足时替用户做不可回滚的外部动作，误判代价（重复外呼、监管投诉）高于人工介入的延迟 |
 | DLQ 合规时段碰撞 | **Phase 1 加固** | 成本极低，避免触达计划空跑（详见 §1.6 附：基础设施实现索引） |
 | AI_CALL 在途呼叫不可中止 | **Phase 1 接受** | 整笔 loan 结清取消计划时无法终止已发起的 AI 外呼（供应商暂不提供单次呼叫取消 API）；用户还款后仍可能接到一通催收电话。`PredictiveDialerService.filterRepaidCase()` 用于通知 AI Call 供应商移出已结清案件。Phase 2 方向：评估呼叫中止接口 |
 

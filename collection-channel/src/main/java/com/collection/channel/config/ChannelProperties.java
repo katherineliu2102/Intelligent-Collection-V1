@@ -168,8 +168,8 @@ public class ChannelProperties {
     public static class PlanTemplate {
         private List<PlanStepDef> steps = new ArrayList<>();
         /**
-         * 生产日程模板：按 DPD 日和 PHT 固定槽位预排绝对 trigger_time。
-         * 未配置时回落到 {@link #steps} 的相对 delayMin 模式，供 local/L4 兼容。
+         * 生产日程模板：按 DPD 日和 PHT 固定槽位预排绝对 trigger_time。 未配置时回落到 {@link #steps} 的相对 delayMin 模式，供
+         * local/L4 兼容。
          */
         private List<DayBlock> dayBlocks = new ArrayList<>();
     }
@@ -186,6 +186,7 @@ public class ChannelProperties {
     public static class DayBlock {
         /** 相对 dueDate 的 DPD 日：D-3=-3、D0=0、D+1=1。 */
         private int dpdDay;
+
         private List<Slot> slots = new ArrayList<>();
     }
 
@@ -194,6 +195,7 @@ public class ChannelProperties {
         private String channel;
         /** PHT 固定槽位，HH:mm。 */
         private String time;
+
         private int observeMin = 0;
         private long templateId = 0;
     }

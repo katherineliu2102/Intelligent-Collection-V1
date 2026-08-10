@@ -13,11 +13,13 @@ public interface ContactPlanStepMapper {
 
     @Insert(
             "INSERT INTO t_contact_plan_step "
-                    + "(plan_id, step_order, channel_type, template_id, delay_minutes, trigger_time, timeout_time, "
+                    + "(plan_id, step_order, channel_type, template_id, delay_minutes, trigger_time, "
+                    + " original_trigger_time, timeout_time, "
                     + " trigger_condition, status, observation_minutes, retry_count, result, idempotency_key, "
                     + " executed_at, completed_at, created_at, updated_at) "
                     + "VALUES "
-                    + "(#{planId}, #{stepOrder}, #{channelType}, #{templateId}, #{delayMinutes}, #{triggerTime}, #{timeoutTime}, "
+                    + "(#{planId}, #{stepOrder}, #{channelType}, #{templateId}, #{delayMinutes}, #{triggerTime}, "
+                    + " #{triggerTime}, #{timeoutTime}, "
                     + " #{triggerCondition}, #{status}, #{observationMinutes}, #{retryCount}, #{result}, #{idempotencyKey}, "
                     + " #{executedAt}, #{completedAt}, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
@@ -65,6 +67,12 @@ public interface ContactPlanStepMapper {
             "UPDATE t_contact_plan_step SET result = #{result}, updated_at = NOW() WHERE id = #{stepId}")
     int updateResult(@Param("stepId") Long stepId, @Param("result") ContactResult result);
 
+    /** 渠道受理时点。重试会复用同一行，只记首次受理，避免覆盖真实发出时间。 */
+    @Update(
+            "UPDATE t_contact_plan_step SET dispatched_at = COALESCE(dispatched_at, NOW()), "
+                    + "updated_at = NOW() WHERE id = #{stepId}")
+    int markDispatched(@Param("stepId") Long stepId);
+
     @Update(
             "UPDATE t_contact_plan_step SET trigger_time = #{triggerTime}, status = #{status}, "
                     + "updated_at = NOW() WHERE id = #{stepId}")
@@ -75,7 +83,8 @@ public interface ContactPlanStepMapper {
 
     @Update(
             "UPDATE t_contact_plan_step SET timeout_time = #{timeoutTime}, trigger_time = NULL, "
-                    + "executed_at = NOW(), status = 'EXECUTING', updated_at = NOW() WHERE id = #{stepId}")
+                    + "executed_at = COALESCE(executed_at, NOW()), status = 'EXECUTING', updated_at = NOW() "
+                    + "WHERE id = #{stepId}")
     int updateTimeoutTime(
             @Param("stepId") Long stepId, @Param("timeoutTime") LocalDateTime timeoutTime);
 

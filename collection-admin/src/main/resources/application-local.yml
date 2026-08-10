@@ -161,3 +161,15 @@ engine:
   delivery-audit:
     hmac-key: ${CONTENT_AUDIT_HMAC_KEY:}
     content-key-id: ${CONTENT_AUDIT_KEY_ID:}
+  # 事件发件箱：派生事件与状态迁移同事务落盘，提交后仍走原路径即时发布并销账；
+  # 只有宽限期内没销账的记录才会被兜底重发，正常链路扫不到任何行。
+  # 引擎内部可靠性守护，不经 Cloud Scheduler，故不受 SchedulerEntrypointValidator 的单入口约束。
+  outbox:
+    enabled: true
+    poll-interval-ms: 2000
+    grace-seconds: 30
+  # 停摆巡检：非终态但已无步骤可被 due/timeout 扫描拾取 → 告警转人工，不自动重发触达。
+  reaper:
+    enabled: true
+    interval-ms: 300000
+    idle-minutes: 30

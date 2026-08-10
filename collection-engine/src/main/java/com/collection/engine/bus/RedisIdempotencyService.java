@@ -34,4 +34,9 @@ public class RedisIdempotencyService implements IdempotencyService {
                                 Duration.ofMinutes(Math.max(1, ttlMinutes)));
         return Boolean.TRUE.equals(acquired);
     }
+
+    @Override
+    public void release(String idempotencyKey) {
+        redisTemplate.delete(KEY_PREFIX + idempotencyKey);
+    }
 }
