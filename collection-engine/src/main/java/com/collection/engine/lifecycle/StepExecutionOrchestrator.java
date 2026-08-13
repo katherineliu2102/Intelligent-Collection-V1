@@ -8,6 +8,8 @@ import com.collection.common.dto.StepResult;
 import com.collection.common.enums.*;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseContext;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContactRecord;
@@ -94,21 +96,22 @@ public class StepExecutionOrchestrator {
     private void executeStepAfterLock(
             ContactPlan plan, ContactPlanStep step, ExecutionState state) {
         // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
-        CancelReason preFlightBlock = preFlightChecker.blockingReason(plan.getCaseId());
-        if (preFlightBlock != null) {
+        PreFlightResult preFlight = preFlightChecker.inspect(plan.getCaseId());
+        if (!preFlight.isPassed()) {
             // prepareStepDue 已将步骤前置为 EXECUTING；业务性阻断必须收敛为计划终态，
             // 否则消息渠道没有 callback timeout 会永久滞留。案件不存在不写 timeline。
             planRepository.updatePlanStatus(
-                    plan.getId(), PlanStatus.PLAN_CANCELLED, preFlightBlock);
+                    plan.getId(), PlanStatus.PLAN_CANCELLED, preFlight.getBlockingReason());
             log.info(
                     "[execStep] preflight blocked plan {} → PLAN_CANCELLED ({})",
                     plan.getId(),
-                    preFlightBlock);
+                    preFlight.getBlockingReason());
             return;
         }
 
         planRepository.markStepExecuting(step.getId());
         ExecutionContext context = contextAssembler.assemble(plan, step);
+        refreshVolatileFields(context, preFlight.getCaseInfo());
 
         // ── ③ 业务级守卫（合规，硬超时 20ms） ──
         GuardVerdict verdict;
@@ -385,6 +388,29 @@ public class StepExecutionOrchestrator {
      * <p>注：input_snapshot 含 UserProfile 手机号/邮箱，与 t_contact_plan.context_snapshot 落库口径一致
      * （均为未脱敏快照）；如需脱敏应在此统一处理。
      */
+    /**
+     * 用步骤② 已读到的实时案件数据覆盖快照中的<b>日变字段</b>（仅内存，不回写 {@code context_snapshot}）。
+     *
+     * <p>文案里的逾期天数与金额必须是发送时刻的值：快照的 dpd 冻结于建计划时刻，而单个阶段最长跨 60 天 （S4 = DPD
+     * 31–90），不刷新会连续数十天对用户播报错误的逾期天数；余额同理，仅靠 CASE_BALANCE_UPDATED 只能覆盖还款场景。
+     *
+     * <p><b>不覆盖 stage</b>：阶段决定模板与话术，必须与所属计划一致，否则同一计划内会串话术。 实际渲染用的数值随 {@code
+     * t_decision_log.input_snapshot} 落库，保留审计能力。
+     */
+    private void refreshVolatileFields(ExecutionContext context, CaseInfo info) {
+        if (context == null || info == null || context.getContextSnapshot() == null) {
+            return;
+        }
+        CaseContext ctx = context.getContextSnapshot().getCaseContext();
+        if (ctx == null) {
+            return;
+        }
+        ctx.setDpd(info.getDpd());
+        if (info.getTotalOutstanding() != null) {
+            ctx.setTotalOutstanding(info.getTotalOutstanding());
+        }
+    }
+
     private void writeDecisionLog(
             ContactPlan plan,
             ContactPlanStep step,

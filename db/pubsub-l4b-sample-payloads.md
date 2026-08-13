@@ -1,78 +1,78 @@
-# L4b PubSub payload 草案（联调 / 脚本引用）
+# L4b Pub/Sub v3 样例
 
-> 与 L4a 触达口径一致：phone `+639451374358`、email `wzynju@126.com`、jpushToken `1a0018970bf0c19de04`。
-> JSON body 使用领域模型 §6.2 语义 key；信贷若 key 不同，配 Nacos `collection.ingestion.case-push.field-map`。
-> **上线前须信贷确认**真实报文 key 名（C-I-01）。
+> L4b 与 Pilot 仅使用数仓新契约的单案消息：`caseEvent`、`repaymentEvent`。禁止投递旧批量 envelope、`calibrationEvent` 或外部阶段事件。
 
-## case_push — 99000000（S0）
+## `caseEvent` — 首次入催或每日投影刷新
 
-Attributes（可选）：`dataType=case_push`, `messageId=ic-l4b-s0-001`
+Attributes：`dataType=caseEvent`
 
 ```json
 {
-  "dataType": "case_push",
-  "messageId": "ic-l4b-s0-001",
-  "caseId": 99000000,
-  "userId": 99000000,
-  "stage": "S0",
-  "dpd": 0,
-  "product": "QuickLoan",
-  "totalOutstanding": 5100.00,
-  "penaltyAmount": 0.00,
-  "dueDate": "2026-06-30",
-  "name": "Test Case S0",
-  "phone": "+639451374358",
-  "email": "wzynju@126.com",
-  "jpushToken": "1a0018970bf0c19de04"
-}
-```
-
-## case_push — 99000001（S1，L4b-2 前置）
-
-```json
-{
-  "dataType": "case_push",
-  "messageId": "ic-l4b-s1-001",
-  "caseId": 99000001,
-  "userId": 99000001,
+  "eventId": "l4b-case-001",
+  "eventType": "CASE_INGESTED",
+  "occurredAt": "2026-08-12T03:00:00+08:00",
+  "caseId": "99000001",
+  "userId": "9901",
+  "caseVersion": 1,
+  "product": "3",
   "stage": "S1",
   "dpd": 2,
-  "totalOutstanding": 5250.00,
-  "penaltyAmount": 100.00,
-  "phone": "+639451374358",
-  "email": "wzynju@126.com",
-  "jpushToken": "1a0018970bf0c19de04"
+  "collectionStatus": "IN_COLLECTION",
+  "totalOutstanding": 3000.00,
+  "penaltyAmount": 0.00,
+  "remainingAmount": 9000.00,
+  "dueDate": "2026-08-11",
+  "borrower": {
+    "name": "L4B USER",
+    "phone": "+639563093217",
+    "email": "l4b@example.com",
+    "language": "en"
+  },
+  "device": {
+    "pushToken": "l4b-push-token"
+  }
 }
 ```
 
-## repayment_push_and_load — 99000001
+对同一 `caseId` 再投一个更高 `caseVersion` 的完整 `caseEvent`：投影应更新；已有催收周期时不得重复建计划或触达。
+
+## `repaymentEvent` — 部分或整笔还款
+
+Attributes：`dataType=repaymentEvent`
 
 ```json
 {
-  "dataType": "repayment_push_and_load",
-  "messageId": "ic-l4b-repay-001",
-  "userId": 99000001,
-  "loanId": 99000001,
-  "totalOutstanding": 0,
-  "fullRepay": true
+  "eventId": "l4b-repay-001",
+  "eventType": "REPAYMENT",
+  "occurredAt": "2026-08-12T10:06:00+08:00",
+  "caseId": "99000001",
+  "userId": "9901",
+  "caseVersion": 2,
+  "repayTime": "2026-08-12T10:00:00+08:00",
+  "paidAmount": 1000.00,
+  "isFullCleared": false,
+  "product": "3",
+  "stage": "S1",
+  "dpd": 2,
+  "collectionStatus": "IN_COLLECTION",
+  "totalOutstanding": 2000.00,
+  "penaltyAmount": 0.00,
+  "remainingAmount": 8000.00,
+  "dueDate": "2026-08-11",
+  "borrower": {
+    "name": "L4B USER",
+    "phone": "+639563093217",
+    "email": "l4b@example.com",
+    "language": "en"
+  },
+  "device": {
+    "pushToken": "l4b-push-token"
+  }
 }
 ```
 
-## case_push — 99000002（S2）
+整笔结清时设 `isFullCleared=true`、`collectionStatus=SETTLED` 且所有余额为零；该消息须在账务结清状态落库 360 秒后发布。
 
-```json
-{
-  "dataType": "case_push",
-  "messageId": "ic-l4b-s2-001",
-  "caseId": 99000002,
-  "userId": 99000002,
-  "stage": "S2",
-  "dpd": 7,
-  "totalOutstanding": 8560.00,
-  "penaltyAmount": 320.00,
-  "phone": "+639451374358",
-  "email": "wzynju@126.com"
-}
-```
+## 契约越权样例
 
-（`jpushToken` 随 `case_push` 消息体携带，2026-07 确认；缺 token 且 `enrich-jpush-token=true` 时可读 `t_user_device_token`。）
+把 `caseEvent` 的 `eventType` 改为 `CASE_STAGE_CHANGED` 或 `CASE_CEASED` 后投递，接入层必须 poison ack 并告警；投影与计划均不得变化。阶段变化与停催只由 `dailyRoll` 内部产生。

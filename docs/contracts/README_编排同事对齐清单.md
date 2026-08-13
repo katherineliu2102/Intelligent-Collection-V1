@@ -32,8 +32,9 @@
 |---|---|
 | `docs/contracts/ContextSnapshot.sample.json` | **冻结的快照样例**——编排同事拿它即可开发 StepResolver |
 | `docs/contracts/README_ContextSnapshot契约对齐.md` | message/push 最小必填字段 + 谁填 + 开放问题 |
-| `docs/channel/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md` | **E1–E8** 引擎侧需拍板项（见下） |
+| `docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md` | 执行语义定稿；E1–E8 收敛见下文 |
 | `docs/MOCASA催收系统升级_Phase1_核心引擎规格.md` | 状态机/七步管线语义基准 |
+| [`HANDOFF.md`](../../HANDOFF.md) §4 | 跨模块须确认项（活板） |
 
 ## 二、对齐点汇总
 
@@ -45,7 +46,7 @@
 4. **快照字段范围**：✅ `work.*`、`risk.*`、offer、投诉冻结均非 Phase 1 StepResolver 输入；可留 null 或不消费。
 5. **SPI 副作用与超时**：✅ 实现须禁写 DB/发事件/调外部；Guard 可读合规计数器；引擎强制 `Future.get(timeoutMs)`。
 
-### 生命周期级（E1–E8，详见对齐待办文档，需会议拍板）
+### 生命周期级（E1–E8，Phase 1 收敛结论）
 
 | 编号 | 对齐点 | 渠道编排倾向 |
 |---|---|---|

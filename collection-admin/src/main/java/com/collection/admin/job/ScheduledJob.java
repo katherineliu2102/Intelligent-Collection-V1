@@ -16,7 +16,7 @@ public enum ScheduledJob {
     /** 回调超时哨兵，每分钟一次 → {@code CALLBACK_TIMEOUT}；Phase 1 仅服务 AI_CALL。 */
     CALLBACK_TIMEOUT("callbackTimeout", 60),
 
-    /** DPD 日切，00:35–02:55 PHT 每 5 分钟一次 → {@code STAGE_CHANGED} / {@code CASE_CEASED}。 */
+    /** DPD 日切，03:35–05:55 PHT 每 5 分钟一次 → {@code STAGE_CHANGED} / {@code CASE_CEASED}。 */
     DAILY_ROLL("dailyRoll", 300);
 
     private final String attribute;

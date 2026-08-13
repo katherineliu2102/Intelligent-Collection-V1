@@ -19,10 +19,14 @@ import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.ContactResult;
 import com.collection.common.enums.PlanStatus;
+import com.collection.common.enums.Stage;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseContext;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
+import com.collection.common.model.ContextSnapshot;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
@@ -31,6 +35,7 @@ import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.spi.SpiInvoker;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -96,7 +101,7 @@ class StepExecutionOrchestratorTest {
 
         // 默认放行到渠道调度前的各步骤（具体测试按需覆盖）
         when(idempotencyService.acquire(anyString(), anyInt())).thenReturn(true);
-        when(preFlightChecker.check(CASE_ID)).thenReturn(true);
+        when(preFlightChecker.inspect(CASE_ID)).thenReturn(PreFlightResult.passed(liveCaseInfo()));
         when(contextAssembler.assemble(any(), any()))
                 .thenReturn(ExecutionContext.builder().plan(plan).currentStep(step).build());
         when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.allow());
@@ -126,6 +131,16 @@ class StepExecutionOrchestratorTest {
                         any()))
                 .thenReturn(true);
         when(stepOutcomeRecorder.recordStrategySkipped(any(), any())).thenReturn(true);
+    }
+
+    /** 步骤② 实时读到的案件数据：dpd/余额比快照新，stage 故意与计划不同以验证不被覆盖。 */
+    private CaseInfo liveCaseInfo() {
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(CASE_ID);
+        info.setDpd(58);
+        info.setStage(Stage.S3);
+        info.setTotalOutstanding(new BigDecimal("1500.00"));
+        return info;
     }
 
     private void stubResolver(ChannelType ch) {
@@ -186,7 +201,8 @@ class StepExecutionOrchestratorTest {
     @Test
     @DisplayName("#5 系统守卫发现已还款 → 取消计划，不触达也不推进")
     void preflightRepaid_cancelsPlan() {
-        when(preFlightChecker.blockingReason(CASE_ID)).thenReturn(CancelReason.REPAID);
+        when(preFlightChecker.inspect(CASE_ID))
+                .thenReturn(PreFlightResult.blocked(CancelReason.REPAID, liveCaseInfo()));
 
         orchestrator.executeStep(plan, step);
 
@@ -194,6 +210,36 @@ class StepExecutionOrchestratorTest {
         verify(eventBus, never()).publish(any());
         verify(planRepository)
                 .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+    }
+
+    @Test
+    @DisplayName("#5g 渲染前刷新日变字段 → Resolver 拿到实时 dpd / 余额，stage 仍随计划")
+    void refreshesVolatileFieldsBeforeResolve() {
+        CaseContext stale = new CaseContext();
+        stale.setCaseId(CASE_ID);
+        stale.setDpd(31);
+        stale.setStage(Stage.S4);
+        stale.setTotalOutstanding(new BigDecimal("1000.00"));
+        ContextSnapshot snapshot = new ContextSnapshot();
+        snapshot.setCaseContext(stale);
+        when(contextAssembler.assemble(any(), any()))
+                .thenReturn(
+                        ExecutionContext.builder()
+                                .plan(plan)
+                                .currentStep(step)
+                                .contextSnapshot(snapshot)
+                                .build());
+        stubResolver(ChannelType.SMS);
+        stubDispatch(ok(ContactResult.DELIVERED));
+
+        orchestrator.executeStep(plan, step);
+
+        ArgumentCaptor<ExecutionContext> captor = ArgumentCaptor.forClass(ExecutionContext.class);
+        verify(stepResolver).resolve(captor.capture());
+        CaseContext used = captor.getValue().getContextSnapshot().getCaseContext();
+        assertThat(used.getDpd()).isEqualTo(58);
+        assertThat(used.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("1500.00"));
+        assertThat(used.getStage()).isEqualTo(Stage.S4);
     }
 
     @Test
@@ -230,7 +276,7 @@ class StepExecutionOrchestratorTest {
     @Test
     @DisplayName("#6b dispatch 前 PreFlight 读取异常 → 释放执行锁并上抛，供 NACK 重投")
     void preFlightFailure_releasesExecutionLockBeforeRethrow() {
-        when(preFlightChecker.blockingReason(CASE_ID)).thenThrow(new RuntimeException("db down"));
+        when(preFlightChecker.inspect(CASE_ID)).thenThrow(new RuntimeException("db down"));
 
         assertThatThrownBy(() -> orchestrator.executeStep(plan, step))
                 .isInstanceOf(RuntimeException.class)

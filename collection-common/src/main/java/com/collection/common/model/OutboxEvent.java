@@ -25,6 +25,8 @@ public class OutboxEvent {
     private int retryCount;
     /** 兜底重发时间。入库时置为 now + 宽限期，让提交后的即时发布先完成。 */
     private LocalDateTime nextRetryAt;
+    /** 多实例发布器的短租约；PROCESSING 租约到期后可被重新认领。 */
+    private LocalDateTime leaseUntil;
 
     private LocalDateTime publishedAt;
     private String lastError;

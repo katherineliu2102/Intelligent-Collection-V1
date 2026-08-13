@@ -449,6 +449,43 @@ class PlanLifecycleManagerTest {
         verify(planRepository).savePlan(any());
     }
 
+    @Test
+    @DisplayName("#26a 阶段变更携带日切日变字段 → carry-forward 快照同时刷新 dpd / 余额")
+    void onStageChanged_refreshesVolatileSnapshotFields() {
+        CaseContext stale = new CaseContext();
+        stale.setCaseId(CASE_ID);
+        stale.setUserId(USER_ID);
+        stale.setDpd(16);
+        stale.setStage(Stage.S3);
+        stale.setTotalOutstanding(new BigDecimal("1000.00"));
+        ContextSnapshot carried = new ContextSnapshot();
+        carried.setCaseContext(stale);
+
+        ContactPlan old = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S3);
+        old.setContextSnapshot(JsonUtil.toJson(carried));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(old)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(old);
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S4)).thenReturn(null);
+        ContactPlan created = newPlan(0L, null, Stage.S4);
+        created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
+        when(planFactory.create(any(), eq(Stage.S4), any())).thenReturn(created);
+
+        manager.onStageChanged(
+                CollectionEvent.of(EventType.STAGE_CHANGED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S4")
+                        .with(CollectionEvent.DPD, 31)
+                        .with(CollectionEvent.TOTAL_OUTSTANDING, new BigDecimal("1800.00")));
+
+        ArgumentCaptor<ContextSnapshot> captor = ArgumentCaptor.forClass(ContextSnapshot.class);
+        verify(planFactory).create(any(), eq(Stage.S4), captor.capture());
+        CaseContext refreshed = captor.getValue().getCaseContext();
+        assertThat(refreshed.getStage()).isEqualTo(Stage.S4);
+        assertThat(refreshed.getDpd()).isEqualTo(31);
+        assertThat(refreshed.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("1800.00"));
+    }
+
     // ─────────── onPtpExpired（#27，Phase 2 预留：Phase 1 Dispatcher 不订阅，仅直测处理器逻辑） ───────────
 
     @Test

@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * <p>这不是业务 Cron，而是引擎内部的可靠性守护进程：不经 Cloud Scheduler，调度链路本身故障时也能推进， 与 {@code
  * RedisStreamEventBus.consume()} 同一类角色，因此不受 {@code SchedulerEntrypointValidator} 的单入口约束。
  *
- * <p>只重发宽限期内没被销账的记录。正常链路里事件在提交后毫秒级即时发布并销账，本轮询扫不到任何行。
+ * <p>只重发宽限期内没被销账的记录。多实例通过短租约原子认领同一行，避免并发重复投递；认领者崩溃后租约到期可重试。正常链路里事件在提交后毫秒级即时发布并销账，本轮询扫不到任何行。
  */
 @Component
 public class OutboxPublisher {
@@ -54,7 +54,10 @@ public class OutboxPublisher {
         EngineProperties.Outbox cfg = props.getOutbox();
         List<OutboxEvent> due;
         try {
-            due = repository.findDueForRepublish(LocalDateTime.now(), cfg.getBatchSize());
+            LocalDateTime now = LocalDateTime.now();
+            due =
+                    repository.claimDueForRepublish(
+                            now, now.plusSeconds(cfg.getLeaseSeconds()), cfg.getBatchSize());
         } catch (Exception e) {
             // 下一轮自愈；此处上抛只会污染调度线程。
             log.error("[outbox] scan failed", e);
@@ -66,15 +69,15 @@ public class OutboxPublisher {
     }
 
     private void republish(OutboxEvent row, EngineProperties.Outbox cfg) {
-        CollectionEvent event = JsonUtil.fromJson(row.getPayload(), CollectionEvent.class);
+        final CollectionEvent event;
+        try {
+            event = JsonUtil.fromJson(row.getPayload(), CollectionEvent.class);
+        } catch (Exception e) {
+            markUndeserializable(row, e);
+            return;
+        }
         if (event == null || event.getEventType() == null) {
-            // 反序列化不可能靠重试变好，直接转人工，避免占着扫描批次。
-            repository.markFailed(row.getEventId(), "payload not deserializable");
-            metrics.outboxFailed(String.valueOf(row.getEventType()));
-            log.error(
-                    "[outbox] undeserializable payload, event={} id={}",
-                    row.getEventType(),
-                    row.getId());
+            markUndeserializable(row, null);
             return;
         }
         try {
@@ -89,6 +92,28 @@ public class OutboxPublisher {
                     row.getRetryCount());
         } catch (Exception e) {
             handleRepublishFailure(row, cfg, e);
+        }
+    }
+
+    private void markUndeserializable(OutboxEvent row, Exception e) {
+        // 反序列化不可能靠重试变好，直接转人工，避免占着扫描批次。
+        String reason =
+                e == null
+                        ? "payload not deserializable"
+                        : truncate("payload not deserializable: " + e);
+        try {
+            repository.markFailed(row.getEventId(), reason);
+            metrics.outboxFailed(String.valueOf(row.getEventType()));
+            log.error(
+                    "[outbox] undeserializable payload, event={} id={}",
+                    row.getEventType(),
+                    row.getId(),
+                    e);
+        } catch (Exception markFailure) {
+            log.error(
+                    "[outbox] unable to mark undeserializable payload failed, eventId={}",
+                    row.getEventId(),
+                    markFailure);
         }
     }
 

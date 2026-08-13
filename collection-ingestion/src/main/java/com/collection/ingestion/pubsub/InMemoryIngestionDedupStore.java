@@ -17,6 +17,7 @@ public class InMemoryIngestionDedupStore implements IngestionDedupStore {
 
     private final Set<String> processedMessages = ConcurrentHashMap.newKeySet();
     private final Map<Long, Long> lastSeenPublishMillis = new ConcurrentHashMap<>();
+    private final Map<Long, Long> lastSeenCaseVersion = new ConcurrentHashMap<>();
     private final Set<Long> ingestedLoans = ConcurrentHashMap.newKeySet();
 
     @Override
@@ -64,6 +65,22 @@ public class InMemoryIngestionDedupStore implements IngestionDedupStore {
     public void clearIngested(Long loanId) {
         if (loanId != null) {
             ingestedLoans.remove(loanId);
+        }
+    }
+
+    @Override
+    public boolean isStaleVersion(Long caseId, Long caseVersion) {
+        if (caseId == null || caseVersion == null) {
+            return false;
+        }
+        Long seen = lastSeenCaseVersion.get(caseId);
+        return seen != null && caseVersion <= seen;
+    }
+
+    @Override
+    public void recordVersion(Long caseId, Long caseVersion) {
+        if (caseId != null && caseVersion != null) {
+            lastSeenCaseVersion.merge(caseId, caseVersion, Math::max);
         }
     }
 }

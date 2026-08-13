@@ -350,6 +350,61 @@ DROP PROCEDURE IF EXISTS sp_schema_add_event_dlq_redrive_columns;
 -- 状态迁移与派生事件写在同一事务：提交后的即时发布若失败（总线抖动、进程被杀），
 -- 原事件重投时状态已是终态、派生事件不会被重新推导，计划就此静默停摆。
 -- 发件箱把"事件已产生"这个事实和状态一起落盘，由 OutboxPublisher 兜底重发。
+
+-- 7.2.5a AI 催收案件投影（collection-ingestion 消费数仓 Pub/Sub 事实流后写入）。
+-- t_ai_collection 是新系统运行时唯一案件来源；不得在引擎/日切路径回读旧 t_collection。
+-- 单写者约束：只有 ingestion 投影管道可以写本表，数仓不得直连业务库 SQL 写入，
+-- 否则独立写入路径会互相覆盖、case_version 出现倒退。
+CREATE TABLE IF NOT EXISTS t_ai_collection (
+    case_id                 BIGINT          NOT NULL PRIMARY KEY COMMENT 'loan_id，规范数字案件键',
+    user_id                 BIGINT          NOT NULL,
+    case_version            BIGINT          NOT NULL COMMENT '同一案件单调递增版本，防 Pub/Sub 乱序',
+    dpd                     INT             NOT NULL,
+    stage                   VARCHAR(16)     NULL COMMENT 'S0/S1/S2/S3/S4；D+91 可为空',
+    collection_status       VARCHAR(32)     NOT NULL COMMENT 'IN_COLLECTION/SETTLED/CEASED',
+    product                 VARCHAR(64)     NOT NULL,
+    total_outstanding       DECIMAL(18,2)   NOT NULL COMMENT '已到期且未结清，对客金额',
+    penalty_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0,
+    remaining_amount        DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '全部未结清，仅对账',
+    due_date                DATE            NULL,
+    borrower_name           VARCHAR(256)    NOT NULL,
+    borrower_phone          VARCHAR(64)     NOT NULL COMMENT 'E.164',
+    borrower_email          VARCHAR(256)    NULL,
+    borrower_language       VARCHAR(16)     NOT NULL DEFAULT 'en',
+    push_token              VARCHAR(512)    NULL,
+    updated_at              DATETIME        NOT NULL COMMENT '数仓快照业务更新时间',
+    synced_at               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '接入层投影落库时间',
+    INDEX idx_ai_collection_active (collection_status, dpd, case_id),
+    INDEX idx_ai_collection_updated (updated_at, case_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='新系统 AI 催收案件当前态';
+
+-- 7.2.5b 入催消息收件箱。event_id 为数仓生成的业务幂等键，重试/重发/重放必须复用同一值。
+-- 投影更新（MySQL）与内部领域事件发布（Redis Stream）无法原子提交：本表在投影事务内落盘，
+-- 记录"这条事实已入库、领域事件是否已发出"。消息重投时据 publish_status 判断是补发事件还是整条跳过，
+-- 避免"投影已写入 → 进程被杀 → 重投被版本判定为陈旧 → 领域事件永久丢失"。
+-- 与 t_event_outbox（引擎派生事件发件箱）分属两层，互不替代。
+CREATE TABLE IF NOT EXISTS t_ai_collection_inbox (
+    id                      BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    event_id                VARCHAR(64)     NOT NULL COMMENT '数仓 publish 时生成，重投复用',
+    case_id                 BIGINT          NOT NULL,
+    case_version            BIGINT          NOT NULL,
+    message_type            VARCHAR(32)     NOT NULL COMMENT 'caseEvent/repaymentEvent',
+    event_type              VARCHAR(64)     NOT NULL,
+    payload                 JSON            NOT NULL COMMENT '完整外部 Pub/Sub payload，供审计与重放',
+    projection_applied      TINYINT(1)      NOT NULL DEFAULT 0 COMMENT '是否已更新 t_ai_collection；陈旧版本为 0',
+    publish_status          VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PUBLISHED/SKIPPED',
+    published_at            DATETIME        NULL COMMENT '内部领域事件确认投递时间',
+    created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ai_inbox_event_id (event_id),
+    INDEX idx_ai_inbox_pending (publish_status, created_at),
+    INDEX idx_ai_inbox_case_version (case_id, case_version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 催收入站事实收件箱（投影与内部事件的可靠桥接）';
+
+-- 既有环境迁移：数仓不再写业务库，t_ai_collection_outbox 无发布器也无消费者。
+-- 归档需求由 t_ai_collection_inbox.payload 承接；确认数仓侧发布器已下线、无 PENDING 记录后再执行下一行。
+-- DROP TABLE IF EXISTS t_ai_collection_outbox;
+
 CREATE TABLE IF NOT EXISTS t_event_outbox (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
     event_id            VARCHAR(64)     NOT NULL COMMENT '与 CollectionEvent.eventId 一致，消费侧据此去重',
@@ -357,16 +412,42 @@ CREATE TABLE IF NOT EXISTS t_event_outbox (
     plan_id             BIGINT          NULL     COMMENT '来源计划（排障用）',
     case_id             BIGINT          NULL     COMMENT '来源案件（排障用）',
     payload             JSON            NOT NULL COMMENT '完整 CollectionEvent 信封 JSON',
-    status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PUBLISHED/FAILED',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/PROCESSING/PUBLISHED/FAILED',
     retry_count         INT             NOT NULL DEFAULT 0 COMMENT '兜底重发次数',
     next_retry_at       DATETIME        NOT NULL COMMENT '兜底重发时间；入库时 = now + 宽限期，让即时发布先赢',
+    lease_until         DATETIME        NULL COMMENT 'PROCESSING 认领租约；到期后允许其他实例重新认领',
     published_at        DATETIME        NULL     COMMENT '确认已投递到总线的时间',
     last_error          VARCHAR(512)    NULL,
     created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_event_outbox_event_id (event_id),
-    INDEX idx_event_outbox_due (status, next_retry_at)
+    INDEX idx_event_outbox_due (status, next_retry_at),
+    INDEX idx_event_outbox_lease (status, lease_until)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='领域事件发件箱（状态与事件同事务）';
+
+-- 既有环境迁移：多实例发布器认领租约。
+DROP PROCEDURE IF EXISTS sp_schema_add_event_outbox_lease;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_event_outbox_lease()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_outbox' AND COLUMN_NAME = 'lease_until'
+    ) THEN
+        ALTER TABLE t_event_outbox
+            ADD COLUMN lease_until DATETIME NULL COMMENT 'PROCESSING 认领租约；到期后允许重新认领';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_event_outbox' AND INDEX_NAME = 'idx_event_outbox_lease'
+    ) THEN
+        ALTER TABLE t_event_outbox
+            ADD INDEX idx_event_outbox_lease (status, lease_until);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_event_outbox_lease();
+DROP PROCEDURE IF EXISTS sp_schema_add_event_outbox_lease;
 
 -- 7.2.4 用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）
 CREATE TABLE IF NOT EXISTS t_user_device_token (

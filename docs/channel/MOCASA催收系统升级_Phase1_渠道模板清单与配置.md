@@ -349,5 +349,5 @@ channel:
 | [策略迭代与测试操作手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链) | 运营改模板流程 |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | Adapter |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | TC 冒烟 |
-| [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) | 里程碑状态 |
+| [HANDOFF](../../HANDOFF.md) | 模块未闭合待办 / Pilot 缺口 |
 | [渠道文档索引](./README_渠道文档索引.md) | 导航 |

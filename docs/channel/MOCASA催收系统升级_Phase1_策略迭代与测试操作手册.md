@@ -198,7 +198,7 @@ ingest → PlanFactory（策略：几步、什么渠道）
        → Adapter（供应商 API）
 ```
 
-进度见 [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md)。
+进度见 [HANDOFF](../../HANDOFF.md) · Checklist 见 [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)。
 
 ---
 

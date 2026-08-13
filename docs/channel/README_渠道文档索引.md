@@ -11,7 +11,7 @@
 
 | 角色 | 从这里开始 |
 |------|-----------|
-| 开发 | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) → [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) |
+| 开发 | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) · 进度板 [HANDOFF §3A](../../HANDOFF.md) |
 | 策略 / 运营 | [策略迭代与测试操作手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) |
 | QA | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
 | 模板 / 运营 | [渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) → [email-templates/](../email-templates/)（docs 根） |
@@ -33,9 +33,8 @@
 
 | 文档 | 说明 |
 |------|------|
-| [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | **开发手册**：分阶段写代码、Nacos 配置、Checklist |
-| [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) | **进度 SSOT**：Checklist 状态、现网对照、下一步、变更日志 |
-| [策略迭代与测试操作手册](../MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) | **策略/运营手册**（docs 根）：怎么测、怎么改、DB 与 Nacos 分工 |
+| [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | **开发手册**：分阶段写代码、Nacos 配置、Checklist；进度见 [HANDOFF](../../HANDOFF.md) |
+| [策略迭代与测试操作手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) | **策略/运营手册**：怎么测、怎么改、DB 与 Nacos 分工 |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | **测试手册**：TC 用例、curl、验收标准 |
 | [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) | ChannelGateway、契约、Webhook；**附录 A** → [渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) |
 
@@ -51,7 +50,8 @@
 | 文档 | 说明 |
 |------|------|
 | [ContextSnapshot 字段透传说明](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md) | 快照 → StepCommand → 供应商 API 全链字段映射 SSOT |
-| [渠道编排与引擎对齐待办](./MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) | E1–E8 引擎行为对齐待办清单（与主架构协调） |
+| [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | dispatch / 观察期 / 空地址 / token 等执行语义（已定稿） |
+| [编排同事对齐清单](../contracts/README_编排同事对齐清单.md) | SPI 实现与 E1–E8 收敛结论 |
 
 ### 供应商 Adapter 对接
 

@@ -89,15 +89,23 @@ public class PlanLifecycleManager {
 
         List<ContactPlan> oldPlans = planRepository.findActivePlansByCase(caseId);
         oldPlans.sort((a, b) -> Long.compare(a.getId(), b.getId())); // 按 id 升序加锁防死锁
-        // 决策 B：carry-forward 旧计划已冻结快照（同案件无新 case_push），刷新 stage；
-        // 取消前先取快照。缺失时 createPlanForStage 降级 CaseService。
-        ContextSnapshot carried = null;
-        for (ContactPlan p : oldPlans) {
-            if (carried == null) {
-                carried = snapshotFromPlan(p);
+        // v2 CASE_STAGE_CHANGED 携带完整快照，优先直接使用，避免无活跃计划时回读旧库。
+        // 旧事件仍保留 carry-forward 兼容路径。
+        ContextSnapshot carried =
+                hasSnapshotPayload(event) ? buildSnapshotFromEvent(event, newStage) : null;
+        if (carried == null) {
+            for (ContactPlan p : oldPlans) {
+                if (carried == null) {
+                    carried = snapshotFromPlan(p);
+                }
             }
         }
-        carried = withStage(carried, newStage);
+        carried =
+                withRefreshedFields(
+                        carried,
+                        newStage,
+                        event.getInt(CollectionEvent.DPD),
+                        event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
         CaseInfo carriedInfo = caseInfoFromSnapshot(carried);
         for (ContactPlan p : oldPlans) {
             ContactPlan locked = planRepository.findPlanWithLock(p.getId());
@@ -380,7 +388,7 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
-        // 决策 B：carry-forward 旧计划已冻结快照（续建非外部 case_push，无新 payload）；
+        // 续建沿用旧计划已冻结快照（非外部案件事件，无新 payload）；
         // 缺失时降级 CaseService（兜底）。
         ContextSnapshot carried = snapshotFromPlan(plan);
         final ContextSnapshot snapshot =
@@ -706,10 +714,26 @@ public class PlanLifecycleManager {
         }
     }
 
-    /** carry-forward 时按事件刷新目标 stage（§4.4 升档）。 */
-    private ContextSnapshot withStage(ContextSnapshot snap, Stage stage) {
-        if (snap != null && snap.getCaseContext() != null && stage != null) {
-            snap.getCaseContext().setStage(stage);
+    /**
+     * carry-forward 时按事件刷新目标 stage（§4.4 升档），并在事件携带日变字段时一并刷新 dpd / 余额。
+     *
+     * <p>日变字段可选：仅日切发布的 STAGE_CHANGED 会带，缺省则保持旧值。渲染时刻的真值另由 步骤② 的实时读覆盖（见 {@code
+     * StepExecutionOrchestrator#refreshVolatileFields}），此处只是让快照列本身不至于长期陈旧。
+     */
+    private ContextSnapshot withRefreshedFields(
+            ContextSnapshot snap, Stage stage, Integer dpd, java.math.BigDecimal totalOutstanding) {
+        if (snap == null || snap.getCaseContext() == null) {
+            return snap;
+        }
+        CaseContext ctx = snap.getCaseContext();
+        if (stage != null) {
+            ctx.setStage(stage);
+        }
+        if (dpd != null) {
+            ctx.setDpd(dpd);
+        }
+        if (totalOutstanding != null) {
+            ctx.setTotalOutstanding(totalOutstanding);
         }
         return snap;
     }

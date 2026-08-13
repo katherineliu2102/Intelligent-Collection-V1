@@ -1,7 +1,8 @@
 # MOCASA 催收系统升级 Phase 1 — L4b 端到端测试报告（单次运行事实）
 
 > 本报告仅记录 2026-07-07 的一次运行事实、当时环境与证据。它不是测试 SSOT，不能据此宣布 L4b 当前通过或覆盖后续变更。
-> 当前准入、用例、退出条件和未关闭项以[测试 SSOT T4](./MOCASA催收系统升级_Phase1_测试文档.md#7-t4-真实来源--真实渠道的隔离联调l4b)为准；L4b 环境操作以[环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)为准。
+> **归档位置**：`docs/testing/_archive/`（2026-08-13）。  
+> 当前准入、用例、退出条件和未关闭项以[测试 SSOT T4](../MOCASA催收系统升级_Phase1_测试文档.md#7-t4-真实来源--真实渠道的隔离联调l4b)为准；L4b 环境操作以[环境交接清单](../MOCASA催收系统升级_Phase1_L4b环境交接清单.md)为准。
 
 - 执行日期：2026-07-07（PHT）
 - 执行人：主架构 / 引擎负责人
@@ -99,13 +100,13 @@
    - 影响：仅影响 L4b-1 的入案投递可靠性，不影响引擎/落库逻辑（S2 路径已由 99000002 完整验证）。
    - 建议运维：为本次联调分配**独占订阅**，或确认同一订阅上无其他活跃订阅方。
 
-2. **真实渠道确有下发**：SMS/Push 均返回真实 provider_msg_id，实际发往 seed 中配置的测试号 `+639451374358`。上线前请确认该号为受控测试号，或在联调期开启渠道 sandbox。逐案应收 SMS/Push/Email 正文见 **[L4b触达内容核对清单](./MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md)**。
+2. **真实渠道确有下发**：SMS/Push 均返回真实 provider_msg_id，实际发往 seed 中配置的测试号 `+639451374358`。上线前请确认该号为受控测试号，或在联调期开启渠道 sandbox。逐案应收 SMS/Push/Email 正文见 **[L4b触达内容核对清单](../MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md)**。
 
 3. **权限现状**：GCP 凭证 `keliu@indiacashgo.com`（ADC）具备 topic publish 与 subscription consume（pull/streaming），但**无 `subscriptions.get`（describe）**——不影响消费，仅无法查订阅元数据。
 
 4. **生产调度未接**：日切 L4b-3/4/8 通过 `POST /mock/daily-roll` 手动触发验证（读真实旧库 dpd）。上线前需由运维交付日切调度。
 
-> **2026-08-06 补记（报告本体为当日快照，不改；仅修正对后续动作的指引）**：调度入口已由 XXL-Job 改为 Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅。本条与下节「注册 XXL-Job 日切任务」一律以 [T5 手册 §3.2 O1–O8](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 为准：日切改为 00:35–02:55 PHT 每 5 分钟发一条 `job=dailyRoll` 消息、每次推进一页 keyset，不再是每日单次触发。
+> **2026-08-06 补记（报告本体为当日快照，不改；仅修正对后续动作的指引）**：调度入口已由 XXL-Job 改为 Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅。本条与下节「注册 XXL-Job 日切任务」一律以 [T5 手册 §3.2 O1–O8](../MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 为准：日切在 `t_collection` 约 03:00 PHT 更新完成后，于 03:35–05:55 PHT 每 5 分钟发一条 `job=dailyRoll` 消息、每次推进一页 keyset，不再是每日单次触发。
 
 ## 六、距正式上线的后续（除 AI Call 外）
 - 运维分配独占订阅 / 确认订阅唯一消费方，并将生产订阅回切 `collection-cases-ai-v1-sub`。

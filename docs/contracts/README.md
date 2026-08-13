@@ -13,7 +13,7 @@
 |------|------|
 | [README_ContextSnapshot契约对齐.md](./README_ContextSnapshot契约对齐.md) | 快照字段最小必填集、来源、金额 SSOT、开放问题 |
 | [ContextSnapshot.sample.json](./ContextSnapshot.sample.json) + [空地址样例](./ContextSnapshot.empty-address.sample.json) | **冻结的快照样例**，分别覆盖可触达与 Guard 空地址路径 |
-| [README_编排同事对齐清单.md](./README_编排同事对齐清单.md) | 要对齐的契约代码 + SPI 实现/超时 + E1–E8 一页清单 |
+| [README_t_ai_collection_PubSub契约.md](./README_t_ai_collection_PubSub契约.md) | 索引；字段/样例/验收 SSOT → [数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md) |
 | [MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | dispatch 回填 / metadata / 观察期 / 空地址 4 项(**已定稿 2026-06-11**) + token 口径 |
 
 ## 历史结论(📦 只读)

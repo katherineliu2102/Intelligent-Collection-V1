@@ -54,7 +54,7 @@
 
 | 类                           | 职责边界             | 拥有的逻辑                                       |
 | --------------------------- | ---------------- | ------------------------------------------- |
-| `EventConsumerDispatcher`   | 事件消费 + 路由 + 并发保护 | 反序列化、行锁获取、终态拦截、委托 `PlanLifecycleManager`    |
+| `EventConsumerDispatcher`   | 事件消费 + 路由 + 提交后投递 | 反序列化、按类型路由、委托 `PlanLifecycleManager`（行锁与终态拦截在其短事务内）、COMMIT 后发布派生事件 |
 | `PlanLifecycleManager`      | 计划级生命周期决策        | §4 全部伪代码（创建/中断/穷尽），事务内状态前置写入                |
 | `StepExecutionOrchestrator` | 步骤级执行管线          | §5 全部伪代码（七步骨架），在非事务上下文中运行                   |
 | `PreFlightChecker`          | 系统级实时守卫          | 实时查 DB 确认案件存活；由 Orchestrator 调用，**不直接消费事件** |
@@ -290,7 +290,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 
 ```python
 def on_case_ingested(event):
-    # 快照由 payload 组装，不读旧库（决策 B，见领域 §4.4）
+    # 快照由 payload 组装，不读 t_ai_collection（决策 B，见领域 §4.4）
     case_info = build_case_info_from_payload(event)
     snapshot  = build_snapshot_from_payload(event)
 
@@ -496,7 +496,7 @@ def on_callback_timeout(event):
 **触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`，见 [§7.3](#73-l1-基础设施异常)）。
 
-`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定、`caseId=loanId` 及发布来源，以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
+`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
 
 ```python
 def on_repayment_received(case_id, user_id):
@@ -560,8 +560,8 @@ def on_plan_exhausted(event):
     if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
         return
 
-    # 决策 B：续建复用旧计划已冻结的快照（同案件、同数据），不回读旧库；
-    # 续建/升档非外部 case_push 触发，无新 payload → carry-forward 即可。
+    # 续建复用旧计划快照，不回读 t_ai_collection；后续步骤发送前仍会按 §5②½
+    # 覆盖内存中的 dpd / totalOutstanding，保证用户可见文案取发送时刻值。
     snapshot = deserialize(plan.context_snapshot)
     case_info = case_info_from_snapshot(snapshot)
 
@@ -586,7 +586,7 @@ def on_plan_exhausted(event):
 
 ### 4.6 部分还款余额更新
 
-**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load)；链 [§2.1](#21-事件路由表ssot)）。
+**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent)；链 [§2.1](#21-事件路由表ssot)）。
 **状态影响**：无。该事件只更新活跃计划的快照金额，不属于计划状态迁移。
 
 ```python
@@ -673,11 +673,12 @@ flowchart TD
     idempotency -->|重复| duplicate_exit["退出 · 无写库"]
     idempotency --> preflight
 
-    preflight["② 系统守卫 PreFlightChecker<br/>只读 CaseService / 旧库"]
+    preflight["② 系统守卫 PreFlightChecker<br/>只读 CaseService / t_ai_collection"]
     preflight -->|案件不存在 / 已还款| cancel_plan["t_contact_plan → PLAN_CANCELLED"]
     cancel_plan --> preflight_exit["退出 · 不写 timeline"]
     preflight --> mark_executing["t_contact_plan_step · executed_at<br/>markStepExecuting"]
-    mark_executing --> guard
+    mark_executing --> refresh["②½ 用 ② 的 CaseInfo 刷新<br/>快照副本 dpd / 余额（仅内存）"]
+    refresh --> guard
 
     guard["③ 合规守卫 ExecutionGuard · SPI"]
     guard -->|deferUntil| reschedule_defer["t_contact_plan_step · trigger_time/status<br/>t_contact_plan → STEP_SCHEDULED"]
@@ -729,9 +730,18 @@ def execute_step(plan, step):
     # ⑤ 已调用：不得释放，交由渠道幂等与 §7.4 收敛。
 
     # ── ② 系统级守卫（实时查 DB；案件存在 / 还款） ──
-    if not PreFlightChecker.check(plan.case_id):
+    preflight = PreFlightChecker.inspect(plan.case_id)   # 带出本次读到的 CaseInfo
+    if not preflight.passed:
         plan.status = PLAN_CANCELLED
         return                                    # 不写 timeline、不投递 STEP_COMPLETED
+
+    # ── ②½ 渲染前刷新日变字段（复用 ② 的实时读，零新增 I/O） ──
+    context = ContextAssembler.assemble(plan, step)
+    context.snapshot.case_context.dpd = preflight.case_info.dpd
+    context.snapshot.case_context.total_outstanding = preflight.case_info.total_outstanding
+    # 仅内存覆盖：不回写 context_snapshot 列，不覆盖 stage（阶段决定模板与话术，须与计划一致）。
+    # 理由：快照 dpd 冻结于建计划时刻，单阶段最长跨 60 天（S4 = DPD 31–90），
+    # 不刷新会连续数十天向用户播报错误逾期天数；余额同理，CASE_BALANCE_UPDATED 只覆盖还款场景。
 
     # ── ③ 业务级守卫（Phase 1 内存计数器：每日渠道频率 / 时段 / 地址可用性） ──
     verdict = ExecutionGuard.evaluate(context)     # → SPI §6.1
@@ -801,7 +811,7 @@ def execute_step(plan, step):
 
 ## 6. SPI 接口契约
 
-5 个策略 SPI（`engine.spi`，渠道编排实现）+ 技术管道 `ChannelGateway`（`collection-common`）。模块边界见 [§1.2](#12-模块边界与调用全景)；DTO 字段 SSOT 见 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。
+5 个策略 SPI（`common.spi`，渠道编排实现）+ 技术管道 `ChannelGateway`（`common.channel`）；均发布于 `collection-common`。模块边界见 [§1.2](#12-模块边界与调用全景)；DTO 字段 SSOT 见 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。
 
 ### 6.1 接口职责与调用位置
 
@@ -876,7 +886,7 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 | **硬超时**      | `SpiInvoker` 统一 `Future.get(timeout_ms)`；超时或池满 → `SpiTimeoutException` → [§7.2.1](#721-spi-异常应对) · 配置键与默认值 → [基础设施附录 A.2～A.4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)                                                                                                          |
 | **I/O**      | 含 I/O 的 SPI（Guard）：**client 命令超时 < 执行器阈值**（client 第一道防线，执行器仅兜底线程池）                                                                                                                                                                                                                  |
 | **锁内 SPI**   | `AdvancementPolicy` / `ExhaustionPolicy` 在行锁事务内调用：**纯内存、≤10ms**                                                                                                                                                                                                                     |
-| **快照与历史** | 计划存活期 [context_snapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照) 不变；还款/存在性走 [§5②](#5-步骤执行管线)。Guard/Resolver 可读最多 50 条 `recentTimeline`（行为上下文，非精确计数）；AdvancementPolicy 锁内轻量上下文，`recentTimeline` 为空 |
+| **快照与历史** | 策略字段在计划存活期保持不变；`CASE_BALANCE_UPDATED` 可更新持久化的 `totalOutstanding`，步骤②½ 再在内存覆盖 `dpd` / `totalOutstanding`。还款/存在性走 [§5②](#5-步骤执行管线)。Guard/Resolver 可读最多 50 条 `recentTimeline`（行为上下文，非精确计数）；AdvancementPolicy 锁内轻量上下文，`recentTimeline` 为空 |
 
 
 > Phase 1 超时阈值为暂定值，联调后按 SPI p99 回采校准。
@@ -885,7 +895,7 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 
 ### 6.3 共享 DTO 定义
 
-**共享 DTO** 定义于 `engine.spi`（`collection-common`），描述引擎骨架、策略子层、渠道执行子层之间的输入/输出数据结构，与 SPI 接口同包发布，构成模块契约层。
+**共享 DTO** 定义于 `common.dto`（`collection-common`，与 `common.spi` 接口同模块发布），描述引擎骨架、策略子层、渠道执行子层之间的输入/输出数据结构，构成模块契约层。
 
 **SPI 与 DTO**：SPI 定义调用入口与时机；DTO 定义入参、出参及字段语义。
 
@@ -995,7 +1005,7 @@ Redis / MySQL / 运行时基础设施故障及 §5①②、③计数器的异常
 | 异常场景                                            | 位置                  | 恢复策略                                                                                                            | fail 策略 |
 | ----------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
 | `save(plan)` 事务失败                               | §4.2 / §4.5 REBUILD | NACK → 重消费（计划未持久化）                                                                                              | —       |
-| 续建 `context_snapshot` 反序列化失败                    | §4.5                | NACK → 重消费（不回读旧库）                                                                                               | —       |
+| 续建 `context_snapshot` 反序列化失败                    | §4.5                | NACK → 重消费（不回读 `t_ai_collection`）                                                                                 | —       |
 | `prepareStepDue` 事务失败                           | §4.3.1              | NACK → 重消费（状态前置未落盘）                                                                                             | —       |
 | `onChannelCallback` / `onCallbackTimeout` 写库失败  | §4.3.3 / §4.3.4     | NACK → 重消费（step 状态与回调/超时 timeline 均未更新；引擎在同一事务落库）                                                           | —       |
 | 中断链路 MySQL 读/写失败                                | §4.4                | NACK → 重消费（计划未取消）                                                                                               | —       |
@@ -1049,7 +1059,7 @@ Redis / MySQL / 运行时基础设施故障及 §5①②、③计数器的异常
 
 1. **同事务入箱**：状态迁移所在事务内向 `t_event_outbox` 插入一条 `PENDING` 记录。仓储实现声明为 `Propagation.MANDATORY`——脱离事务调用会立即失败，而不是悄悄退化回"提交后发布"。
 2. **提交后即时发布**：链路不变，仍由 Dispatcher / Orchestrator 在提交后立即 `publish`。成功即把记录置 `PUBLISHED`（销账）。**正常链路的延迟与投递量完全不受影响。**
-3. **兜底重发**：`OutboxPublisher` 每 2s（`engine.outbox.poll-interval-ms`）扫一次到期未销账的记录并重发。入箱时 `next_retry_at = now + grace`（`grace-seconds` 默认 30s），让即时发布先赢——正常情况下这个轮询扫不到任何行。重发失败按 `grace × factor^retry` 退避（上限 15min），超过 `max-retry-count`（默认 8）置 `FAILED` 并告警转人工。
+3. **兜底重发**：`OutboxPublisher` 每 2s（`engine.outbox.poll-interval-ms`）扫描 `PENDING` 到期或 `PROCESSING` 租约到期的记录；先原子认领为 `PROCESSING`，写入 60s 租约（`lease-seconds`），只有认领成功的实例才发布。认领者崩溃则租约到期后重新认领，避免多实例并发重复投递。入箱时 `next_retry_at = now + grace`（`grace-seconds` 默认 30s），让即时发布先赢——正常情况下轮询扫不到任何行。重发失败回到 `PENDING`，按 `grace × factor^retry` 退避（上限 15min）；超过 `max-retry-count`（默认 8，默认约 65min）置 `FAILED` 并告警转人工。
 4. **确定性 eventId**：派生事件的 `eventId` 由业务身份推导而非随机 UUID（`STEP_COMPLETED:{planId}:{stepOrder}:{retryCount}` / `PLAN_EXHAUSTED:{planId}` / `STAGE_CHANGED:{planId}:{targetStage}`）。事件 payload 同时携带 `caseId`、`planId`，步骤事件另带 `stepId`；入箱行将前两者落为普通列，步骤 ID 保留在 payload。这样既可按计划查询，也可从 eventId / payload 回溯原步骤。入箱记录与即时发布必须落到同一个 id，否则轮询器无法判断已投递成功、会把每个正常事件都重发一遍；同时它也让重投与兜底重发在消费侧天然收敛到同一条。
 
 **部署位置**：`OutboxPublisher` 是引擎内部的可靠性守护进程，与 `RedisStreamEventBus.consume()` 同一类角色——不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [基础设施 §5.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#52-任务清单与-cron) 的调度入口唯一性约束。
@@ -1066,10 +1076,6 @@ Redis / MySQL / 运行时基础设施故障及 §5①②、③计数器的异常
 
 #### 停摆巡检（StuckPlanReaper，只告警不修复）
 
-`StuckPlanReaper` 每 5min（`engine.reaper.interval-ms`）扫一次「非终态、`renewal_pending=0`、`updated_at` 静默超过 `idle-minutes`（默认 30），且没有任何步骤能被 due / timeout 扫描拾取」的计划。判定条件与 `selectDueSteps` / `selectTimeoutSteps` 严格互补——那两个扫描是计划推进的唯一驱动源，都捞不到即等于不会再动。命中即 `collection.plan.stuck` 计数 + ERROR 日志。
-
-**为什么不自动修复**：重建步骤或重发触达是在判断依据不足时替用户做出不可回滚的外部动作，误判的代价（重复外呼、监管投诉）远高于人工介入的延迟。巡检的价值在于把"静默停摆"变成"有人知道"。
-
-> **不可扫描补救的例外**：`REBUILD` / `ESCALATE` 的「半成品」与正常 `COMPLETE` 在库中不可区分（[§4.5](#45-穷尽续建)），故靠**先落后继 + 重投重跑**的崩溃安全序保证，而非事后对账。
+`StuckPlanReaper` 每 5min（`engine.reaper.interval-ms`）扫一次「非终态、`renewal_pending=0`、`updated_at` 静默超过 `idle-minutes`（默认 75，覆盖 Outbox 默认约 65min 的自愈窗口）、没有任何步骤能被 `selectDueSteps` / `selectTimeoutSteps` 拾取，且无 `PENDING` / `PROCESSING` Outbox」的计划——判定与 DB 内的 Cron 和 Outbox 自愈严格互补，都捞不到才视为停摆。命中即 `collection.plan.stuck` 计数 + ERROR 日志，**只把静默停摆变成有人知道，不自动重建步骤或重发触达**：在无法确认触达是否已发出时替用户做外部动作，误判代价（重复外呼、监管投诉）远高于人工介入的延迟。Reaper 不读取 Redis PEL，故 `collection.plan.stuck` 与 PEL 积压同时出现时，须先按 [基础设施 §3.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#33-异常恢复与死信) 判断事件是否仍在重投。另有一类 Reaper 刻意不碰：`REBUILD` / `ESCALATE` 的「半成品」与正常 `PLAN_COMPLETED` 在库中不可区分（[§4.5](#45-穷尽续建)），靠同事务原子提交 + `PLAN_EXHAUSTED` 重投重跑保证后继不丢，而非事后扫描补救。
 
 **Phase 2 预留**：渠道对账扫描——查供应商补 `t_contact_timeline`（[§4.3.4](#434-callback_timeout)），覆盖 B 类残留。

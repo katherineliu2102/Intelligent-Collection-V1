@@ -69,7 +69,7 @@ public class MockTriggerController {
     @Resource private IngestionFaultInjector ingestionFaultInjector;
 
     /**
-     * L4b-7：预约后续 {@code count} 条白名单 case_push 各失败一次 → 不 ack → PubSub 重投。
+     * L4b-7：预约后续 {@code count} 条白名单案件事件各失败一次 → 不 ack → PubSub 重投。
      *
      * <p>需 {@code collection.ingestion.fault-injection-enabled=true} 才生效；未启用时返回 armed=0。
      */

@@ -35,7 +35,7 @@ collection:
   ingestion:
     enabled: ${INGESTION_ENABLED:false}
     project-id: ${GCP_PUBSUB_PROJECT:}
-    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-cases-ai-v1-sub}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-ai-events-v1-sub}
     ack-deadline-seconds: 60
     max-concurrency: 4
     # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
@@ -168,8 +168,9 @@ engine:
     enabled: true
     poll-interval-ms: 2000
     grace-seconds: 30
+    lease-seconds: 60
   # 停摆巡检：非终态但已无步骤可被 due/timeout 扫描拾取 → 告警转人工，不自动重发触达。
   reaper:
     enabled: true
     interval-ms: 300000
-    idle-minutes: 30
+    idle-minutes: 75

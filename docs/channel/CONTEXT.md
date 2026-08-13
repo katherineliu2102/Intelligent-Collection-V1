@@ -3,7 +3,7 @@ domain: [智能催收, 渠道编排, collection-channel]
 doc_type: Architecture
 status: ✅ Stable
 owner: 编排(channel)
-last_updated: 2026-06-26
+last_updated: 2026-08-13
 rag_tags: [channel, orchestration, navigation, CONTEXT]
 ---
 
@@ -37,7 +37,7 @@ flowchart TB
 | **模块策略层** | 计划怎么编、Guard 拦什么、事件怎么处理 | [`渠道编排规格`](./MOCASA催收系统升级_Phase1_渠道编排规格.md)（**业务规则 SSOT**） |
 | **模块运行时** | Gateway/Adapter/Webhook 怎么接 | [`collection-channel 总规格`](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、各 Adapter 对接说明 |
 | **验证层** | 怎么测、Golden Set 在哪 | [`功能测试指南`](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)、[`testing/`](../testing/README.md) |
-| **开发演进层** | 今天做到哪、下一步什么 | [`开发进度`](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md)、[`引擎对齐待办`](./MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) |
+| **开发演进层** | 今天做到哪、下一步什么 | [`HANDOFF`](../../HANDOFF.md)、[`开发执行指南`](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) |
 
 **跨模块契约**（引擎维护，编排只读消费）：[`docs/contracts/`](../contracts/README.md)。
 
@@ -45,25 +45,24 @@ flowchart TB
 
 | 任务 | 必读（顺序） | 按需 |
 |------|--------------|------|
-| **理解渠道全貌** | 本页 → [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) → [开发进度 §0–2](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) | [HANDOFF](../../HANDOFF.md) |
+| **理解渠道全貌** | 本页 → [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) → [HANDOFF §3A](../../HANDOFF.md) | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) |
 | **编写 SPI / Adapter 代码** | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) → [执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) → [ContextSnapshot 契约](../contracts/README_ContextSnapshot契约对齐.md) | [字段透传说明](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md) |
 | **改模板 / 文案** | [渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) → [`email-templates/`](../email-templates/README.md) | [策略迭代手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) |
-| **跑测试 / L4a** | [testing §L4a](../testing/MOCASA催收系统升级_Phase1_测试文档.md) → [L4a 编排补全清单](../testing/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
-| **与引擎对齐会议** | [引擎对齐待办](./MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) | [编排对齐清单](../contracts/README_编排同事对齐清单.md) |
+| **跑测试 / L4a** | [testing 主文档](../testing/MOCASA催收系统升级_Phase1_测试文档.md) | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
+| **与引擎对齐** | [执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) · [编排对齐清单](../contracts/README_编排同事对齐清单.md) | [HANDOFF §4](../../HANDOFF.md) |
 
-## 当前进展摘要（2026-06-26）
+## 当前进展摘要
 
-> 明细与 Changelog 见 [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md)。下列与代码仓库事实对齐。
+> 活板见 [HANDOFF](../../HANDOFF.md)。下列为 2026-08 口径摘要。
 
 | 域 | 状态 | 说明 |
 |----|:--:|------|
 | 执行子层 Adapter（SMS/Push/Email） | ✅ | `NotificationSmsAdapter` / `NotificationPushAdapter` / `SendGridEmailAdapter` |
 | `DefaultStepResolver` + ScriptLibrary | ✅ | 取址 `jpushToken`、scriptSlot、变量注入 |
-| SPI A1/A2/A4/A5 | 🟡 | 主架构 **2026-06-25 临时代写** `@Primary`（L4a-全）；**非生产**，编排须 review 并替换 |
-| SMS DLR → `CHANNEL_CALLBACK` | ⏭ | **已撤销（2026-07-18）**：Phase 1 SMS 同步完成，不靠 DLR 结转 |
-| `LthVoiceAdapter` + voice Webhook | 🔴 | 未实现 |
-| `ComplianceExecutionGuard`（Redis） | 🔴 | 临时 `ConfigurableExecutionGuard` 为内存版 |
-| 渠道编排规格 §3.5 SMS 同步完成 | ✅ | 2026-07-18：与架构 §1.6.7 / 引擎 §5⑦ 对齐（不进 WAITING） |
+| SPI A1/A2/A4/A5 | 🟡 | 临时代写 / 非全生产；编排须 review 并替换（见 HANDOFF） |
+| SMS/PUSH/EMAIL 完成时机 | ✅ | dispatch 成功即完成，观察期=0（不靠 DLR） |
+| Voice / AI_CALL Adapter | 🔴 | 未完成 |
+| `ComplianceExecutionGuard`（Redis） | 🔴 | 生产须原子频控 |
 
 ## SSOT 边界（引用替代搬运）
 
@@ -73,7 +72,7 @@ flowchart TB
 | scriptSlot / 模板 ID | 渠道模板清单与配置 | §3–§7 |
 | 快照字段与取号 | contracts ContextSnapshot 契约 | §最小必填 |
 | dispatch/观察期/空地址 | 引擎渠道执行契约 | §1–§4 |
-| 步骤完成时机（SMS 两段） | 核心引擎规格 | §2.3.3 |
+| 步骤完成时机（消息三渠道同步） | 核心引擎规格 / 执行契约 | §5⑦ / §3 |
 | TC 用例与 curl | 功能测试指南 | `TC-*` |
 | L4a 用例与脚本 | testing 主文档 | §L4a |
 
@@ -93,3 +92,4 @@ flowchart TB
 | 日期 | Reason |
 |------|--------|
 | 2026-06-26 | 初版 CONTEXT；对齐 README 状态、L4a §8 临时代码事实、§3.5 SMS 语义修正索引 |
+| 2026-08-13 | 删除过时「开发进度」「引擎对齐待办」；进度改链 HANDOFF / 执行契约 |

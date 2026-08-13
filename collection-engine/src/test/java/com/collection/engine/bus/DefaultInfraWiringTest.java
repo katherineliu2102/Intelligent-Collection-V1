@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 /**
- * 防漂移守卫：Phase 1 基础设施为内存版（架构设计文档 §3.1 / §1.5）。
+ * 本地测试布线守卫：内存实现只服务测试，生产基础设施要求见架构设计文档 §1.5 与基础设施规范。
  *
  * <p>断言默认装配为内存实现，且 Redis 版尚未引入。若未来接入 Redis（多实例前置）， 本测试会失败——提醒同步更新架构文档中「Phase 1 现状为内存版」的口径。
  */

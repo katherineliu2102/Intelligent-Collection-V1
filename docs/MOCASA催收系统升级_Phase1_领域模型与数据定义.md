@@ -41,7 +41,7 @@
 
 | 阶段           | 数据内容                                              | 载体 / 落表                                 | 说明                                                   |
 | ------------ | ------------------------------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| ① 上游原始数据     | 案件字段（dpd/产品/金额/到期日…）、还款标识                         | PubSub JSON                             | 信贷推送，`case_push` / `repayment_push_and_load`         |
+| ① 上游原始数据     | 案件字段（dpd/产品/金额/到期日…）、还款标识                         | PubSub JSON                             | 数仓 Cloud Scheduler 发布，`caseEvent` / `repaymentEvent` |
 | ② 入案 payload | 精简后的案件快照字段 + 阶段                                   | EventPayload（经 `CASE_INGESTED`）         | ingestion 组装，字段见 [§6.2](#62-逐事件-payload-字段)          |
 | ③ 决策上下文快照    | CaseContext + UserProfile + ContactHistory（冻结不可变） | `t_contact_plan.context_snapshot`（JSON） | 引擎建计划时序列化，见 §4                                       |
 | ④ 触达指令 → 结果  | 渠道类型/地址/模板/幂等键 → 成功标记/结果枚举/供应商消息 ID               | `StepCommand` → `StepResult`（SPI DTO）   | 引擎 ↔ 渠道编排，见 §5                                       |
@@ -141,10 +141,11 @@ flowchart LR
 | 表名                    | 状态                  | Owner          | 首席写入方                               | 核心消费方                                      | DDL 位置                  |
 | --------------------- | ------------------- | -------------- | ----------------------------------- | ------------------------------------------ | ----------------------- |
 | `t_contact_timeline`  | NEW                 | 跨模块共写          | channel(自动触达), 人工外呼, ingestion(ETL) | 决策引擎(聚合), 合规引擎(频率), 数仓(BI)                 | 附录 A A.2.1              |
-| `t_user_device_token` | NEW                 | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`）      | collection-ingestion（enrichment 只读，**降级**） | 附录 A A.2.3              |
+| `t_user_device_token` | NEW                 | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`）      | Phase 1 入案不消费 | 附录 A A.2.3              |
 | `t_user_profile_ext`  | **NEW（Phase 2 押后）** | service        | ProfileService, 坐席后台                | 决策引擎(画像输入)                                 | 附录 A A.2.2（Phase 1 不建表） |
 | `t_event_dlq`         | NEW                 | 主架构 / common   | collection-engine（事件总线）             | 运维重放接口 `/ops/dlq/redrive`                  | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
 | `t_event_outbox`      | NEW                 | 主架构 / common   | collection-engine（状态迁移所在事务）         | `OutboxPublisher` 兜底重发（[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
+| `t_channel_callback_audit` | NEW            | 主架构 / common   | collection-admin（渠道 Webhook 入口）      | 排障与渠道分析；**不计入 timeline 触达次数**（§3.4 注 4）      | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
 
 
 #### C. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
@@ -154,10 +155,10 @@ flowchart LR
 
 | 表名                      | 状态       | 引用位置                        | 用途                                            |
 | ----------------------- | -------- | --------------------------- | --------------------------------------------- |
-| `t_collection`          | EXISTING | §4.1 CaseContext            | 案件主表；守卫/日切读库来源，非入案快照主路径                       |
+| `t_collection`          | EXISTING | 历史对账                     | 旧案件主表；不在新系统运行时路径读取                              |
 | `t_user_repayment_plan` | EXISTING | §4.1 CaseContext            | 还款计划，金额/日期来源                                  |
 | `t_user_basis`          | EXISTING | §4.2 UserProfile.BasicInfo  | 用户基本信息（name/phone/email/language）             |
-| `t_user_equipment`      | EXISTING | §4.2 UserProfile.DeviceInfo | 设备信息；Phase 1 入案不读（`jpushToken` 走 `case_push`） |
+| `t_user_equipment`      | EXISTING | §4.2 UserProfile.DeviceInfo | 设备信息；Phase 1 入案不读（`jpushToken` 走 `caseEvent.device.pushToken`） |
 
 
 > **Phase 2 才引用**的现有表（`t_user_work` / `t_user_telephone_book` / `t_system_property`，对应 UserProfile 维度 Phase 1 不填充见 §4.2 🅿️2）不在 Phase 1 矩阵展开，见 [附录 A A.3](#a3-现有表只读引用)。
@@ -204,8 +205,8 @@ flowchart TB
 | **持久实体**   | ContactPlanStep                            | §3.2      | `t_contact_plan_step`             | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进                                      | 计划内单步；含 trigger/timeout 调度字段                  |
 | **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记          | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
 | **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
-| **快照**     | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON        | `CASE_INGESTED` 建计划时冻结                                                                           | 决策输入字段；无独立表                                   |
-| **快照**     | ContextSnapshot                            | §4.4      | `t_contact_plan.context_snapshot` | 同上                                                                                               | 快照根；计划存活期内只读，保证步骤间决策一致                        |
+| **快照**     | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON        | 建计划时写入；阶段变更 / 续建时 carry-forward                                                        | 决策输入字段；无独立表                                   |
+| **快照**     | ContextSnapshot                            | §4.4      | `t_contact_plan.context_snapshot` | 同上；`CASE_BALANCE_UPDATED` 更新余额                                                               | 快照根；策略字段固定，余额允许受控更新                        |
 | **瞬态 DTO** | CaseInfo                                   | §5.1      | 否                                 | `PreFlightChecker`（步骤②）；`PlanFactory` / `ExhaustionPolicy`                                       | 实时案件态（`repaid`）；与快照 CaseContext 语义不同 |
 | **瞬态 DTO** | ExecutionContext                           | §5.2      | 否                                 | `PLAN_STEP_DUE` → 步骤执行 ③④⑤                                                                       | SPI 统一入参；含 snapshot + recentTimeline          |
 | **瞬态 DTO** | GuardVerdict                               | §5.3      | 否                                 | 步骤 ③ `ExecutionGuard.evaluate`                                                                   | 合规裁定：放行 / 拦截原因                                |
@@ -291,10 +292,10 @@ erDiagram
 
 | 出现位置 | 字段名 | 含义 |
 |---|---|---|
-| 信贷 PubSub | `loan_id` / `loanID` / `loanId` | 上游原始 key（大小写因消息类型而异） |
+| 数仓 PubSub | `caseId` | 两类 v3 单案事件的上游主键 |
 | 领域事件 payload | `caseId` | 事件总线 SSOT |
 | 新库表 | `case_id` | `t_contact_plan` / `t_contact_timeline` 等 |
-| 旧库 | `t_collection.loan_id` | 日切扫描、CaseService 查询 |
+| 案件投影 | `t_ai_collection.case_id` | 日切扫描、CaseService 查询 |
 
 **同一笔 loan 全链路必须用同一数字标识**；**不是**旧库 `t_collection.id`（hex 行主键）。关系：**1 user : N loan(case)**；Phase 1 按 loan 粒度催收。
 
@@ -852,7 +853,7 @@ loan_id（上游）
 
 | 字段                 | 类型            | 必填  | 来源                                                                                                                   | Phase 1 状态                                                                 |
 | ------------------ | ------------- | --- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| jpushToken         | String        | 否   | 上游 `case_push` 消息体 → ingestion 写入 payload（**已确认 2026-07**）；缺失且 `enrich-jpush-token=true` 时可读新库 `t_user_device_token` | JPush Registration ID；见 [数据接入 §3.1 读库](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库) |
+| jpushToken         | String        | 否   | 用户存在 JPush 注册时由上游 `caseEvent.device.pushToken` 携带并由 ingestion 写入 payload；缺失不回查 | JPush Registration ID；无 token 时 Push fallback SMS |
 | deviceModel        | String        | 否   | t_user_equipment                                                                                                     | 🅿️2 Phase 2 预留                                                            |
 | osVersion          | String        | 否   | t_user_equipment                                                                                                     | 🅿️2 Phase 2 预留                                                            |
 | phoneValidity      | PhoneValidity | 否   | t_user_profile_ext（Phase 2）                                                                                          | 🅿️2 预留，需号码检测供应商                                                           |
@@ -865,8 +866,8 @@ loan_id（上游）
 
 | 项        | 说明                                                                                                                                                  |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 主路径      | `jpushToken` 随上游 `case_push` 消息体携带 → `CASE_INGESTED` payload → 引擎冻结入 `context_snapshot`（2026-07 确认，[数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库)） |
-| 降级读库     | 消息缺失且 `collection.ingestion.enrich-jpush-token=true` 时，可读新库 `t_user_device_token`                                                                   |
+| 主路径      | `jpushToken` 随上游 `caseEvent.device.pushToken` 携带 → `CASE_INGESTED` payload → 引擎冻结入 `context_snapshot` |
+| 无注册 token | 不读库；保留空值，渠道同槽 fallback SMS                                                                                                                           |
 | 现网设备表    | `t_user_equipment` 仍由 App 上报维护；Phase 1 入案主链路不依赖此表取 token                                                                                            |
 | 多设备      | Phase 1 **单 token**（最新设备）；多 token 逗号拼接见 Notification 附录 B #5                                                                                        |
 | 与 FCM 区分 | **不使用** FCM token；催收 Push 经通知中心走 JPush                                                                                                              |
@@ -919,7 +920,7 @@ loan_id（上游）
 
 > **Java**：`com.collection.common.model.ContextSnapshot`  
 > **落库**：`t_contact_plan.context_snapshot`（JSON，§3.1）  
-> **用途**：计划存活期内只读决策输入；建计划时冻结写入，经 `ExecutionContext`（§5.2）传给 SPI。
+> **用途**：策略字段在计划存活期保持不变；建计划、阶段变更和续建时写入，`CASE_BALANCE_UPDATED` 可受控更新 `totalOutstanding`。经 `ExecutionContext`（§5.2）传给 SPI；发送前的 `dpd` / 余额覆盖规则见 [架构 §1.6.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#162-决策上下文快照化)。
 
 
 | 字段              | 类型             | 必填  | 说明                   |
@@ -931,13 +932,15 @@ loan_id（上游）
 | snapshotVersion | String         | 是   | 快照版本标识（用于 A/B 测试时区分） |
 
 
-> **不可变性约束**：快照一旦写入，不随源数据变化而更新。SPI 实现基于快照做决策——这保证了同一计划内步骤之间的决策一致性。不可快照的实时还款状态由 PreFlightChecker 在步骤执行时实时校验；争议冻结为 Phase 2 能力。
+> **不可变性约束**：策略字段在同一计划内保持不变，SPI 基于快照做决策，以保证步骤间一致性。新计划在入案、阶段变更或续建时写入快照；不可快照的实时还款状态由 PreFlightChecker 在步骤执行时校验。
 >
-> **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；接入层优先映射 `case_push`，缺少金融字段时可经 `CaseService` **只读回填** `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`。引擎仅消费 payload，并衍生 `stage`（由 dpd）、`collectionStatus`（dpd≥91 时 `CEASED`）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。联系方式以 payload 为准，不被回填覆盖。
+> **日变字段例外（对外文案准确性）**：`caseContext.dpd` / `totalOutstanding` 进入用户可见文案，冻结值会随时间失真（单阶段最长跨 60 天）。因此：① 日切发布的 `STAGE_CHANGED` 携带两字段时，carry-forward 写入新快照；② `CASE_BALANCE_UPDATED` 持久化更新活跃计划的 `totalOutstanding`；③ 步骤执行时 `StepExecutionOrchestrator` 用 PreFlightChecker 已读到的 `CaseInfo` 覆盖**内存中的**快照副本（不回写本列、不覆盖 `stage`）。实际渲染值见 `t_decision_log.input_snapshot`。
+>
+> **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 由 `caseEvent` 完整快照强制携带，缺失即脏数据（不回填）。引擎仅消费 payload，并衍生 `stage`（由 dpd）、`collectionStatus`（dpd≥91 时 `CEASED`）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。
 >
 > **JSON 序列化约定**：样例 JSON 字段名 = Java 模型字段名（fastjson 默认）。注意布尔字段 `CaseContext.isFirstLoan` 序列化为 `**firstLoan`**（去 `is` 前缀）。冻结样例见 `[./contracts/ContextSnapshot.sample.json](./contracts/ContextSnapshot.sample.json)`。MySQL `JSON` 列读回可能规范化键序/空格，测试与对账按**语义等价**断言（不按字节相等）。
 >
-> ⚠️ **待确认**：具体的序列化策略（全量 vs 精简字段）、快照大小上限、快照刷新机制（阶段变更时是否重建）待后续讨论确定。
+> ⚠️ **待确认**：具体的序列化策略（全量 vs 精简字段）、快照大小上限待后续讨论确定。快照刷新机制已定：阶段变更 carry-forward + 日变字段例外（见上）。
 
 > **与 contracts 的分工（SSOT 边界）**
 >
@@ -952,7 +955,7 @@ loan_id（上游）
 
 ## 5. SPI 契约 DTO
 
-本章定义核心引擎（`engine.lifecycle`）与渠道编排层（`engine.strategy` + `collection-channel`）之间的接口数据结构。这些 DTO 定义于 `engine.spi` 包（`collection-common` 模块），构成模块契约层。
+本章定义核心引擎（`engine.lifecycle`）与渠道编排层（`collection-channel`，含 `channel.strategy` 策略实现）之间的接口数据结构。这些 DTO 定义于 `common.dto` 包（`collection-common` 模块，与 `common.spi` 接口同模块发布），构成模块契约层。
 
 SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)。
 
@@ -1149,10 +1152,10 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 
 | EventType                   | 发布者                                                  | payload 字段（key）                                                                                                                                   | 必填 / 缺省                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`**jpushToken` 由 `case_push` 消息体携带**（2026-07 确认）；缺失时可降级读新库（[数据接入 §3.1 读库](./MOCASA催收系统升级_Phase1_数据接入规格.md#读库)）；无 token → PUSH fallback SMS |
-| STAGE_CHANGED               | ingestion / engine（ESCALATE 续建）                      | `caseId`、`stage`（=**目标阶段**）                                                                                                                       | 均必填                                                                                                                                                                                                                                                                                                                   |
-| REPAYMENT_RECEIVED          | ingestion                                            | `caseId`（=loanId）、`userId`、`cancelReason=REPAID`、`cancelScope=CASE`                                                                                  | `caseId`、`userId` 必填；仅整笔 loan 全额结清发布（`fullRepayTime` 非空或 loan 级 `STATUS=4`），取消该案件活跃计划                                                                                                                                                                                                                     |
-| CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`（上游 `currentAmmout`）、`repayStatus`                                                                            | `caseId`、`totalOutstanding` 必填；金额缺失或为负事件被忽略                                                                                                                                                                                                                                                                          |
+| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS |
+| STAGE_CHANGED               | ingestion / engine（ESCALATE 续建）                      | `caseId`、`stage`（=**目标阶段**）、`dpd`、`totalOutstanding`                                                                                             | `caseId`、`stage` 必填；`dpd`、`totalOutstanding` 可选，仅日切发布时携带（值取自 `t_ai_collection` 当日投影），非空则 carry-forward 时刷新新计划快照的同名字段，缺省保持旧值                                                                                                                                                              |
+| REPAYMENT_RECEIVED          | ingestion                                            | `caseId`、`userId`、`cancelReason=REPAID`、`cancelScope=CASE`                                                                                  | `caseId`、`userId` 必填；仅 `repaymentEvent.isFullCleared=true` 时发布，取消该案件活跃计划                                                                                                                                                                                                                     |
+| CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`                                                                            | `caseId`、`totalOutstanding` 必填；金额缺失或为负事件进入 poison                                                                                                                                                                                                                                                                          |
 | PLAN_STEP_DUE               | collection-admin（调度订阅 `job=planStepDue`）             | `planId`、`stepId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CHANNEL_CALLBACK            | admin（webhook）                                       | `planId`、`stepId`、`result`、`providerMsgId`、`disposition`                                                                                          | `planId`、`stepId` 必填；其余为供应商回调字段，细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)                                                                                                                                                                               |
 | STEP_COMPLETED              | engine                                               | `caseId`、`userId`、`planId`、`stepId`                                                                                                               | 均必填                                                                                                                                                                                                                                                                                                                   |
@@ -1296,11 +1299,11 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 
 #### A.2.3 t_user_device_token — Push Token 镜像（Phase 1）
 
-> **用途**：可选 enrichment 降级表（`enrich-jpush-token=true` 且消息缺 token 时只读）。**主路径（2026-07 确认）**：`jpushToken` 随 `case_push` 消息体携带，入案零读库。数仓同步可逐步停用。
+> **用途**：历史 token 镜像表，Phase 1 入案不读取。`jpushToken` 仅在用户存在注册时随 `caseEvent.device.pushToken` 携带；无 token 时由渠道 fallback SMS。数仓同步可按其他消费者需求保留。
 
 ```sql
 CREATE TABLE IF NOT EXISTS t_user_device_token (
-    user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID，与 case_push user_id 对齐',
+    user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID，与 caseEvent userId 对齐',
     jpush_token         VARCHAR(256)    NULL     COMMENT 'JPush Registration ID（源：旧库 t_user_extend.ji_guang_token）',
     synced_at           DATETIME        NOT NULL COMMENT '数仓同步批次时间',
     updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

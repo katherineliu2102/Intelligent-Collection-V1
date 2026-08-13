@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 Phase 1 — L4b 触达内容核对清单
 
 > **用途**：供测试同事核对 L4b 端到端联调后，手机 / App / 邮箱是否收到预期触达。  
-> **关联**：[`L4b测试报告_20260707`](./MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) · [`L4b环境交接清单`](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) · [`db/l4b-assert.sql`](../db/l4b-assert.sql)
+> **关联**：[`L4b测试报告_20260707`（归档）](./_archive/MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) · [`L4b环境交接清单`](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) · [`db/l4b-assert.sql`](../../db/l4b-assert.sql)
 
 - **测试执行日期**：2026-07-07（UTC+8）
 - **触达地址（全案统一）**

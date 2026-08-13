@@ -46,7 +46,7 @@ class OutboxPublisherTest {
     @Test
     @DisplayName("到期未销账 → 重发并置 PUBLISHED")
     void republishesDueRowAndMarksPublished() {
-        when(repository.findDueForRepublish(any(), anyInt()))
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
                 .thenReturn(Collections.singletonList(row("STEP_COMPLETED:100:1:0", 0)));
 
         publisher.republishDue();
@@ -59,9 +59,24 @@ class OutboxPublisherTest {
     }
 
     @Test
+    @DisplayName("扫描时传入短租约，保证多实例只能由认领方发布")
+    void claimsRowsWithConfiguredLease() {
+        props.getOutbox().setLeaseSeconds(75);
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
+                .thenReturn(Collections.emptyList());
+
+        LocalDateTime before = LocalDateTime.now();
+        publisher.republishDue();
+
+        ArgumentCaptor<LocalDateTime> leaseUntil = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(repository).claimDueForRepublish(any(), leaseUntil.capture(), anyInt());
+        assertThat(leaseUntil.getValue()).isAfter(before.plusSeconds(70));
+    }
+
+    @Test
     @DisplayName("重发失败 → 退避推迟，不丢记录")
     void schedulesBackoffRetryOnPublishFailure() {
-        when(repository.findDueForRepublish(any(), anyInt()))
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
                 .thenReturn(Collections.singletonList(row("STEP_COMPLETED:100:1:0", 2)));
         doThrow(new IllegalStateException("bus down")).when(eventBus).publish(any());
 
@@ -79,7 +94,7 @@ class OutboxPublisherTest {
     @DisplayName("重发次数耗尽 → FAILED 转人工，不再自动重发")
     void marksFailedWhenRetriesExhausted() {
         props.getOutbox().setMaxRetryCount(3);
-        when(repository.findDueForRepublish(any(), anyInt()))
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
                 .thenReturn(Collections.singletonList(row("STEP_COMPLETED:100:1:0", 2)));
         doThrow(new IllegalStateException("bus down")).when(eventBus).publish(any());
 
@@ -94,7 +109,21 @@ class OutboxPublisherTest {
     void marksFailedOnUndeserializablePayload() {
         OutboxEvent broken = row("STEP_COMPLETED:100:1:0", 0);
         broken.setPayload("{\"eventType\":null}");
-        when(repository.findDueForRepublish(any(), anyInt()))
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
+                .thenReturn(Collections.singletonList(broken));
+
+        publisher.republishDue();
+
+        verify(eventBus, never()).publish(any());
+        verify(repository).markFailed(eq("STEP_COMPLETED:100:1:0"), any());
+    }
+
+    @Test
+    @DisplayName("payload 反序列化抛异常 → 仅标 FAILED，后续批次仍可处理")
+    void marksFailedWhenPayloadDeserializationThrows() {
+        OutboxEvent broken = row("STEP_COMPLETED:100:1:0", 0);
+        broken.setPayload("{not-json");
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
                 .thenReturn(Collections.singletonList(broken));
 
         publisher.republishDue();
@@ -110,14 +139,14 @@ class OutboxPublisherTest {
 
         publisher.republishDue();
 
-        verify(repository, never()).findDueForRepublish(any(), anyInt());
+        verify(repository, never()).claimDueForRepublish(any(), any(), anyInt());
         verify(eventBus, never()).publish(any());
     }
 
     @Test
     @DisplayName("扫描抛错只记日志，交由下一轮自愈")
     void swallowsScanFailure() {
-        when(repository.findDueForRepublish(any(), anyInt()))
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
                 .thenThrow(new IllegalStateException("db down"));
 
         publisher.republishDue();
@@ -150,10 +179,11 @@ class OutboxPublisherTest {
     @DisplayName("单批上限取自配置，防止积压时一次性捞空表")
     void usesConfiguredBatchSize() {
         props.getOutbox().setBatchSize(7);
-        when(repository.findDueForRepublish(any(), anyInt())).thenReturn(Collections.emptyList());
+        when(repository.claimDueForRepublish(any(), any(), anyInt()))
+                .thenReturn(Collections.emptyList());
 
         publisher.republishDue();
 
-        verify(repository).findDueForRepublish(any(), eq(7));
+        verify(repository).claimDueForRepublish(any(), any(), eq(7));
     }
 }

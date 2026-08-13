@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
+import com.collection.common.enums.CancelReason;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.service.CaseService;
+import java.math.BigDecimal;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,38 +29,68 @@ class PreFlightCheckerTest {
     private CaseInfo alive() {
         CaseInfo info = new CaseInfo();
         info.setCaseId(CASE_ID);
+        info.setDpd(37);
+        info.setTotalOutstanding(new BigDecimal("1234.56"));
         info.setRepaid(false);
         return info;
     }
 
     @Test
-    @DisplayName("#5a 案件不存在(null) → false，静默退出")
-    void caseNotFound_returnsFalse() {
+    @DisplayName("#5a 案件不存在(null) → 阻断 CASE_NOT_FOUND")
+    void caseNotFound_blocks() {
         when(caseService.getCaseInfo(CASE_ID)).thenReturn(null);
-        assertThat(preFlightChecker.check(CASE_ID)).isFalse();
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isFalse();
+        assertThat(result.getBlockingReason()).isEqualTo(CancelReason.CASE_NOT_FOUND);
     }
 
     @Test
-    @DisplayName("#5b 已还款 → false")
-    void repaid_returnsFalse() {
+    @DisplayName("#5b 已还款 → 阻断 REPAID")
+    void repaid_blocks() {
         CaseInfo info = alive();
         info.setRepaid(true);
         when(caseService.getCaseInfo(CASE_ID)).thenReturn(info);
-        assertThat(preFlightChecker.check(CASE_ID)).isFalse();
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isFalse();
+        assertThat(result.getBlockingReason()).isEqualTo(CancelReason.REPAID);
     }
 
     @Test
-    @DisplayName("#5d 案件存活（未还款）→ true，可触达")
-    void alive_returnsTrue() {
+    @DisplayName("#5c 无已到期余额 → 阻断 NO_DUE_BALANCE，禁止发送零金额文案")
+    void noDueBalance_blocks() {
+        CaseInfo info = alive();
+        info.setTotalOutstanding(BigDecimal.ZERO);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(info);
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isFalse();
+        assertThat(result.getBlockingReason()).isEqualTo(CancelReason.NO_DUE_BALANCE);
+    }
+
+    @Test
+    @DisplayName("#5d 案件存活（未还款）→ 放行并带出实时案件数据，供渲染前刷新日变字段")
+    void alive_passesWithCaseInfo() {
         when(caseService.getCaseInfo(CASE_ID)).thenReturn(alive());
-        assertThat(preFlightChecker.check(CASE_ID)).isTrue();
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isTrue();
+        assertThat(result.getCaseInfo()).isNotNull();
+        assertThat(result.getCaseInfo().getDpd()).isEqualTo(37);
+        assertThat(result.getCaseInfo().getTotalOutstanding())
+                .isEqualByComparingTo(new BigDecimal("1234.56"));
     }
 
     @Test
     @DisplayName("#5e 读取失败(DB 不可达) → 抛出异常，由事件总线重投")
     void readFailure_propagatesForRetry() {
         when(caseService.getCaseInfo(CASE_ID)).thenThrow(new RuntimeException("MySQL down"));
-        assertThatThrownBy(() -> preFlightChecker.check(CASE_ID))
+        assertThatThrownBy(() -> preFlightChecker.inspect(CASE_ID))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("MySQL down");
     }

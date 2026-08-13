@@ -21,6 +21,7 @@ import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
@@ -102,7 +103,9 @@ class MessageChannelHappyPathTest {
     /** mock 出"一切放行 + 渠道成功"的 happy path 前置条件。 */
     private void stubHappyPath() {
         when(idempotencyService.acquire(anyString(), anyInt())).thenReturn(true);
-        when(preFlightChecker.check(CASE_ID)).thenReturn(true);
+        CaseInfo liveCase = new CaseInfo();
+        liveCase.setCaseId(CASE_ID);
+        when(preFlightChecker.inspect(CASE_ID)).thenReturn(PreFlightResult.passed(liveCase));
         when(contextAssembler.assemble(plan, step))
                 .thenReturn(ExecutionContext.builder().plan(plan).currentStep(step).build());
         when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.allow());
@@ -230,7 +233,7 @@ class MessageChannelHappyPathTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(preFlightChecker, never()).check(any());
+        verify(preFlightChecker, never()).inspect(any());
         verify(channelGateway, never()).dispatch(any());
         verify(eventBus, never()).publish(any());
     }

@@ -1135,7 +1135,7 @@ Phase 1 两系统 **独立运行**，一致性要求 **收敛**：
 | 本规格章节 | 引擎/infra 落点 |
 |-----------|----------------|
 | §6 策略标记、§6.4 快照 | ingestion 写 snapshot；`PlanFactory` / `ExecutionGuard` 读 snapshot |
-| §7.1 PlanFactory 对齐 | `engine.spi.PlanFactory`；步骤写入 `t_contact_plan_step.trigger_time` |
+| §7.1 PlanFactory 对齐 | `common.spi.PlanFactory`；步骤写入 `t_contact_plan_step.trigger_time` |
 | §7.0 条件 Email | `ExecutionGuard.evaluate`（**Phase 2**；Phase 1 不生成 step） |
 | §3.5 / L3 渠道 | [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) + 四份子渠道说明 |
 | §7.2 Override | 引擎 Consumer **§2.4 中断** + 案件标签；非 Guard 单点 |

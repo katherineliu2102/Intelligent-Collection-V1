@@ -17,8 +17,14 @@ public interface EventOutboxRepository {
     /** 确认已投递：PENDING → PUBLISHED。返回 false 表示记录不存在或已被处置。 */
     boolean markPublished(String eventId);
 
-    /** 到期未确认投递的记录，供兜底重发。带 LIMIT。 */
-    List<OutboxEvent> findDueForRepublish(LocalDateTime now, int limit);
+    /**
+     * 原子认领到期记录，供兜底重发。多实例仅一个实例能认领同一行；认领方崩溃后租约到期可重新认领。
+     *
+     * @param now 当前时间
+     * @param leaseUntil 认领租约到期时间
+     * @param limit 单轮上限
+     */
+    List<OutboxEvent> claimDueForRepublish(LocalDateTime now, LocalDateTime leaseUntil, int limit);
 
     /** 重发失败：累加次数并推迟下次重发。 */
     void scheduleRetry(String eventId, LocalDateTime nextRetryAt, String lastError);

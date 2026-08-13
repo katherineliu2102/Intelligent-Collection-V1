@@ -20,7 +20,8 @@ collection:
     counter: redis
   eventbus: redis
   idempotency: redis
-  case-service: real
+  # 新运行态案件源为业务库 t_ai_collection；接入层投影管道为唯一写入方，数仓不直连写表。
+  case-service: ai
   # 生产调度入口：Cloud Scheduler → 调度专用 Pub/Sub 主题 → 本应用专用订阅（基础设施规范 §5）。
   # 无入站网络、无固定端口、无执行器注册；鉴权由 GCP 服务账号与订阅权限承担。
   # 缺 project-id / subscription 时 SchedulerEntrypointValidator 会拒绝启动，不会静默不消费。

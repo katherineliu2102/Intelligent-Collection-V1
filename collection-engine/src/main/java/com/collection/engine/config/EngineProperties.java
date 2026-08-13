@@ -97,6 +97,9 @@ public class EngineProperties {
         /** 单轮兜底重发上限。 */
         private int batchSize = 200;
 
+        /** 多实例发布器的认领租约。必须覆盖一次 Redis publish 的最长合理耗时；实例在租约内崩溃，行在到期后才会被其他实例重新认领。 */
+        private int leaseSeconds = 60;
+
         /** 重发退避：nextRetryAt = now + min(grace * factor^retryCount, maxBackoffSeconds)。 */
         private int backoffFactor = 3;
 
@@ -114,8 +117,8 @@ public class EngineProperties {
         /** 巡检间隔。@Scheduled 需要字面量占位符，实际读取见 StuckPlanReaper。 */
         private long intervalMs = 300000;
 
-        /** 计划 updated_at 早于 now - 该值才纳入，避开正在处理中的计划。 */
-        private int idleMinutes = 30;
+        /** 计划 updated_at 早于 now - 该值才纳入。须不短于 Outbox 自动重发窗口，避免 Outbox 仍在自愈时提前报停摆。 */
+        private int idleMinutes = 75;
 
         private int batchSize = 200;
     }

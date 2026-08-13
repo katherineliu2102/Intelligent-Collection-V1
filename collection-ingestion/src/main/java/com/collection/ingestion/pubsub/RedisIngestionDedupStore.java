@@ -23,6 +23,7 @@ public class RedisIngestionDedupStore implements IngestionDedupStore {
     private static final String MESSAGE_PREFIX = "collection:ingestion:dedup:msg:";
     private static final String LAST_SEEN_PREFIX = "collection:ingestion:last-seen:";
     private static final String INGESTED_PREFIX = "collection:ingestion:ingested:";
+    private static final String CASE_VERSION_PREFIX = "collection:ingestion:case-version:";
     private static final Duration MESSAGE_TTL = Duration.ofDays(7);
     private static final Duration LOAN_TTL = Duration.ofDays(90);
 
@@ -91,6 +92,26 @@ public class RedisIngestionDedupStore implements IngestionDedupStore {
     public void clearIngested(Long loanId) {
         if (loanId != null) {
             redis.delete(INGESTED_PREFIX + loanId);
+        }
+    }
+
+    @Override
+    public boolean isStaleVersion(Long caseId, Long caseVersion) {
+        if (caseId == null || caseVersion == null) {
+            return false;
+        }
+        String seen = redis.opsForValue().get(CASE_VERSION_PREFIX + caseId);
+        return seen != null && caseVersion <= Long.parseLong(seen);
+    }
+
+    @Override
+    public void recordVersion(Long caseId, Long caseVersion) {
+        if (caseId != null && caseVersion != null) {
+            redis.execute(
+                    SET_IF_GREATER,
+                    Collections.singletonList(CASE_VERSION_PREFIX + caseId),
+                    String.valueOf(caseVersion),
+                    String.valueOf(LOAN_TTL.getSeconds()));
         }
     }
 }

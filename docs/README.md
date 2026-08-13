@@ -16,7 +16,8 @@
 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 事件路由、状态机、七步管线、SPI 定义 |
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
 | [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis / **定时调度（Cloud Scheduler → Pub/Sub → 应用订阅，SSOT §5）** / Repository、**运行配置附录 A**、可观测性（生产目标） |
-| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域 §9、配置键见 infra 附录 A |
+| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（接入实现 SSOT）；数仓字段与消息 → [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) |
+| [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) | ✅ | 数仓对外唯一 SSOT：计算口径、两类事件、可靠性、日切门控、验收 |
 
 ### collection-common 契约查阅
 
@@ -46,7 +47,7 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4 测试地图、链路 × 层级矩阵、§L4a 用例与脚本索引 |
-| [L4a 编排同事补全清单](./testing/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | 🟡 | L4a-全 SPI 切换前置与官方脚本说明 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 运维交付、Pilot 配置与演练 |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 
@@ -59,8 +60,7 @@
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 
-入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。包含：渠道编排规格、collection-channel 总规格、引擎对齐待办(E1–E8)、4 个 adapter 对接说明(LTH SMS/Voice、SendGrid Email、FCM Push)。
-根目录另有编排同事维护的：开发执行指南、开发进度、功能测试指南、渠道模板清单与配置、策略迭代与测试操作手册，以及 [`email-templates/`](./email-templates/) 邮件模板全套。
+入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。含编排规格、总规格、Notification（SMS/Push）/ SendGrid / LTH Voice 对接说明、开发执行指南与进度、策略迭代手册等。邮件模板见 [`email-templates/`](./email-templates/)。**本分支对 channel/ 只读**（编排同事维护）。
 
 ---
 

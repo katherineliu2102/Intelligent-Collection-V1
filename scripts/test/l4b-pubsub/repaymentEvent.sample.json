@@ -1,0 +1,21 @@
+{
+  "eventId": "l4b-repay-99000001-0001",
+  "eventType": "REPAYMENT",
+  "occurredAt": "2026-08-12T10:06:00+08:00",
+  "caseId": "99000001",
+  "userId": "99000001",
+  "caseVersion": 2,
+  "repayTime": "2026-08-12T10:00:00+08:00",
+  "paidAmount": 3000.00,
+  "isFullCleared": true,
+  "product": "3",
+  "stage": "S1",
+  "dpd": 2,
+  "collectionStatus": "SETTLED",
+  "totalOutstanding": 0.00,
+  "penaltyAmount": 0.00,
+  "remainingAmount": 0.00,
+  "dueDate": "2026-08-11",
+  "borrower": {"name": "Test Case", "phone": "+639451374358", "email": "l4b@example.com", "language": "en"},
+  "device": {"pushToken": "1a0018970bf0c19de04"}
+}

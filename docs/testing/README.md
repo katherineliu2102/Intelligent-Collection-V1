@@ -6,11 +6,10 @@
 |---|---|
 | [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) | 测试准入、用例、出口、当前状态的唯一来源（T0–T6） |
 | [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | L4b 的 topic/订阅、Nacos、凭证约定和操作 Runbook；不作测试裁决 |
-| [L4b 测试报告 20260707](./MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) | 2026-07-07 单次运行事实；不作 SSOT |
 | [L4b 触达内容核对清单](./MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md) | 手工终端核对工作纸；不定义用例或环境 |
-| [L4a 编排同事补全清单](./MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | L4a 协作/临时实现历史与后续评审项 |
-| [_archive/L4a 对齐纪要](./_archive/L4a_对齐纪要_20260622.md) | 只读历史纪要 |
+| [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Redis / GCP 运维交付、Pilot 配置与演练 |
 | [Admin P0 自测](./admin-p0-test.md) | Admin 独立 P0 自测 |
+| [_archive/L4b 测试报告 20260707](./_archive/MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) | 📦 单次运行事实归档；不作 SSOT |
 
 渠道 `TC-*` 细节见[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)。渠道架构中的 L1/L3 不等于测试 SSOT 的 L1/L3。
 

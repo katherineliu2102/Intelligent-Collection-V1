@@ -85,6 +85,10 @@ public interface ContactPlanMapper {
                     + "    (s.trigger_time IS NOT NULL AND s.status IN ('PENDING','EXECUTING')) "
                     + "    OR (s.timeout_time IS NOT NULL AND s.status = 'EXECUTING')"
                     + "  )) "
+                    + "AND NOT EXISTS ("
+                    + "  SELECT 1 FROM t_event_outbox o WHERE o.plan_id = p.id "
+                    + "  AND o.status IN ('PENDING','PROCESSING')"
+                    + ") "
                     + "ORDER BY p.id ASC LIMIT #{limit}")
     List<Long> selectStuckPlanIds(
             @Param("idleBefore") LocalDateTime idleBefore, @Param("limit") int limit);

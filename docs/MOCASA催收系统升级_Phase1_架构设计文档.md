@@ -33,8 +33,7 @@
     - [附：基础设施实现索引](#附基础设施实现索引)
 - [2. 技术栈决策](#2-技术栈决策)
 - [3. 扩展性与演进路径](#3-扩展性与演进路径)
-  - [3.1 容量扩展](#31-容量扩展)
-  - [3.2 演进预留](#32-演进预留)
+  - [3.1 演进预留](#31-演进预留)
 - [附录 A：架构决策记录 (ADR)](#附录-a架构决策记录-adr)
 
 ---
@@ -54,7 +53,7 @@
 ```
               ┌─────────────────────┐       ┌──────────────────────────────┐
               │    上游信贷系统       │       │ Cloud Scheduler → 调度 PubSub │
-              │ case_push / repayment│       │ dailyRoll（00:35–02:55 PHT）  │
+              │ caseEvent / repaymentEvent   │ dailyRoll（03:35–05:55 PHT）  │
               └──────────┬──────────┘       └────────────┬─────────────────┘
                          │ 案件 PubSub                     │ 调度订阅
                          ▼                                 ▼
@@ -66,7 +65,7 @@
 │  │                                      CASE_BALANCE_UPDATED               │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  ┌─ DPD 日切 ───────────────────────────────────────────────────────────────┐   │
-│  │ 只读扫描在催名单 / bill → 重算 Max DPD → STAGE_CHANGED / CASE_CEASED      │   │
+│  │ 只读 t_ai_collection → STAGE_CHANGED / CASE_CEASED / CASE_INGESTED（复活）│   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  两路径均 publish 领域事件；context_snapshot 由引擎建计划时冻结。                │
 └───────────────────┬──────────────────────────────────────────────────────────────┘
@@ -117,7 +116,7 @@
 
 ```
   上游信贷系统
-       │  case_push (PubSub)
+       │  caseEvent / CASE_INGESTED (PubSub)
        ▼
   接入层 (collection-ingestion)
        │  校验 / 组装 payload
@@ -161,14 +160,14 @@
 
 | 代码模块 | 入 | 出 | 边界 |
 |---|---|---|---|
-| `collection-ingestion` | 案件 PubSub：`case_push` / `repayment`；`dailyRoll` 由 admin 调度订阅触发 | `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` / `STAGE_CHANGED` / `CASE_CEASED` | 不做业务决策、不直接调用渠道、不回写旧库 |
+| `collection-ingestion` | 案件 PubSub：`caseEvent` / `repaymentEvent`；`dailyRoll` 由 admin 调度订阅触发 | `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` / `STAGE_CHANGED` / `CASE_CEASED` | 不做业务决策、不直接调用渠道；作为 `t_ai_collection` 投影唯一写入者 |
 | `collection-admin` | 供应商 Webhook / REST / 调度 PubSub 订阅 | `CHANNEL_CALLBACK` / `PLAN_STEP_DUE` / `CALLBACK_TIMEOUT` / HTTP 响应 | Webhook 与调度订阅仅发布事件；REST 不直接执行催收业务逻辑 |
 
 #### 1.2.1 上游数据接入
 
-PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。
+PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。数仓计算口径、消息样例与验收 → [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md)。
 
-> `jpushToken` 随 `case_push` 携带；缺失时可启用 `collection.ingestion.enrich-jpush-token=true`，降级读取 `t_user_device_token`。金融字段缺失时，接入可经 CaseService 只读回填后再发布 payload；引擎只消费 payload 并冻结为 `context_snapshot`。字段与衍生责任见 [领域模型 §4/§6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)。
+> 数仓 Cloud Scheduler 每日发布 `caseEvent` 完整快照，并每 15 分钟发布 `repaymentEvent`；消息均携带 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 等必填字段，缺失即按入站脏数据处置。`device.pushToken` 仅在用户有注册时携带，缺失不回查，渠道按 Push→SMS fallback 处理。接入层按 `eventId` / `caseVersion` 写投影后，引擎只消费 payload 并冻结为 `context_snapshot`。字段与衍生责任见 [领域模型 §4/§6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)。
 
 #### 1.2.2 应用入站
 
@@ -181,11 +180,11 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 
 **调度任务与场景**（`register_job(...)` 底层即写 DB 的 `trigger_time` / `timeout_time`，到期由扫表拾取）：
 
-| `job` 属性 | cron（Asia/Manila） | 扫描条件 | 发布事件 | 典型场景 |
-|---|---|---|---|---|
-| `planStepDue` | 每分钟 | `trigger_time <= NOW()` 且步骤待触发、计划非终态 | `PLAN_STEP_DUE` | 计划首步/后续步到期触发触达；观察期结束重触发；退避重试到期 |
-| `callbackTimeout` | 每分钟 | `timeout_time <= NOW()` 且 step=`EXECUTING`、计划非终态 | `CALLBACK_TIMEOUT` | AI_CALL dispatch 后 Webhook 超时未到，步骤 FAILED 并推进 |
-| `dailyRoll` | 00:35–02:55 每 5 分钟 | 并行期旧库在催名单 + `overdue_days`；切量后才 bill DPD 重算 | `STAGE_CHANGED` / `CASE_CEASED` | DPD 日切导致阶段变更或停催 |
+| `job` 属性 | 执行组件 | cron（Asia/Manila） | 扫描条件 | 发布事件 | 典型场景 |
+|---|---|---|---|---|---|
+| `planStepDue` | `ScheduledJobRunner` → `PlanStepTriggerPublisher`（admin） | `* * * * *`（每分钟） | `trigger_time <= NOW()` 且步骤待触发、计划非终态 | `PLAN_STEP_DUE` | 计划首步/后续步到期触发触达；退避重试到期 |
+| `callbackTimeout` | `ScheduledJobRunner` → `PlanStepTriggerPublisher`（admin） | `* * * * *`（每分钟） | `timeout_time <= NOW()` 且 step=`EXECUTING`、计划非终态 | `CALLBACK_TIMEOUT` | AI_CALL dispatch 后 Webhook 超时未到，步骤 FAILED 并推进 |
+| `dailyRoll` | `ScheduledJobRunner` → `DpdStageRollHandler`（ingestion） | `35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` | 数仓约 03:00 PHT 稳定后，只读 `t_ai_collection` 的 `dpd` / `stage` / `collection_status`；每次仅推进一页 keyset | `STAGE_CHANGED` / `CASE_CEASED` / `CASE_INGESTED` | 阶段变更、停催或结清反转复活；日切窗口 03:35–05:55 PHT |
 
 完整规格（含陈旧消息防抖、ACK 语义、单飞保护、运维交付清单）见 [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)。
 
@@ -213,7 +212,7 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 | 步骤 | 职责 | 失败/退出 |
 |---|---|---|
 | ① 幂等锁 | `idempotency_key` SETNX 去重 | 重复 → 静默退出 |
-| ② 系统级守卫 | `PreFlightChecker` 实时查案件存活（不存在 / 已还款） | 不可触达 → 静默退出；读取失败 → NACK 重投 |
+| ② 系统级守卫 | `PreFlightChecker` 实时查案件存活（不存在 / 已还款） | 不可触达 → 计划置 `PLAN_CANCELLED` 后退出（不写 timeline、不推进）；读取失败 → NACK 重投 |
 | ③ 业务级守卫 | SPI `ExecutionGuard` 合规校验（时段 / 空地址 / 频率） | 静默时段 → 延后执行；正常 block → `COMPLIANCE_BLOCKED` timeline + 推进；SPI 异常/超时 fail-close → SKIPPED + 推进 |
 | ④ 步骤解析 | SPI `StepResolver` 读 `context_snapshot` 生成 `StepCommand` | 异常或超时 → FAILED + 推进；返回 `null` → SKIPPED + 推进 |
 | ⑤ 渠道调度 | `ChannelGateway.dispatch()` → `StepResult` | 可重试失败 → 退避重试；其余失败交 ⑥ |
@@ -255,38 +254,45 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 
 ### 1.5 数据服务层
 
-`collection-service` 承载 MySQL 持久化（MyBatis）。**纯数据存取，不含编排/触发**。Redis 幂等契约在 `collection-common`、实现在 `collection-engine`（生产 Redis SETNX / 本地内存，见 [§3.1](#31-容量扩展)）；BigQuery 为后台冷层/渠道参考查询，非本模块职责。
+`collection-service` 承载新库 MySQL 持久化（MyBatis）与 `t_ai_collection` 只读访问，**纯数据存取，不含编排 / 触发**。BigQuery 为后台冷层与渠道参考查询，非本模块职责。
 
-| 代码模块 | 入 → 出 | 边界 |
+**契约分工**：接口全部定义在 `collection-common`，实现按存储归属分散在三个模块——
+
+| 契约 | 用途 | 实现模块 |
 |---|---|---|
-| `collection-service` | Repository / Service 调用 → MySQL 读写（MyBatis） | 纯数据存取，不含编排/触发 |
+| `common.repository`（6 个，[§1.5.1](#151-持久层-repository)） | 新库 MySQL 表读写：计划域 3 + 事件/回调审计 3 | `collection-service` |
+| `common.service`（5 个，[§1.5.2](#152-领域服务-servicecommon-契约)） | 案件表只读、Redis 键、外部系统桥接 | `collection-service` / `collection-engine` / `collection-channel` |
 
-**Repository vs Service**：计划域读写 → Repository（[§1.5.1](#151-持久层-repository)）；跨表 / Redis / 外部桥接 → Service（[§1.5.2](#152-领域服务-servicecommon-契约)）。表结构见 [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)；Repository 方法见 [基础设施 §6](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#6-持久层与跨存储一致性)。模板 / 合规 / offer 无 common 契约，见 [§1.4](#14-渠道编排层南向出站)。
+表结构见 [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)；方法全集见接口 Javadoc 与 [基础设施 §6](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#6-持久层与跨存储一致性)。模板 / 合规规则 / offer 无 common 契约，见 [§1.4](#14-渠道编排层南向出站)。
 
 #### 1.5.1 持久层 Repository
 
-`engine.lifecycle` 对计划 / 步骤 / 时间线 / 决策日志的读写全部经 Repository 接口，**不直连 Mapper**。Mapper 是 `collection-service` 内部的 MyBatis SQL 映射层，仅由 Repository 实现类调用；引擎不感知 Mapper。
+引擎与 admin 对 MySQL 的读写全部经 Repository 接口，**不直连 Mapper**。`Mapper` 指 `collection-service` 内的 MyBatis 映射接口（一个 Mapper 约对应一张表，SQL 写在方法注解或同名 XML），只允许 Repository 实现类调用；引擎不感知 Mapper，也不依赖 `collection-service`——换 ORM 或改案件表映射不触发引擎重编。
 
-| Repository | 覆盖表 | 主调用方 | 独有职责 |
+**落地路径**（三段固定命名，据此定位文件）：`common.repository.XxxRepository`（契约）→ `service.repository.XxxRepositoryImpl`（实现）→ `service.mapper.*Mapper`（SQL）。
+
+| Repository | 覆盖表 | 调用方（类） | 关键方法 / 用途 |
 |---|---|---|---|
-| `ContactPlanRepository` | `t_contact_plan` + `t_contact_plan_step` | `engine.lifecycle` | `findPlanWithLock`（行锁）、`findDueSteps` / `findTimeoutSteps`（Cron 扫描） |
-| `TimelineRepository` | `t_contact_timeline` | `engine.lifecycle` | `writeTimeline` / `getContactHistory` |
-| `DecisionLogRepository` | `t_decision_log` | `engine.lifecycle`（只写） | 决策日志落 MySQL（可作为后续数仓输入；ETL 不属 Phase 1） |
-
-MyBatis 实现位于 `collection-service`；契约接口位于 `collection-common/repository`。
+| `ContactPlanRepository` | `t_contact_plan` + `t_contact_plan_step` | `engine.lifecycle`、`engine.reaper`；admin `PlanStepTriggerPublisher`（Cron 扫表）、`PlanQueryController`（只读） | `findPlanWithLock`（行锁）、`findDueSteps` / `findTimeoutSteps`（Cron 扫描）、`savePlan` |
+| `TimelineRepository` | `t_contact_timeline` | `engine.lifecycle`（写触达结果、读近期历史）；admin `PlanQueryController`（只读） | `writeTimeline` / `getContactHistory` |
+| `DecisionLogRepository` | `t_decision_log` | `StepExecutionOrchestrator`（只写） | 落 ④ 渠道/话术决策；fail-open 不阻断触达 |
+| `EventOutboxRepository` | `t_event_outbox` | `engine.outbox`：`OutboxEventSink` 写、`OutboxPublisher` 重发 | 派生事件与状态迁移同事务落库、投递后销账（[引擎 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） |
+| `EventDlqRepository` | `t_event_dlq` | `engine.bus`（重试耗尽入列）、admin `DlqController`（`/ops/dlq` 重放） | 死信持久化与受控重放 |
+| `ChannelCallbackAuditRepository` | `t_channel_callback_audit` | admin `WebhookController`（只写） | 供应商原始回调留痕；不计入 timeline 触达次数 |
 
 #### 1.5.2 领域服务 Service（common 契约）
 
-契约在 `collection-common/service`；实现模块与 Phase 1 类见下表。
+契约在 `collection-common/service`，**共 5 个，下表即全集**。「载体」是该服务访问的存储或外部系统，**不是**业务写回地址——落库一律走 §1.5.1 的 Repository。本文只描述生产实现；本地测试替身见测试文档与 HANDOFF。
 
-| Service | 主要功能（主调用方） | 覆盖数据 | Phase 1 实现 |
-|---|---|---|---|
-| `CaseService` | 提供案件存在/还款状态实时校验及可选快照兜底（引擎） | `t_collection` + 快照反序列化 | `collection-service`：`MockCaseService`（默认）/ `RealCaseService`（`case-service=real`） |
-| `ProfileService` | 画像兜底读库（引擎经 `CaseService` 降级调用；主链路靠 payload，不依赖本服务） | 旧库 `t_user_*` 画像 | `collection-service`：联调 `MockProfileService`；上线前须替真（HANDOFF C2） |
-| `IdempotencyService` | 为步骤与渠道提供重复执行拦截（引擎骨架① / 渠道执行层） | 幂等键 + TTL（[§1.6.3](#163-幂等键契约)） | `collection-engine`：生产 Redis SETNX / 本地 `InMemoryIdempotencyService`（见 [§3.1](#31-容量扩展)） |
-| `PredictiveDialerService` | 整笔 loan 结清后请求 AI Call 合作方将该案件移出排队名单（引擎） | AI Call 合作方桥接（`filterRepaidCase`）；不绑定具体拨号线路 | `collection-channel`：`MockPredictiveDialerService`（失败仅告警） |
+| Service | 调用方 | 职责 | 载体 / 读写 | 生产实现（模块） |
+|---|---|---|---|---|
+| `CaseService` | 引擎骨架②、`ingestion` 日切 | 案件存活与还款实时校验（并带出渲染用 `dpd` / 余额）；日切 keyset 扫描；**不为入案主链路回填快照** | `t_ai_collection`，只读 | `collection-service`：`RealCaseService`（`case-service=real`、`@Primary`） |
+| `ProfileService` | 预留兜底链路按需调用 | 画像聚合；**不在主链路**——联系方式由 `caseEvent` 的 `borrower` / `device` 带出 | 画像来源待单独接入；只读 | `collection-service`：真实画像实现；未接入时不得作为生产兜底来源 |
+| `IdempotencyService` | 引擎骨架①、渠道执行层 | 步骤与触达的重复执行拦截（[§1.6.3](#163-幂等键契约)） | Redis `collection:lock:plan:` 等键 + TTL，读写 | `collection-engine`：`RedisIdempotencyService`（`SET NX EX`，跨实例） |
+| `ComplianceCounterService` | 渠道 `ExecutionGuard`（骨架③） | 单渠道与跨渠道日配额的原子占用 | Redis `collection:compliance:` 计数器，读写 | `collection-channel`：`RedisComplianceCounterService`（Lua 原子；Redis 异常上抛以 fail-close） |
+| `PredictiveDialerService` | 引擎 `REPAYMENT_RECEIVED` 处理 | 结清后请求 AI Call 合作方移出排队名单（`filterRepaidCase`） | AI Call 合作方 HTTP，无本地存储 | `collection-channel`：AI Call 合作方名单过滤 API；失败仅告警，不阻断计划取消 |
 
-> 边界：`engine.lifecycle` 经 Repository（§1.5.1）读写计划域表、经 Service（§1.5.2）做案件/画像/幂等/AI Call 供应商桥接，**一律不直连 Mapper**。MyBatis 映射与旧库对接由服务同事维护。
+> `ProfileService` 不在 Phase 1 主链路；真实兜底链路若接入它，必须提供独立画像来源实现。生产就绪差集见 [基础设施附录 C](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-c生产就绪差集登记) 与 [HANDOFF](../HANDOFF.md)；本地测试替身只在测试文档与代码配置中维护。
 
 ### 1.6 关键架构机制
 
@@ -309,25 +315,27 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 #### 1.6.1 事件驱动 + 定时触发
 
-**不变量**：模块间经 EventBus 异步协作；定时调度仅发布事件，业务逻辑在 Consumer 线程池执行。
+**不变量**：模块间只经 EventBus 异步协作；定时调度只发布事件，业务逻辑一律在 Consumer 线程池执行。
 
 **约束**：
-- 调度线程与 Consumer 线程严格隔离
-- 核心业务事件 + `CALLBACK_TIMEOUT` 哨兵 + `CASE_CEASED` 停催经 Redis Stream 流转（Phase 1 有效事件清单以 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 为 SSOT；`PTP_EXPIRED` 为 Phase 2 预留，Phase 1 不生产、不流转）
-- 调度订阅采用 Trigger-to-Event：毫秒级返回，不执行业务
+- **线程隔离**：调度线程与 Consumer 线程分离，调度侧不开业务事务、不做渠道 I/O，因此扫表快慢与触达耗时互不牵连。
+- **Trigger-to-Event**：调度订阅收到消息后毫秒级返回——只扫待办、发事件、ACK。`PlanStepTriggerPublisher` 即此模式：`findDueSteps` → 发 `PLAN_STEP_DUE`，`findTimeoutSteps` → 发 `CALLBACK_TIMEOUT`；任务清单见 [§1.2.2](#122-应用入站)。
+- **统一传输**：生产环境所有事件（业务事件、`CALLBACK_TIMEOUT` 哨兵、`CASE_CEASED` 停催）经同一条 Redis Stream 流转，无旁路直调；事件清单与路由以 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 为 SSOT，本节不复述。
 
-> 规格：[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) · [核心引擎规格 §2.1 EventType 路由](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) · [领域模型 §6 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义) · [基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)
+> 规格：[核心引擎规格 §3.1 线程隔离](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event) · [§2.1 事件路由](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) · [领域模型 §6 EventPayload](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义) · [基础设施 §2 事件总线](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)
 
 **执行正确性**
 
 #### 1.6.2 决策上下文快照化
 
-**不变量**：SPI 的静态决策输入（案件 / 画像等）读不可变 `context_snapshot`，不实时回查旧库；单个计划内所有步骤共享同一份决策上下文。（实时存活状态与合规频次计数为明确例外，见下。）
+**不变量**：SPI 的静态决策输入（案件 / 画像等）读不可变 `context_snapshot`，不实时回查案件表；单个计划内所有步骤共享同一份决策上下文。（实时存活状态、合规频次计数、对外文案的日变字段为明确例外，见下。）
 
 **约束**：
-- 接入层组装 `CASE_INGESTED` payload（PubSub 字段优先；缺金融字段时可经 CaseService 只读 enrichment）；引擎只将完整 payload 映射为不可变 `context_snapshot` 写入 plan 行，不在建快照时读旧库。ProfileService 不进入主入案链路（见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
-- `STAGE_CHANGED` 取消旧阶段计划并重建，新计划 carry-forward 旧快照并刷新 `stage`（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）
+- 接入层消费 `caseEvent` 并组装 `CASE_INGESTED` payload（完整快照由数仓消息携带，缺失即脏数据）；引擎只将完整 payload 映射为不可变 `context_snapshot` 写入 plan 行，不在建快照时读 `t_ai_collection`。ProfileService 不进入主入案链路（见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
+- 新计划（入案、阶段变更、续建）均写入快照。`STAGE_CHANGED` 取消旧阶段计划并重建，carry-forward 后刷新 `stage`；日切事件另携带 `dpd` / `totalOutstanding` 刷新新快照。引擎内部升档未携带两字段，由下一条发送时覆盖兜底（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）。
+- `CASE_BALANCE_UPDATED` 只持久化更新活跃计划快照的 `totalOutstanding`；不改变 `dpd`、阶段、模板、渠道或策略字段。
 - 实时读取例外：还款状态由 `PreFlightChecker`（骨架②）实时校验；合规频次 / 时段计数由 `ExecutionGuard`（骨架③）读实时计数器——二者均不走快照。争议冻结及其后台操作为 Phase 2 能力。
+- **对外文案日变字段例外**：骨架② 已实时读到 `CaseInfo`，其 `dpd` / `totalOutstanding` 在解析前覆盖内存中的快照副本（**不回写** `context_snapshot`，**不覆盖** `stage`）。快照的 `dpd` 冻结于建计划时刻，而单阶段最长跨 60 天（S4 = DPD 31–90），不刷新会连续数十天向用户播报错误逾期天数。实际渲染值随 `t_decision_log.input_snapshot` 落库可审计。
 
 > 规格：[领域模型 §4.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照) · [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
 
@@ -337,10 +345,10 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 **约束**：
 - 三层去重（Redis）：消费层事件去重（`collection:processed:`）→ 步骤级分布式锁（`collection:lock:plan:`）→ 渠道 SETNX 二次去重（`collection:idempotency:channel:`）
+- 上游 PubSub 的 `eventId` / `caseVersion` / 周期入催去重归接入层 `collection:ingestion:*`；其成功 publish 后才 ack，与本节三层键隔离（见 [数据接入 §2.3、§3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#23-消费可靠性)）。
 - 每步生成唯一 `idempotency_key`；key 前缀与 TTL 见基础设施 §3
 - 残余边界：「外部渠道已发出但本地落记录失败」——`AI_CALL` 由 [§1.6.7](#167-异步回调对账) 回调/哨兵兜底；同步渠道（SMS/PUSH/EMAIL）接受极低概率残余，靠幂等键 + `StuckPlanReaper` 停摆巡检告警可观测，Phase 1 不做回调对账
 - 另一类「状态已落盘但派生事件没发出去」不属于残余边界：由 `t_event_outbox` 同事务落盘 + 兜底重发完整消除（[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)）
-- 本地 CI 用 `InMemoryIdempotencyService` 替身，语义等价但不跨实例/不持久（见 [§3.1](#31-容量扩展)）
 
 > 规格：[核心引擎规格 §5 步骤①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线) · [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-运行时状态redis-kv)
 
@@ -351,8 +359,8 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 **约束**：
 - 消费任何事件后，短事务内 `SELECT FOR UPDATE` 获锁 → 状态前置写入 → COMMIT（锁窗口毫秒级；渠道 I/O 在事务外，见 [§1.6.5](#165-事务边界状态前置与渠道-io-隔离)）
 - 持锁期间计划已终态则静默退出
-- 中断源优先级：`REPAID` > `CEASED` > `STAGE_UPGRADE` > 非终态（与 [核心引擎规格 §3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#32-并发与一致性模型) SSOT 对齐）
-- 计划内多事件无全局有序保证，靠终态单调 + 中断优先级 + 状态机幂等转移收敛（乱序覆盖详见核心引擎 §3.2）
+- 中断源优先级 `REPAID` > `CEASED` > `STAGE_UPGRADE` > 非终态仅为语义/审计参考，**不是运行时覆盖规则**（与 [核心引擎规格 §3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#32-并发与一致性模型) SSOT 对齐）
+- 计划内多事件无全局有序保证，靠终态单调「先写先赢」+ 状态机幂等转移收敛（乱序覆盖详见核心引擎 §3.2）
 - 与 [§1.6.3](#163-幂等键契约) 互补：幂等防重复消费，竞态防并发写同一计划
 
 > 规格：[核心引擎规格 §3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#32-并发与一致性模型)
@@ -390,7 +398,6 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 **约束**：
 - Phase 1：供应商 Webhook 仅鉴权并发布 `CHANNEL_CALLBACK`；引擎写回调 timeline、发布 `STEP_COMPLETED`。超时未回调则引擎哨兵 `CALLBACK_TIMEOUT` 写 FAILED timeline 后自愈
-- Phase 2：渠道对账扫描（查供应商补发）作运维兜底，Phase 1 不实现。**该能力有前置条件**——只有合作方提供「按任务标识查询终态」的 API 时对账才可能自动完成；若无查询 API，只能保留回调审计 + 超时置失败 + 告警，不得自行重拨或凭推测改写真实结果
 - Webhook 入站见 [§1.2.2 应用入站](#122-应用入站)
 
 > 规格：[核心引擎规格 §4.3.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#434-callback_timeout) · [§7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)
@@ -399,11 +406,11 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 
 #### 1.6.8 可观测性守卫
 
-**不变量**：静默退出 / fail-close / SKIPPED / 哨兵兜底路径须可观测。**Phase 1 最低要求为结构化日志 + MDC**（跨线程串联决策路径）；Micrometer 指标与告警规则为生产埋点设计（**待实现**）。
+**不变量**：静默退出 / fail-close / SKIPPED / 哨兵兜底路径须可观测。生产通过结构化日志、MDC、Micrometer 指标与告警完成闭环。
 
 **约束**：
-- Phase 1 落地：上述静默/降级分支打结构化日志，MDC 透传 `caseId`/`planId`/`eventId` 便于串联排障
-- 生产埋点（待实现）：引擎在决策点输出 Micrometer 指标（跳过率、SPI 超时率、对账补发量、Stream 延迟、线程利用率），统一接入 Prometheus；新增静默分支须同步加指标
+- 静默/降级分支打结构化日志，MDC 透传 `caseId` / `planId` / `eventId` 便于串联排障。
+- 引擎在决策点输出 Micrometer 指标（跳过率、SPI 超时率、Stream 延迟、线程利用率），统一接入 Prometheus；新增静默分支须同步加指标与告警。
 
 > 规格：[基础设施 §7.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#73-指标与日志) · [§2.2 消费线程与背压](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#22-生产消费拓扑线程职责与背压) · 告警规则与 Grafana（**规划中**）
 
@@ -426,37 +433,23 @@ MyBatis 实现位于 `collection-service`；契约接口位于 `collection-commo
 | 维度 | 旧系统 | Phase 1 目标 | 备注 |
 |---|---|---|---|
 | 运行时 | Java 8 | Java 8 | |
-| 框架 | Spring Boot 2.1 | Spring Boot 2.7.18 | Boot 3.2+ / Java 17 演进见 [§3.2](#32-演进预留) |
+| 框架 | Spring Boot 2.1 | Spring Boot 2.7.18 | Boot 3.2+ / Java 17 演进见 [§3.1](#31-演进预留) |
 | 构建/部署 | — | Maven 多模块单体，单实例 | 模块划分见 [§1.1](#11-架构总览) |
 | 配置 | 本地 properties | Nacos | 本地 `application-*.yml`；生产 Nacos（admin 已引 starter） |
 | 安全 | Shiro | Shiro（管理后台 REST） | 催收引擎模块不依赖；Webhook 鉴权待接入 |
 | 持久化 | MySQL + MyBatis | MySQL 8 + MyBatis | |
-| Redis | 缓存/限流 | Stream 事件总线 + KV（幂等、合规计数） | **Phase 1 生产依赖**；内存版仅本地/CI，Redis 实现待接入（HANDOFF D1/D2，见 [§3.1](#31-容量扩展)） |
+| Redis | 缓存/限流 | Stream 事件总线 + KV（幂等、合规计数） | **Phase 1 生产依赖**；实现与生产就绪要求见 [基础设施规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
 | 外部消息 | GCP PubSub（同步） | GCP PubSub 异步消费 | `collection-ingestion` |
 | 数仓 | — | BigQuery（只读，冷层） | 后台看板冷热分离 / 渠道参考 SQL；**非** `collection-service` 职责（见 [管理后台设计](./MOCASA催收系统升级_Phase1_管理后台设计文档.md)） |
-| 调度 | XXL-Job | 外部 Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | 见 [§1.6.1](#161-事件驱动--定时触发)；本地/CI 用 `@Scheduled`。不复用旧系统 XXL-Job：主系统为常驻内网服务，避免执行器注册、固定端口与入站网络依赖 |
+| 调度 | XXL-Job | 外部 Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | 见 [§1.6.1](#161-事件驱动--定时触发)。不复用旧系统 XXL-Job：主系统为常驻内网服务，避免执行器注册、固定端口与入站网络依赖 |
 | 流程编排 | 无 | 自建状态机 + SPI | 见 [§1.3](#13-核心引擎) |
-| 可观测 | 无 | Actuator + Micrometer → Prometheus/Grafana | Phase 1 最低：结构化日志 + MDC；Micrometer/告警待实现（见 [§1.6.8](#168-可观测性守卫)） |
+| 可观测 | 无 | Actuator + Micrometer → Prometheus/Grafana | 指标、日志与告警要求见 [§1.6.8](#168-可观测性守卫) |
 
 ---
 
 ## 3. 扩展性与演进路径
 
-### 3.1 容量扩展
-
-**当前容量评估（2026-08-03 已用 BigQuery `bnpl_collection.t_collection` 真实数据核实，替代旧版"日均案件量 1w-2w"假设——该假设与真实业务规模不符，已作废）**：D-3~D90 主动催收窗口内真实在催案件合计 8,921（S0 1,635 / S1 364 / S2 248 / S3 494 / S4a 2,914 / S4b 3,266），按渠道时间表换算约 **20,981 触达/天 ≈ 73,400 事件/天**；案件分布严重向 S4（D31-90）倾斜（占比 85%），与此前口头估算的"5000 在催"存在 1.5–1.8 倍差异，**口径待与业务/数据同事核实**（详见[基础设施交互规范 B.1](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#b1-上线前容量校准清单)，同处也记录了 S4 backlog 上线激活策略这一业务待决项）。因渠道时间表是固定钟点触发（08:00 SMS 等），真实峰值由 Cron 扫描批量（`scan_limit=1000`）和扫描间隔决定，而非日总量摊平到 8 小时窗口。**结论不变**：单实例 + 8 线程 Consumer 池 + Redis + MySQL 的组合仍有数量级以上余量，吞吐层面 Phase 1 不需分布式拆分；真实容量瓶颈（如果有）会先出现在业务规则/backlog 处理策略上，不会先出现在基础设施吞吐上。
-
-**Redis 为 Phase 1 生产依赖**（旧催收系统已使用 Redis 做缓存/限流）：事件总线、幂等、合规频控的**生产实现均基于 Redis**，`collection-common` 已抽象接口，切换不改业务代码。
-
-| 能力 | 生产实现（Phase 1） | 本地 / CI 替身 | 实现状态 |
-|---|---|---|---|
-| 事件总线 | `RedisStreamEventBus`（Consumer Group + PEL 重投；轮询式，非长连接监听，已确认） | `InMemoryEventBus`（`collection.eventbus=memory`） | **生产差集未闭合**：Consumer Pool、DLQ 落库、合规频控与可观测性详见[基础设施交互规范 附录 C](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-c生产就绪差集登记) |
-| 幂等 | Redis SETNX + TTL（`RedisIdempotencyService`） | `InMemoryIdempotencyService`（`collection.idempotency=memory`） | **Pilot 已实现**（HANDOFF D2） |
-| 合规频控 | Redis 原子计数（单渠道日上限 + 跨渠道日总上限） | `ConfigurableExecutionGuard` 内存计数 | 未实现，仍是内存计数 |
-
-> 内存版仅用于本地开发与 CI 链路验证，**不用于生产**（跨实例不共享、重启清零）。生产以 Redis 保证幂等、频控与事件可靠投递。本表是 [基础设施交互规范 附录 C](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-c生产就绪差集登记) 的产品/容量视角摘要，两处不重复维护数值——差集细节和跟踪 ID 以附录 C 为准，本表随之校对。
-
-### 3.2 演进预留
+### 3.1 演进预留
 
 SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 
@@ -499,6 +492,8 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 | Lettuce 连接假死 | **Phase 1 已消除（2026-08-03）** | 消费模型改为轮询式 `@Scheduled`+`XREADGROUP`（非长连接监听），该风险的前提"长连接假死但进程不退出"不存在，因此不需要看门狗机制去兜底；决策依据见[基础设施交互规范 §3.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议) |
 | Webhook 回调丢失 | **Phase 1 加固** | Phase 1 靠 Webhook + `CALLBACK_TIMEOUT` 哨兵自愈；渠道对账扫描属 Phase 2（详见 §1.6.7） |
 | 派生事件因发布失败而丢失 | **Phase 1 已消除** | 状态迁移提交后发布失败时，原事件重投会因状态已是终态而按幂等 no-op 返回，派生事件不会被重新推导，计划静默停摆。改为事件与状态迁移同事务写 `t_event_outbox` + `OutboxPublisher` 兜底重发；正常链路仍是提交后即时发布，延迟不变（详见[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） |
+| 案件投影双写者互相覆盖 | **Phase 1 已消除（2026-08-12）** | 原设计数仓直连业务库写 `t_ai_collection` 并维护自己的 Outbox。数仓在确认 Pub/Sub 事实流本身完整、持久、可重放后，改为只发消息不写库，`collection-ingestion` 成为投影唯一写入者：实时事件与每日全量校准走同一条按 `caseVersion` 判定的写入路径，不会互相覆盖或让版本倒退（详见[数据接入规格 §3.1 投影写入](./MOCASA催收系统升级_Phase1_数据接入规格.md#投影写入与单写者约束)） |
+| 入站事实入库后领域事件丢失 | **Phase 1 已消除（2026-08-12）** | 投影写 MySQL、领域事件走 Redis Stream，无法原子提交；若提交后进程被杀，消息重投会被版本判定为陈旧而永久丢事件。改为同事务写 `t_ai_collection_inbox` 记录发布状态，重投命中 `PENDING` 时只补发事件、不重写投影 |
 | 计划静默停摆 | **Phase 1 只检测不修复** | `StuckPlanReaper` 巡检「非终态但已无步骤可被 due/timeout 扫描拾取」的计划并告警。不自动重建步骤或重发触达——那是在依据不足时替用户做不可回滚的外部动作，误判代价（重复外呼、监管投诉）高于人工介入的延迟 |
 | DLQ 合规时段碰撞 | **Phase 1 加固** | 成本极低，避免触达计划空跑（详见 §1.6 附：基础设施实现索引） |
 | AI_CALL 在途呼叫不可中止 | **Phase 1 接受** | 整笔 loan 结清取消计划时无法终止已发起的 AI 外呼（供应商暂不提供单次呼叫取消 API）；用户还款后仍可能接到一通催收电话。`PredictiveDialerService.filterRepaidCase()` 用于通知 AI Call 供应商移出已结清案件。Phase 2 方向：评估呼叫中止接口 |

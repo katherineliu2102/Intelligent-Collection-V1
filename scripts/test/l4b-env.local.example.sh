@@ -10,8 +10,8 @@
 # GCP 项目（映射 collection.ingestion.project-id）
 export GCP_PUBSUB_PROJECT="fintech-all"
 
-# L4b 阶段：测试订阅（方案 B，见 L4b 交接清单）；上线改回 collection-cases-ai-v1-sub
-export GCP_PUBSUB_SUBSCRIPTION="collection-cases-test1-sub"
+# L4b 阶段：测试订阅；Pilot/生产改 collection-ai-events-v1-sub
+export GCP_PUBSUB_SUBSCRIPTION="collection-ai-events-test1-sub"
 
 # 须 true，否则 PubSub Consumer 不启动（application-local.yml 默认 ${INGESTION_ENABLED:false}）
 export INGESTION_ENABLED=true

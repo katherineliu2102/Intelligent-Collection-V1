@@ -17,13 +17,13 @@ import org.springframework.stereotype.Service;
 /**
  * 数据接入服务。对应架构设计文档 §数据接入层、数据接入与事件规格。
  *
- * <p>生产职责：消费 PubSub（case_push / repayment）→ 校验 / 对账（旧库只读）→ publish 领域事件。 不回写旧库；<b>决策
- * B（2026-06-29）</b>：快照字段随 CASE_INGESTED payload 带出（源自 case_push）， 引擎据 payload 组装快照，运行时不读旧库
- * t_collection。CaseService 仅作兜底 / 对账。
+ * <p>生产职责：把已落库的入站事实与日切比对结果 publish 为内部领域事件。快照字段随事件 payload 带出，
+ * 引擎据 payload 组装快照，运行时不读旧库 {@code t_collection}。CaseService 仅用于投影守卫与日切。
  *
- * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供真实 PubSub 消费者 {@link
- * com.collection.ingestion.pubsub.PubSubCaseConsumer}（B1）映射后调用。本类只 publish、 不写库；ack/nack/幂等/路由归
- * Consumer。
+ * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供 {@link
+ * com.collection.ingestion.pubsub.AiCaseIngestionProcessor} 在投影事务提交后调用。本类只 publish、不写库；
+ * 投影写入与收件箱幂等归 Processor，ack/nack/路由归 {@link
+ * com.collection.ingestion.pubsub.PubSubCaseConsumer}。
  */
 @Service
 public class IngestionService {
@@ -39,7 +39,7 @@ public class IngestionService {
     }
 
     /**
-     * 决策 B（2026-06-29）：携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 case_push 映射后调用本方法，引擎据 payload 组装
+     * 携带快照字段发布 CASE_INGESTED。真实 PubSub 消费（B1）从 caseEvent 映射后调用本方法，引擎据 payload 组装
      * ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
      *
      * @param snapshotFields key 用 {@link CollectionEvent} 快照常量（DPD/PRODUCT/TOTAL_OUTSTANDING/
@@ -51,10 +51,7 @@ public class IngestionService {
         if (resolvedStage == null && snapshotFields != null) {
             resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
         }
-        // 混合方案：payload 缺金融字段时读 CaseService 回填，
-        // 联系方式（phone/email/name/jpushToken）仍以 payload 为准（putIfAbsent 不覆盖）。
-        if (snapshotFields != null && hasMissingFinancialField(snapshotFields)) {
-            enrichFinancialFromCaseService(caseId, snapshotFields);
+        if (snapshotFields != null) {
             requireFinancialFields(caseId, snapshotFields);
             if (resolvedStage == null) {
                 resolvedStage = stageFromDpd(snapshotFields.get(CollectionEvent.DPD));
@@ -85,37 +82,12 @@ public class IngestionService {
         eventBus.publish(event);
     }
 
-    /**
-     * 迟到 case_push 不信任原始快照，先读取实时案件状态；仅仍在催的案件以当前快照受控重放。
-     *
-     * @return true 表示已发布 CASE_INGESTED；false 表示当前状态不允许重放
-     */
-    public boolean replayLateCase(Long caseId, Long payloadUserId) {
-        CaseInfo current = caseService.getCaseInfo(caseId);
-        if (current == null
-                || current.isRepaid()
-                || "CEASED".equalsIgnoreCase(current.getCaseStatus())
-                || current.getStage() == null) {
-            return false;
-        }
-        ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
-        Map<String, Object> fields = currentSnapshotFields(snapshot);
-        if (fields == null) {
-            return false;
-        }
-        ingestCase(
-                caseId,
-                current.getUserId() != null ? current.getUserId() : payloadUserId,
-                current.getStage(),
-                fields);
-        return true;
-    }
-
     private Stage stageFromDpd(Object dpd) {
         return dpd instanceof Number ? Stage.fromDpd(((Number) dpd).intValue()) : null;
     }
 
-    private Map<String, Object> currentSnapshotFields(ContextSnapshot snapshot) {
+    /** 将 t_ai_collection 运行态快照映射为内部事件字段，供日切完整快照事件复用。 */
+    public Map<String, Object> currentSnapshotFields(ContextSnapshot snapshot) {
         if (snapshot == null || snapshot.getCaseContext() == null) {
             return null;
         }
@@ -144,36 +116,6 @@ public class IngestionService {
         return fields;
     }
 
-    /**
-     * 混合方案回填：payload 缺金融字段时读旧库 {@link CaseService#getContextSnapshot}，把
-     * dpd/totalOutstanding/penaltyAmount/dueDate/product 补进 snapshotFields（{@code putIfAbsent}， 不覆盖
-     * payload 已带值）。读取异常上抛，由 PubSub Consumer NACK 重投；不可补全的字段由调用方 转为 poison/DLQ，禁止发布不完整 payload。
-     */
-    private void enrichFinancialFromCaseService(Long caseId, Map<String, Object> fields) {
-        try {
-            ContextSnapshot snap = caseService.getContextSnapshot(caseId);
-            if (snap == null || snap.getCaseContext() == null) {
-                return;
-            }
-            CaseContext c = snap.getCaseContext();
-            fields.putIfAbsent(CollectionEvent.DPD, c.getDpd());
-            if (c.getTotalOutstanding() != null) {
-                fields.putIfAbsent(CollectionEvent.TOTAL_OUTSTANDING, c.getTotalOutstanding());
-            }
-            if (c.getPenaltyAmount() != null) {
-                fields.putIfAbsent(CollectionEvent.PENALTY_AMOUNT, c.getPenaltyAmount());
-            }
-            if (c.getDueDate() != null) {
-                fields.putIfAbsent(CollectionEvent.DUE_DATE, c.getDueDate().toString());
-            }
-            if (c.getProduct() != null) {
-                fields.putIfAbsent(CollectionEvent.PRODUCT, c.getProduct());
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException("financial enrichment failed for caseId=" + caseId, e);
-        }
-    }
-
     private boolean hasMissingFinancialField(Map<String, Object> fields) {
         return fields.get(CollectionEvent.DPD) == null
                 || fields.get(CollectionEvent.PRODUCT) == null
@@ -185,18 +127,56 @@ public class IngestionService {
     private void requireFinancialFields(Long caseId, Map<String, Object> fields) {
         if (hasMissingFinancialField(fields)) {
             throw new IllegalArgumentException(
-                    "CASE_INGESTED missing required financial fields after enrichment, caseId="
-                            + caseId);
+                    "event payload missing required financial fields, caseId=" + caseId);
         }
     }
 
     /** 阶段变更 → 发布 STAGE_CHANGED。 */
     public void changeStage(Long caseId, Stage newStage) {
+        changeStage(caseId, newStage, null, null);
+    }
+
+    /**
+     * 阶段变更 → 发布 STAGE_CHANGED，附带日切读到的日变字段。
+     *
+     * <p>{@code dpd} / {@code totalOutstanding} 为可选：非空时引擎在 carry-forward 快照里一并刷新，
+     * 使新计划的快照列不再停留在建计划时刻的旧值（缺省则仅刷新 stage，保持原语义）。
+     */
+    public void changeStage(
+            Long caseId, Stage newStage, Integer dpd, java.math.BigDecimal totalOutstanding) {
         eventBus.publish(
                 CollectionEvent.of(EventType.STAGE_CHANGED)
                         .with(CollectionEvent.CASE_ID, caseId)
-                        .with(CollectionEvent.STAGE, newStage.name()));
-        log.info("[Ingestion] publish STAGE_CHANGED case={} stage={}", caseId, newStage);
+                        .with(CollectionEvent.STAGE, newStage.name())
+                        .with(CollectionEvent.DPD, dpd)
+                        .with(CollectionEvent.TOTAL_OUTSTANDING, totalOutstanding));
+        log.info(
+                "[Ingestion] publish STAGE_CHANGED case={} stage={} dpd={}", caseId, newStage, dpd);
+    }
+
+    /** v2 完整快照阶段变更：不依赖旧计划 carry-forward 或旧库兜底。 */
+    public void changeStage(
+            Long caseId, Long userId, Stage newStage, Map<String, Object> snapshotFields) {
+        if (newStage == null) {
+            throw new IllegalArgumentException("CASE_STAGE_CHANGED missing stage");
+        }
+        requireFinancialFields(caseId, snapshotFields);
+        CollectionEvent event =
+                CollectionEvent.of(EventType.STAGE_CHANGED)
+                        .with(CollectionEvent.CASE_ID, caseId)
+                        .with(CollectionEvent.USER_ID, userId)
+                        .with(CollectionEvent.STAGE, newStage.name());
+        snapshotFields.forEach(
+                (key, value) -> {
+                    if (value != null) {
+                        event.with(key, value);
+                    }
+                });
+        eventBus.publish(event);
+        log.info(
+                "[Ingestion] publish STAGE_CHANGED full snapshot case={} stage={}",
+                caseId,
+                newStage);
     }
 
     /** 整笔 loan 全额结清 → 发布案件级 REPAYMENT_RECEIVED。 */

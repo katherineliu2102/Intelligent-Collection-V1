@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 基础设施交互规范
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
-> **日期**: 2026-08-04
+> **日期**: 2026-08-13
 > **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)
 
 ---
@@ -25,10 +25,10 @@
   - [4.2 Key 与生命周期规格](#42-key-与生命周期规格)
   - [4.3 原子操作与内存保护](#43-原子操作与内存保护)
 - [5. 定时调度：Cloud Scheduler → Pub/Sub → 应用订阅](#5-定时调度cloud-scheduler--pubsub--应用订阅)
-  - [5.1 生产调度约束](#51-生产调度约束)
-  - [5.2 Job 规格与运行窗口](#52-job-规格与运行窗口)
-  - [5.3 陈旧消息防抖、ACK 语义与单飞](#53-陈旧消息防抖ack-语义与单飞)
-  - [5.4 调度一致性与积压处理](#54-调度一致性与积压处理)
+  - [5.1 拓扑与职责](#51-拓扑与职责)
+  - [5.2 任务与扫描目标](#52-任务与扫描目标)
+  - [5.3 消费、恢复与幂等](#53-消费恢复与幂等)
+  - [5.4 分页与数据库调度模型](#54-分页与数据库调度模型)
   - [5.5 运维 / GCP 交付清单](#55-运维--gcp-交付清单)
 - [6. 持久层与跨存储一致性](#6-持久层与跨存储一致性)
   - [6.1 事件与调度场景映射](#61-事件与调度场景映射)
@@ -102,7 +102,7 @@ flowchart LR
 
 | 线程组 | 职责 | 禁止事项 |
 |---|---|---|
-| Cron（调度订阅消费线程） | 扫描到期步骤或旧库，发布事件后返回 | 执行渠道调用、等待业务 I/O、与 Consumer 共用线程池 |
+| Cron（调度订阅消费线程） | 扫描到期步骤或日切分页，发布事件后返回 | 执行渠道调用、等待业务 I/O、与 Consumer 共用线程池 |
 | Consumer | 经 `XREADGROUP` 获取事件，提交 Consumer Pool 执行业务管线并在成功后 `XACK` | 与 Cron 或 PEL Scanner 共用线程池 |
 | PEL Scanner | 扫描 PEL、认领超过 idle 阈值的消息并重新进入消费管线 | 执行业务管线或长期占用 Consumer 线程 |
 
@@ -137,12 +137,12 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 | 守护任务 | 线程模型 | 执行频率 | 安全约束 |
 |---|---|---|---|
 | PEL Scanner | 由独立 `@Scheduled` 任务驱动 | `collection.redis.pel-scan-interval-ms`（初始值 30s） | 每次 `XPENDING` 必须携带 `COUNT`（`collection.redis.pel-batch-size`，初始值 50），防止崩溃重启后一次性捞出海量积压导致 OOM |
-| Outbox Publisher | 引擎内独立 `@Scheduled` 任务 | `engine.outbox.poll-interval-ms`（初始值 2s） | 单批 `engine.outbox.batch-size`（初始值 200）；只捞 `next_retry_at <= now` 的 `PENDING`，入箱时该值 = `now + grace-seconds`（初始值 30s），使正常链路的即时发布先完成销账、轮询扫不到行 |
-| Stuck Plan Reaper | 引擎内独立 `@Scheduled` 任务 | `engine.reaper.interval-ms`（初始值 5min） | 只读检测 + 计数告警，**不得写库、不得重发触达**；仅纳入 `updated_at` 静默超过 `engine.reaper.idle-minutes`（初始值 30min）的计划，避开正在处理中的计划 |
+| Outbox Publisher | 引擎内独立 `@Scheduled` 任务 | `engine.outbox.poll-interval-ms`（初始值 2s） | 单批 `engine.outbox.batch-size`（初始值 200）；`PENDING` 到期或 `PROCESSING` 租约到期时，先原子认领 `engine.outbox.lease-seconds`（初始值 60s）再发布，避免多实例重复投递。入箱 `next_retry_at = now + grace-seconds`（初始值 30s），使正常链路的即时发布先完成销账、轮询扫不到行 |
+| Stuck Plan Reaper | 引擎内独立 `@Scheduled` 任务 | `engine.reaper.interval-ms`（初始值 5min） | 只读检测 + 计数告警，**不得写库、不得重发触达**；仅纳入 `updated_at` 静默超过 `engine.reaper.idle-minutes`（初始值 75min）、无 due/timeout 步骤且无活跃 Outbox（`PENDING` / `PROCESSING`）的计划，避免 Outbox 自愈期间误报 |
 
 > PEL Scanner 仅认领 idle 超过 `collection.redis.pel-min-idle-seconds`（初始值 120s）的消息。该值必须覆盖一次同步处理的最长时长（渠道 HTTP 重试、DB 写入和调度抖动）并保留安全裕量；恢复时间约为 `minIdle + 一个扫描周期`，而非固定秒数。
 
-> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务清单与-cron) 调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
+> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务与扫描目标) 的调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
 
 ---
 
@@ -269,86 +269,80 @@ return current
 
 ## 5. 定时调度：Cloud Scheduler → Pub/Sub → 应用订阅
 
-核心引擎通过外部调度器实现 Trigger-to-Event 模式（[核心引擎规格 §3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event)）。调度侧只扫描数据并发布事件，不执行业务 I/O；业务由引擎 Consumer 执行。
+本节定义新系统的**调度订阅**：Cloud Scheduler 只发定时 tick，应用收到后扫描运行时表并发布内部事件。它不定义数仓 Publisher 的 Cloud Scheduler、案件 Topic 或案件接入订阅；这些属于[数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md)与[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。
 
-**本节是调度机制的 SSOT**：机制、配置、运行窗口、积压与告警口径均以本节为准。
+调度侧只扫描和发布事件，**不做渠道 I/O**；业务由 Redis Stream Consumer 执行。本文是调度拓扑、运行语义、GCP 资源与验收的 SSOT。
 
-### 5.1 生产调度约束
+### 5.1 拓扑与职责
+
+生产入口是 **Cloud Scheduler → 调度专用 Topic → 专用订阅**，不是应用内 `@Scheduled`（`local`/`test` 例外见 [§5.2](#52-任务与扫描目标)）。tick 不含案件快照，只带消息属性 `job`。
 
 ```mermaid
 flowchart LR
-  CS[Cloud Scheduler\n3 个 Job · Asia/Manila] -->|publish attribute job=xxx| T[(调度专用 Pub/Sub 主题)]
-  T --> S[[调度专用订阅]]
-  S --> C[PubSubScheduleConsumer\ncollection-admin]
-  C --> R[ScheduledJobRunner\n单飞保护]
-  R --> DB[(MySQL 扫表)]
-  R --> EB[(Redis Stream 发事件)]
+  scheduler["应用 Cloud Scheduler\n4 条规则、3 个任务\nAsia/Manila"] -->|"job=..."| topic[(调度专用 Topic)]
+  topic --> subscription[[调度专用订阅]]
+  subscription --> consumer["PubSubScheduleConsumer\ncollection-admin"]
+  consumer --> runner["ScheduledJobRunner\n陈旧 tick 丢弃、单飞"]
+  runner --> mysql[(MySQL 扫描)]
+  runner --> stream[(Redis Stream 发事件)]
+  stream --> engine["引擎 Consumer\n执行催收业务"]
 ```
 
-| 约束 | 要求 |
-|---|---|
-| 调度入口 | 运维用 Cloud Scheduler 定时向**调度专用 Pub/Sub 主题**发消息；应用侧用**专用订阅**消费并触发扫描 |
-| 无入站依赖 | 不依赖调度执行器、固定端口或入站网络；主系统是常驻内网服务，不部署在 Cloud Run |
-| 无对外调度接口 | 不新增 HTTP 调度端点，不做 OIDC / ID Token 校验；鉴权由 GCP 服务账号与订阅权限承担 |
-| 订阅隔离 | 调度订阅与案件接入订阅 `collection-cases-ai-v1-sub` **各走各的**；开关 `collection.scheduler.enabled` 独立于 `collection.ingestion.enabled` |
-| 单订阅多任务 | 三个任务**共用一个**调度订阅，按消息属性 `job` 路由，不为每个任务建订阅 |
-| Pilot = 生产 | 同一实现直接用于正式上线，Pilot 与生产**只允许配置值不同**，不存在两套调度模型 |
-| 触达精度 | ±1min 可接受 |
-| 还款状态 | 不由调度轮询：还款 PubSub 事件取消计划，触达前 `PreFlightChecker` 再按 `loan_id` 实时核验 |
+各组件职责如下：
 
-### 5.2 Job 规格与运行窗口
+| 组件 | 职责 | 不负责 |
+| --- | --- | --- |
+| Cloud Scheduler | 按 cron 向调度 Topic 发布 tick | 扫库、执行业务、调用渠道 |
+| 调度 Topic / 订阅 | 暂存与投递 tick；应用服务账号拉取订阅 | 承载案件/还款消息 |
+| `PubSubScheduleConsumer` | 按 `job` 路由 tick，确认后交给 runner | 业务扫描、渠道 I/O |
+| `ScheduledJobRunner` | 单飞运行扫描任务，记录指标 | 直接触达客户 |
+| 扫描器 | 查询到期步骤或案件投影，发布 Redis Stream 事件 | 在调度线程中执行引擎或渠道逻辑 |
 
-调度侧只扫表 / 扫旧库并发事件；业务在引擎 Consumer 执行。Phase 1 共 3 个任务（`ptpExpired` Phase 2 预留，不创建）。时区统一 **Asia/Manila**，Cloud Scheduler 使用 **5 段 cron**（`分 时 日 月 周`）。
+**必须满足的拓扑约束**：
 
-| `job` 属性 | 类 · 模块 | Scheduler cron（PHT） | 扫描条件 → 发布事件 |
+- 调度 Topic / 订阅必须与案件 `collection-ai-events-v1` / `collection-ai-events-v1-sub` **物理隔离**；`collection.scheduler.enabled` 独立于 `collection.ingestion.enabled`。
+- 三个应用任务共用一个调度订阅，按 `job` 路由；不为每个任务创建订阅。
+- 主系统是常驻内网服务：不注册调度执行器、不暴露 HTTP 调度端点。认证和授权由 Scheduler SA 的发布权限、应用 SA 的订阅权限承担。
+- 数仓也使用 Cloud Scheduler，但只触发 Publisher 往**案件 Topic** 发 `caseEvent` / `repaymentEvent`。两套 Topic、SA、IAM 和告警分别配置。
+
+### 5.2 任务与扫描目标
+
+Phase 1 有 **3 个应用任务、4 条 Cloud Scheduler 规则**。时区统一 `Asia/Manila`；Cloud Scheduler 使用五段 cron（`分 时 日 月 周`）。Pilot 与生产使用同一实现，只允许配置值不同。
+
+| `job` 属性 | Scheduler 规则（PHT） | 扫描表与条件 | 发布事件 |
 |---|---|---|---|
-| `planStepDue` | `ScheduledJobRunner` → `PlanStepTriggerPublisher` · admin | `* * * * *`（每分钟） | `trigger_time≤NOW`，步骤待触发，计划非终态 → `PLAN_STEP_DUE` |
-| `callbackTimeout` | 同上 | `* * * * *`（每分钟） | `timeout_time≤NOW`，`EXECUTING`，计划非终态 → `CALLBACK_TIMEOUT`；Phase 1 仅服务 AI_CALL |
-| `dailyRoll` | `ScheduledJobRunner` → `DpdStageRollHandler` · ingestion | 拆两个 Job：`35,40,45,50,55 0 * * *` + `*/5 1-2 * * *` | 并行期读取旧库 `overdue_days` → `STAGE_CHANGED` / `CASE_CEASED`；白名单优先，全量模式按 Redis 游标 keyset 每次仅处理一页；当天完成后跳过后续触发，切量后再改 bill 重算 |
+| `planStepDue` | `* * * * *` | `t_contact_plan_step.trigger_time <= NOW`，步骤待触发，关联计划非终态 | `PLAN_STEP_DUE` |
+| `callbackTimeout` | `* * * * *` | `t_contact_plan_step.timeout_time <= NOW`，步骤为 `EXECUTING`，关联计划非终态 | `CALLBACK_TIMEOUT` |
+| `dailyRoll` | `35,40,45,50,55 3 * * *` | `t_ai_collection` 按 `case_id` keyset 分页，只读 DPD、stage、`collection_status` | `STAGE_CHANGED`、`CASE_CEASED`、复活 `CASE_INGESTED` |
+| `dailyRoll`（续跑） | `*/5 4-5 * * *` | 同上；Redis 游标记录已处理页，当日完成后跳过 | 同上 |
 
-> **为何 `dailyRoll` 拆两个 Job**：运行窗口为 **00:35–02:55 PHT 每 5 分钟**。5 段 cron 无法在单个表达式里既从 00:35 起步又覆盖到 02:55，`*/5 0-2 * * *` 会把 00:00–00:30 也纳入（账务数据尚未落库）。因此拆成「00 点的 35 分起」与「01–02 点整点起每 5 分钟」两条，精确覆盖窗口。两个 Job 发往同一主题、同一 `job=dailyRoll` 属性，应用侧无差别。
+`planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影。
 
-扫描逻辑集中在 `PlanStepTriggerPublisher` 与 `DpdStageRollHandler`，由两个入口共用：生产 / Pilot 走 `PubSubScheduleConsumer` → `ScheduledJobRunner`（Pub/Sub 调度订阅），`local`/`test` profile 走 `TriggerScanner`（Spring `@Scheduled`）。**入口唯一性由 `SchedulerEntrypointValidator` 在启动时强制**：`collection.scheduler.enabled=true` 且 `TriggerScanner` bean 同时存在即拒绝启动，不依赖 profile 约定自觉。
+> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 固定窗口只是当前数仓 03:00 批次的消费缓冲；真实门控仍是该批案件消息已消费完毕，迟到则推迟并告警（[数仓契约 §6](./数仓_PubSub交付契约.md#6-日切门控)）。
 
-### 5.3 陈旧消息防抖、ACK 语义与单飞
+生产 / Pilot 经 `PubSubScheduleConsumer → ScheduledJobRunner` 触发；`local`/`test` 的 `TriggerScanner` 只触发到期与超时扫描，本地日切通过 `POST /mock/daily-roll` 显式触发。`SchedulerEntrypointValidator` 强制生产入口与本地入口不同时启用。
 
-这三条是本调度链路特有的正确性要求，缺一即引入生产故障。
+### 5.3 消费、恢复与幂等
 
-#### 陈旧消息防抖（必需）
-
-Cloud Scheduler + Pub/Sub 是**至少一次投递且会累积**：应用停机 30 分钟后重启，会一次性收到约 30 条每分钟任务消息。若全部放行，启动瞬间会连跑 30 轮扫描并向 Stream 灌入重复事件——即「启动扫描风暴」。
-
-**规则**：按消息 `publishTime` 计算消息年龄，超过该任务阈值的调度消息**丢弃并计入 `collection.schedule.stale.discarded`**，只放行属于当前 tick 的那一条。
+Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tick。调度消息过期后没有业务价值，不能像案件消息一样无限重投；正确性由陈旧过滤、单飞、步骤幂等和日切游标共同保证。
 
 | 任务 | 触发周期 | 阈值配置键 | 默认值 |
 |---|---|---|---|
 | `planStepDue` / `callbackTimeout` | 60s | `collection.scheduler.stale-threshold-seconds` | `60` |
 | `dailyRoll` | 300s | `collection.scheduler.daily-roll-stale-threshold-seconds` | `300` |
 
-> **不变量：阈值 ≤ 任务触发周期**，由启动校验强制。阈值大于周期意味着上一轮的 tick 也会被判为新鲜，防抖形同虚设。
->
-> **为何 `dailyRoll` 不沿用 60s**：陈旧性是相对任务自身节奏而言的。日切 tick 每 5 分钟才有一条，凡属上一轮及更早的 tick 至少已有 300s，300s 阈值同样能全部挡住；但 60s 窗口下，重启延迟（进程启动 + 订阅 attach）极易把**当轮** tick 也判为陈旧，白白损失一整页 keyset 推进（默认 1000 笔），在 02:55 收尾的窗口里会推高 03:00 未完成告警的概率。
-
-#### ACK 语义
+`SchedulerEntrypointValidator` 强制阈值不大于任务周期。超过阈值的 tick 记录 `collection.schedule.stale.discarded` 后 ack；这避免重启后集中重跑数十轮扫描。`dailyRoll` 使用 300 秒而非 60 秒，避免启动/订阅 attach 延迟误丢当轮日切 tick。
 
 | 情况 | 处置 |
 |---|---|
-| 正常触发 | **先 ack 再执行扫描**。先 ack 可避免长时间日切页扫描撑过 ack deadline 造成重投；重复投递由单飞吸收 |
+| 新鲜 tick | **先 ack 再扫描**；日切页扫描不会撑过 ack deadline，重复投递由单飞与幂等吸收 |
 | 陈旧消息 | 丢弃 + 计数 + ack |
 | 未知 `job` 取值 | 记录 WARN + 计入 `collection.schedule.skipped{reason=UNKNOWN_JOB}` + ack，**不重投** |
-| 扫描失败 | 记录 ERROR + 计入 `collection.schedule.failed` 并告警，**不 nack**。每分钟任务下一条消息会再来；靠 nack 无限重投只会堆积过期的调度消息 |
+| 扫描失败 | 记录 ERROR、`collection.schedule.failed` 并告警，ack 后不 nack；下一 tick 重试扫描 |
 
-> `dailyRoll` 的续跑依赖既有 **Redis 游标与当日完成标记**，不依赖消息重投。
->
-> **代价与代偿**：丢弃陈旧消息等于放弃「重投」这层安全网，因此 `collection.schedule.failed` 与 `collection.schedule.triggered` 是**承重告警**（见 [§7.4](#74-告警最低要求)），不是可选的观测项。
+同一个 `job` 的并发 tick 只能运行一轮：`ScheduledJobRunner` 按任务持进程内 CAS 单飞，跳过的 tick 记 `collection.schedule.skipped{reason=IN_FLIGHT}`。不同任务互不阻塞。日切续跑依赖 Redis 游标和当日完成标记，不依赖 Pub/Sub 重投。
 
-#### 并发单飞
-
-同一任务的重复或并发投递**不得同时跑两次扫描**（日切并发会重复推进同一页游标；到期扫描并发会放大重复事件）。`ScheduledJobRunner` 按任务持进程内 CAS 闸门，跳过的投递计入 `collection.schedule.skipped{reason=IN_FLIGHT}`。闸门按任务独立，日切在跑不阻塞每分钟的到期扫描；失败路径也会释放闸门，避免一次故障让任务永久静默。
-
-#### 幂等分工（不新增去重层）
-
-跨投递的业务幂等仍由既有机制兜底，调度层**不再叠加第四层去重**：
+调度层不增加第四层去重；重复扫描由既有机制收敛：
 
 | 层 | 机制 |
 |---|---|
@@ -356,49 +350,40 @@ Cloud Scheduler + Pub/Sub 是**至少一次投递且会累积**：应用停机 3
 | 事件消费 | `collection:processed:{event_id}`（[§4.2](#42-key-与生命周期规格)） |
 | 日切 | Redis keyset 游标 + 当日完成标记 |
 
-### 5.4 调度一致性与积压处理
+> `collection.schedule.triggered` 与 `collection.schedule.failed` 是承重指标：前者证明扫描入口仍在工作，后者是 ack 后扫描失败的唯一告警信号。具体巡检与告警见 [§7.3](#73-指标与日志)、[§7.4](#74-告警最低要求)。
 
-**扫描分页**：每批 `LIMIT N`（默认 1000）；`planStepDue` 与 `callbackTimeout` 使用 `engine.consumer.scan_limit`，`dailyRoll` 使用 `collection.ingestion.daily-roll-batch-size`。`dailyRoll` 从 00:35 至 02:55 PHT 每 5 分钟续跑；`count==LIMIT` 记录当日 keyset 游标，完成后写完成标记并跳过当天后续触发。03:00 前仍未完成必须告警，禁止 `findAll`、禁止单次触发内递归扫完。
+### 5.4 分页与数据库调度模型
+
+每轮扫描有界：`planStepDue` / `callbackTimeout` 使用 `engine.consumer.scan_limit`；`dailyRoll` 使用 `collection.ingestion.daily-roll-batch-size`。日切在 03:35–05:55 PHT 每 5 分钟仅推进一页，满页记录 Redis keyset 游标；空页写当日完成标记。06:00 前未完成必须告警，禁止 `findAll` 或一次 tick 内递归扫完全表。
+
+`register_job(...)` 不创建 Cloud Scheduler Job；它只更新步骤表的到期字段，由固定频率的扫描任务拾取：
+
+| 引擎动作 | 写入 / 终态语义 | 由谁拾取 |
+|---|---|---|
+| `register_job(PLAN_STEP_DUE, t)` | 写 `t_contact_plan_step.trigger_time=t` | `planStepDue` |
+| `register_job(CALLBACK_TIMEOUT, min)` | 写 `t_contact_plan_step.timeout_time=NOW()+min` | `callbackTimeout` |
+| `cancel_scheduled_jobs(plan)` | 计划置终态；扫描 SQL 自动过滤 | 无需删除 GCP Job |
 
 ### 5.5 运维 / GCP 交付清单
 
-以下均为运维 / GCP 侧交付物，代码与配置样例已就位但**不能由研发闭合**：
+以下资源由运维在 GCP 创建；研发只交付应用代码、配置占位符和 T5 验收模板。推荐以 [T5 手册 §3.2](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 的 `gcloud` 模板执行并归档证据。
 
-| # | 交付项 | 要求 |
+| 顺序 | 交付项 | 运维操作与验收 |
 |---|---|---|
-| O1 | 调度专用 Pub/Sub 主题 | 与案件 topic `collection-cases` 分离；建议名 `collection-schedule-ai-v1` |
-| O2 | 我们专用的调度订阅 | 建议名 `collection-schedule-ai-v1-sub`；**不得**复用 `collection-cases-ai-v1-sub`，也不得与其他消费者共享 |
-| O3 | Scheduler 服务账号发布权限 | 对 O1 主题授予 `roles/pubsub.publisher`（仅该主题，最小权限） |
-| O4 | 应用服务账号订阅权限 | 对 O2 订阅授予 `roles/pubsub.subscriber`；沿用应用现有 SA 与 `GOOGLE_APPLICATION_CREDENTIALS` |
-| O5 | 订阅 ack deadline 与消息保留 | ack deadline 建议 60s；`message-retention-duration` 建议 10m（调度消息过期即无价值，短保留可减少重启后的积压）；不配置死信主题（陈旧消息由应用侧丢弃，重投无意义） |
-| O6 | 三个 Cloud Scheduler Job | 见 [§5.2](#52-job-规格与运行窗口) cron 与时区；消息属性 `job` 必填 |
-| O7 | Scheduler 失败告警 | Cloud Scheduler Job 执行失败（发布失败 / 非 2xx）需告警到值班渠道 |
-| O8 | 日切 03:00 未完成告警 | 当日 03:00 PHT 前未出现完成标记即告警（口径见 [§7.4](#74-告警最低要求)） |
+| O1 | 调度 Topic | 创建 `collection-schedule-ai-v1`（或环境等价名称）；确认不指向案件 Topic |
+| O2 | 专用订阅 | 创建 `collection-schedule-ai-v1-sub`，绑定 O1；不与其他消费者共享 |
+| O3 | Scheduler SA 权限 | 仅向 O1 Topic 授予 `roles/pubsub.publisher` |
+| O4 | 应用 SA 权限 | 仅向 O2 Subscription 授予 `roles/pubsub.subscriber`；应用日志确认调度消费者已启动 |
+| O5 | 订阅参数 | `ack-deadline=60s`、消息保留 `10m`、不配置 DLQ；调度积压由应用侧陈旧过滤处理 |
+| O6 | 4 条 Scheduler 规则 | 按 [§5.2](#52-任务与扫描目标) 创建两条每分钟规则和两条 `dailyRoll` 规则；每条携带正确 `job` 属性与 `Asia/Manila` 时区 |
+| O7 | Scheduler 发布失败告警 | Cloud Scheduler 任一 Job 发布失败通知值班渠道 |
+| O8 | 日切未完成告警 | 06:00 PHT 前没有日切完成标记时通知值班渠道 |
 
-> Cloud Scheduler 只能证明**消息已发出**，不能证明扫描跑过。「扫描是否真的在跑」必须由应用侧指标回答，见 [§7.3](#73-指标与日志)。
+部署应用时必须注入 `GCP_PUBSUB_PROJECT`、`GCP_SCHEDULER_SUBSCRIPTION` 与服务账号凭证，并设置 `collection.scheduler.enabled=true`。完整键名、热更属性与样例见[附录 A.6](#a6-定时调度)；缺订阅配置、阈值非法或同时启用本地与生产入口时，应用拒绝启动。
 
-#### 伪代码 → DB 调度（`register_job` / `cancel_scheduled_jobs`）
+**验收边界**：Cloud Scheduler 的成功记录只证明 tick 已发布；必须同时确认应用侧 `collection.schedule.triggered` 按周期增长、`collection.schedule.failed=0`、订阅无持续未确认积压。T5 调度专项用例与证据要求见[测试文档 T5-S](./testing/MOCASA催收系统升级_Phase1_测试文档.md#t5-s-调度通道专项用例)。
 
-引擎伪代码中的调度注册**不建独立 Scheduler Job**，而是写 DB 字段，由上表 cron 到期扫表拾取（[引擎 §4/§5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)）：
-
-| 伪代码 | 写库 | 由谁扫 |
-|---|---|---|
-| `register_job(PLAN_STEP_DUE, t)` | `trigger_time=t`，步骤待触发 | `planStepDue` |
-| `register_job(CALLBACK_TIMEOUT, min)` | `timeout_time=NOW()+min`（§5 ⑤ dispatch 后） | `callbackTimeout` |
-| `cancel_scheduled_jobs(plan)` | 计划置终态；扫描 SQL 过滤非终态计划，自动跳过 | — |
-
-调度订阅消费线程只做扫表→发事件→返回，**禁止业务 I/O**（[§3.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#31-线程隔离trigger-to-event)）。
-
-#### 重复扫描与去重
-
-调度侧 **不改步骤状态**，迁出扫描集前每轮会重发同一 `(planId, stepId)`，且每次 `eventId` 新生成——**不靠** `collection:processed:{event_id}` 去重，靠步骤幂等锁 `collection:lock:plan:`（[引擎 §5 ①](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)）在管线入口吸收；幂等锁在合规计数（§5 ③）之前，故重复扫描不会重复 INCR。
-
-| 事件 | 迁出扫描集 | 重复发布收敛 |
-|---|---|---|
-| `PLAN_STEP_DUE` | Consumer 消费后步骤离开「待触发」 | 幂等锁 |
-| `CALLBACK_TIMEOUT` | Consumer 消费后步骤离开 `EXECUTING`/超时态 | 步骤状态 + 幂等锁 |
-
-> **投诉/争议冻结**：Phase 2 能力；Phase 1 不存在解冻重注入、Override 事件或 Guard 拦截路径。
+**产品化边界（非 Phase 1 交付）**：当前生产入口是 GCP 调度订阅。非 GCP 或私有化部署应替换 tick 来源并复用 `ScheduledJobRunner` 与扫描器；不应将业务逻辑迁回调度器。XXL-Job 可作为未来适配器，但不是当前应用依赖。
 
 ---
 
@@ -417,14 +402,14 @@ Cloud Scheduler + Pub/Sub 是**至少一次投递且会累积**：应用停机 3
 | `PLAN_STEP_DUE` | **prepareStepDue**（事务）：读并锁计划/步骤，写计划→EXECUTING、`markStarted`、清 `trigger_time`；**executeStep**：`PreFlightChecker` 经 `CaseService.getCaseInfo` 实时查还款状态，读 `getContactHistory`，写步骤状态、timeline、`timeout_time` |
 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
-| `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) |
-| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；仅写回 `context_snapshot.caseContext.totalOutstanding`，不变更计划/步骤/模板/渠道决策字段；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) |
+| `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) |
+| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；仅写回 `context_snapshot.caseContext.totalOutstanding`，不变更计划/步骤/模板/渠道决策字段；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) |
 | `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED` |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
 | `planStepDueHandler` / `callbackTimeoutHandler` | 分页读 `findDueSteps` / `findTimeoutSteps`，只发布事件 |
 | `dailyRoll` | keyset 分页读 `CaseService.findActiveCaseIdsAfter`，逐笔读 `getCaseInfo` 与 `findActivePlansByCase`；Redis 记录日切游标和完成状态 |
 
-> `repayment_push_and_load` 的结清判定、`caseId=loanId` 映射与事件分流以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repayment_push_and_load) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
+> `repaymentEvent` 的结清判定（`isFullCleared`）与事件分流以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
 
 ### 6.2 契约分工
 
@@ -433,7 +418,11 @@ Cloud Scheduler + Pub/Sub 是**至少一次投递且会累积**：应用停机 3
 | `ContactPlanRepository` | 引擎、`PlanStepTriggerPublisher` | 读写 | 计划/步骤、行锁、Cron 扫表 |
 | `TimelineRepository` | Orchestrator、ContextAssembler | 读写 | 触达时间线 |
 | `DecisionLogRepository` | 引擎决策日志 | 只写 | `t_decision_log` |
-| `CaseService` | 守卫 / payload 兜底 | 只读 | 建计划→payload；守卫→旧库；兜底→`getContextSnapshot` |
+| `EventOutboxRepository` | `OutboxEventSink`（状态迁移同事务）、`OutboxPublisher` | 读写 | `t_event_outbox`；派生事件与状态迁移同事务落库，投递后销账（[§6.3 跨存储一致性边界](#跨存储一致性边界)） |
+| `EventDlqRepository` | `RedisStreamEventBus`（入列）、admin `/ops/dlq`（重放） | 读写 | `t_event_dlq`；死信持久化与受控重放（[§3.3](#33-异常恢复与死信)） |
+| `ChannelCallbackAuditRepository` | admin `WebhookController` | 只写 | `t_channel_callback_audit`；供应商原始回调留痕，不计入 timeline 触达次数 |
+| `CaseService` | 守卫 / 日切 / payload 兜底 | 只读 | 建计划→payload；守卫→旧库（并带出渲染用日变字段）；兜底→`getContextSnapshot` |
+| `ComplianceCounterService` | 渠道 `ExecutionGuard` | 读写（Redis） | 渠道 / 跨渠道日配额原子占用；Redis 异常上抛以 fail-close（[§4](#4-运行时状态redis-kv)） |
 
 ### 6.3 事务、行锁与并发约束
 
@@ -456,7 +445,7 @@ MySQL 计划状态、Redis Stream 确认和渠道发送不构成单一分布式�
 
 ### 7.1 配置职责与来源
 
-Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；Redis、GCP（接入与调度）与渠道凭证走部署环境的 Secret 或环境变量。**具体键名、默认值与热更属性** → [附录 A](#附录-a生产配置键索引)。
+Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；Redis、GCP（接入与调度）与渠道凭证走部署环境的 Secret 或环境变量。**键名与热更属性** → [附录 A](#附录-a生产配置键索引)；**默认值与行为语义** → 各模块正文（如 [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)）。
 
 | 来源 | 适用 | 说明 |
 |---|---|---|
@@ -521,7 +510,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 指标（job tag） | 健康口径 | 异常含义 |
 |---|---|---|
-| `collection.schedule.triggered` | `planStepDue` / `callbackTimeout` 每分钟 +1（每小时约 +60）；`dailyRoll` 仅在 00:35–02:55 PHT 窗口内增长 | 停止增长 = 调度链路断了（Scheduler 未发、订阅权限丢失或消费者未启动），比扫描失败更严重 |
+| `collection.schedule.triggered` | `planStepDue` / `callbackTimeout` 每分钟 +1（每小时约 +60）；`dailyRoll` 仅在 03:35–05:55 PHT 窗口内增长 | 停止增长 = 调度链路断了（Scheduler 未发、订阅权限丢失或消费者未启动），比扫描失败更严重 |
 | `collection.schedule.scan.rows` | 随触达量波动；持续等于 `engine.consumer.scan_limit` 说明积压 | 长期为 0 且业务有在催案件 → 扫描 SQL 或数据范围有问题 |
 | `collection.schedule.stale.discarded` | 稳态为 0；重启后允许一次尖峰后归零 | 稳态持续增长 = 消费跟不上或消息在订阅里堆积，须查 ack deadline 与消费者存活 |
 | `collection.schedule.failed` | 恒为 0 | 任意增长即须处置：调度消息已 ack 不会重投，这是失败的**唯一**信号 |
@@ -560,13 +549,13 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 调度积压 | 扫描批次连续命中上限 | 检查扫描 SQL、锁等待和事件积压 |
 | **发件箱兜底重发** | `collection.outbox.republished` 任意增长 | 正常链路恒为 0。增长即说明提交后的即时发布在失败、事件正靠发件箱救回；查事件总线连通性与 Consumer 存活 |
 | **发件箱转人工** | `collection.outbox.failed` 任意增长，或 `collection.outbox.pending` 持续不归零 | 每一条对应一个停摆的计划。按 `t_event_outbox.last_error` 定位后手工重放 |
-| **计划停摆** | `collection.plan.stuck` 任意增长 | 计划非终态却已无步骤可被 due/timeout 扫描拾取。**不会自愈**，须人工确认后决定重建步骤或终结计划 |
+| **计划停摆** | `collection.plan.stuck` 任意增长 | 计划非终态、无 due/timeout 步骤且无活跃 Outbox。先结合 PEL 深度确认是否仍在 NACK 重投；确认无重投后，须人工决定重建步骤或终结计划 |
 | **调度静默** | `collection.schedule.triggered{job=planStepDue}` 连续 5 分钟无增长 | 最高优先级：整条触达链路已停摆。依次查 Cloud Scheduler Job 状态、调度订阅未确认消息数、应用调度消费者存活 |
 | **调度扫描失败** | `collection.schedule.failed` 任意增长 | 调度消息已 ack 不会重投，须人工介入；确认失败原因后可等下一 tick 自愈或手工补发调度消息 |
 | **陈旧消息堆积** | `collection.schedule.stale.discarded` 在稳态（非重启后）持续增长 | 消费跟不上或订阅积压；查 ack deadline、消费者线程与扫描耗时 |
 | **单飞持续跳过** | `collection.schedule.skipped{reason=IN_FLIGHT}` 持续增长 | 单次扫描耗时超过触发周期，须降低批量或优化扫描 SQL |
 | **Scheduler Job 失败** | Cloud Scheduler 侧任一 Job 执行失败（运维侧告警，交付项 O7） | 查 Scheduler 服务账号对调度主题的发布权限与主题存在性 |
-| **日切未完成** | 当日 03:00 PHT 前未出现 `dailyRoll` 完成标记（交付项 O8） | 查游标推进速率、`daily-roll-batch-size` 与窗口内的丢弃/跳过计数 |
+| **日切未完成** | 当日 06:00 PHT 前未出现 `dailyRoll` 完成标记（交付项 O8） | 查游标推进速率、`daily-roll-batch-size` 与窗口内的丢弃/跳过计数 |
 
 ---
 
@@ -574,12 +563,12 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 <a id="附录运行配置与环境"></a>
 
-生产部署检索**键名、默认值与热更属性**的 SSOT；热更分类语义见 [§7.2](#72-配置热更新与静态参数)。各键行为语义见对应模块正文。
+生产部署检索**键名与热更属性**的索引；**默认值与行为语义 SSOT 在各模块正文**（接入 §2.1 / §3.3、调度 §5 等）。热更分类语义见 [§7.2](#72-配置热更新与静态参数)。
 
 | 分册 | 内容 |
 |---|---|
 | **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`） |
-| **A.3** | 接入与 PubSub（`collection.ingestion.*`、GCP 环境变量） |
+| **A.3** | 接入与 PubSub 部署索引（热更属性；行为 SSOT → [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)） |
 | **A.4** | 迁移与触达（`collection.notification.owner`） |
 | **A.5** | 接入 dedup 键索引（SSOT → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)） |
 | **A.6** | 定时调度（`collection.scheduler.*`、调度 GCP 环境变量） |
@@ -613,10 +602,11 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `engine.outbox.poll-interval-ms` | `2000` | Y | 发件箱兜底重发轮询间隔 |
 | `engine.outbox.grace-seconds` | `30` | Y-注意 | 入箱到可兜底重发的宽限期。过短会把正常事件重发一遍，过长则拉长故障恢复时间；须大于一次提交后发布的最长耗时 |
 | `engine.outbox.batch-size` | `200` | Y | 单轮兜底重发上限 |
+| `engine.outbox.lease-seconds` | `60` | Y-注意 | 多实例认领一条 Outbox 行的短租约；须覆盖一次 Redis publish 的最长合理耗时，实例崩溃后租约到期才允许重新认领 |
 | `engine.outbox.max-retry-count` | `8` | Y | 超过即置 `FAILED` 转人工（告警信号） |
 | `engine.reaper.enabled` | `true` | N | 停摆巡检开关 |
 | `engine.reaper.interval-ms` | `300000` | Y | 停摆巡检周期 |
-| `engine.reaper.idle-minutes` | `30` | Y-注意 | 计划静默多久才判定停摆；须大于一次正常步骤执行的最长耗时，否则误报 |
+| `engine.reaper.idle-minutes` | `75` | Y-注意 | 计划静默多久才判定停摆；须覆盖 Outbox 默认约 65min 的自动重试窗口，且 Reaper 会排除有活跃 Outbox 的计划 |
 | `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限 |
 | `engine.compliance.quiet_hours_start` / `end` | `21:00` / `08:00` | Y | PHT 静默时段 |
 
@@ -624,28 +614,26 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### A.3 接入与 PubSub
 
-行为 SSOT：[数据接入 §2.1～§3、§6.0](./MOCASA催收系统升级_Phase1_数据接入规格.md)。
+**部署索引**：运维查表写 Nacos/Secret/GCP；**默认值与语义 SSOT** → [数据接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)（消费参数）、[§3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（dedup）、[§4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)（日切扫描）、[§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离)（白名单）。
 
-**GCP 环境变量**（不入仓）
+**GCP 环境变量**（不入仓；默认值见接入 §2.1）
 
-| 键 | 说明 | 待闭合 |
+| 键 | 热更 | 规格 |
 |---|---|---|
-| `GCP_PUBSUB_PROJECT` | GCP 项目 ID | [C-P-01](./MOCASA催收系统升级_Phase1_数据接入规格.md#c-p-基础设施与可靠性) |
-| `GCP_PUBSUB_SUBSCRIPTION` | 独立订阅，目标 **`collection-cases-ai-v1-sub`** | C-P-01 |
-| `GOOGLE_APPLICATION_CREDENTIALS` | 服务账号 JSON 路径 | C-P-01 |
+| `GCP_PUBSUB_PROJECT` | N | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费) · [C-P-01](./MOCASA催收系统升级_Phase1_数据接入规格.md#c-p-基础设施与可靠性) |
+| `GCP_PUBSUB_SUBSCRIPTION` | N | 同上 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | N | 同上 |
 
 **Nacos / 应用配置**
 
-| 参数 Key | 默认值 | 热更 | 说明 | 规格 |
-|---|---|---|---|---|
-| `collection.ingestion.enabled` | `true` | Y | 是否启动 PubSub Consumer |
-| `collection.ingestion.ack-deadline-seconds` | `60` | Y | PubSub ack 期限（秒） | 接入 §2.1 |
-| `collection.ingestion.max-concurrency` | `4` | N | 拉取并发度；改需重启 | 接入 §2.1 |
-| `collection.ingestion.loan-id-whitelist` | 部署时指定 | Y | 受控切量期间必须为非空批准名单；全量启用须另行审批 |
-| `collection.ingestion.daily-roll-full-scan-enabled` | `false` | N | 白名单为空时才允许旧库 keyset 扫描；须与 Redis dedup 一并启用 |
-| `collection.ingestion.daily-roll-batch-size` | `1000` | N | 全量日切单次 Job 最大处理数；满批保留 Redis 游标，下一次 Job 继续 |
-| `collection.ingestion.case-push.field-map` | — | Y | PubSub JSON key → 语义字段 JSON | C-I-01 |
-| `collection.ingestion.enrich-jpush-token` | `false` | Y | 消息缺 token 时读新库补全（**主路径**：`case_push` 已带 token，2026-07 确认；仅异常消息开启） | C-I-10、接入 §3.1 |
+| 参数 Key | 热更 | 规格 |
+|---|---|---|
+| `collection.ingestion.enabled` | Y | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费) |
+| `collection.ingestion.ack-deadline-seconds` | Y | 同上；运维建 Subscription 时 `--ack-deadline` 须与此一致 |
+| `collection.ingestion.max-concurrency` | N | 同上；改值需重启 |
+| `collection.ingestion.loan-id-whitelist` | Y | [接入 §6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离) |
+| `collection.ingestion.daily-roll-full-scan-enabled` | N | [接入 §4.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#42-读库与扫描) |
+| `collection.ingestion.daily-roll-batch-size` | N | [接入 §4.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#43-日切流程) |
 
 <a id="a4-迁移与触达"></a>
 
@@ -653,7 +641,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 参数 Key | 取值 | 热更 | 说明 | 规格 |
 |---|---|---|---|---|
-| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属 | [接入 §6.0～§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
+| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
 
 ### A.5 接入层 Redis Key 索引
 
@@ -731,6 +719,6 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 合规频控 | Redis Lua 原子计数，单渠道与跨渠道日上限 | Pilot 使用 Redis Lua 双计数；local/test 保留内存实现；键名、PHT 过期时间与断连 fail-close 已单测覆盖 | 跨实例上限与真实 Redis 断连行为待 T5 环境验证 | 高 | T5-R8 证据及告警到达记录 |
 | 日切去重 | Redis 去重且与旧系统隔离 | `RedisDailyRollDeduplicator` 已使用 `collection:ingestion:` 前缀和 2 天 TTL | 日切 Redis 与生产配置仍待 Pilot 验收 | 高 | 确认物理隔离、配置与运维检索口径 |
 | 接入去重 | 消息重投、乱序水位与周期内重复入催跨重启/跨实例一致 | `RedisIngestionDedupStore` 承载三类 key（`dedup:msg` 7d、`last-seen` 90d Lua 水位、`ingested` 90d），内存实现仅留本地与 CI | 真实 Redis 上的重启连续性待 Pilot 验收 | 高 | 重启后重复消息仍被拦截、结清后可再次入案 |
-| 调度 | Cloud Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | `PubSubScheduleConsumer` + `ScheduledJobRunner` 已实现：单订阅按 `job` 属性路由、按 `publishTime` 丢弃陈旧消息、一律 ack 不重投、按任务单飞、五个 `collection.schedule.*` 指标；`SchedulerEntrypointValidator` 强制配置完整性、阈值 ≤ 周期与调度入口唯一；XXL 运行时（类、依赖、配置、环境变量）已移除；全量 `dailyRoll` 仍按 Redis 游标 keyset 单页扫描并记录当日完成状态。27 例单测覆盖路由、陈旧丢弃、重复投递、并发单飞与入口唯一性 | 调度主题 / 专用订阅 / 双向 IAM / 三个 Scheduler Job / ack deadline 与消息保留 / Scheduler 失败与 03:00 未完成告警均属运维 GCP 交付（[§5.5](#55-运维--gcp-交付清单) O1–O8） | 高 | O1–O8 交付完成，且 Pilot 上观测到 `collection.schedule.triggered` 按周期增长、重启后 `stale.discarded` 出现一次尖峰后归零 |
+| 调度 | Cloud Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | `PubSubScheduleConsumer` + `ScheduledJobRunner` 已实现：单订阅按 `job` 属性路由、按 `publishTime` 丢弃陈旧消息、一律 ack 不重投、按任务单飞、五个 `collection.schedule.*` 指标；`SchedulerEntrypointValidator` 强制配置完整性、阈值 ≤ 周期与调度入口唯一；XXL 运行时（类、依赖、配置、环境变量）已移除；全量 `dailyRoll` 仍按 Redis 游标 keyset 单页扫描并记录当日完成状态。27 例单测覆盖路由、陈旧丢弃、重复投递、并发单飞与入口唯一性 | 调度主题 / 专用订阅 / 双向 IAM / 四条 Cloud Scheduler Job / ack deadline 与消息保留 / Scheduler 失败与 06:00 未完成告警均属运维 GCP 交付（[§5.5](#55-运维--gcp-交付清单) O1–O8） | 高 | O1–O8 交付完成，且 Pilot 上观测到 `collection.schedule.triggered` 按周期增长、重启后 `stale.discarded` 出现一次尖峰后归零 |
 | 还款分流与金额 | 仅全额结清取消；部分还款刷新后续渲染金额 | 已按 `fullRepayTime` / `STATUS=4` 分流；部分还款仅受控更新活跃计划快照 `totalOutstanding`；两类分支已单测覆盖 | 缺真实 PubSub 回归及金额字段质量验收 | 高 | 以真实消息覆盖缺失/负值/重复/终态、部分还款与全额结清 |
 | 可观测性 | Stream/PEL/DLQ、线程池、合规与调度均有指标和告警 | `/actuator/prometheus` 暴露 §7.3 全部指标（事件、PEL、Stream 长度、DLQ、线程池、跳过原因、SPI 超时），消费入口统一写 MDC | 告警规则、通知路由与 Dashboard 依赖 Prometheus/Alertmanager 部署 | 高（2026-08-05 决定：由阻断降级，可与渠道验证、切量并行） | 代偿期内每日人工巡检日志并手工抓取 `/actuator/prometheus` 记录 PEL/DLQ/跳过原因；最迟 T6 受控切量前完成抓取、告警路由与 Dashboard，并留存告警到达证据 |

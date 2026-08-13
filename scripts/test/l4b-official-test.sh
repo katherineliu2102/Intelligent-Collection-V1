@@ -7,7 +7,7 @@
 #       裁决不看 REST 预览，而看 t_contact_plan / _step / _timeline 落库事实。
 #
 # 前置（缺一不可，均由 l4b-preflight.sh --strict 校验）：
-#   1) 运维已建 collection-cases-test1 + collection-cases-test1-sub，且**独占消费**；
+#   1) 运维已建 collection-ai-events-test1 + collection-ai-events-test1-sub，且**独占消费**；
 #   2) Nacos 已指向测试订阅、白名单 99000000–99000005、渠道沙箱开关已发布；
 #   3) 本机 gcloud 有测试 topic publisher 权限，credentials.json 就位；
 #   4) 本 shell 已注入 DB_HOST/DB_PORT/DB_USER/DB_PASS/DB_NAME（不入仓）；
@@ -16,7 +16,7 @@
 # 用法：
 #   source scripts/test/l4b-env.local.sh
 #   export DB_HOST=... DB_PORT=3306 DB_USER=... DB_PASS=... DB_NAME=ai_collection_db
-#   export GCP_PUBSUB_TEST_TOPIC=collection-cases-test1
+#   export GCP_PUBSUB_TEST_TOPIC=collection-ai-events-test1
 #   ./scripts/test/l4b-official-test.sh
 #   L4B_ONLY=1,5,6 ./scripts/test/l4b-official-test.sh    # 只跑指定用例
 #   L4B_RESET=0 ./scripts/test/l4b-official-test.sh       # 保留历史落库（默认清零后取绝对值断言）
@@ -124,7 +124,7 @@ latest_plan_field() {
 hdr "L4b 前置校验（run=${RUN_TS})"
 
 [ -n "$TOPIC" ] || die "缺 GCP_PUBSUB_TEST_TOPIC"
-[ "$TOPIC" != "collection-cases" ] || die "拒绝：collection-cases 是生产共享 topic"
+[ "$TOPIC" != "collection-cases" ] && [ "$TOPIC" != "collection-ai-events-v1" ] || die "拒绝：生产 topic（collection-cases / collection-ai-events-v1）"
 [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] && [ -n "$DB_NAME" ] || \
   die "缺 DB_HOST/DB_USER/DB_NAME（连接信息不入仓，见 L4b 环境交接清单）"
 command -v mysql >/dev/null 2>&1 || die "缺 mysql 客户端（Apple Silicon 需 arm64 版本）"

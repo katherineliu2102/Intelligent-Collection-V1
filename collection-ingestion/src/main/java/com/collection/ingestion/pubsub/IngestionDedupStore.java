@@ -35,4 +35,10 @@ public interface IngestionDedupStore {
 
     /** 全额结清：允许下一周期再次 {@code CASE_INGESTED}（§2.2.2）。 */
     void clearIngested(Long loanId);
+
+    /** t_ai_collection 的 caseVersion 乱序防护：相同或更低版本均不可覆盖。 */
+    boolean isStaleVersion(Long caseId, Long caseVersion);
+
+    /** 仅把更大的版本写为已消费水位。 */
+    void recordVersion(Long caseId, Long caseVersion);
 }

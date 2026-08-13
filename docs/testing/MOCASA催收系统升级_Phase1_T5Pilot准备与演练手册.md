@@ -28,12 +28,12 @@ T5 的目标是在不触达真实客户的前提下，准备并演练生产等�
 
 | 组件 | Pilot 约束 |
 |---|---|
-| PubSub（案件） | 使用生产 topic 的独立扇出订阅 `collection-cases-ai-v1-sub`；不得复用旧系统 `collection-cases-sub` |
+| PubSub（案件） | 专用 topic `collection-ai-events-v1` + 订阅 `collection-ai-events-v1-sub`（与调度订阅分离） |
 | PubSub（调度） | 调度专用主题 + 我们专用订阅（建议 `collection-schedule-ai-v1` / `collection-schedule-ai-v1-sub`）；**不得**复用案件订阅 |
 | 应用 | `pilot` profile，Redis EventBus 与幂等均启用；首期单活跃实例，跨实例用例临时启动第二实例。常驻内网服务，不部署在 Cloud Run，不开放入站调度端口 |
 | Redis | 独立于旧催收系统；Stream、幂等、合规频控按基础设施规范隔离 |
 | MySQL | 使用正式表结构；Pilot 数据必须可按案件、计划、事件追溯 |
-| 调度 | Cloud Scheduler 三个 Job（`planStepDue` / `callbackTimeout` 每分钟；`dailyRoll` 拆两条 cron 覆盖 00:35–02:55 PHT 每 5 分钟），时区 Asia/Manila，发往调度专用主题 |
+| 调度 | Cloud Scheduler 三个调度任务、四条 Job（`planStepDue` / `callbackTimeout` 每分钟；`dailyRoll` 拆两条 cron 覆盖 03:35–05:55 PHT 每 5 分钟），时区 Asia/Manila，发往调度专用主题 |
 | 渠道 | 仅 sandbox、测试地址或批准白名单；强制限频、脱敏与 Webhook 签名校验 |
 
 > **Pilot 与生产使用同一套调度实现**，只允许配置值不同（项目、订阅名、开关）；不存在「Pilot 一套、上线另一套」的调度模型。
@@ -78,9 +78,9 @@ T5 的目标是在不触达真实客户的前提下，准备并演练生产等�
 | O3 | Scheduler 服务账号对 O1 的 `roles/pubsub.publisher` | IAM 绑定截图 / `get-iam-policy` 输出 |
 | O4 | 应用服务账号对 O2 的 `roles/pubsub.subscriber` | 同上；应用日志出现 `[Scheduler] 调度订阅消费已启动` |
 | O5 | 订阅 ack deadline 60s、`message-retention-duration` 10m、不配死信主题 | 订阅配置输出 |
-| O6 | 三个调度任务、共四条 Cloud Scheduler Job（`dailyRoll` 拆两条精确覆盖 00:35–02:55 PHT；cron 与消息属性见 [§5.1 配置模板](#51-应用配置)） | 各 Job 的 `describe` 输出与一次成功执行记录 |
+| O6 | 三个调度任务、共四条 Cloud Scheduler Job（`dailyRoll` 拆两条精确覆盖 03:35–05:55 PHT；cron 与消息属性见 [§5.1 配置模板](#51-应用配置)） | 各 Job 的 `describe` 输出与一次成功执行记录 |
 | O7 | Scheduler Job 失败告警 | 告警规则配置 + 一次测试告警到达记录 |
-| O8 | 日切 03:00 PHT 未完成告警 | 告警规则配置 + 触发条件说明 |
+| O8 | 日切 06:00 PHT 未完成告警 | 告警规则配置 + 触发条件说明 |
 
 > **为什么这些不能由研发闭合**：主题、订阅、IAM 绑定与 Scheduler Job 都是 GCP 侧资源，仓库内只能提供可复制的配置模板与占位符，真值与资源创建必须由运维执行。
 
@@ -200,24 +200,24 @@ gcloud scheduler jobs create pubsub collection-callback-timeout \
   --message-body="scheduled-tick" \
   --attributes="job=callbackTimeout"
 
-# 3a. 日切窗口起始段：00:35–00:55 每 5 分钟
+# 3a. 日切窗口起始段：03:35–03:55 每 5 分钟
 gcloud scheduler jobs create pubsub collection-daily-roll-open \
   --project=<PROJECT_ID> --location=<REGION> \
-  --schedule="35,40,45,50,55 0 * * *" --time-zone="Asia/Manila" \
+  --schedule="35,40,45,50,55 3 * * *" --time-zone="Asia/Manila" \
   --topic=<SCHEDULE_TOPIC> \
   --message-body="scheduled-tick" \
   --attributes="job=dailyRoll"
 
-# 3b. 日切窗口续跑段：01:00–02:55 每 5 分钟
+# 3b. 日切窗口续跑段：04:00–05:55 每 5 分钟
 gcloud scheduler jobs create pubsub collection-daily-roll-continue \
   --project=<PROJECT_ID> --location=<REGION> \
-  --schedule="*/5 1-2 * * *" --time-zone="Asia/Manila" \
+  --schedule="*/5 4-5 * * *" --time-zone="Asia/Manila" \
   --topic=<SCHEDULE_TOPIC> \
   --message-body="scheduled-tick" \
   --attributes="job=dailyRoll"
 ```
 
-> 拆 3a / 3b 的原因：5 段 cron 无法在单表达式内既从 00:35 起步又覆盖到 02:55；`*/5 0-2 * * *` 会把 00:00–00:30 纳入，而账务数据此时尚未落库。两条 Job 发同一主题、同一 `job=dailyRoll` 属性，应用侧无差别。
+> 拆 3a / 3b 的原因：5 段 cron 无法在单表达式内既从 03:35 起步又覆盖到 05:55。`t_collection` 约 03:00 更新完成，03:35 起跑保留 35 分钟稳定缓冲；两条 Job 发同一主题、同一 `job=dailyRoll` 属性，应用侧无差别。
 >
 > `--message-body` 内容不参与路由，路由只看 `job` 属性；未知 `job` 取值会被记录并 ack，不重投。
 
@@ -239,7 +239,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 重启后 `stale.discarded` 一次尖峰 | 正常：停机期间累积的 tick 被丢弃，属预期防抖 | 若持续增长则为消费跟不上，查 ack deadline 与扫描耗时 |
 | `skipped{reason=UNKNOWN_JOB}` 增长 | Scheduler Job 的 `--attributes` 里 `job` 拼写 | 是否有非预期发布者向调度主题写入 |
 | `skipped{reason=IN_FLIGHT}` 持续增长 | 单次扫描耗时超过触发周期 | 降 `engine.consumer.scan_limit` / `daily-roll-batch-size`，查扫描 SQL |
-| 日切 03:00 未完成 | 窗口内 `triggered{job=dailyRoll}` 次数是否达到预期（约 29 次） | 游标推进速率与 `daily-roll-batch-size` |
+| 日切 06:00 未完成 | 窗口内 `triggered{job=dailyRoll}` 次数是否达到预期（约 29 次） | 游标推进速率与 `daily-roll-batch-size` |
 
 #### 调度回滚
 
@@ -273,9 +273,9 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 序 | 渠道 | 前置 | 验证内容 | 通过标准 |
 |---|---|---|---|---|
 | 1 | SMS | `channel.notification.app-key`、发送额度、菲律宾号段准入 | 对内部测试号发一条 S1 话术 | 供应商返回成功且拿到 `providerMsgId`；`t_contact_timeline` 落一条 SENT；真机收到且文案无占位符残留 |
-| 2 | PUSH | 极光 token 可取（`jpushToken` 或 `t_user_device_token`） | 有 token 与无 token 两种案件 | 有 token 走 PUSH；无 token 自动 fallback SMS 且只产生一次投递 |
+| 2 | PUSH | `case_push` 携带的极光 token（用户已注册时） | 有 token 与无 token 两种案件 | 有 token 走 PUSH；无 token 自动 fallback SMS 且只产生一次投递 |
 | 3 | EMAIL | `channel.sendgrid.api-key`、模板 ID、发件域名验证 | 对内部邮箱发一封 | SendGrid 202；模板渲染含正确金额与还款链接；脏邮箱（空/`0`）走 Guard SKIP 不发送 |
-| 4 | AI_CALL | 供应商联调地址、回调地址可达、HMAC secret | 一次呼叫 + 回调 | 步骤保持 `STEP_EXECUTING` 等回调；回调经签名校验后推进；不回调时哨兵按 `callback_timeout_minutes` 收敛为 FAILED |
+| 4 | AI_CALL | 已完成 [测试 SSOT L2-CB 第 1–3 级](./MOCASA催收系统升级_Phase1_测试文档.md#l2-cbai_call-分级联调方案)；稳定 HTTPS 回调地址、HMAC secret、真实 Adapter 与批准测试号码就绪 | 一次呼叫 + 回调 | 步骤保持 `STEP_EXECUTING` 等回调；回调经签名校验后推进；不回调时哨兵按 `callback_timeout_minutes` 收敛为 FAILED |
 | 5 | 回调与审计 | Webhook 公网可达、签名开启 | 重复回调与伪造签名 | 重复回调幂等不重复计次；签名错误被拒并留审计 |
 | 6 | 合规与停止 | 触达窗口、日上限、白名单 | 窗口外触达与超限触达 | 窗口外不发送（延后或 SKIP）；超限被 Guard 拦截并写 `COMPLIANCE_BLOCKED`；关闭开关后立即停止发送 |
 
@@ -299,7 +299,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 接入去重连续性 | 重启应用后 `dedup:msg` / `last-seen` / `ingested` 仍生效；结清后可再次入案 | ingestion + 运维 |
 | 渠道生产连通 | [§6.1](#61-渠道生产连通验证清单) 六项全部通过并留存投递与回调证据 | 编排同事 + 主架构 |
 | 事件消费去重 | 真实 Redis 上验证 PEL 重投与同一 `eventId` 重放只执行一次业务，`collection:processed:*` 按 24h 过期 | collection-engine + 运维 |
-| 调度通道生产化 | [§3.2](#32-调度交付清单o1o8) O1–O8 全部交付：调度主题、专用订阅、双向 IAM、四条 Scheduler Job（`35,40,45,50,55 0 * * *` + `*/5 1-2 * * *` 覆盖日切窗口）、ack deadline 与消息保留、Scheduler 失败与 03:00 未完成告警；并在 Pilot 上确认 Redis keyset 游标、当日完成标记与幂等行为 | ingestion / admin / 运维 |
+| 调度通道生产化 | [§3.2](#32-调度交付清单o1o8) O1–O8 全部交付：调度主题、专用订阅、双向 IAM、四条 Scheduler Job（`35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` 覆盖日切窗口）、ack deadline 与消息保留、Scheduler 失败与 06:00 未完成告警；并在 Pilot 上确认 Redis keyset 游标、当日完成标记与幂等行为 | ingestion / admin / 运维 |
 | 可观测性（可后置，最迟 T6 前） | Prometheus 抓取、Alertmanager 路由与 Dashboard 接通，§7.4 告警到达钉钉；代偿期内每日人工巡检日志并手工抓取指标 | 运维 |
 
 ## 8. 证据归档与 T5 完成判定

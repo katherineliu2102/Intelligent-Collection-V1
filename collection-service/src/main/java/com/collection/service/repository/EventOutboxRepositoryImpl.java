@@ -28,8 +28,13 @@ public class EventOutboxRepositoryImpl implements EventOutboxRepository {
     }
 
     @Override
-    public List<OutboxEvent> findDueForRepublish(LocalDateTime now, int limit) {
-        return mapper.selectDueForRepublish(now, limit);
+    @Transactional
+    public List<OutboxEvent> claimDueForRepublish(
+            LocalDateTime now, LocalDateTime leaseUntil, int limit) {
+        List<OutboxEvent> candidates = mapper.selectClaimableForRepublish(now, limit);
+        return candidates.stream()
+                .filter(row -> mapper.claimForRepublish(row.getEventId(), now, leaseUntil) == 1)
+                .collect(java.util.stream.Collectors.toList());
     }
 
     @Override

@@ -19,27 +19,41 @@ public interface EventOutboxMapper {
     int insertIgnoreDuplicate(OutboxEvent event);
 
     @Update(
-            "UPDATE t_event_outbox SET status='PUBLISHED', published_at=NOW(), last_error=NULL "
-                    + "WHERE event_id=#{eventId} AND status='PENDING'")
+            "UPDATE t_event_outbox SET status='PUBLISHED', published_at=NOW(), lease_until=NULL, last_error=NULL "
+                    + "WHERE event_id=#{eventId} AND status IN ('PENDING','PROCESSING')")
     int markPublished(@Param("eventId") String eventId);
 
     @Select(
-            "SELECT * FROM t_event_outbox WHERE status='PENDING' AND next_retry_at <= #{now} "
+            "SELECT * FROM t_event_outbox WHERE "
+                    + "(status='PENDING' AND next_retry_at <= #{now}) "
+                    + "OR (status='PROCESSING' AND lease_until <= #{now}) "
                     + "ORDER BY next_retry_at LIMIT #{limit}")
-    List<OutboxEvent> selectDueForRepublish(
+    List<OutboxEvent> selectClaimableForRepublish(
             @Param("now") LocalDateTime now, @Param("limit") int limit);
 
     @Update(
-            "UPDATE t_event_outbox SET retry_count=retry_count+1, next_retry_at=#{nextRetryAt}, "
-                    + "last_error=#{lastError} WHERE event_id=#{eventId} AND status='PENDING'")
+            "UPDATE t_event_outbox SET status='PROCESSING', lease_until=#{leaseUntil} "
+                    + "WHERE event_id=#{eventId} AND ("
+                    + "  (status='PENDING' AND next_retry_at <= #{now}) "
+                    + "  OR (status='PROCESSING' AND lease_until <= #{now})"
+                    + ")")
+    int claimForRepublish(
+            @Param("eventId") String eventId,
+            @Param("now") LocalDateTime now,
+            @Param("leaseUntil") LocalDateTime leaseUntil);
+
+    @Update(
+            "UPDATE t_event_outbox SET status='PENDING', retry_count=retry_count+1, "
+                    + "next_retry_at=#{nextRetryAt}, lease_until=NULL, last_error=#{lastError} "
+                    + "WHERE event_id=#{eventId} AND status='PROCESSING'")
     int scheduleRetry(
             @Param("eventId") String eventId,
             @Param("nextRetryAt") LocalDateTime nextRetryAt,
             @Param("lastError") String lastError);
 
     @Update(
-            "UPDATE t_event_outbox SET status='FAILED', last_error=#{lastError} "
-                    + "WHERE event_id=#{eventId} AND status='PENDING'")
+            "UPDATE t_event_outbox SET status='FAILED', lease_until=NULL, last_error=#{lastError} "
+                    + "WHERE event_id=#{eventId} AND status='PROCESSING'")
     int markFailed(@Param("eventId") String eventId, @Param("lastError") String lastError);
 
     @Select(
