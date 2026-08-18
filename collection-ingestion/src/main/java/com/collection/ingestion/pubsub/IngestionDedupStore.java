@@ -1,75 +1,38 @@
 package com.collection.ingestion.pubsub;
 
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Component;
-
 /**
- * 接入层去重 / 幂等存储（数据接入规格 §3.3）。Phase 1 <b>内存版</b>，与引擎侧 {@code processed:} / {@code lock:plan:}
- * 分层、互不替代；生产切 Redis（同前缀 {@code ingestion:*}）。
+ * 接入层去重 / 幂等存储（数据接入规格 §3.3）。与引擎侧 {@code processed:} / {@code lock:plan:} 分层、互不替代。
  *
  * <p>三道检查各管一类重复：
  *
  * <ul>
- *   <li>{@link #markMessageProcessed} / {@link #isMessageProcessed}：同一条消息重投（{@code
- *       dedup:case_push:{message_id}}）；
- *   <li>{@link #isStale} / {@link #recordSeen}：同 loan 更旧 publish_time 的乱序消息（{@code
- *       last_seen:{loan_id}}）；
+ *   <li>{@link #markMessageProcessed} / {@link #isMessageProcessed}：同一条消息重投；
+ *   <li>{@link #isStale} / {@link #recordSeen}：同 loan 更旧 publish_time 的乱序消息；
  *   <li>{@link #isIngested} / {@link #markIngested} / {@link #clearIngested}：本催收周期已 publish 过
- *       {@code CASE_INGESTED} 后的增量推送（{@code ingested:{loan_id}}），全额结清时清除。
+ *       {@code CASE_INGESTED} 后的增量推送，全额结清时清除。
  * </ul>
  *
  * <p><b>标记时机</b>：messageId / ingested 仅在 publish <b>成功后</b>标记，失败 nack 后允许重投重处理 （配合 §2.3 ACK 语义，支撑
  * L4b-7 NACK 重投幂等）。
+ *
+ * <p>实现选择由 {@code collection.ingestion.redis-dedup-enabled} 决定：Pilot / 生产走 {@link
+ * RedisIngestionDedupStore}（跨重启、跨实例共享），本地与 CI 走 {@link InMemoryIngestionDedupStore}。
  */
-@Component
-public class IngestionDedupStore {
+public interface IngestionDedupStore {
 
-    private final Set<String> processedMessages = ConcurrentHashMap.newKeySet();
-    private final Map<Long, Long> lastSeenPublishMillis = new ConcurrentHashMap<>();
-    private final Set<Long> ingestedLoans = ConcurrentHashMap.newKeySet();
+    boolean isMessageProcessed(String messageId);
 
-    public boolean isMessageProcessed(String messageId) {
-        return messageId != null && processedMessages.contains(messageId);
-    }
+    void markMessageProcessed(String messageId);
 
-    public void markMessageProcessed(String messageId) {
-        if (messageId != null) {
-            processedMessages.add(messageId);
-        }
-    }
+    /** 是否为乱序旧消息：已见过该 loan 更新的 publish_time。null publishMillis 视为不旧。 */
+    boolean isStale(Long loanId, Long publishMillis);
 
-    /** 是否为乱序旧消息：已见过该 loan 更新或同等 publish_time。null publishMillis 视为不旧。 */
-    public boolean isStale(Long loanId, Long publishMillis) {
-        if (loanId == null || publishMillis == null) {
-            return false;
-        }
-        Long seen = lastSeenPublishMillis.get(loanId);
-        return seen != null && publishMillis < seen;
-    }
+    void recordSeen(Long loanId, Long publishMillis);
 
-    public void recordSeen(Long loanId, Long publishMillis) {
-        if (loanId == null || publishMillis == null) {
-            return;
-        }
-        lastSeenPublishMillis.merge(loanId, publishMillis, Math::max);
-    }
+    boolean isIngested(Long loanId);
 
-    public boolean isIngested(Long loanId) {
-        return loanId != null && ingestedLoans.contains(loanId);
-    }
-
-    public void markIngested(Long loanId) {
-        if (loanId != null) {
-            ingestedLoans.add(loanId);
-        }
-    }
+    void markIngested(Long loanId);
 
     /** 全额结清：允许下一周期再次 {@code CASE_INGESTED}（§2.2.2）。 */
-    public void clearIngested(Long loanId) {
-        if (loanId != null) {
-            ingestedLoans.remove(loanId);
-        }
-    }
+    void clearIngested(Long loanId);
 }

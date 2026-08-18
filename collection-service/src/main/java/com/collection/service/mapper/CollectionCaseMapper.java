@@ -1,5 +1,6 @@
 package com.collection.service.mapper;
 
+import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -15,6 +16,17 @@ public interface CollectionCaseMapper {
                     + "FROM t_collection WHERE loan_id = #{loanId} "
                     + "ORDER BY create_time DESC LIMIT 1")
     CollectionCaseRow selectByLoanId(@Param("loanId") String loanId);
+
+    /** 日切全量扫描的 keyset 页；只返回当前页 loan_id，调用方逐笔读取最新记录，避免将旧库全表载入 JVM。 */
+    @Select(
+            "SELECT DISTINCT loan_id FROM t_collection "
+                    + "WHERE loan_id > #{afterLoanId} "
+                    + "  AND overdue_days > 0 "
+                    + "  AND full_repay_time IS NULL "
+                    + "  AND total_not_paid > 0 "
+                    + "ORDER BY loan_id LIMIT #{limit}")
+    List<Long> selectActiveLoanIdsAfter(
+            @Param("afterLoanId") Long afterLoanId, @Param("limit") int limit);
 
     /**
      * 从 t_user_extend 取极光 Registration ID（ji_guang_token）。 PUSH 渠道 targetAddress 来源；token 不存在时返回

@@ -21,14 +21,18 @@ import com.collection.common.service.CaseService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.job.DpdStageRollHandler;
+import com.collection.ingestion.pubsub.IngestionFaultInjector;
 import com.collection.service.impl.MockCaseService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -38,7 +42,13 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/mock")
+@Profile({"local", "test"})
 public class MockTriggerController {
+
+    private static final long[] L4A_CASE_IDS = {
+        94999L, 94201L, 94101L, 94102L, 92001L, 92002L, 93101L, 93201L, 95001L, 94801L, 94805L,
+        94804L
+    };
 
     @Resource private IngestionService ingestionService;
     @Resource private DpdStageRollHandler dpdStageRollHandler;
@@ -54,12 +64,45 @@ public class MockTriggerController {
 
     @Resource private ChannelProperties channelProperties;
 
+    @Resource private JdbcTemplate jdbcTemplate;
+
+    @Resource private IngestionFaultInjector ingestionFaultInjector;
+
     /**
-     * 直连 SendGrid 发一封 Email（不经 plan/DB）。 用于 DB 不可用时的渠道冒烟；caseId 见
-     * docs/email-templates/email-e2e-test-cases.md。
+     * L4b-7：预约后续 {@code count} 条白名单案件事件各失败一次 → 不 ack → PubSub 重投。
+     *
+     * <p>需 {@code collection.ingestion.fault-injection-enabled=true} 才生效；未启用时返回 armed=0。
+     */
+    @PostMapping("/ingestion-fault/arm")
+    public Map<String, Object> armIngestionFault(@RequestParam(defaultValue = "1") int count) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("armed", ingestionFaultInjector.arm(count));
+        return result;
+    }
+
+    /** L4b-7：撤销未触发的注入，返回被撤销的剩余次数。 */
+    @PostMapping("/ingestion-fault/disarm")
+    public Map<String, Object> disarmIngestionFault() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("cancelled", ingestionFaultInjector.disarm());
+        return result;
+    }
+
+    @GetMapping("/ingestion-fault")
+    public Map<String, Object> ingestionFaultStatus() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("remaining", ingestionFaultInjector.remaining());
+        return result;
+    }
+
+    /**
+     * 直连 SendGrid 发一封 Email，或只预览解析后的 scriptSlot（不经 plan/DB）。
+     *
+     * <p>{@code dryRun=true} 仅在 local/test profile 返回解析元数据，不调用渠道，用于 L4a 模板断言。
      */
     @PostMapping("/send-email")
-    public Map<String, Object> sendEmail(@RequestParam Long caseId) {
+    public Map<String, Object> sendEmail(
+            @RequestParam Long caseId, @RequestParam(defaultValue = "false") boolean dryRun) {
         ContextSnapshot snapshot = caseService.getContextSnapshot(caseId);
         if (snapshot.getUserProfile() == null
                 || snapshot.getUserProfile().getBasic() == null
@@ -90,16 +133,21 @@ public class MockTriggerController {
                         .build();
 
         StepCommand command = stepResolver.resolve(execCtx);
-        StepResult result = sendGridEmailAdapter.send(command);
+        StepResult result = dryRun ? null : sendGridEmailAdapter.send(command);
 
         Map<String, Object> m = new HashMap<>();
-        m.put("ok", result.isSuccess());
+        m.put("ok", dryRun || result.isSuccess());
         m.put("caseId", caseId);
+        m.put("dryRun", dryRun);
+        m.put("stage", plan.getStage());
         m.put("email", snapshot.getUserProfile().getBasic().getEmail());
+        m.put("templateId", step.getTemplateId());
         m.put("scriptSlot", command.getMetadata().get(StepCommand.META_SCRIPT_SLOT));
-        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
-        m.put("providerMsgId", result.getProviderMsgId());
-        if (!result.isSuccess()) {
+        m.put(
+                "result",
+                dryRun ? "PREVIEW" : result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("providerMsgId", result == null ? null : result.getProviderMsgId());
+        if (result != null && !result.isSuccess()) {
             m.put("message", result.getErrorCode());
         }
         return m;
@@ -396,15 +444,68 @@ public class MockTriggerController {
         return ok("CASE_INGESTED published, caseId=" + caseId);
     }
 
-    /** 模拟还款到账：标记 mock 案件已还款 + 发布 REPAYMENT_RECEIVED（应取消该用户活跃计划）。 */
+    /**
+     * 清理 L4a 官方固定合成案的运行数据，使官方脚本可重复执行。
+     *
+     * <p>端点仅在 local/test profile 暴露；没有任意 caseId 参数，不触碰旧库 {@code t_collection}。
+     */
+    @PostMapping("/reset-l4a")
+    public Map<String, Object> resetL4a() {
+        if (!(caseService instanceof MockCaseService)) {
+            return fail("MOCK_CASE_SERVICE_REQUIRED", "L4a reset requires MockCaseService");
+        }
+        String placeholders = String.join(",", Collections.nCopies(L4A_CASE_IDS.length, "?"));
+        Object[] caseIds = new Object[L4A_CASE_IDS.length];
+        List<Long> resetCaseIds = new ArrayList<>(L4A_CASE_IDS.length);
+        for (int i = 0; i < L4A_CASE_IDS.length; i++) {
+            caseIds[i] = L4A_CASE_IDS[i];
+            resetCaseIds.add(L4A_CASE_IDS[i]);
+        }
+
+        jdbcTemplate.update(
+                "DELETE a FROM t_channel_callback_audit a "
+                        + "JOIN t_contact_plan p ON p.id = a.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        jdbcTemplate.update(
+                "DELETE d FROM t_decision_log d "
+                        + "JOIN t_contact_plan p ON p.id = d.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        jdbcTemplate.update(
+                "DELETE s FROM t_contact_plan_step s "
+                        + "JOIN t_contact_plan p ON p.id = s.plan_id "
+                        + "WHERE p.case_id IN ("
+                        + placeholders
+                        + ")",
+                caseIds);
+        int timelines =
+                jdbcTemplate.update(
+                        "DELETE FROM t_contact_timeline WHERE case_id IN (" + placeholders + ")",
+                        caseIds);
+        int plans =
+                jdbcTemplate.update(
+                        "DELETE FROM t_contact_plan WHERE case_id IN (" + placeholders + ")",
+                        caseIds);
+        ((MockCaseService) caseService).resetCases(new HashSet<>(resetCaseIds));
+        Map<String, Object> result = ok("L4a fixed-case runtime data cleared");
+        result.put("plansDeleted", plans);
+        result.put("timelinesDeleted", timelines);
+        return result;
+    }
+
+    /** 模拟整笔 loan 结清：标记 mock 案件已还款 + 发布案件级 REPAYMENT_RECEIVED。 */
     @PostMapping("/repayment")
-    public Map<String, Object> repayment(
-            @RequestParam Long userId, @RequestParam(required = false) Long caseId) {
-        if (caseId != null && caseService instanceof MockCaseService) {
+    public Map<String, Object> repayment(@RequestParam Long userId, @RequestParam Long caseId) {
+        if (caseService instanceof MockCaseService) {
             ((MockCaseService) caseService).markRepaid(caseId);
         }
-        ingestionService.repayment(userId);
-        return ok("REPAYMENT_RECEIVED published, userId=" + userId);
+        ingestionService.repayment(caseId, userId);
+        return ok("REPAYMENT_RECEIVED published, caseId=" + caseId + " userId=" + userId);
     }
 
     /** 模拟阶段变更：取消旧阶段计划 + 创建新阶段计划。 */
@@ -412,6 +513,13 @@ public class MockTriggerController {
     public Map<String, Object> stageChanged(@RequestParam Long caseId, @RequestParam Stage stage) {
         ingestionService.changeStage(caseId, stage);
         return ok("STAGE_CHANGED published, caseId=" + caseId + " stage=" + stage);
+    }
+
+    /** 仅 local/test：同步触发并行期 DPD 日切，供 L4b 重跑与 dedup 验证。 */
+    @PostMapping("/daily-roll")
+    public Map<String, Object> dailyRoll() {
+        dpdStageRollHandler.dailyRoll();
+        return ok("daily roll triggered");
     }
 
     /** 模拟 PTP 到期。Phase 2 预留：Phase 1 引擎不消费 PTP_EXPIRED，此端点仅发布事件、无消费方（核心引擎规格 §2.6）。 */
@@ -436,17 +544,6 @@ public class MockTriggerController {
         }
         ingestionService.caseCeased(caseId, maxDpd);
         return ok("CASE_CEASED published, caseId=" + caseId + " maxDpd=" + maxDpd);
-    }
-
-    /**
-     * 手动触发 DPD 日切，等效 XXL-Job {@code dailyRoll}（读白名单 loan 的 {@code overdue_days} → {@code
-     * STAGE_CHANGED}/{@code CASE_CEASED}）。L4b 免注册 XXL-Job 即可即时验 L4b-3/4/8； 可多次调用验幂等（L4b-8）。结果详见应用日志
-     * {@code [DpdStageRollHandler]}。
-     */
-    @PostMapping("/daily-roll")
-    public Map<String, Object> dailyRoll() {
-        dpdStageRollHandler.dailyRoll();
-        return ok("dailyRoll executed（扫描白名单，详见应用日志 [DpdStageRollHandler]）");
     }
 
     private Map<String, Object> ok(String msg) {

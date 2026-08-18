@@ -12,6 +12,8 @@ public enum EventType {
     CASE_INGESTED,
     STAGE_CHANGED,
     REPAYMENT_RECEIVED,
+    /** 部分还款后的余额刷新；不取消计划、不改变步骤或话术。 */
+    CASE_BALANCE_UPDATED,
     PLAN_STEP_DUE,
     CHANNEL_CALLBACK,
     /** Phase 2 预留：Phase 1 引擎不生产、不消费、不入 §1.1 路由表（核心引擎规格 §2.6）。 */

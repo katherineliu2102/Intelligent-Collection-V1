@@ -20,9 +20,15 @@ public class CaseContext {
     private BigDecimal overdueAmount;
     private BigDecimal penaltyAmount;
     private BigDecimal totalOutstanding;
+    /** 三期产品下一期在 D-3～D0 窗口内的待还金额。 */
+    private BigDecimal upcomingAmount;
+
     private Integer loanTerms;
     private LocalDate disbursementDate;
     private LocalDate dueDate;
+    /** 三期产品下一期在 D-3～D0 窗口内的提醒日期。 */
+    private LocalDate nextDueDate;
+
     private String caseStatus;
     private Long assignedAgentId;
     private boolean isFirstLoan;

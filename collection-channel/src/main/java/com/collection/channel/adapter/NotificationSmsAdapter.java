@@ -93,7 +93,7 @@ public class NotificationSmsAdapter implements ChannelAdapter {
                     maskPhone(mobile),
                     fallback,
                     e.getMessage());
-            return AdapterSupport.notificationTimeout();
+            return AdapterSupport.notificationFailure(e);
         }
     }
 
@@ -149,6 +149,10 @@ public class NotificationSmsAdapter implements ChannelAdapter {
                 .targetAddress(phone)
                 .templateId(pushCommand.getTemplateId())
                 .idempotencyKey(fallbackKey)
+                .providerIdempotencyKey(
+                        pushCommand.getProviderIdempotencyKey() == null
+                                ? null
+                                : pushCommand.getProviderIdempotencyKey() + ":sms_fallback")
                 .metadata(meta)
                 .build();
     }

@@ -1,9 +1,7 @@
 package com.collection.ingestion.config;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -29,7 +27,10 @@ public class IngestionProperties {
     /** GCP 项目（映射环境变量 {@code GCP_PUBSUB_PROJECT}）。 */
     private String projectId;
 
-    /** 订阅短名（映射 {@code GCP_PUBSUB_SUBSCRIPTION}，定稿 {@code collection-cases-ai-v1-sub}）。 */
+    /**
+     * 订阅短名（映射 {@code GCP_PUBSUB_SUBSCRIPTION}；生产 {@code intelligent-collection-cases-v1-sub}，联调
+     * {@code intelligent-collection-cases-test1-sub}）。
+     */
     private String subscription;
 
     /** ACK deadline（秒），默认 60（§2.1）。 */
@@ -38,34 +39,25 @@ public class IngestionProperties {
     /** 并发消费度，默认 4（§2.1），用作 flow-control 最大未确认条数与拉取线程数。 */
     private int maxConcurrency = 4;
 
-    /** 仅处理名单内 loan_id；空 = 全量（§6.0 联调隔离，名单不入仓）。 */
+    /** 仅处理名单内 loan_id；空 = 全量（§6.1 联调隔离，名单不入仓）。 */
     private List<Long> loanIdWhitelist = new ArrayList<>();
 
-    /** 消息缺 jpushToken 时是否查新库 {@code t_user_device_token} 补全（B3，Phase 1 默认关）。 */
-    private boolean enrichJpushToken = false;
+    /** 白名单为空时是否启用旧库全量日切；默认关闭，避免未经审批扫描全表。 */
+    private boolean dailyRollFullScanEnabled = false;
 
-    private CasePush casePush = new CasePush();
+    /** 全量日切每次调度触发最多处理的 keyset 页大小。 */
+    private int dailyRollBatchSize = 1000;
+
+    /**
+     * 是否允许 L4b-7 受控 NACK 故障注入。**联调专用，生产必须 false**；为 true 时仍只能对白名单 loan_id 生效， 且需显式调用 {@code POST
+     * /mock/ingestion-fault/arm} 才会失败一次。
+     */
+    private boolean faultInjectionEnabled = false;
 
     /** loan_id 是否在白名单内（空名单视为放行全部）。 */
     public boolean whitelisted(Long loanId) {
         return loanIdWhitelist == null
                 || loanIdWhitelist.isEmpty()
                 || (loanId != null && loanIdWhitelist.contains(loanId));
-    }
-
-    /**
-     * case_push 报文解析约定。上游 JSON key 与契约（领域模型 §6.2）不一致时，用 {@link #fieldMap} 把<b>语义字段</b>映射到上游实际
-     * key；未配置则按同名取值（C-I-01 待信贷联调）。
-     */
-    @Data
-    public static class CasePush {
-        /** 消息类型字段（先读 PubSub attribute，缺失再读 JSON 此字段）。 */
-        private String dataTypeField = "dataType";
-
-        /** 业务 message_id 字段（缺失则回退 PubSub messageId，用于去重）。 */
-        private String messageIdField = "messageId";
-
-        /** 语义字段 → 上游 JSON key 的别名表；缺省同名（契约 §6.2 key）。 */
-        private Map<String, String> fieldMap = new HashMap<>();
     }
 }

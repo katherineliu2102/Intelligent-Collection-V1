@@ -1,7 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 collection-channel 总规格
 
-> **版本**: v1.0  
-> **日期**: 2026-06-03  
+> **版本**: v1.1  
+> **日期**: 2026-08-18  
+> **v1.1**：语言默认 `en`；AI_CALL 链 Facade；S0 对客金额 `upcomingAmount`；Push token 上游 `device.pushToken`。  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`（执行子层）  
 > **关联文档**: [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[HANDOFF 模块 A](../../HANDOFF.md)
@@ -82,7 +83,7 @@ PLAN_STEP_DUE
 | key | 类型 | 必填场景 | 说明 |
 |-----|------|----------|------|
 | stage | String | 建议 | `Stage.name()` |
-| language | String | 建议 | `tl` / `en` |
+| language | String | 建议 | 默认 **`en`**（Phase 1 文本渠道英文；来自 `borrower.language`） |
 | callbackUrl | String | AI_CALL | 供应商回调基址 |
 | timeoutMinutes | Integer | AI_CALL | 默认 60，覆盖引擎 `callback_timeout_minutes` |
 | scriptSlot | String | 建议 | 编排话术槽名，如 `S1_SMS_STANDARD` |
@@ -114,10 +115,10 @@ PLAN_STEP_DUE
 | stepId | Long | 是 | |
 | caseId | Long | 建议 | |
 | result | String | 是 | `ContactResult` 名：ANSWERED / NO_ANSWER / BUSY / … |
-| disposition | String | Voice 建议 | 业务分支：见 [LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
+| disposition | String | Voice 建议 | 业务分支：见 [AI Call Facade](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) |
 | providerMsgId | String | 建议 | 对账 |
 
-**引擎行为**（`PlanLifecycleManager.onChannelCallback`）：仅当 plan 为 `STEP_EXECUTING` 时更新 step → `STEP_COMPLETED`。
+**引擎行为**（`PlanLifecycleManager.onChannelCallback`）：plan 为 `STEP_EXECUTING`（AI_CALL disposition）时更新 step → `COMPLETED` 并发布 `STEP_COMPLETED`；Phase 1 SMS/PUSH/EMAIL 同步完成，不经本事件。其余态静默吸收。
 
 **SendGrid Event Webhook**：**不**发布 `CHANNEL_CALLBACK` 完成步骤；由 admin 服务 **更新** `t_contact_timeline`（同 `providerMsgId` 幂等升级 READ/CLICKED 等）。
 
@@ -129,8 +130,8 @@ PLAN_STEP_DUE
 
 | 项 | 变更 |
 |----|------|
-| UserProfile | `BasicInfo.email`；`DeviceInfo.jpushToken`（JPush Registration ID） |
-| CaseContext | `repaymentUrl`（ingestion 从 App/信贷写入，供模板变量） |
+| UserProfile | `BasicInfo.email`；`DeviceInfo.jpushToken`（← 外部 `device.pushToken`） |
+| CaseContext | `repaymentUrl`（引擎按模板生成，消息不带；Nacos 短链兜底）；`upcomingAmount`（S0 对客金额，可空） |
 | CollectionEvent | 常量 `DISPOSITION`、`PROVIDER_MSG_ID` |
 | EventType | `CASE_CEASED`（ingestion 发、引擎 Consumer 处理，**非本模块实现**） |
 | StepCommand | metadata 键：`META_SCRIPT_SLOT`、`META_SMS_BODY`、`META_DYNAMIC_TEMPLATE_DATA` 等 |
@@ -148,7 +149,7 @@ collection-channel/
   adapter/NotificationSmsAdapter.java
   adapter/NotificationPushAdapter.java
   adapter/SendGridEmailAdapter.java
-  adapter/LthVoiceAdapter.java
+  adapter/FacadeAiCallAdapter.java
   strategy/DefaultPlanFactory.java
   strategy/ComplianceExecutionGuard.java
   strategy/DefaultStepResolver.java
@@ -163,12 +164,12 @@ collection-channel/
 | SMS | NotificationSmsAdapter | [Notification 对接说明 §1](./MOCASA催收系统升级_Phase1_Notification对接说明.md#1-sms同步) |
 | EMAIL | SendGridEmailAdapter | [SendGrid Email](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) |
 | PUSH | NotificationPushAdapter | [Notification 对接说明 §2](./MOCASA催收系统升级_Phase1_Notification对接说明.md#2-app-push异步入队) |
-| AI_CALL | AiCallAdapter（或 Mock） | [AI Call / LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) |
+| AI_CALL | FacadeAiCallAdapter（或 Mock） | [AI Call Facade](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) |
 | HUMAN_CALL | — | **禁止** dispatch（StepResolver 不得输出） |
 
 `ChannelGatewayImpl.dispatch`：
 
-1. 渠道幂等（Redis `idempotency:channel:{idempotencyKey}`，TTL 24h，见基础设施规范 §3）
+1. 渠道幂等（Redis `collection:idempotency:channel:{idempotencyKey}`，TTL 24h，见基础设施规范 §3）
 2. 路由 Adapter
 3. 熔断 / fallback 在 Adapter 或 Gateway 内完成，**只返回最终** `StepResult`
 
@@ -190,10 +191,10 @@ collection-channel/
 | 路径 | 供应商 | 行为 |
 |------|--------|------|
 | `POST /webhook/channel-callback` | 联调 / 骨架 | 已有；扩展支持 `disposition` |
-| `POST /webhook/.../voice` | AI Call 供应商 | 解析话单 → `CHANNEL_CALLBACK` |
+| `POST /webhook/facade/voice` | Valubo Facade | HMAC 验签；解析 `session.completed` → `CHANNEL_CALLBACK` |
 | `POST /webhook/sendgrid` | SendGrid | 验签（TODO）→ 更新 timeline / suppression |
 
-鉴权：Phase 1 可跳过；生产须 SendGrid 签名校验 + LTH IP/签名（TODO 列入运维）。
+鉴权：Phase 1 可跳过；生产须 SendGrid 签名校验 + Facade HMAC（见 Facade 接入说明）。
 
 ---
 
@@ -214,7 +215,7 @@ collection-channel/
 |------|------------|
 | [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | SMS + Push；§7 简易对账 · §9 StepResult 草案 · §10 Phase 2 回调（必做） |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `POST /v3/mail/send`；API 附录见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md) |
-| [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | `voiceNotification` + 回调 |
+| [AI Call Facade 接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) | Valubo Facade 批次外呼 + Callback |
 
 ---
 
@@ -230,7 +231,7 @@ PLAN_STEP_DUE(planId=1, stepId=10)
        targetAddress="639171234567",
        templateId="S1_SMS_STANDARD",
        idempotencyKey="1:1:0",
-       metadata={ scriptSlot, sms_body, stage=S1, language=tl, case_id=1001 }
+       metadata={ scriptSlot, sms_body, stage=S1, language=en, case_id=1001 }
      }
   → NotificationSmsAdapter → POST /v1/sms/send (contentType=collection)
   → StepResult{ success=true, contactResult=DELIVERED, providerMsgId="requestId", metadata.notification_channel=QHSms }
@@ -242,10 +243,10 @@ PLAN_STEP_DUE(planId=1, stepId=10)
 
 ```
 PLAN_STEP_DUE → StepCommand{ channelType=AI_CALL, metadata={ callbackUrl, timeoutMinutes=60, disposition... } }
-  → LthVoiceAdapter → voiceNotification 受理
+  → FacadeAiCallAdapter → Valubo Facade 批次外呼
   → StepResult{ success=true, DELIVERED }  // 仅表示已提交
   → plan STEP_EXECUTING, timeout_time=now+60m
-  → (later) POST /webhook/lth/voice
+  → (later) POST /webhook/facade/voice
   → CHANNEL_CALLBACK{ planId, stepId, result=ANSWERED, disposition=CONNECTED_NO_PAY }
   → step COMPLETED → STEP_COMPLETED
 ```

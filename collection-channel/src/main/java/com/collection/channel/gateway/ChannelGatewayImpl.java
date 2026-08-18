@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
 public class ChannelGatewayImpl implements ChannelGateway {
 
     private static final Logger log = LoggerFactory.getLogger(ChannelGatewayImpl.class);
-    private static final String IDEMPOTENCY_PREFIX = "channel:";
+    private static final String IDEMPOTENCY_PREFIX = "idempotency:channel:";
 
     @Resource private List<ChannelAdapter> adapters;
 

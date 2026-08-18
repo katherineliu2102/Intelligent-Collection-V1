@@ -2,14 +2,12 @@ package com.collection.ingestion.pubsub;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
 import com.google.api.gax.batching.FlowControlSettings;
 import com.google.api.gax.core.InstantiatingExecutorProvider;
 import com.google.cloud.pubsub.v1.AckReplyConsumer;
 import com.google.cloud.pubsub.v1.MessageReceiver;
 import com.google.cloud.pubsub.v1.Subscriber;
-import com.google.protobuf.Timestamp;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 import com.google.pubsub.v1.PubsubMessage;
 import java.util.concurrent.TimeUnit;
@@ -22,16 +20,16 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 /**
- * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code collection-cases-ai-v1-sub}（topic {@code
- * collection-cases}），按 {@code dataType} 路由 {@code case_push} / {@code repayment_push_and_load}， 经
- * {@link CasePayloadMapper} 映射后调 {@link IngestionService} publish 领域事件。
+ * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code intelligent-collection-cases-v1-sub}（topic {@code
+ * intelligent-collection-cases-v1}），按 {@code dataType} 路由 {@code caseEvent} / {@code
+ * repaymentEvent}， 交由 {@link AiCaseIngestionProcessor} 写投影并发布领域事件。
  *
  * <p><b>门控</b>：{@code @ConditionalOnProperty(collection.ingestion.enabled=true)} —— 本地 / CI （默认
  * false）不实例化本 bean，启动完全不依赖 GCP 凭证 / 网络。
  *
  * <p><b>ACK 语义（§2.3）</b>：处理成功（含按幂等 / 白名单 / 乱序<i>跳过</i>）→ ack；不可修复消息 （{@link
- * PoisonMessageException}）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如下游 publish 失败）→ nack 重投（支撑 L4b-7）。幂等键仅在
- * publish 成功后标记（{@link IngestionDedupStore}）。
+ * PoisonMessageException}，含违反契约的外部阶段/停催事件）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如投影写入或下游 publish 失败）→ nack
+ * 重投（支撑 L4b-7）。ack 只发生在投影事务已提交、领域事件已发布之后。
  *
  * <p>未启用 spring-cloud-gcp 自动装配：直接用 {@link Subscriber} 自建，凭证经 {@code
  * GOOGLE_APPLICATION_CREDENTIALS}（ADC）加载。
@@ -42,13 +40,11 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
 
     private static final Logger log = LoggerFactory.getLogger(PubSubCaseConsumer.class);
 
-    private static final String DATA_TYPE_CASE_PUSH = "case_push";
-    private static final String DATA_TYPE_REPAYMENT = "repayment_push_and_load";
+    private static final String DATA_TYPE_CASE_EVENT = "caseEvent";
+    private static final String DATA_TYPE_REPAYMENT_EVENT = "repaymentEvent";
 
     @Resource private IngestionProperties props;
-    @Resource private IngestionService ingestionService;
-    @Resource private CasePayloadMapper mapper;
-    @Resource private IngestionDedupStore dedup;
+    @Resource private AiCaseIngestionProcessor processor;
 
     private volatile Subscriber subscriber;
     private volatile boolean running;
@@ -111,12 +107,11 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
     public void receiveMessage(PubsubMessage message, AckReplyConsumer reply) {
         String pubsubMsgId = message.getMessageId();
         try {
-            JSONObject json = parse(message);
-            String attrDataType = message.getAttributesOrDefault("dataType", null);
-            String dataType = mapper.dataType(json, attrDataType);
-            String bizMsgId = mapper.messageId(json, pubsubMsgId);
-            long publishMillis = toMillis(message.getPublishTime());
-            route(dataType, json, bizMsgId, publishMillis);
+            String body = message.getData().toStringUtf8();
+            JSONObject json = parse(body);
+            String dataType =
+                    message.getAttributesOrDefault("dataType", json.getString("dataType"));
+            route(dataType, payload(json), body);
             reply.ack();
         } catch (PoisonMessageException e) {
             log.warn(
@@ -130,60 +125,29 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         }
     }
 
-    private void route(String dataType, JSONObject json, String bizMsgId, long publishMillis) {
-        if (DATA_TYPE_CASE_PUSH.equals(dataType)) {
-            handleCasePush(json, bizMsgId, publishMillis);
-        } else if (DATA_TYPE_REPAYMENT.equals(dataType)) {
-            handleRepayment(json, bizMsgId);
+    private void route(String dataType, JSONObject json, String rawPayload) {
+        if (DATA_TYPE_CASE_EVENT.equals(dataType)) {
+            processor.handleCaseEvent(json, rawPayload);
+        } else if (DATA_TYPE_REPAYMENT_EVENT.equals(dataType)) {
+            processor.handleRepaymentEvent(json, rawPayload);
         } else {
-            log.debug("[Ingestion] 未知 dataType={} ack 跳过", dataType);
+            log.warn("[Ingestion] 不支持的 dataType={}，ack 跳过", dataType);
         }
     }
 
-    private void handleCasePush(JSONObject json, String bizMsgId, long publishMillis) {
-        if (dedup.isMessageProcessed(bizMsgId)) {
-            log.debug("[Ingestion] case_push 重复消息 msgId={} 跳过", bizMsgId);
-            return;
+    /** 每条 Pub/Sub 消息的业务体固定在顶层 data 中；兼容历史平铺 body。 */
+    private JSONObject payload(JSONObject outer) {
+        if (!outer.containsKey("data")) {
+            return outer;
         }
-        CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
-        if (dedup.isStale(ci.caseId, publishMillis)) {
-            log.info("[Ingestion] case_push 乱序旧消息 caseId={} 跳过", ci.caseId);
-            return;
+        JSONObject data = outer.getJSONObject("data");
+        if (data == null) {
+            throw new PoisonMessageException("消息 data 必须为 JSON object");
         }
-        if (!props.whitelisted(ci.caseId)) {
-            log.info("[Ingestion] case_push caseId={} 不在白名单，ack 跳过", ci.caseId);
-            return;
-        }
-        if (dedup.isIngested(ci.caseId)) {
-            dedup.recordSeen(ci.caseId, publishMillis);
-            log.info("[Ingestion] case_push caseId={} 本周期已入催，跳过（阶段变靠日切）", ci.caseId);
-            return;
-        }
-        ingestionService.ingestCase(ci.caseId, ci.userId, ci.stage, ci.snapshotFields);
-        dedup.markIngested(ci.caseId);
-        dedup.recordSeen(ci.caseId, publishMillis);
-        dedup.markMessageProcessed(bizMsgId);
+        return data;
     }
 
-    private void handleRepayment(JSONObject json, String bizMsgId) {
-        if (dedup.isMessageProcessed(bizMsgId)) {
-            log.debug("[Ingestion] repayment 重复消息 msgId={} 跳过", bizMsgId);
-            return;
-        }
-        Long userId = mapper.repaymentUserId(json);
-        ingestionService.repayment(userId);
-        if (mapper.fullySettled(json)) {
-            Long loanId = mapper.repaymentLoanId(json);
-            if (loanId != null) {
-                dedup.clearIngested(loanId);
-                log.info("[Ingestion] 全额结清 DEL ingested loanId={}", loanId);
-            }
-        }
-        dedup.markMessageProcessed(bizMsgId);
-    }
-
-    private JSONObject parse(PubsubMessage message) {
-        String body = message.getData().toStringUtf8();
+    private JSONObject parse(String body) {
         if (StringUtils.isBlank(body)) {
             throw new PoisonMessageException("空消息体");
         }
@@ -197,9 +161,5 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
             throw new PoisonMessageException("JSON 解析为空");
         }
         return json;
-    }
-
-    private static long toMillis(Timestamp ts) {
-        return ts.getSeconds() * 1000L + ts.getNanos() / 1_000_000L;
     }
 }

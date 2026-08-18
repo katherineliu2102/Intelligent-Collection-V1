@@ -12,10 +12,10 @@
 
 | # | 对齐项 | 现状（Mock 初版） | ✅ 定稿（2026-06-11） |
 |---|---|---|---|
-| 1 | StepResult 回填 | 恒 `success=true / DELIVERED / retryable=false` | **3 种返回情形**：发送受理 / 网络超时(retryable) / 其他异常(不重试)；**SMS 另分「发送受理」与「送达」两段**（送达需等供应商回调 DLR） |
+| 1 | StepResult 回填 | 恒 `success=true / DELIVERED / retryable=false` | **3 档**：发送受理 / 可证明未发出(retryable) / 结果未知或确定性失败(不重试)；SMS/PUSH/EMAIL 同步完成口径一致 |
 | 2 | StepCommand metadata | `language="en"` 硬编码；异步 `timeoutMinutes=60` | **采纳推荐**：language 取快照(空→en)、timeout 仅异步、templateId 按 stage×channel |
-| 3 | 观察期 + 幂等 | 幂等 key = `plan:stepOrder:retryCount`（引擎/Mock 已一致） | **PUSH / EMAIL 无观察期立即完成；仅 SMS 等供应商回传 DLR**；`observationMinutes` 由 PlanFactory 设定 |
-| 4 | 空地址处理 | Resolver 地址空返回 null；Guard 恒放行（**NO_EMAIL 未实现**） | **采纳方案 A**：Guard 检测空地址 → block `NO_EMAIL`/`NO_TOKEN`→SKIPPED；PUSH 另叠加 C（空 jpushToken → 同槽 fallback SMS） |
+| 3 | 观察期 + 幂等 | 幂等 key = `plan:stepOrder:retryCount`（引擎/Mock 已一致） | **Phase 1：SMS/PUSH/EMAIL 均无观察期**（`dispatch` 成功即 `STEP_COMPLETED`）；观察期仅 Phase 2 消息渠道预留 |
+| 4 | 空地址处理 | Guard 真实化待编排实现 | **采纳方案 A**：Guard 检测空地址 → `COMPLIANCE_BLOCKED` + 引擎写 timeline 后推进；PUSH 另叠加 C（空 jpushToken → 同槽 fallback SMS） |
 
 ---
 
@@ -26,28 +26,38 @@
 
 ### 待对齐：失败映射与 errorCode 表（推荐样例）
 
-| 渠道返回情形 | `success` | `contactResult` | `retryable` | `errorCode`（建议） |
+**判定边界（2026-08-10 修订）**：分档依据是**请求字节是否已写给供应商**，而不是渠道「返回了还是抛了异常」。只有渠道能**证明未写出**时才允许引擎重试。
+
+| 情形 | `success` | `contactResult` | `retryable` | `errorCode`（建议） |
 |---|---|---|---|---|
-| 发送受理/送达 | true | DELIVERED | false | — |
-| 网络超时 / 供应商 5xx | false | FAILED | **true** | `*_TIMEOUT` / `*_PROVIDER_5XX` |
-| 限流 / 配额 | false | FAILED | **true** | `*_RATE_LIMITED` |
+| 发送受理 / 送达 | true | DELIVERED | false | — |
+| 熔断打开（未调供应商） | false | CHANNEL_DOWN | **true** | `*_NOT_SENT` |
+| 凭证 / 配置缺失（未调供应商） | false | CHANNEL_DOWN | **true** | `*_NOT_CONFIGURED` |
+| 本地限流 / 供应商显式 429 拒绝受理 | false | CHANNEL_DOWN | **true** | `*_429_NOT_SENT` |
+| DNS 失败 / 连接被拒 / TLS 握手失败 | false | CHANNEL_DOWN | **true** | `*_NOT_SENT` |
+| Socket 超时（含读超时） | false | FAILED | **false** | `*_OUTCOME_UNKNOWN` |
+| 写请求后连接中断 | false | FAILED | **false** | `*_OUTCOME_UNKNOWN` |
+| 供应商 5xx | false | FAILED | **false** | `*_5xx_OUTCOME_UNKNOWN` |
 | 地址无效（号码/邮箱/token 非法） | false | FAILED | **false** | `SMS_INVALID_NUMBER` / `EMAIL_INVALID_ADDR` / `PUSH_INVALID_TOKEN` |
+| 业务码失败（HTTP 200 + body code） | false | FAILED | **false** | 按对接说明 §9 映射 |
 | 退订 / 拒收 | false | REJECTED | **false** | `*_UNSUBSCRIBED` |
-| 渠道熔断 | false | CHANNEL_DOWN | **true** | `*_CIRCUIT_OPEN` |
 
-> 引擎语义：`retryable=true` 且未超 `maxRetryCount(3)` → 退避重试；否则 FAILED 推进。`errorCode` 仅落 timeline 对账，引擎不解析其值。
+> **为什么超时与 5xx 不可重试**：引擎重试会把 `idempotencyKey` 的 `retryCount` 加一，供应商即便有去重也不会命中，重试等价于重复发送。
+>
+> **Socket 超时为何不能细分**：当前 `channelRestTemplate` 使用 JDK 默认 `SimpleClientHttpRequestFactory`，连接超时与读超时同为 `SocketTimeoutException`，无法区分，故一律按结果未知处理。若换成 Apache HttpClient，其 `ConnectTimeoutException` 可证明未发出，届时可升为 `NOT_SENT`。
 
-**讨论结论（2026-06-11 定稿）**：渠道返回**收敛为 3 种情形**，编排同事按此实现 `ChannelGateway.dispatch` 回填：
+引擎行为收敛为三档：
 
-| 情形 | `success` | `contactResult` | `retryable` | 引擎行为 |
-|---|---|---|---|---|
-| **① 发送受理** | true | DELIVERED（PUSH/EMAIL）/ 受理（SMS，见下） | false | STEP_COMPLETED |
-| **② 网络超时**（含供应商 5xx/限流/熔断） | false | FAILED | **true** | 未超 maxRetry(3) → 退避重试 |
-| **③ 其他异常**（地址无效/退订/未知错误） | false | FAILED | **false** | 直接 FAILED + 推进 |
+| 档 | `retryable` | 引擎行为 |
+|---|---|---|
+| **① 发送受理** | false | `STEP_COMPLETED`（SMS/PUSH/EMAIL 同步完成） |
+| **② 可证明未发出** | **true** | 未超 `maxRetryCount(3)` → 退避重试本步骤 |
+| **③ 结果未知 / 确定性失败** | false | 直接 `FAILED` + 推进，不再重发 |
 
-> **SMS 两段语义（重要）**：SMS 的「发送受理」与「送达」是**两个结果**——`dispatch` 同步返回时只代表**供应商已受理**（success=true）；真实**送达（DLR）部分供应商需异步回调**。
-> 因此 SMS 走「**受理→观察期等 DLR→结转**」（见 §3），PUSH/EMAIL 无此两段、`dispatch` 返回即终态。
-> `errorCode` 体系沿用上方建议表（`*_TIMEOUT`/`*_INVALID_*`/`*_UNSUBSCRIBED` 等），仅落 timeline 对账。
+> `errorCode` 仅由**核心引擎**落 timeline 对账，引擎不解析其值。`dispatch` 抛出未分类异常时引擎按 ③ 处理（`CHANNEL_OUTCOME_UNKNOWN`）——渠道层是唯一有信息做分档的一方，不应把分类责任留给引擎。
+
+> **Phase 1 消息类同步完成（2026-07-18 修订）**：SMS / PUSH / EMAIL 均 `dispatch` 成功即 `STEP_COMPLETED`，**不进** `STEP_WAITING`；DLR/打开等仅可 enrichment timeline，不用于完成步骤（与架构 §1.6.7、渠道编排 §3.5 一致）。
+> `errorCode` 体系沿用上方建议表，仅落 timeline 对账。
 
 ## 2. StepCommand 寻址与 metadata
 
@@ -59,7 +69,7 @@
 | 项 | 现状 | 推荐 |
 |---|---|---|
 | `metadata.language` | 硬编码 `"en"` | 取 `snapshot.basic.language`，空则默认 `"en"` |
-| `metadata.timeoutMinutes` | 异步固定 60 | 仅异步渠道需要；消息类不设。AI_CALL/TTS 建议 60，按 LTH 实际可调 |
+| `metadata.timeoutMinutes` | 异步固定 60 | 仅异步渠道需要；消息类不设。`AI_CALL` 建议 60，按**AI Call 合作方**实际回调时延调整（不绑定 LTH） |
 | `metadata.stage` | 取 `plan.stage` | 保持 |
 | `templateId` | `step.templateId`，空则 `"default"` | 确认模板 ID 取值表（按 stage × channel） |
 | `targetAddress` | 见 _re.md §12 | 保持，不在此重复 |
@@ -77,43 +87,51 @@
 - 确认 `observationMinutes` 归属：由 `PlanFactory` 按 stage 设定，引擎与 StepResolver 都不改。
 - 编排真实 `ChannelGateway` 的幂等维度须与引擎一致（`plan:stepOrder:retryCount`）。
 
-**讨论结论（2026-06-11 定稿）**：
+**讨论结论（2026-06-11 定稿；2026-07-18 修订 SMS）**：
 
 | 渠道 | 观察期 | 说明 |
 |---|---|---|
-| **PUSH** | **0（无）** | `dispatch` 返回即终态，立即 STEP_COMPLETED |
+| **PUSH** | **0（无）** | `dispatch` 返回即终态 |
 | **EMAIL** | **0（无）** | 同上 |
-| **SMS** | **有**（等供应商 DLR 回传） | 受理后进 `STEP_WAITING`，到期/收到 DLR 结转 |
+| **SMS** | **0（无）** | 同上；引擎忽略 SMS 上的 `observationMinutes` |
 
-- `observationMinutes` 归属确认：**由 `PlanFactory` 按 stage 设定**，引擎与 StepResolver 都不改。
-- SMS 观察期**默认时长建议 10 分钟**（依据见下，最终以 LTH/供应商 SLA 为准；可按 stage 在模板配置覆盖）：
-  - 菲律宾聚合短信 DLR（送达回执）典型延迟：正常 **数秒～30 秒**内回；P95 约 **1～3 分钟**；网络拥塞/跨网时可达 **5～15 分钟**，少数永不回。
-  - 取 **10 min** 兼顾「绝大多数 DLR 已到」与「不长期占用 WAITING」；超时未收到 DLR 按「受理即视为完成」结转（不阻断管线推进）。
+- `observationMinutes`：Phase 1 消息三渠道恒 0；字段保留供 Phase 2（VIBER/WHATSAPP 等）。
 - 幂等维度 `plan:stepOrder:retryCount`：**引擎与编排真实 `ChannelGateway` 须一致**（已确认）。
+
+**新增 `providerIdempotencyKey`（2026-08-10，待编排确认）**：`StepCommand` 增加一个**跨引擎重试稳定**的键 `{planId}:{stepOrder}`（不含 `retryCount`），与尝试级 `idempotencyKey` 并存。
+
+| 键 | 格式 | 用途 | 每次重试是否变 |
+|---|---|---|---|
+| `idempotencyKey` | `{planId}:{stepOrder}:{retryCount}` | 渠道内去重、timeline `attempt_key` 审计 | 变 |
+| `providerIdempotencyKey` | `{planId}:{stepOrder}` | 供应商侧去重锚点 | **不变** |
+
+需编排同事确认：通知中心 / SendGrid / AI Call 合作方**是否提供幂等或去重字段**，以及字段名。确认后由渠道层把 `providerIdempotencyKey` 透传给供应商。
+
+> Phase 1 **只建键，不据此放开重试**——供应商去重能力未确认前，「结果未知后重试」仍等价于重复发送。放开的前提是拿到供应商的去重保证，两件事必须分开做。
 
 ## 4. 空地址处理（已发现不一致，需拍板）
 
-### 现状（不一致）
-- 契约/用例 C3 期望：EMAIL `email` 为空 → `ExecutionGuard` 判 `NO_EMAIL` → 步骤 **SKIPPED**。
-- 实际：`MockExecutionGuard` **恒放行**；`MockStepResolver` 地址空时返回 `null` → `StepCommand.targetAddress=null` 会被 dispatch 出去。
-- **结论：NO_EMAIL / NO_TOKEN 的拦截逻辑目前没人实现。**
+### 收敛口径
+- EMAIL `email` 为空 → `ExecutionGuard` 判 `NO_EMAIL` → 引擎结果 `COMPLIANCE_BLOCKED`、写 timeline、推进。
+- `StepResolver=null` 只表示策略性跳过，不用于表达空地址；该路径不写 timeline。
+- **实现责任**：编排同事在真实 `ExecutionGuard` 补齐 `NO_EMAIL` / `NO_PHONE` / `NO_TOKEN`；引擎已负责写 timeline 与推进。
 
 ### 待对齐（三选一，推荐 A）
 
 | 方案 | 做法 | 引擎现成支持 | 评价 |
 |---|---|---|---|
-| **A（推荐）** | `ExecutionGuard` 检测空地址 → `block(NO_EMAIL/NO_TOKEN)` | ✅ 引擎已有 block→SKIPPED+推进 | 语义最清晰，复用现有管线 |
+| **A（已采纳）** | `ExecutionGuard` 检测空地址 → `block(NO_EMAIL/NO_TOKEN)` | ✅ 引擎已有 block→COMPLIANCE_BLOCKED、timeline、推进 | 语义最清晰，复用现有管线 |
 | B | `StepResolver` 空地址抛异常 | ⚠ 走 FAILED 分支 | 把“无地址”当错误，语义偏差 |
 | C | `ChannelGateway` 内 fallback（如 PUSH 无 token → 转 SMS） | ⚠ 对引擎透明 | 仅适合 PUSH→SMS，EMAIL 无 fallback |
 
 > PUSH 可叠加 C（jpushToken 空 → 同槽 fallback SMS），EMAIL/SMS 走 A。
 
-**讨论结论（2026-06-11 定稿）**：**采纳方案 A** —— `ExecutionGuard` 检测空地址 → `block(NO_EMAIL / NO_TOKEN)` → 引擎 SKIPPED + 推进。
+**讨论结论（2026-06-11 定稿，2026-07-24 收敛结果码）**：**采纳方案 A** —— `ExecutionGuard` 检测空地址 → `block(NO_EMAIL / NO_TOKEN)` → 引擎 `COMPLIANCE_BLOCKED`、写 timeline、推进。
 分渠道细化：
-- **EMAIL**：`basic.email` 空 → Guard `NO_EMAIL` → SKIPPED。
-- **SMS**：`basic.primaryPhone` 空 → Guard `NO_PHONE` → SKIPPED。
-- **PUSH**：**先叠加 C**（`device.jpushToken` 空 → `ChannelGateway` 同槽 fallback 改发 SMS，对引擎透明）；若连 SMS 号也空，则 Guard `NO_TOKEN` → SKIPPED。
-> 由编排同事在真实 `ExecutionGuard` 实现空地址检测；引擎侧 block→SKIPPED→推进已现成支持，无需改动。
+- **EMAIL**：`basic.email` 空 → Guard `NO_EMAIL` → `COMPLIANCE_BLOCKED`。
+- **SMS**：`basic.primaryPhone` 空 → Guard `NO_PHONE` → `COMPLIANCE_BLOCKED`。
+- **PUSH**：**先叠加 C**（`device.jpushToken` 空 → `ChannelGateway` 同槽 fallback 改发 SMS，对引擎透明）；若连 SMS 号也空，则 Guard `NO_TOKEN` → `COMPLIANCE_BLOCKED`。
+> 由编排同事在真实 `ExecutionGuard` 实现空地址检测；引擎侧 block→timeline→推进为唯一落数路径，channel/admin 不得重复写 timeline。
 
 ---
 
@@ -121,7 +139,7 @@
 
 - [x] **S1 会议拍板**：本文 4 项已定稿（2026-06-11）；Webhook 签名格式 → 后续安排。
 - [ ] **S2 渠道实现真实化**：编排同事按结论改 `MockChannelGateway`（3 情形回填 + PUSH fallback）、`MockStepResolver`（language/templateId）、`MockExecutionGuard`（NO_EMAIL/NO_PHONE/NO_TOKEN）。
-- [ ] **S3 快照样例补齐**：`ContextSnapshot.sample.json` 含 email/jpushToken/language 的有值与空值两组，供联调。
+- [ ] **S3 快照样例补齐**：使用 `ContextSnapshot.sample.json`（有值）与 `ContextSnapshot.empty-address.sample.json`（空地址）两组，供联调。
 - [x] **S4 落 C1–C7 测试骨架**：引擎侧已落 `ChannelContractL2Test`（真实语义可配置替身 + mock 发送）；待编排同事真实化后对接即绿。
 - [ ] **S5 验证回报**：按 `ic-v1-validation.mdc` 跑 `collection-channel` + `collection-engine` 测试，回报结果。
 - [ ] **S6 异常面补强**：超时/异常/空地址各跑一遍，确认引擎重试与 SKIP 行为符合预期。

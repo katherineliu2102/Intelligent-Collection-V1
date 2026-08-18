@@ -114,15 +114,16 @@ class NotificationPushAdapterTest {
     }
 
     @Test
-    void transient5xxRetryable() {
+    void serverError5xxIsOutcomeUnknownAndNotRetried() {
         stubFor(
                 post(urlEqualTo("/v1/app_notification/send"))
                         .willReturn(aResponse().withStatus(503)));
 
         StepResult result = pushAdapter.send(pushCommand("jpush-reg-id-abc", null));
         assertFalse(result.isSuccess());
-        assertTrue(result.isRetryable());
-        assertEquals("NOTIFICATION_TIMEOUT", result.getErrorCode());
+        assertFalse(result.isRetryable());
+        assertEquals("NOTIFICATION_503_OUTCOME_UNKNOWN", result.getErrorCode());
+        verify(1, postRequestedFor(urlEqualTo("/v1/app_notification/send")));
     }
 
     @Test

@@ -6,12 +6,14 @@ import com.collection.common.enums.*;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.model.*;
 import com.collection.common.repository.ContactPlanRepository;
+import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.CaseService;
 import com.collection.common.service.PredictiveDialerService;
 import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.outbox.OutboxEventSink;
 import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
 import java.time.LocalDate;
@@ -21,6 +23,8 @@ import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,12 +40,20 @@ public class PlanLifecycleManager {
     private static final Logger log = LoggerFactory.getLogger(PlanLifecycleManager.class);
 
     @Resource private ContactPlanRepository planRepository;
+    @Resource private TimelineRepository timelineRepository;
+    @Resource private StepOutcomeRecorder stepOutcomeRecorder;
     @Resource private CaseService caseService;
     @Resource private PlanFactory planFactory;
     @Resource private AdvancementPolicy advancementPolicy;
     @Resource private ExhaustionPolicy exhaustionPolicy;
     @Resource private PredictiveDialerService predictiveDialerService;
     @Resource private SpiInvoker spiInvoker;
+
+    @Autowired(required = false)
+    private OutboxEventSink outboxEventSink;
+
+    @Value("${collection.repayment-url-template:https://app.mocasa.com/repay/{caseId}}")
+    private String repaymentUrlTemplate = "https://app.mocasa.com/repay/{caseId}";
 
     // ───────────────────────── 计划创建（§2.2） ─────────────────────────
 
@@ -66,7 +78,7 @@ public class PlanLifecycleManager {
             CaseInfo info = caseInfo != null ? caseInfo : caseService.getCaseInfo(caseId);
             stage = info != null ? info.getStage() : null;
         }
-        createPlanForStage(caseId, stage, caseInfo, snapshot);
+        createPlanForStage(caseId, stage, caseInfo, snapshot, null);
         return noEvents();
     }
 
@@ -77,29 +89,40 @@ public class PlanLifecycleManager {
 
         List<ContactPlan> oldPlans = planRepository.findActivePlansByCase(caseId);
         oldPlans.sort((a, b) -> Long.compare(a.getId(), b.getId())); // 按 id 升序加锁防死锁
-        // 决策 B：carry-forward 旧计划已冻结快照（同案件无新 case_push），刷新 stage；
-        // 取消前先取快照。缺失时 createPlanForStage 降级 CaseService。
-        ContextSnapshot carried = null;
-        for (ContactPlan p : oldPlans) {
-            if (carried == null) {
-                carried = snapshotFromPlan(p);
+        // v2 CASE_STAGE_CHANGED 携带完整快照，优先直接使用，避免无活跃计划时回读旧库。
+        // 旧事件仍保留 carry-forward 兼容路径。
+        ContextSnapshot carried =
+                hasSnapshotPayload(event) ? buildSnapshotFromEvent(event, newStage) : null;
+        if (carried == null) {
+            for (ContactPlan p : oldPlans) {
+                if (carried == null) {
+                    carried = snapshotFromPlan(p);
+                }
             }
         }
-        carried = withStage(carried, newStage);
+        carried =
+                withRefreshedFields(
+                        carried,
+                        newStage,
+                        event.getInt(CollectionEvent.DPD),
+                        event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
         CaseInfo carriedInfo = caseInfoFromSnapshot(carried);
         for (ContactPlan p : oldPlans) {
-            if (p.getStage() != newStage) {
-                planRepository.findPlanWithLock(p.getId());
+            ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+            if (locked == null || locked.isTerminal() || locked.getStage() == newStage) {
+                continue;
+            }
+            if (locked.getStage() != newStage) {
                 planRepository.updatePlanStatus(
-                        p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
+                        locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
                 log.info(
                         "[stageChanged] cancelled old plan {} ({}→{})",
-                        p.getId(),
-                        p.getStage(),
+                        locked.getId(),
+                        locked.getStage(),
                         newStage);
             }
         }
-        createPlanForStage(caseId, newStage, carriedInfo, carried);
+        createPlanForStage(caseId, newStage, carriedInfo, carried, null);
         return noEvents();
     }
 
@@ -111,10 +134,13 @@ public class PlanLifecycleManager {
         List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
         plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
         for (ContactPlan p : plans) {
-            planRepository.findPlanWithLock(p.getId());
+            ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+            if (locked == null || locked.isTerminal()) {
+                continue;
+            }
             planRepository.updatePlanStatus(
-                    p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
-            log.info("[caseCeased] cancelled plan {} (CEASED)", p.getId());
+                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+            log.info("[caseCeased] cancelled plan {} (CEASED)", locked.getId());
         }
         return noEvents();
     }
@@ -122,19 +148,77 @@ public class PlanLifecycleManager {
     @Transactional
     public List<CollectionEvent> onRepaymentReceived(CollectionEvent event) {
         Long userId = event.getLong(CollectionEvent.USER_ID);
-        List<ContactPlan> plans = planRepository.findActivePlansByUser(userId);
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        if (caseId == null) {
+            log.warn("[repayment] ignore event without caseId, user={}", userId);
+            return noEvents();
+        }
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
         plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
         for (ContactPlan p : plans) {
-            planRepository.findPlanWithLock(p.getId());
+            ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+            if (locked == null || locked.isTerminal()) {
+                continue;
+            }
             planRepository.updatePlanStatus(
-                    p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
-            log.info("[repayment] cancelled plan {} (REPAID)", p.getId());
+                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+            log.info("[repayment] cancelled plan {} (REPAID)", locked.getId());
         }
         try {
-            predictiveDialerService.filterRepaidUser(userId);
+            predictiveDialerService.filterRepaidCase(userId, caseId);
         } catch (Exception e) {
             // 告警 + 继续：计划已取消是核心目标（核心引擎规格 §5）
-            log.warn("[repayment] filterRepaidUser failed for user {}: {}", userId, e.getMessage());
+            log.warn(
+                    "[repayment] filterRepaidCase failed for user {} case {}: {}",
+                    userId,
+                    caseId,
+                    e.getMessage());
+        }
+        return noEvents();
+    }
+
+    /** 部分还款的唯一计划变更：更新活跃计划快照中的余额。DPD、阶段、模板、渠道和话术决策字段保持原值。 */
+    @Transactional
+    public List<CollectionEvent> onCaseBalanceUpdated(CollectionEvent event) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        java.math.BigDecimal amount = event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING);
+        if (caseId == null || amount == null || amount.signum() < 0) {
+            log.warn("[balanceUpdated] ignore invalid event case={} amount={}", caseId, amount);
+            return noEvents();
+        }
+        for (ContactPlan plan : planRepository.findActivePlansByCase(caseId)) {
+            ContactPlan locked = planRepository.findPlanWithLock(plan.getId());
+            ContextSnapshot snapshot = snapshotFromPlan(locked);
+            if (locked == null
+                    || locked.isTerminal()
+                    || snapshot == null
+                    || snapshot.getCaseContext() == null) {
+                continue;
+            }
+            CaseContext context = snapshot.getCaseContext();
+            context.setTotalOutstanding(amount);
+            if (event.has(CollectionEvent.OVERDUE_AMOUNT)) {
+                context.setOverdueAmount(event.getBigDecimal(CollectionEvent.OVERDUE_AMOUNT));
+            }
+            if (event.has(CollectionEvent.DPD)) {
+                context.setDpd(event.getInt(CollectionEvent.DPD));
+            }
+            if (event.has(CollectionEvent.PENALTY_AMOUNT)) {
+                context.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
+            }
+            if (event.has(CollectionEvent.UPCOMING_AMOUNT)) {
+                context.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
+            }
+            if (event.has(CollectionEvent.NEXT_DUE_DATE)) {
+                context.setNextDueDate(parseDate(event.getString(CollectionEvent.NEXT_DUE_DATE)));
+            }
+            if (event.has("collectionStatus")) {
+                context.setCollectionStatus(event.getString("collectionStatus"));
+            }
+            if (planRepository.updateActivePlanContextSnapshot(
+                    locked.getId(), JsonUtil.toJson(snapshot))) {
+                log.info("[balanceUpdated] plan={} amount={}", locked.getId(), amount);
+            }
         }
         return noEvents();
     }
@@ -154,6 +238,15 @@ public class PlanLifecycleManager {
         if (step == null) {
             return StepDuePreparation.noop();
         }
+        // 至少一次投递下重复的 PLAN_STEP_DUE 不得把已终结步骤改回 EXECUTING：
+        // markStepExecuting 无状态前置且不清 completed_at，回退后该步骤再也不会收敛。
+        if (step.getStatus() != null && step.getStatus().isTerminal()) {
+            log.info(
+                    "[stepDue] duplicate due for terminal step {} ({}), skip",
+                    stepId,
+                    step.getStatus());
+            return StepDuePreparation.noop();
+        }
 
         if (plan.getStatus() == PlanStatus.PENDING
                 || plan.getStatus() == PlanStatus.STEP_SCHEDULED
@@ -162,7 +255,7 @@ public class PlanLifecycleManager {
             planRepository.updatePlanStatus(planId, PlanStatus.STEP_EXECUTING, null);
             planRepository.markStarted(planId);
             // 清空 trigger_time 防止扫描器在处理窗口内重复投递（幂等锁亦兜底）
-            planRepository.updateStepTriggerTime(stepId, null, StepStatus.EXECUTING);
+            planRepository.markStepExecuting(stepId);
             plan.setStatus(PlanStatus.STEP_EXECUTING);
             return StepDuePreparation.toExecute(plan, step);
         }
@@ -173,7 +266,7 @@ public class PlanLifecycleManager {
                     step.getResult() != null ? step.getResult() : ContactResult.SENT_NO_RESPONSE;
             planRepository.updateStepStatus(stepId, StepStatus.COMPLETED, result);
             StepDuePreparation prep = StepDuePreparation.noop();
-            prep.getEvents().add(stepCompletedEvent(plan, step));
+            prep.getEvents().add(enqueued(EngineEvents.stepCompleted(plan, step)));
             return prep;
         }
         return StepDuePreparation.noop();
@@ -205,11 +298,16 @@ public class PlanLifecycleManager {
                 ContactPlanStep next = planRepository.getNextStep(planId, completed.getStepOrder());
                 if (next == null) {
                     log.info("[advance] plan {} no next step → PLAN_EXHAUSTED", planId);
-                    return single(planExhaustedEvent(plan));
+                    return single(enqueued(EngineEvents.planExhausted(plan)));
                 }
-                LocalDateTime triggerTime =
-                        LocalDateTime.now().plusMinutes(Math.max(0, next.getDelayMinutes()));
-                planRepository.updateStepTriggerTime(next.getId(), triggerTime, StepStatus.PENDING);
+                LocalDateTime triggerTime = next.getTriggerTime();
+                if (triggerTime == null) {
+                    triggerTime =
+                            LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
+                                    .plusMinutes(Math.max(0, next.getDelayMinutes()));
+                    planRepository.updateStepTriggerTime(
+                            next.getId(), triggerTime, StepStatus.PENDING);
+                }
                 planRepository.updateCurrentStep(planId, next.getStepOrder());
                 planRepository.updatePlanStatus(planId, PlanStatus.STEP_SCHEDULED, null);
                 log.info(
@@ -226,7 +324,7 @@ public class PlanLifecycleManager {
 
             case PLAN_EXHAUSTED:
             default:
-                return single(planExhaustedEvent(plan));
+                return single(enqueued(EngineEvents.planExhausted(plan)));
         }
     }
 
@@ -238,14 +336,36 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        if (plan == null || plan.getStatus() != PlanStatus.STEP_EXECUTING) {
-            return noEvents(); // 非执行态（已处理/已取消），静默吸收
+        // AI_CALL 等 disposition（EXECUTING）；Phase 2 消息观察期（WAITING）可短路结转
+        // Phase 1 SMS/PUSH/EMAIL 同步完成，不进 WAITING（引擎 §4.3.3 / §5⑦）
+        if (plan == null
+                || (plan.getStatus() != PlanStatus.STEP_EXECUTING
+                        && plan.getStatus() != PlanStatus.STEP_WAITING)) {
+            return noEvents(); // 非执行/等待态（已处理/已取消），静默吸收
         }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        ContactResult result = mapCallbackToResult(event.getString("result"));
-        planRepository.updateStepStatus(stepId, StepStatus.COMPLETED, result);
+        if (step == null) {
+            return noEvents();
+        }
+        String callbackOutcome = event.getString(CollectionEvent.DISPOSITION);
+        if (callbackOutcome == null) {
+            callbackOutcome = event.getString(CollectionEvent.RESULT);
+        }
+        ContactResult result = mapCallbackToResult(callbackOutcome);
+        if (!stepOutcomeRecorder.recordTerminal(
+                plan,
+                step,
+                StepStatus.EXECUTING,
+                StepStatus.COMPLETED,
+                result,
+                step.getChannelType(),
+                event.getString(CollectionEvent.PROVIDER_MSG_ID),
+                null)) {
+            return noEvents();
+        }
         log.info("[callback] plan {} step {} result {}", planId, stepId, result);
-        return single(stepCompletedEvent(plan, step));
+        // 入箱已由 recordTerminal 在同一事务内完成，此处只负责提交后的即时发布。
+        return single(EngineEvents.stepCompleted(plan, step));
     }
 
     // ───────────────────────── 回调超时兜底（§2.3.4） ─────────────────────────
@@ -260,9 +380,22 @@ public class PlanLifecycleManager {
             return noEvents(); // 回调已正常处理
         }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        planRepository.updateStepStatus(stepId, StepStatus.FAILED, ContactResult.FAILED);
+        if (step == null
+                || !stepOutcomeRecorder.recordTerminal(
+                        plan,
+                        step,
+                        StepStatus.EXECUTING,
+                        StepStatus.FAILED,
+                        ContactResult.FAILED,
+                        step.getChannelType(),
+                        null,
+                        JsonUtil.toJson(
+                                java.util.Collections.singletonMap(
+                                        "errorCode", "CALLBACK_TIMEOUT")))) {
+            return noEvents();
+        }
         log.info("[callbackTimeout] plan {} step {} → FAILED", planId, stepId);
-        return single(stepCompletedEvent(plan, step));
+        return single(EngineEvents.stepCompleted(plan, step));
     }
 
     // ───────────────────────── 穷尽续建（§2.5） ─────────────────────────
@@ -274,7 +407,7 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
-        // 决策 B：carry-forward 旧计划已冻结快照（续建非外部 case_push，无新 payload）；
+        // 续建沿用旧计划已冻结快照（非外部案件事件，无新 payload）；
         // 缺失时降级 CaseService（兜底）。
         ContextSnapshot carried = snapshotFromPlan(plan);
         final ContextSnapshot snapshot =
@@ -289,17 +422,23 @@ public class PlanLifecycleManager {
                         () -> exhaustionPolicy.handle(plan, caseInfo, snapshot));
         switch (result.getAction()) {
             case REBUILD:
-                planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null); // 旧计划正常完成
-                createPlanForStage(plan.getCaseId(), plan.getStage(), caseInfo, snapshot);
+                // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
+                planRepository.markRenewalPending(planId);
+                if (!createPlanForStage(
+                        plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
+                    throw new IllegalStateException(
+                            "REBUILD did not create successor plan: " + planId);
+                }
+                planRepository.updatePlanStatus(
+                        planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
                 log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
                 return noEvents();
             case ESCALATE:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
                 log.info("[exhausted] plan {} ESCALATE → {}", planId, result.getTargetStage());
                 return single(
-                        CollectionEvent.of(EventType.STAGE_CHANGED)
-                                .with(CollectionEvent.CASE_ID, plan.getCaseId())
-                                .with(CollectionEvent.STAGE, result.getTargetStage().name()));
+                        enqueued(
+                                EngineEvents.stageEscalated(plan, result.getTargetStage().name())));
             case COMPLETE:
             default:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
@@ -348,7 +487,7 @@ public class PlanLifecycleManager {
                         SpiType.EXHAUSTION_POLICY,
                         () -> exhaustionPolicy.handle(last, caseInfo, snapshot));
         if (result.getAction() == ExhaustionAction.REBUILD) {
-            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot);
+            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot, null);
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
         }
         return noEvents();
@@ -356,18 +495,23 @@ public class PlanLifecycleManager {
 
     // ───────────────────────── 私有：计划创建复用（§2.2） ─────────────────────────
 
-    private void createPlanForStage(
-            Long caseId, Stage stage, CaseInfo providedCaseInfo, ContextSnapshot providedSnapshot) {
+    private boolean createPlanForStage(
+            Long caseId,
+            Stage stage,
+            CaseInfo providedCaseInfo,
+            ContextSnapshot providedSnapshot,
+            Long excludedActivePlanId) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
-            return;
+            return false;
         }
-        if (planRepository.findActivePlanByCaseAndStage(caseId, stage) != null) {
+        ContactPlan activePlan = planRepository.findActivePlanByCaseAndStage(caseId, stage);
+        if (activePlan != null && !activePlan.getId().equals(excludedActivePlanId)) {
             log.info(
                     "[create] caseId={} stage={} already has active plan, idempotent skip",
                     caseId,
                     stage);
-            return; // 单活跃计划约束 / 幂等
+            return false; // 单活跃计划约束 / 幂等
         }
         // 决策 B：优先用传入的 caseInfo / snapshot（事件 payload / carry-forward）；
         // 缺失时降级 CaseService（仅兜底 / 对账，非主链路）。
@@ -375,7 +519,7 @@ public class PlanLifecycleManager {
                 providedCaseInfo != null ? providedCaseInfo : caseService.getCaseInfo(caseId);
         if (caseInfo != null && isCeased(caseInfo)) {
             log.info("[create] caseId={} is CEASED, skip PlanFactory.create", caseId);
-            return;
+            return false;
         }
         ContextSnapshot snapshot =
                 providedSnapshot != null
@@ -385,7 +529,7 @@ public class PlanLifecycleManager {
                 && snapshot.getCaseContext() != null
                 && "CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
             log.info("[create] caseId={} snapshot collectionStatus=CEASED, skip", caseId);
-            return;
+            return false;
         }
 
         // SPI 硬超时 50ms；异常/超时上抛 → NACK 延迟重消费（丢失整个计划 = 案件完全无触达，核心引擎规格 §4.1）
@@ -397,7 +541,7 @@ public class PlanLifecycleManager {
                     "[create] PlanFactory returned null for case {} stage {}, no plan",
                     caseId,
                     stage);
-            return;
+            return false;
         }
         plan.setCaseId(caseId);
         if (plan.getUserId() == null) {
@@ -410,12 +554,15 @@ public class PlanLifecycleManager {
         plan.setCurrentStep(0);
         plan.setIdempotencyKey(caseId + ":" + stage + ":" + System.currentTimeMillis());
 
-        // 首步设置 trigger_time（相对计划创建时间）；其余步骤等推进时再注册
+        // Factory 预写的 DayBlock 绝对槽位必须保留；相对 delayMinutes 仅作 local/L4 回退。
         if (!plan.getSteps().isEmpty()) {
             ContactPlanStep first = plan.getSteps().get(0);
             first.setStepOrder(1);
-            first.setTriggerTime(
-                    LocalDateTime.now().plusMinutes(Math.max(0, first.getDelayMinutes())));
+            if (first.getTriggerTime() == null) {
+                first.setTriggerTime(
+                        LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
+                                .plusMinutes(Math.max(0, first.getDelayMinutes())));
+            }
             first.setStatus(StepStatus.PENDING);
         }
         planRepository.savePlan(plan);
@@ -425,6 +572,7 @@ public class PlanLifecycleManager {
                 caseId,
                 stage,
                 plan.getTotalSteps());
+        return true;
     }
 
     // ───────────────────────── 辅助 ─────────────────────────
@@ -447,18 +595,31 @@ public class PlanLifecycleManager {
         return StepResult.builder().success(success).contactResult(cr).build();
     }
 
-    private CollectionEvent stepCompletedEvent(ContactPlan plan, ContactPlanStep step) {
-        return CollectionEvent.of(EventType.STEP_COMPLETED)
-                .with(CollectionEvent.CASE_ID, plan.getCaseId())
-                .with(CollectionEvent.USER_ID, plan.getUserId())
-                .with(CollectionEvent.PLAN_ID, plan.getId())
-                .with(CollectionEvent.STEP_ID, step.getId());
-    }
-
-    private CollectionEvent planExhaustedEvent(ContactPlan plan) {
-        return CollectionEvent.of(EventType.PLAN_EXHAUSTED)
-                .with(CollectionEvent.CASE_ID, plan.getCaseId())
-                .with(CollectionEvent.PLAN_ID, plan.getId());
+    /** 异步回调和超时的唯一 timeline 落数点。与步骤状态更新处于同一事务， 重复回调由 TimelineRepository 按 providerMsgId 幂等更新。 */
+    private void writeCallbackTimeline(
+            ContactPlan plan,
+            ContactPlanStep step,
+            ContactResult result,
+            String providerMsgId,
+            String errorCode) {
+        ContactRecord record = new ContactRecord();
+        record.setCaseId(plan.getCaseId());
+        record.setUserId(plan.getUserId());
+        record.setPlanId(plan.getId());
+        record.setStepId(step.getId());
+        record.setAttemptKey(plan.getId() + ":" + step.getStepOrder() + ":" + step.getRetryCount());
+        record.setChannel(step.getChannelType());
+        record.setDirection(Direction.OUT);
+        record.setTemplateId(step.getTemplateId());
+        record.setResult(result);
+        record.setProviderMsgId(providerMsgId);
+        record.setProviderCallback(
+                errorCode == null
+                        ? null
+                        : JsonUtil.toJson(
+                                java.util.Collections.singletonMap("errorCode", errorCode)));
+        record.setSource(DataSource.SYSTEM);
+        timelineRepository.writeTimeline(record);
     }
 
     private ContactResult mapCallbackToResult(String raw) {
@@ -502,10 +663,14 @@ public class PlanLifecycleManager {
         ctx.setDpd(dpd);
         ctx.setStage(stage != null ? stage : Stage.fromDpd(dpd));
         ctx.setProduct(event.getString(CollectionEvent.PRODUCT));
+        ctx.setOverdueAmount(event.getBigDecimal(CollectionEvent.OVERDUE_AMOUNT));
         ctx.setTotalOutstanding(event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
         ctx.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
+        ctx.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
         ctx.setDueDate(parseDate(event.getString(CollectionEvent.DUE_DATE)));
-        ctx.setStrategyTone("STANDARD");
+        ctx.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
+        ctx.setNextDueDate(parseDate(event.getString(CollectionEvent.NEXT_DUE_DATE)));
+        ctx.setRepaymentUrl(repaymentUrlTemplate.replace("{caseId}", String.valueOf(caseId)));
         ctx.setComplaintFrozen(false);
         // D+91 完全停催：collectionStatus=CEASED；createPlanForStage / PlanFactory 据此拒建。
         ctx.setCollectionStatus(dpd >= 91 ? "CEASED" : "ACTIVE");
@@ -516,7 +681,8 @@ public class PlanLifecycleManager {
         basic.setName(event.getString(CollectionEvent.NAME));
         basic.setPrimaryPhone(event.getString(CollectionEvent.PHONE));
         basic.setEmail(event.getString(CollectionEvent.EMAIL));
-        basic.setLanguage("en");
+        String language = event.getString(CollectionEvent.LANGUAGE);
+        basic.setLanguage(language == null || language.trim().isEmpty() ? "en" : language);
         profile.setBasic(basic);
         UserProfile.DeviceInfo device = new UserProfile.DeviceInfo();
         device.setJpushToken(event.getString(CollectionEvent.JPUSH_TOKEN));
@@ -571,10 +737,26 @@ public class PlanLifecycleManager {
         }
     }
 
-    /** carry-forward 时按事件刷新目标 stage（§4.4 升档）。 */
-    private ContextSnapshot withStage(ContextSnapshot snap, Stage stage) {
-        if (snap != null && snap.getCaseContext() != null && stage != null) {
-            snap.getCaseContext().setStage(stage);
+    /**
+     * carry-forward 时按事件刷新目标 stage（§4.4 升档），并在事件携带日变字段时一并刷新 dpd / 余额。
+     *
+     * <p>日变字段可选：仅日切发布的 STAGE_CHANGED 会带，缺省则保持旧值。渲染时刻的真值另由 步骤② 的实时读覆盖（见 {@code
+     * StepExecutionOrchestrator#refreshVolatileFields}），此处只是让快照列本身不至于长期陈旧。
+     */
+    private ContextSnapshot withRefreshedFields(
+            ContextSnapshot snap, Stage stage, Integer dpd, java.math.BigDecimal totalOutstanding) {
+        if (snap == null || snap.getCaseContext() == null) {
+            return snap;
+        }
+        CaseContext ctx = snap.getCaseContext();
+        if (stage != null) {
+            ctx.setStage(stage);
+        }
+        if (dpd != null) {
+            ctx.setDpd(dpd);
+        }
+        if (totalOutstanding != null) {
+            ctx.setTotalOutstanding(totalOutstanding);
         }
         return snap;
     }
@@ -609,6 +791,18 @@ public class PlanLifecycleManager {
 
     private List<CollectionEvent> noEvents() {
         return new ArrayList<>();
+    }
+
+    /**
+     * 在当前事务内把事件写入发件箱，再交给调用方于提交后即时发布（核心引擎规格 §7.4）。
+     *
+     * <p>不入箱的话，提交后发布一旦失败，原事件重投时状态已是终态、这些分支不会被再次走到， 事件就永久消失、计划静默停摆。
+     */
+    private CollectionEvent enqueued(CollectionEvent event) {
+        if (outboxEventSink != null) {
+            outboxEventSink.enqueue(event);
+        }
+        return event;
     }
 
     private List<CollectionEvent> single(CollectionEvent e) {

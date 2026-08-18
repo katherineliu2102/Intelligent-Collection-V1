@@ -45,7 +45,7 @@
 
 ### 1.1 背景
 
-Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的分层架构，`collection-admin` 作为**应用层**承载管理后台 REST API、Webhook 回调与 XXL-Job 触发入口（详见 [架构设计文档 §1.7](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）。
+Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的分层架构，`collection-admin` 作为**应用层**承载管理后台 REST API、Webhook 回调与调度订阅触发入口（Cloud Scheduler → Pub/Sub → 应用订阅）（详见 [架构设计文档 §1.7](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）。
 
 当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台仅有只读 API（`/catalog`、`/plans`）与开发用静态页（`catalog.html`、`orchestration.html`）。**运营与策略人员无法通过产品化界面完成日常配置与监控**，是 Phase 1 产品化缺口。
 
@@ -372,15 +372,8 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 | 层级 | 能力 | 时机 | 拦截示例 |
 |------|------|------|----------|
-| **静态校验**（P0） | 字段级规则校验，保存前同步执行 | 点击保存 | 触达时段非法（如 22:00–06:00 跨夜未声明）、日频率上限 = 0、**文案非法/未知变量/超字数**（`ScriptTemplateValidator`，SMS/Push）、scriptSlot 无渠道映射、计划步骤引用了停用渠道 |
-| **Dry-run 预演**（P1） | 对历史案件样本回放新规则，展示命中分布；文案侧已提供 `POST /config/script-templates/validate` | 保存前可选触发 | 新规则导致某 Stage 触达量骤增/归零、与现有合规阈值冲突、绝大多数案件未命中任何模板 |
-
-**文案模板静态规则（SMS/Push，已落地）**：
-
-- 变量白名单与引擎一致：`{name}` `{amount}` `{dpd}` `{repaymentUrl}`；未知 `{xxx}` 拒绝保存。
-- SMS body 必含 `{amount}` + `{repaymentUrl}`；模板 ≤300，样例渲染 ≤400（>160/>320 警告多段短信成本）。
-- Push title ≤40 / body ≤120；title+body 不可同时为空。
-- UI：Templates 编辑弹窗变量 chip、字数条、样例预览；后端 `PUT` 写库前强制校验。
+| **静态校验**（P0） | 字段级规则校验，保存前同步执行 | 点击保存 | 触达时段非法（如 22:00–06:00 跨夜未声明）、日频率上限 = 0、模板变量缺失、scriptSlot 无渠道映射、计划步骤引用了停用渠道 |
+| **Dry-run 预演**（P1） | 对历史案件样本回放新规则，展示命中分布 | 保存前可选触发 | 新规则导致某 Stage 触达量骤增/归零、与现有合规阈值冲突、绝大多数案件未命中任何模板 |
 
 **Dry-run 实现**：复用 `MockTriggerController` 能力，取近期历史案件样本（如近 7 日 N 个案件），用**新配置**跑一遍 plan 生成与 Guard 校验（不真实发送），输出：
 
@@ -511,17 +504,17 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 ---
 
-### 5.6 基础合规操作
+### 5.6 合规操作（Phase 2 预留）
 
-**定位**：满足 PRD 场景 C 的最小后台能力；**不是**独立合规子系统。
+**定位**：投诉/争议冻结、解冻和终态取消不属于 Phase 1；接口实现由 `collection.phase2.compliance-ops.enabled=true` 显式启用。
 
 | 操作 | 行为 | 角色 |
 |------|------|------|
-| **投诉冻结** | 对用户活跃 plan 打冻结标记；引擎 Pre-flight 拦截新触达，不取消 plan | 催收主管 |
-| **解冻** | 清除冻结标记，恢复触达 | 催收主管 |
-| **终态取消** | 确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
+| **投诉冻结** | Phase 2：对用户活跃 plan 写冻结标记 | 催收主管 |
+| **解冻** | Phase 2：清除冻结标记 | 催收主管 |
+| **终态取消** | Phase 2：确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
 
-记录：操作人、时间、原因（操作日志）。不建设 Consent 台账、DNC 管理、Dispute 工单流 ✅。
+Phase 2 记录操作人、时间、原因（操作日志）。Phase 1 不建设 Consent 台账、DNC 管理、Dispute 工单流。
 
 ---
 
@@ -662,7 +655,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 ### 6.6 节点配置一致性（多实例演进项）
 
-Phase 1 为**单实例部署**（[架构文档 §3.1](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#31-容量扩展)），不存在「部分节点未收到 Nacos 推送导致新老策略混跑」的脑裂问题，因此本能力**当前不做**。
+Phase 1 为**单实例部署**（部署拓扑见 [架构文档 §2](./MOCASA催收系统升级_Phase1_架构设计文档.md#2-技术栈决策)），不存在「部分节点未收到 Nacos 推送导致新老策略混跑」的脑裂问题，因此本能力**当前不做**。
 
 ⏳ **演进触发条件**：当引擎扩容到 >1 个实例（多个 Consumer 加入 Redis Stream Consumer Group）时，启用「节点配置版本一致性视图」——展示各引擎节点当前加载的 `config_version`，运维可发现落后/失联节点。
 

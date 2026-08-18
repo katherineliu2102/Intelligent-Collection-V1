@@ -66,9 +66,9 @@ docs/
 
 | scriptSlot | 渠道 | 供应商 | 触发 | 渲染 / template_id | 素材 | Phase 1 |
 |------------|------|--------|------|-------------------|------|---------|
-| `S0_REMINDER` | SMS / Push | LTH / FCM | D-3、D-2 · 08:00 | Resolver → `sms_body` / FCM data | 待填 · 含防诈骗 | ⏳ |
-| `S0_REMINDER_URGENT` | SMS / Push | LTH / FCM | D-1 · 08:00 | 同上 | 待填 | ⏳ |
-| `S0_DUE_TODAY` | SMS / Push | LTH / FCM | D0 · 08:00 | 同上 | 待填 | ⏳ |
+| `S0_REMINDER` | SMS / Push | LTH / Notification Center → JPush | D-3、D-2 · 08:00 | Resolver → `sms_body` / JPush data | 待填 · 含防诈骗 | ⏳ |
+| `S0_REMINDER_URGENT` | SMS / Push | LTH / Notification Center → JPush | D-1 · 08:00 | 同上 | 待填 | ⏳ |
+| `S0_DUE_TODAY` | SMS / Push | LTH / Notification Center → JPush | D0 · 08:00 | 同上 | 待填 | ⏳ |
 | `S0_DUE_TODAY_EMAIL` | EMAIL | SendGrid | D0 · 14:00 | `d-9b485bfd24e14950a7811faf33c2b22f` | [HTML](./email-templates/milestones/S0_DUE_TODAY_EMAIL.html) · [Test Data](./email-templates/email-templates-test/test-data.sample.json) | ✅ **启用** |
 
 ### 2.2 S1（D+1 ~ D+3）
@@ -86,7 +86,7 @@ docs/
 
 | scriptSlot | 渠道 | 供应商 | 触发 | 渲染 / template_id | 素材 | Phase 1 |
 |------------|------|--------|------|-------------------|------|---------|
-| `S2_SMS_STANDARD` / `S2_SMS_FIRM` | SMS | LTH | 08:00 | `sms_body` + offer 占位 | 待填 | ⏳ |
+| `S2_SMS_STANDARD` / `S2_SMS_FIRM` | SMS | LTH | 08:00 | `sms_body`（不含动态 offer 变量） | 待填 | ⏳ |
 | `S2_PUSH_STANDARD` | PUSH | FCM | 12:00 | data payload | 待填 | ⏳ |
 | `S2_EMAIL_ENTRY` | EMAIL | SendGrid | D+4 · 14:00 | `d-86ed8faae3b24489ad7db8a11067b8c4` | [HTML](./email-templates/milestones/S2_EMAIL_ENTRY.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d4.json) | ✅ **启用** |
 | `S2_EMAIL_MID` | EMAIL | SendGrid | D+7 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S2_EMAIL_MID.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d7.json) | 📦 HTML 备用 |
@@ -169,7 +169,7 @@ channel:
 
 **叙事原则**（v3）：见 [email-templates/README §2](./email-templates/README.md#2-催收心理学矩阵)——**全程无 third-party**；D+75 用 `assignment_date` 预告 **final delinquency review**（禁写停催/委外）。
 **Subject / Preheader SSOT**：[`email-templates/subjects.md`](./email-templates/subjects.md)  
-**语言**：Phase 1 仅英文；S2+ 静态 Offer 引导（无 `offer_amount`）。
+**语言**：Phase 1 仅英文；S2+ 可使用泛化 payment-options 引导，但不承诺减免、不使用 `offer_*` 变量。
 
 ### 3.3 里程碑速查
 
@@ -300,6 +300,7 @@ channel:
   callback:
     base-url: https://domain/webhook
   scripts:                        # SMS/Push 文案（§4.1/§5.1），DefaultStepResolver 按 scriptSlot 读取并注入变量
+    release-version: "2026.07.27.1" # YAML/Nacos 模板发布版本；DB 模板则记录 db:<config_version>
     push-default-deep-link: "https://app.mocasa.com/repay"   # repaymentUrl 缺失时 Push 兜底（到 App 还款页，待 App 确认）
     sms-default-repayment-link: "https://mocasa.com/s/4cTu"  # SMS 还款短链兜底（App 官方短链）
     sms:
@@ -323,7 +324,7 @@ channel:
       S4_PUSH_STANDARD: { title: "Final notice: {dpd} days overdue", body: "Resolve PHP {amount} now. View your options in the app." }
 ```
 
-> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}/{repaymentUrl}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。
+> **落地说明**：`DefaultStepResolver` 由 `Stage + 渠道 + strategyTone(+dpd)` 推导 `scriptSlot`，读 `channel.scripts` 注入 `{name}/{amount}/{dpd}/{repaymentUrl}`；S2+ 自动按 `strategyTone=FIRM` 选 `*_FIRM`。配置缺该槽时回退占位串。FIRM/STANDARD 由 ingestion 写入 `caseContext.strategyTone`。每次 YAML/Nacos 文案发布必须递增 `scripts.release-version`；timeline 只保存 slot、版本和 HMAC，不保存正文或变量值。
 
 ---
 
@@ -348,5 +349,5 @@ channel:
 | [策略迭代与测试操作手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链) | 运营改模板流程 |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | Adapter |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | TC 冒烟 |
-| [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) | 里程碑状态 |
+| [HANDOFF](../../HANDOFF.md) | 模块未闭合待办 / Pilot 缺口 |
 | [渠道文档索引](./README_渠道文档索引.md) | 导航 |

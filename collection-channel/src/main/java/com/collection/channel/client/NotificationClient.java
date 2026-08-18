@@ -15,9 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -27,9 +24,9 @@ import org.springframework.web.client.RestTemplate;
  * <p>统一注入鉴权字段 {@code appCode / dateTime / sign}（{@code sign = MD5(appCode+appKey+dateTime)} 小写
  * hex）， POST JSON 并解析 {@link NotificationResponse}。
  *
- * <p>对「明确未发送」的瞬时故障（连接超时、HTTP 5xx、429）做 <b>渠道侧短重试</b>（默认重试 1 次）； 业务码（HTTP 200 + body code）不在此重试，交由
- * Adapter 按 §9 映射。重试耗尽后抛出最后一次异常， 由 Adapter 映射为 {@code retryable=true} 的瞬时失败。通知中心无幂等字段，重试存在 SMS
- * 至少一次的残余风险。
+ * <p>仅对 {@link HttpFailureClassifier#provablyNotSent 可证明未写给供应商}的故障做 <b>渠道侧短重试</b>（默认重试 1
+ * 次）——通知中心没有幂等字段，读超时与 5xx 下请求可能已被受理，重试就是重复发送。这两类一律立即上抛， 由 Adapter 映射为 {@code retryable=false}
+ * 的结果未知。业务码（HTTP 200 + body code）不在此重试，交由 Adapter 按 §9 映射。
  */
 @Component
 public class NotificationClient {
@@ -55,7 +52,7 @@ public class NotificationClient {
      * @param path 接口路径，如 {@code /v1/sms/send}
      * @param body 业务字段（不含鉴权）
      * @return 解析后的响应
-     * @throws RestClientException 瞬时故障重试耗尽后抛出（连接超时 / 5xx / 429）
+     * @throws RestClientException 结果未知（读超时 / 5xx）立即抛出；可证明未发出的故障重试耗尽后抛出
      */
     public NotificationResponse post(String path, Map<String, Object> body) {
         return execute(path, body, true);
@@ -68,36 +65,25 @@ public class NotificationClient {
 
     private NotificationResponse execute(String path, Map<String, Object> body, boolean withAuth) {
         String url = baseUrl() + path;
-        RestClientException last = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; ; attempt++) {
             try {
                 ResponseEntity<String> response =
                         channelRestTemplate.postForEntity(
                                 url, buildEntity(body, withAuth), String.class);
                 return NotificationResponse.parse(response.getBody());
-            } catch (ResourceAccessException | HttpServerErrorException e) {
-                last = e;
+            } catch (RestClientException e) {
+                if (attempt >= MAX_ATTEMPTS || !HttpFailureClassifier.provablyNotSent(e)) {
+                    throw e;
+                }
                 log.warn(
-                        "[NotificationClient] transient failure path={} attempt={}/{}: {}",
+                        "[NotificationClient] not-sent failure, retrying path={} attempt={}/{}: {}",
                         path,
                         attempt,
                         MAX_ATTEMPTS,
                         e.getMessage());
-            } catch (HttpClientErrorException e) {
-                if (e.getStatusCode().value() == 429) {
-                    last = e;
-                    log.warn(
-                            "[NotificationClient] rate limited path={} attempt={}/{}",
-                            path,
-                            attempt,
-                            MAX_ATTEMPTS);
-                } else {
-                    throw e;
-                }
             }
             sleepBeforeRetry(attempt);
         }
-        throw last;
     }
 
     private HttpEntity<String> buildEntity(Map<String, Object> body, boolean withAuth) {

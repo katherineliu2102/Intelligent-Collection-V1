@@ -1,0 +1,22 @@
+{
+  "dataType": "caseEvent",
+  "data": {
+    "eventId": "l4b-case-99000000-0001",
+    "occurredAt": "2026-08-12 03:00:00",
+    "caseId": 99000000,
+    "userId": 99000000,
+    "caseVersion": "00000000000000000000000000000000",
+    "product": "3",
+    "stage": "S1",
+    "dpd": 2,
+    "collectionStatus": "IN_COLLECTION",
+    "overduePrincipal": 3000.00,
+    "overdueInterest": 0.00,
+    "overduePenaltyAmount": 0.00,
+    "overdueAmount": 3000.00,
+    "upcomingAmount": 0.00,
+    "nextDueDate": 0,
+    "borrower": {"name": "Test Case", "phone": "9451374358", "email": "l4b@example.com", "language": "en"},
+    "device": {"pushToken": "1a0018970bf0c19de04"}
+  }
+}

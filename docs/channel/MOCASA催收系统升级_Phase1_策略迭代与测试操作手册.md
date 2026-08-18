@@ -1,7 +1,8 @@
 # MOCASA Phase 1 — 策略迭代与测试操作手册
 
-> **版本**: v1.1  
-> **日期**: 2026-06-05  
+> **版本**: v1.2  
+> **日期**: 2026-08-18  
+> **v1.2**：Push 走通知中心 → JPush；Voice 密钥改为 `channel.facade.voice.*`。  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
 > **关联文档**: [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
@@ -74,7 +75,7 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 |------------|------|---------|
 | `channel.notification.app-key` 等 | 通知中心 SMS + Push | TC-SMS-01、TC-PUSH-01/02 |
 | `channel.sendgrid.api-key` + `templates` 映射 | SendGrid Email | TC-EMAIL-01、TC-EMAIL-D0-01 |
-| `channel.lth.voice.url` | LTH 外呼 | TC-VOICE-01 |
+| `channel.facade.voice.*` | Valubo Facade 外呼 | TC-VOICE-01 |
 | `channel.callback.base-url` | Voice 回调 | TC-VOICE-03 |
 | `channel.compliance.*` | 合规 Guard | TC-GUARD-* |
 | `channel.debug.single-step` | 单渠道冒烟 | 各单渠道 TC |
@@ -176,7 +177,7 @@ Email 联调递增 caseId（92002、92003…），避免 plan 冲突。
 | 渠道 | 改哪里 |
 |------|--------|
 | SMS | Resolver 文案 + LTH URL；无 SendGrid 式 template_id |
-| PUSH | FCM payload + App 深链约定 |
+| PUSH | 通知中心 JPush payload + App 深链约定 |
 
 ### 5.3 改「合规频率 / 触达窗」
 
@@ -198,7 +199,7 @@ ingest → PlanFactory（策略：几步、什么渠道）
        → Adapter（供应商 API）
 ```
 
-进度见 [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md)。
+进度见 [HANDOFF](../../HANDOFF.md) · Checklist 见 [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)。
 
 ---
 

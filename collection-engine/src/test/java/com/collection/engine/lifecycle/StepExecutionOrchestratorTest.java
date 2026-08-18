@@ -1,6 +1,7 @@
 package com.collection.engine.lifecycle;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -14,20 +15,27 @@ import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
+import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.enums.ContactResult;
 import com.collection.common.enums.PlanStatus;
+import com.collection.common.enums.Stage;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.event.CollectionEventBus;
+import com.collection.common.model.CaseContext;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
+import com.collection.common.model.ContextSnapshot;
 import com.collection.common.repository.ContactPlanRepository;
+import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.spi.SpiInvoker;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -64,6 +72,8 @@ class StepExecutionOrchestratorTest {
     @Mock private ContextAssembler contextAssembler;
     @Mock private ContactPlanRepository planRepository;
     @Mock private TimelineRepository timelineRepository;
+    @Mock private StepOutcomeRecorder stepOutcomeRecorder;
+    @Mock private DecisionLogRepository decisionLogRepository;
     @Mock private CollectionEventBus eventBus;
     @Spy private EngineProperties props = new EngineProperties();
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
@@ -91,11 +101,46 @@ class StepExecutionOrchestratorTest {
 
         // 默认放行到渠道调度前的各步骤（具体测试按需覆盖）
         when(idempotencyService.acquire(anyString(), anyInt())).thenReturn(true);
-        when(preFlightChecker.check(CASE_ID)).thenReturn(true);
+        when(preFlightChecker.inspect(CASE_ID)).thenReturn(PreFlightResult.passed(liveCaseInfo()));
         when(contextAssembler.assemble(any(), any()))
                 .thenReturn(ExecutionContext.builder().plan(plan).currentStep(step).build());
         when(executionGuard.evaluate(any())).thenReturn(GuardVerdict.allow());
         when(planRepository.findById(PLAN_ID)).thenReturn(plan); // ⑤½ 复检默认非终态
+        when(planRepository.transitionStepStatus(
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(ContactResult.class)))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        any(StepStatus.class),
+                        any(StepStatus.class),
+                        any(ContactResult.class),
+                        any(ChannelType.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordWaiting(
+                        any(),
+                        any(),
+                        any(ChannelType.class),
+                        any(ContactResult.class),
+                        any(),
+                        any()))
+                .thenReturn(true);
+        when(stepOutcomeRecorder.recordStrategySkipped(any(), any())).thenReturn(true);
+    }
+
+    /** 步骤② 实时读到的案件数据：dpd/余额比快照新，stage 故意与计划不同以验证不被覆盖。 */
+    private CaseInfo liveCaseInfo() {
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(CASE_ID);
+        info.setDpd(58);
+        info.setStage(Stage.S3);
+        info.setTotalOutstanding(new BigDecimal("1500.00"));
+        return info;
     }
 
     private void stubResolver(ChannelType ch) {
@@ -126,6 +171,19 @@ class StepExecutionOrchestratorTest {
                 .build();
     }
 
+    private void verifyTerminalRecorded(StepStatus status, ContactResult result) {
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(plan),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(status),
+                        eq(result),
+                        any(ChannelType.class),
+                        any(),
+                        any());
+    }
+
     @Test
     @DisplayName("#4 PUSH 无观察期成功 → STEP_COMPLETED + 发布")
     void push_noObservation_completes() {
@@ -136,22 +194,52 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.COMPLETED, ContactResult.DELIVERED);
+        verifyTerminalRecorded(StepStatus.COMPLETED, ContactResult.DELIVERED);
         verify(eventBus).publish(any());
     }
 
     @Test
-    @DisplayName("#5 系统守卫不通过（已还款/冻结/读失败 fail-close）→ 静默退出")
-    void preflightFail_silentExit() {
-        when(preFlightChecker.check(CASE_ID)).thenReturn(false);
+    @DisplayName("#5 系统守卫发现已还款 → 取消计划，不触达也不推进")
+    void preflightRepaid_cancelsPlan() {
+        when(preFlightChecker.inspect(CASE_ID))
+                .thenReturn(PreFlightResult.blocked(CancelReason.REPAID, liveCaseInfo()));
 
         orchestrator.executeStep(plan, step);
 
         verify(channelGateway, never()).dispatch(any());
         verify(eventBus, never()).publish(any());
-        verify(planRepository, never())
-                .updateStepStatus(eq(STEP_ID), eq(StepStatus.EXECUTING), any());
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+    }
+
+    @Test
+    @DisplayName("#5g 渲染前刷新日变字段 → Resolver 拿到实时 dpd / 余额，stage 仍随计划")
+    void refreshesVolatileFieldsBeforeResolve() {
+        CaseContext stale = new CaseContext();
+        stale.setCaseId(CASE_ID);
+        stale.setDpd(31);
+        stale.setStage(Stage.S4);
+        stale.setTotalOutstanding(new BigDecimal("1000.00"));
+        ContextSnapshot snapshot = new ContextSnapshot();
+        snapshot.setCaseContext(stale);
+        when(contextAssembler.assemble(any(), any()))
+                .thenReturn(
+                        ExecutionContext.builder()
+                                .plan(plan)
+                                .currentStep(step)
+                                .contextSnapshot(snapshot)
+                                .build());
+        stubResolver(ChannelType.SMS);
+        stubDispatch(ok(ContactResult.DELIVERED));
+
+        orchestrator.executeStep(plan, step);
+
+        ArgumentCaptor<ExecutionContext> captor = ArgumentCaptor.forClass(ExecutionContext.class);
+        verify(stepResolver).resolve(captor.capture());
+        CaseContext used = captor.getValue().getContextSnapshot().getCaseContext();
+        assertThat(used.getDpd()).isEqualTo(58);
+        assertThat(used.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("1500.00"));
+        assertThat(used.getStage()).isEqualTo(Stage.S4);
     }
 
     @Test
@@ -162,10 +250,57 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
+    @DisplayName("#6a 静默时段 → 延后执行，不跳过也不推进")
+    void quietHours_deferred() {
+        LocalDateTime resumeAt = LocalDateTime.of(2026, 7, 17, 8, 0);
+        when(executionGuard.evaluate(any()))
+                .thenReturn(GuardVerdict.defer("quiet", "TIME_WINDOW", resumeAt));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).updateStepTriggerTime(STEP_ID, resumeAt, StepStatus.PENDING);
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_SCHEDULED, null);
+        verify(planRepository, never())
+                .updateStepStatus(eq(STEP_ID), eq(StepStatus.SKIPPED), any());
+        verify(eventBus, never()).publish(any());
+        verify(channelGateway, never()).dispatch(any());
+        verify(idempotencyService).release(eq("lock:plan:" + PLAN_ID + ":1:0"));
+    }
+
+    @Test
+    @DisplayName("#6b dispatch 前 PreFlight 读取异常 → 释放执行锁并上抛，供 NACK 重投")
+    void preFlightFailure_releasesExecutionLockBeforeRethrow() {
+        when(preFlightChecker.inspect(CASE_ID)).thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> orchestrator.executeStep(plan, step))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verify(idempotencyService).release(eq("lock:plan:" + PLAN_ID + ":1:0"));
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
+    @DisplayName("#6c dispatch 后写库异常 → 保留执行锁，避免不确定结果重复触达")
+    void postDispatchFailure_keepsExecutionLock() {
+        stubResolver(ChannelType.SMS);
+        stubDispatch(ok(ContactResult.DELIVERED));
+        org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+                .when(planRepository)
+                .markStepDispatched(STEP_ID);
+
+        assertThatThrownBy(() -> orchestrator.executeStep(plan, step))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("db down");
+
+        verify(channelGateway).dispatch(any());
+        verify(idempotencyService, never()).release(anyString());
     }
 
     @Test
@@ -175,8 +310,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository)
-                .updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
@@ -188,34 +322,37 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(channelGateway, never()).dispatch(any());
     }
 
     @Test
-    @DisplayName("#8b StepResolver 返回 null → SKIPPED + 推进（主动跳过，非失败）")
+    @DisplayName("#8b StepResolver 返回 null → SKIPPED + 推进但不写 timeline（策略性跳过）")
     void resolverNull_skipped() {
         when(stepResolver.resolve(any())).thenReturn(null);
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        // 状态迁移与 STEP_COMPLETED 入箱必须同事务，故走 recordStrategySkipped 而非裸 transitionStepStatus
+        verify(stepOutcomeRecorder).recordStrategySkipped(plan, step);
         verify(eventBus).publish(any());
+        verify(timelineRepository, never()).writeTimeline(any());
         verify(channelGateway, never()).dispatch(any());
     }
 
     @Test
-    @DisplayName("#9 ChannelGateway 抛异常 → 视为 retryable → 退避重试")
-    void channelException_retryable() {
+    @DisplayName("#9 ChannelGateway 抛异常 → 结果未知，FAILED 推进")
+    void channelException_unknownOutcomeFailed() {
         stubResolver(ChannelType.SMS);
         when(channelGateway.dispatch(any())).thenThrow(new RuntimeException("gateway down"));
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).incrementRetryCount(STEP_ID);
-        verify(planRepository).updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
-        verify(planRepository, never()).updateStepStatus(eq(STEP_ID), eq(StepStatus.FAILED), any());
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
+        verify(planRepository, never()).incrementRetryCount(STEP_ID);
+        verify(planRepository, never())
+                .updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
     }
 
     @Test
@@ -241,7 +378,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(planRepository, never()).incrementRetryCount(STEP_ID);
     }
@@ -255,7 +392,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepStatus(STEP_ID, StepStatus.FAILED, ContactResult.FAILED);
+        verifyTerminalRecorded(StepStatus.FAILED, ContactResult.FAILED);
         verify(eventBus).publish(any());
         verify(planRepository, never()).incrementRetryCount(STEP_ID);
         verify(planRepository, never())
@@ -290,6 +427,7 @@ class StepExecutionOrchestratorTest {
         orchestrator.executeStep(plan, step);
 
         verify(planRepository).updateStepTimeoutTime(eq(STEP_ID), any());
+        verify(timelineRepository).writeTimeline(any());
         verify(eventBus, never()).publish(any());
         verify(planRepository, never())
                 .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_WAITING), any());
@@ -357,7 +495,8 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#31 幂等 key 含 retryCount：key = planId:stepOrder:retryCount（保证重试不被自身幂等拦截）")
+    @DisplayName(
+            "#31 幂等 key 含 retryCount：key = lock:plan:planId:stepOrder:retryCount（保证重试不被自身幂等拦截）")
     void idempotencyKey_includesRetryCount() {
         stubResolver(ChannelType.SMS);
         stubDispatch(ok(ContactResult.DELIVERED));
@@ -367,7 +506,7 @@ class StepExecutionOrchestratorTest {
 
         orchestrator.executeStep(plan, step);
 
-        verify(idempotencyService).acquire(eq(PLAN_ID + ":1:2"), anyInt());
+        verify(idempotencyService).acquire(eq("lock:plan:" + PLAN_ID + ":1:2"), anyInt());
     }
 
     @Test

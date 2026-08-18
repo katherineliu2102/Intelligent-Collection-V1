@@ -53,6 +53,15 @@ fi
 
 merged=$(printf '%s\n%s\n' "$current" "$block")
 
+# 追加式发布最容易踩的坑：现网已有 channel:/collection: 顶层键，再追加一份就成了重复键。
+# SnakeYAML 会抛 DuplicateKeyException，Spring 报成「config does not exist」，应用启动即挂。
+dup=$(echo "$merged" | grep -E '^[a-zA-Z][a-zA-Z0-9_-]*:' | sort | uniq -d | tr '\n' ' ')
+if [ -n "${dup// /}" ]; then
+  echo "[publish] ✗ 合并结果存在重复顶层键: ${dup}" >&2
+  echo "[publish]   必须手动把新键合并进已有块，而不是追加。已中止发布。" >&2
+  exit 3
+fi
+
 if [ "$APPLY" -ne 1 ]; then
   echo "===== DRY-RUN：合并后将发布的完整内容如下（未发布）====="
   echo "$merged"

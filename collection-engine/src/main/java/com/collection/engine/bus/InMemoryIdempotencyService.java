@@ -1,19 +1,20 @@
 package com.collection.engine.bus;
 
 import com.collection.common.service.IdempotencyService;
+import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 内存幂等锁（Phase 1 链路验证默认实现）。对应 {@link IdempotencyService}。
  *
- * <p>生产应替换为 Redis SETNX 实现（基础设施规范 §3）。
- * 激活条件：collection.idempotency=memory（缺省默认）。
+ * <p>生产应替换为 Redis SETNX 实现（基础设施规范 §3）。 激活条件：collection.idempotency=memory（缺省默认）。
  */
 @Component
-@ConditionalOnProperty(name = "collection.idempotency", havingValue = "memory", matchIfMissing = true)
+@ConditionalOnProperty(
+        name = "collection.idempotency",
+        havingValue = "memory",
+        matchIfMissing = true)
 public class InMemoryIdempotencyService implements IdempotencyService {
 
     /** key -> 过期时间戳(ms)。 */
@@ -29,5 +30,10 @@ public class InMemoryIdempotencyService implements IdempotencyService {
             store.remove(idempotencyKey, existing);
         }
         return store.putIfAbsent(idempotencyKey, expireAt) == null;
+    }
+
+    @Override
+    public void release(String idempotencyKey) {
+        store.remove(idempotencyKey);
     }
 }

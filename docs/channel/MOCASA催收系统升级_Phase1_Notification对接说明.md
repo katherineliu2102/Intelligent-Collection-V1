@@ -1,10 +1,11 @@
 # MOCASA Phase 1 — 通知中心对接说明（SMS + App Push）
 
-> **版本**: v1.1  
-> **日期**: 2026-06-11  
+> **版本**: v1.2  
+> **日期**: 2026-08-18  
+> **v1.2**：token 上游改为 `caseEvent.device.pushToken` → 内部 `jpushToken`；SMS `{amount}` 按 Stage 分流。  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[notification-send-api.md](./reference/notification-send-api.md)、[LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md)
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[notification-send-api.md](./reference/notification-send-api.md)、[字段透传说明](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md)
 
 ---
 
@@ -185,7 +186,7 @@ SMS 为 **同步渠道**：`ChannelGateway.dispatch` 成功 → `STEP_COMPLETED`
 
 | 字段                              | 来源                             | 说明                                     |
 | ------------------------------- | ------------------------------ | -------------------------------------- |
-| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion → 快照（2026-07 确认） | **JPush Registration ID**（非 FCM token） |
+| `userProfile.device.jpushToken` | **`caseEvent.device.pushToken`** → ingestion 改名写入快照 | **JPush Registration ID**（非 FCM token）；空则 Push→SMS |
 
 
 `StepResolver` 将 `jpushToken` 填入 `StepCommand.targetAddress`。
@@ -310,7 +311,7 @@ collection-channel/
   adapter/NotificationPushAdapter.java
   adapter/NotificationClient.java          # 签名、HTTP、响应解析
   adapter/SendGridEmailAdapter.java
-  adapter/LthVoiceAdapter.java
+  adapter/FacadeAiCallAdapter.java
 ```
 
 ### 4.4 迁移对照
@@ -321,14 +322,14 @@ collection-channel/
 | `LthSmsAdapter`                      | `NotificationSmsAdapter`                             |
 | `FcmPushAdapter` + `channel.fcm.*`   | `NotificationPushAdapter` + `channel.notification.*` |
 | `SmsDispatchAdapter` / QH/Hiway/BORI | **删除**，路由由通知中心负责                                     |
-| `ChannelProperties.lth.sms`          | 废弃；`lth` 仅保留 `voice`                                 |
+| `ChannelProperties.lth.sms` / `lth.voice` | 废弃；外呼见 `channel.facade.voice.*` |
 
 
 ### 4.5 幂等
 
 通知中心 API **无** `idempotencyKey` 字段。collection-channel 侧：
 
-- Redis `idempotency:channel:{idempotencyKey}`（Gateway 已有）
+- Redis `collection:idempotency:channel:{idempotencyKey}`（Gateway 已有）
 - 日志关联 `planId`、`stepOrder`、`requestId`（SMS 同步返回）
 
 合规（静默时段、日上限）在 `ComplianceExecutionGuard`，**调用通知中心之前**执行。
@@ -407,17 +408,17 @@ POST {base-url}/v1/sms/send
 | 快照 | StepCommand | API 字段 |
 |------|-------------|----------|
 | `basic.primaryPhone` | `targetAddress` | `mobile` |
-| Resolver 渲染 | `metadata.sms_body` | `content` |
+| Resolver 渲染 | `metadata.sms_body` | `content`（S0 `{amount}`=`upcomingAmount`；S1+=逾期总额） |
 | — | — | `contentType=collection` |
 
 ### 6.2 Push
 
 | 快照字段 | 上游来源 | StepCommand | API 字段 |
 |----------|----------|-------------|----------|
-| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion（§2.2；可选降级读 `t_user_device_token`） | `targetAddress` | `token` |
+| `userProfile.device.jpushToken` | **`device.pushToken`** → ingestion 改名为 `jpushToken` | `targetAddress` | `token` |
 | Resolver 渲染 | — | `metadata.title` | `title` |
 | Resolver 渲染 | — | `metadata.body` | `body` |
-| `caseContext.repaymentUrl` 等 | ingestion / 信贷结账链路 | `metadata.pushData`（JSON 字符串） | `data` |
+| `caseContext.repaymentUrl` 等 | 引擎模板 / Nacos 兜底（消息不带） | `metadata.pushData`（JSON 字符串） | `data` |
 
 `pushData` 内字段：`scene`（固定 `collection`）、`case_id`、`deep_link`（来自 `repaymentUrl`）、`script_slot`（来自 `metadata.scriptSlot`）；**value 均为 string**。
 
