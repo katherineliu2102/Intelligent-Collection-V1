@@ -1,7 +1,7 @@
 # 与编排同事（collection-channel）对齐清单
 
 > **版本**: Phase 1  
-> **日期**: 2026-06-11  
+> **日期**: 2026-08-17
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-common` / `collection-channel`  
 > **关联文档**: [核心引擎规格 §6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)、[ContextSnapshot 契约对齐](./README_ContextSnapshot契约对齐.md)、[引擎渠道执行契约对齐](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)
@@ -41,7 +41,7 @@
 ### 契约级（本轮快照相关，需编排同事确认）
 
 1. **`StepCommand.targetAddress`**：✅ StepResolver 从快照取值；SMS=`basic.primaryPhone`、PUSH=`device.jpushToken`、EMAIL=`basic.email`。Gateway/Adapter 不得查库取号。
-2. **PUSH token**：✅ 仅 `jpushToken`（JPush Registration ID），不使用 `fcmToken`；来源为 `case_push`，缺失可走约定 fallback。
+2. **PUSH token**：✅ 仅 `jpushToken`（JPush Registration ID），不使用 `fcmToken`；来源为 `caseEvent.data.device.pushToken`，缺失可走约定 fallback。
 3. **手机号格式**：✅ 快照统一 E.164（`+63…`）。
 4. **快照字段范围**：✅ `work.*`、`risk.*`、offer、投诉冻结均非 Phase 1 StepResolver 输入；可留 null 或不消费。
 5. **SPI 副作用与超时**：✅ 实现须禁写 DB/发事件/调外部；Guard 可读合规计数器；引擎强制 `Future.get(timeoutMs)`。

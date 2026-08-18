@@ -18,7 +18,7 @@ public class CollectionEvent {
 
     public static final String CASE_ID = "caseId";
     public static final String USER_ID = "userId";
-    /** 外部 t_ai_collection 单案件单调递增版本，接入层用于乱序拦截。 */
+    /** 外部 t_ai_collection 单案件内容指纹，接入层用于识别快照变化。 */
     public static final String CASE_VERSION = "caseVersion";
     public static final String PLAN_ID = "planId";
     public static final String STEP_ID = "stepId";
@@ -36,9 +36,12 @@ public class CollectionEvent {
     //    运行时不读旧库 t_collection。SSOT 见领域模型 §2.2。
     public static final String DPD = "dpd";
     public static final String PRODUCT = "product";
+    public static final String OVERDUE_AMOUNT = "overdueAmount";
     public static final String TOTAL_OUTSTANDING = "totalOutstanding";
     public static final String PENALTY_AMOUNT = "penaltyAmount";
+    public static final String UPCOMING_AMOUNT = "upcomingAmount";
     public static final String DUE_DATE = "dueDate";
+    public static final String NEXT_DUE_DATE = "nextDueDate";
     public static final String FULL_REPAY_TIME = "fullRepayTime";
     public static final String REPAY_STATUS = "repayStatus";
     public static final String CANCEL_REASON = "cancelReason";

@@ -64,7 +64,7 @@
 |---|---|---|---|---|---|---|
 | T0-1 | 本地/CI JDK、Maven、模块可发现 | 不适用 | `mvn -B -ntp clean test` | CI job | 主架构 | ✅ |
 | T0-2 | L4a App、Nacos、健康检查 | 仅合成案 | `/actuator/health`、启动日志 | health=UP、配置加载日志 | 主架构 | ✅ |
-| T0-3 | L4b 联调隔离、白名单、渠道沙箱 | 合成 loan_id/测试地址 | `./scripts/test/l4b-preflight.sh --strict`；Nacos 指向 `collection-ai-events-test1-sub` | preflight 输出、Nacos 片段 | 主架构 + 运维 | ✅：2026-07-27 strict preflight（旧订阅 `collection-cases-test1-sub`）；**2026-08-11 起**定稿 `collection-ai-events-test1-sub` |
+| T0-3 | L4b 联调隔离、白名单、渠道沙箱 | 合成 loan_id/测试地址 | `./scripts/test/l4b-preflight.sh --strict`；Nacos 指向 `intelligent-collection-cases-test1-sub` | preflight 输出、Nacos 片段 | 主架构 + 运维 | ✅：2026-07-27 strict preflight（旧订阅 `collection-cases-test1-sub`）；**2026-08-11 起**定稿 `intelligent-collection-cases-test1-sub` |
 | T0-4 | 测试订阅**独占消费**（无其他活跃 consumer 抢消息） | 不允许多实例共享同一 test-sub | 开跑前确认无他机 consumer；任选一 loan_id publish 一次，本机日志命中 `[Ingestion]` | 同 loan_id publish 后本地 consumer 必命中 | 运维 | ✅：运维确认独占；2026-07-27 publish 唯一消息后，本机命中 `CASE_INGESTED case=99000000` |
 | T0-5 | 数据库表、只读旧库访问、脱敏输出 | 测试 seed | preflight + SQL 连通性 | 表存在、账号范围确认 | 服务同事 + 运维 | ✅：六张业务/审计表及 timeline 审计字段齐备；`t_collection` 6 条 `IC_TEST_%` 行可读写，事务回滚验证无痕 |
 
@@ -73,7 +73,7 @@
 - T1 可在 T0-1 通过后开始。
 - T3a 需要 T0-5。
 - T3b 需要 T0-2 和受控测试渠道配置。
-- T4 需要 T0-3、T0-4、T0-5；仅可使用独立测试 topic，禁止向生产 `collection-ai-events-v1`（及旧 `collection-cases`）发布。
+- T4 需要 T0-3、T0-4、T0-5；仅可使用独立测试 topic，禁止向生产 `intelligent-collection-cases-v1`（及旧 `collection-cases`）发布。
 - T0-3 验证隔离/白名单，T0-4 验证独占消费，二者不可互相替代。
 - T0-1～T0-5 均已通过；L4b 官方闭环已于 2026-07-27 实跑通过（见 [§7](#7-t4-真实来源--真实渠道的隔离联调l4b)）。
 
@@ -232,7 +232,7 @@ L4a 使用 `MockTriggerController`/`*CaseRegistry` 的合成案件驱动真实�
 | L4a-1 | 三渠道顺序完成 | SMS→PUSH→EMAIL、providerMsgId、计划完成 | ✅ | 2026-07-27 `restart-and-l4a.sh`（timeline 三渠道） |
 | L4a-2 | PUSH 无 token → SMS fallback | fallback 元数据、SMS 投递、步骤完成 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
 | L4a-3 | 整笔 loan 结清取消 | `fullRepayTime` 非空或 loan 级 `STATUS=4`，携带 `caseId=loanId` → 仅该案 `PLAN_CANCELLED(REPAID)`，后续不触达 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-3b | 部分还款金额刷新 | 非结清还款携带有效非负 `currentAmmout` → 仅活跃计划快照 `totalOutstanding` 更新；模板、步骤、计划状态不变（[核心 §4.6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新)） | 单测已覆盖，待真实 PubSub 回归 | `PlanLifecycleManagerTest`（刷新 / 终态跳过 / 脏值忽略）、`CasePayloadMapperTest` |
+| L4a-3b | 部分还款运行态刷新 | 增量还款携带有效非负 `overdueAmount`（含罚息）及可选 `upcomingAmount` / `nextDueDate` → 活跃计划运行态快照更新；模板、步骤、计划状态和 stage 不变。stage 变化只能由 dailyRoll 的 `STAGE_CHANGED` 产生（[核心 §4.6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新)） | 单测已覆盖，待真实 PubSub 回归 | `PlanLifecycleManagerTest`（运行态刷新 / 终态跳过 / 脏值忽略）、`CasePayloadMapperTest` |
 | L4a-4 | 升档取消并新建 | 旧计划 `STAGE_UPGRADE`、新计划正确 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
 | L4a-5 | 停催 | `PLAN_CANCELLED(CEASED)`，不重建 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
 | L4a-6 | SMS 同步完成冒烟 | 同步 `COMPLETED`，不进入 `WAITING` | ✅ | 2026-07-27 `restart-and-l4a.sh` |
@@ -268,8 +268,8 @@ L4b 将 L4a 的合成入口替换为**真实 PubSub 消费 + 真实旧库 seed +
 
 | 层 | 做法 | 作用 |
 |---|---|---|
-| **独立 topic** | 联调用 `collection-ai-events-test1` | 与生产 `collection-ai-events-v1` 物理隔离 |
-| **独立订阅** | 新系统联调 `collection-ai-events-test1-sub` | 与生产 `collection-ai-events-v1-sub` 分离 |
+| **独立 topic** | 联调用 `intelligent-collection-cases-test1` | 与生产 `intelligent-collection-cases-v1` 物理隔离 |
+| **独立订阅** | 新系统联调 `intelligent-collection-cases-test1-sub` | 与生产 `intelligent-collection-cases-v1-sub` 分离 |
 | **发布护栏** | `publish-test-messages.sh` 拒绝生产 topic | 防止误操作 |
 | **应用白名单** | Nacos `loan-id-whitelist: 99000000–99000005` | Consumer 只处理合成案 |
 | **触达沙箱** | `sms-test-mode`、`push-test-token`、受控测试邮箱/手机号 | 真实 adapter 代码、受控投递地址 |
@@ -292,8 +292,8 @@ L4b 用完整单案 `caseEvent` 写入 `t_ai_collection` 投影；日切用手�
 
 | 场景 | topic / subscription |
 |---|---|
-| L4b 隔离联调 | `collection-ai-events-test1` / `collection-ai-events-test1-sub` |
-| Pilot/生产 | `collection-ai-events-v1` / `collection-ai-events-v1-sub`（T5/T6） |
+| L4b 隔离联调 | `intelligent-collection-cases-test1` / `intelligent-collection-cases-test1-sub` |
+| Pilot/生产 | `intelligent-collection-cases-v1` / `intelligent-collection-cases-v1-sub`（T5/T6） |
 | 旧 L4b（已废弃） | `collection-cases-test1` / `collection-cases-test1-sub` |
 
 快照主路径（v3 契约，2026-08-12）：
@@ -316,7 +316,7 @@ caseEvent/CASE_INGESTED → AiCaseIngestionProcessor
 
 | ID | 场景 | 真实触发/断言 | 状态 | 实跑证据 |
 |---|---|---|---|---|
-| L4b-1 | `caseEvent` 入案、建计划、投递、timeline | PubSub → projection → plan/step/timeline | ⬜ 待 v3 联调 | 首次案件建计划；同案更高版本每日快照只更新投影 |
+| L4b-1 | `caseEvent` 入案、建计划、投递、timeline | PubSub → projection → plan/step/timeline | ⬜ 待 v3 联调 | 首次案件建计划；同案内容指纹变化的每日快照只更新投影 |
 | L4b-2 | 还款取消 | `repaymentEvent` → REPAID | ⬜ 待 v3 联调 | 整笔结清取消活跃计划；部分还款更新余额 |
 | L4b-3 | 日切升档 | 手动 daily-roll → STAGE_UPGRADE | ✅ | 99000002 dpd 4→20：旧 S2 计划 `STAGE_UPGRADE` 取消 + 新建 S3 计划 |
 | L4b-4 | 日切停催 | 手动 daily-roll → CEASED | ✅ | 99000003 dpd 20→95：活跃计划 `CEASED` 取消，静置 20s 未重建 |
@@ -414,7 +414,7 @@ epoch**，不是话术版本号，更不是模板数量。原实现按「DB 配�
 ```bash
 source scripts/test/l4b-env.local.sh
 export DB_HOST=... DB_PORT=3306 DB_USER=... DB_PASS=... DB_NAME=ai_collection_db
-export GCP_PUBSUB_TEST_TOPIC=collection-ai-events-test1
+export GCP_PUBSUB_TEST_TOPIC=intelligent-collection-cases-test1
 
 ./scripts/test/l4b-preflight.sh --strict
 ./scripts/dev/start-local.sh --detach           # 每轮必须重启：幂等标记是进程内内存态
@@ -477,7 +477,7 @@ L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn tes
 | ID | 准入/用例 | 允许替身 | 证据 | Owner | 状态 |
 |---|---|---|---|---|---|
 | T5-1 | T4 全部出口已通过 | 无 | T4 证据包 | 主架构 | ⬜ |
-| T5-2 | 生产订阅 `collection-ai-events-v1-sub`（topic `collection-ai-events-v1`） | 测试白名单 | 运维拓扑/消费证据 | 运维 | ⬜ |
+| T5-2 | 生产订阅 `intelligent-collection-cases-v1-sub`（topic `intelligent-collection-cases-v1`） | 测试白名单 | 运维拓扑/消费证据 | 运维 | ⬜ |
 | T5-3 | 调度通道生产化，见 [T5-S](#t5-s-调度通道专项用例) | 可用白名单数据 | T5-S1…S7 证据 | 运维 + 主架构 | ⬜ |
 | T5-4 | 渠道 sandbox、白名单、脱敏、限频 | 测试地址 | 配置审查 | 编排同事 + 运维 | ⬜ |
 | T5-5 | Redis 事件总线/幂等专项用例组，见 [T5-R](#t5-r-redis-专项用例) | 不允许 memory-only 假设 | T5-R1…R10 证据 | 主架构 | ⬜ |

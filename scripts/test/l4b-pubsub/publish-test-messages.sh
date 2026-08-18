@@ -2,12 +2,12 @@
 # L4b：向【独立测试 topic】发布合成的单案 caseEvent / repaymentEvent。
 #
 # 设计前提（安全）：
-#   - 绝不向生产 topic 发消息。护栏拒绝：`collection-ai-events-v1`、`collection-cases`（旧）。
+#   - 绝不向生产 topic 发消息。护栏拒绝：`intelligent-collection-cases-v1`、`collection-cases`（旧）。
 #   - 合成 loan_id 99000000x 非真人；联系方式为测试地址。
 #
 # 用法：
 #   export GCP_PUBSUB_PROJECT=fintech-all
-#   export GCP_PUBSUB_TEST_TOPIC=collection-ai-events-test1
+#   export GCP_PUBSUB_TEST_TOPIC=intelligent-collection-cases-test1
 #   export GOOGLE_APPLICATION_CREDENTIALS=$PWD/credentials.json
 #   ./publish-test-messages.sh case                 # 发 caseEvent 6 案（99000000..99000005）
 #   ./publish-test-messages.sh repay 99000001       # 发 repayment（默认 99000001）
@@ -25,8 +25,8 @@ CRED="${GOOGLE_APPLICATION_CREDENTIALS:-$ROOT/credentials.json}"
 [ -f "$CRED" ] || { echo "[publish] 缺凭证文件 $CRED" >&2; exit 1; }
 
 # ── 安全护栏：拒绝向生产 topic 发消息 ──
-if [ "$TOPIC" = "collection-ai-events-v1" ] || [ "$TOPIC" = "collection-cases" ]; then
-  echo "[publish] ✗ 拒绝：$TOPIC 是生产 topic。请用联调 topic collection-ai-events-test1。" >&2
+if [ "$TOPIC" = "intelligent-collection-cases-v1" ] || [ "$TOPIC" = "collection-cases" ]; then
+  echo "[publish] ✗ 拒绝：$TOPIC 是生产 topic。请用联调 topic intelligent-collection-cases-test1。" >&2
   exit 2
 fi
 
@@ -71,22 +71,26 @@ case "$MODE" in
       lid="${LOANS[$i]}"; nm="${NAMES[$i]}"
       cat > "$tmp" <<JSON
 {
-  "eventId": "l4b-case-${lid}-$(date +%s)",
-  "eventType": "CASE_INGESTED",
-  "occurredAt": "$(date '+%Y-%m-%dT%H:%M:%S+08:00')",
-  "caseId": "${lid}",
-  "userId": "${lid}",
-  "caseVersion": 1,
-  "product": "3",
-  "stage": "S1",
-  "dpd": 2,
-  "collectionStatus": "IN_COLLECTION",
-  "totalOutstanding": 3000.00,
-  "penaltyAmount": 0.00,
-  "remainingAmount": 9000.00,
-  "dueDate": "2026-08-11",
-  "borrower": {"name": "${nm}", "phone": "+639451374358", "email": "l4b@example.com", "language": "en"},
-  "device": {"pushToken": "1a0018970bf0c19de04"}
+  "dataType": "caseEvent",
+  "data": {
+    "eventId": "l4b-case-${lid}-$(date +%s)",
+    "occurredAt": "$(TZ=Asia/Manila date '+%Y-%m-%d %H:%M:%S')",
+    "caseId": ${lid},
+    "userId": ${lid},
+    "caseVersion": "0000000000000000000000000000000${i}",
+    "product": "3",
+    "stage": "S1",
+    "dpd": 2,
+    "collectionStatus": "IN_COLLECTION",
+    "overduePrincipal": 3000.00,
+    "overdueInterest": 0.00,
+    "overdueAmount": 3000.00,
+    "overduePenaltyAmount": 0.00,
+    "upcomingAmount": 0.00,
+    "nextDueDate": 0,
+    "borrower": {"name": "${nm}", "phone": "9451374358", "email": "l4b@example.com", "language": "en"},
+    "device": {"pushToken": "1a0018970bf0c19de04"}
+  }
 }
 JSON
       publish_one "$tmp" "caseEvent" "l4b-case-${lid}-$(date +%s)"
@@ -98,25 +102,23 @@ JSON
     tmp="$(mktemp)"
     cat > "$tmp" <<JSON
 {
-  "eventId": "l4b-repay-${lid}-$(date +%s)",
-  "eventType": "REPAYMENT",
-  "occurredAt": "$(date '+%Y-%m-%dT%H:%M:%S+08:00')",
-  "caseId": "${lid}",
-  "userId": "${lid}",
-  "caseVersion": 2,
-  "repayTime": "$(date '+%Y-%m-%dT%H:%M:%S+08:00')",
-  "paidAmount": 3000.00,
-  "isFullCleared": true,
-  "product": "3",
-  "stage": "S1",
-  "dpd": 2,
-  "collectionStatus": "SETTLED",
-  "totalOutstanding": 0.00,
-  "penaltyAmount": 0.00,
-  "remainingAmount": 0.00,
-  "dueDate": "2026-08-11",
-  "borrower": {"name": "L4B USER", "phone": "+639451374358", "email": "l4b@example.com", "language": "en"},
-  "device": {"pushToken": "1a0018970bf0c19de04"}
+  "dataType": "repaymentEvent",
+  "data": {
+    "eventId": "l4b-repay-${lid}-$(date +%s)",
+    "eventType": "REPAYMENT",
+    "occurredAt": "$(date '+%Y-%m-%dT%H:%M:%S+08:00')",
+    "caseId": "${lid}",
+    "userId": "${lid}",
+    "repayTime": "$(date '+%Y-%m-%dT%H:%M:%S+08:00')",
+    "paidAmount": 3000.00,
+    "isFullCleared": true,
+    "stage": "S0",
+    "dpd": -1,
+    "overdueAmount": 0.00,
+    "overduePenaltyAmount": 0.00,
+    "upcomingAmount": 3000.00,
+    "nextDueDate": "2026-09-11"
+  }
 }
 JSON
     publish_one "$tmp" "repaymentEvent" "l4b-repay-${lid}-$(date +%s)"

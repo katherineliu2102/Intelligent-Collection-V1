@@ -150,7 +150,7 @@ flowchart LR
 
 #### C. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
 
-**Phase 1 实际读取**（守卫/日切/兜底经 CaseService·ProfileService；**入案快照主路径**为 `CASE_INGESTED` payload，见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）：
+**Phase 1 实际读取**（守卫/日切/兜底经 CaseService·ProfileService；**入案快照主路径**为 `CASE_INGESTED` payload，见 [数据接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）：
 
 
 | 表名                      | 状态       | 引用位置                        | 用途                                            |
@@ -732,7 +732,7 @@ loan_id（上游）
 
 ## 4. 决策上下文模型
 
-本章定义 ContextSnapshot 及其组成模型的**字段结构**（Java model SSOT）。**Phase 1 入案主路径**：引擎消费 `CASE_INGESTED` 时将 payload 组装为不可变快照写入 `t_contact_plan.context_snapshot`（[核心引擎规格 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）；`CaseService`/`ProfileService` 聚合逻辑用于守卫实时查库、日切与可选兜底，见 [数据接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)。
+本章定义 ContextSnapshot 及其组成模型的**字段结构**（Java model SSOT）。**Phase 1 入案主路径**：引擎消费 `CASE_INGESTED` 时将 payload 组装为不可变快照写入 `t_contact_plan.context_snapshot`（[核心引擎规格 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)）；`CaseService`/`ProfileService` 聚合逻辑用于守卫实时查库、日切与可选兜底，见 [数据接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)。
 
 > **节首约定**：**Java** + **落库**（内嵌 `context_snapshot` JSON 或运行时聚合）+ **用途**；字段「来源」列保留在字段表内。
 
@@ -753,10 +753,12 @@ loan_id（上游）
 | loanAmount       | BigDecimal | 是   | 贷款金额                                                                                                         | t_user_repayment_plan     |
 | overdueAmount    | BigDecimal | 是   | 逾期待还金额（本金+利息）                                                                                                | t_user_repayment_plan 计算  |
 | penaltyAmount    | BigDecimal | 是   | 罚息金额                                                                                                         | t_user_repayment_plan 计算  |
-| totalOutstanding | BigDecimal | 是   | 总待还金额（overdueAmount + penaltyAmount）                                                                         | 计算字段                      |
+| totalOutstanding | BigDecimal | 是   | 已到期未结清金额（直接映射数仓 `overdueAmount`，该字段已含罚息）                                                                         | caseEvent / repaymentEvent |
 | loanTerms        | int        | 否   | 贷款期数                                                                                                         | t_user_repayment_plan     |
 | disbursementDate | LocalDate  | 否   | 放款日期                                                                                                         | t_collection              |
-| dueDate          | LocalDate  | 是   | 到期日                                                                                                          | t_user_repayment_plan     |
+| dueDate          | LocalDate  | 否   | 历史兼容到期日；不再由新 Pub/Sub 契约全面必填                                                                                                          | 旧投影 / 兼容数据     |
+| upcomingAmount   | BigDecimal | 否   | 三期产品下一期 D-3～D0 的该期金额；仅提醒，不替代 `dueDate` | caseEvent / repaymentEvent |
+| nextDueDate      | LocalDate  | 否   | 与 `upcomingAmount` 成对的下一期还款日；仅提醒 | caseEvent / repaymentEvent |
 | caseStatus       | String     | 是   | 案件状态（现有业务状态）                                                                                                 | t_collection.status       |
 | assignedAgentId  | Long       | 否   | 当前分配的催收员ID                                                                                                   | t_collection.collector_id |
 | isFirstLoan      | boolean    | 是   | 是否首贷用户（JSON 序列化为 `firstLoan`，见 §4.4 注）                                                                       | 数仓或 t_collection 扩展       |
@@ -764,7 +766,7 @@ loan_id（上游）
 | activePlanId     | Long       | 否   | 当前活跃触达计划ID                                                                                                   | t_contact_plan 查询         |
 | strategyTone     | String     | 否   | 编排强度：Phase 1 固定 `STANDARD`；FIRM 规则为后续阶段预留                                                            | 引擎由 payload/配置推导 |
 | complaintFrozen  | boolean    | 否   | 投诉/争议冻结标记；Phase 2 预留。Phase 1 不以该字段拦截触达，快照值仅记录建计划时点       | 案件状态（实时）/ snapshot（建计划时点） |
-| collectionStatus | String     | 否   | 案件催收生命周期：`CEASED` = D+91 完全停催                                                                                | ingestion 日切 / 案件         |
+| collectionStatus | String     | 否   | 接入派生：结清优先，其次 D+91 停催，否则在催                                                                                | ingestion         |
 | repaymentUrl     | String     | 否   | App 还款深链；引擎按受控 `collection.repayment-url-template` 基于 `caseId` 生成，供 Push/Email/SMS 渲染；点击归因不属 Phase 1 | engine snapshot builder |
 | emailScriptSlot  | String     | 否   | Phase 1 Mock：显式指定 Email 里程碑 scriptSlot（E2E 联调）；为空时由 `EmailMilestoneScriptSlots.resolveByDpd(dpd)` 推断         | Mock / E2E                |
 
@@ -920,7 +922,7 @@ loan_id（上游）
 
 > **Java**：`com.collection.common.model.ContextSnapshot`  
 > **落库**：`t_contact_plan.context_snapshot`（JSON，§3.1）  
-> **用途**：策略字段在计划存活期保持不变；建计划、阶段变更和续建时写入，`CASE_BALANCE_UPDATED` 可受控更新 `totalOutstanding`。经 `ExecutionContext`（§5.2）传给 SPI；发送前的 `dpd` / 余额覆盖规则见 [架构 §1.6.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#162-决策上下文快照化)。
+> **用途**：策略字段在计划存活期保持不变；建计划、阶段变更和续建时写入，`CASE_BALANCE_UPDATED` 可受控更新运行态金额和下一期提醒字段。经 `ExecutionContext`（§5.2）传给 SPI；发送前的 `dpd` / 余额覆盖规则见 [架构 §1.6.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#162-决策上下文快照化)。
 
 
 | 字段              | 类型             | 必填  | 说明                   |
@@ -936,7 +938,7 @@ loan_id（上游）
 >
 > **日变字段例外（对外文案准确性）**：`caseContext.dpd` / `totalOutstanding` 进入用户可见文案，冻结值会随时间失真（单阶段最长跨 60 天）。因此：① 日切发布的 `STAGE_CHANGED` 携带两字段时，carry-forward 写入新快照；② `CASE_BALANCE_UPDATED` 持久化更新活跃计划的 `totalOutstanding`；③ 步骤执行时 `StepExecutionOrchestrator` 用 PreFlightChecker 已读到的 `CaseInfo` 覆盖**内存中的**快照副本（不回写本列、不覆盖 `stage`）。实际渲染值见 `t_decision_log.input_snapshot`。
 >
-> **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 由 `caseEvent` 完整快照强制携带，缺失即脏数据（不回填）。引擎仅消费 payload，并衍生 `stage`（由 dpd）、`collectionStatus`（dpd≥91 时 `CEASED`）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。
+> **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；完整 `caseEvent` 必带 `dpd`、`product`、`overdueAmount`、`overduePenaltyAmount`、`isFullCleared`，并可带三期提醒 `upcomingAmount` / `nextDueDate`。接入将前两项金额映射为 `totalOutstanding` / `penaltyAmount`，并派生 `collectionStatus`（`isFullCleared` 优先，随后 `dpd>=91`）。`repaymentEvent` 只更新运行态，不补齐完整快照。引擎仅消费内部 payload，并衍生 `stage`（由 dpd）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。
 >
 > **JSON 序列化约定**：样例 JSON 字段名 = Java 模型字段名（fastjson 默认）。注意布尔字段 `CaseContext.isFirstLoan` 序列化为 `**firstLoan`**（去 `is` 前缀）。冻结样例见 `[./contracts/ContextSnapshot.sample.json](./contracts/ContextSnapshot.sample.json)`。MySQL `JSON` 列读回可能规范化键序/空格，测试与对账按**语义等价**断言（不按字节相等）。
 >
@@ -1152,10 +1154,10 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 
 | EventType                   | 发布者                                                  | payload 字段（key）                                                                                                                                   | 必填 / 缺省                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate`、`fullRepayTime`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 必填；`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS |
+| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount` 必填；`dueDate` 不再由新契约全面必填。`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS |
 | STAGE_CHANGED               | ingestion / engine（ESCALATE 续建）                      | `caseId`、`stage`（=**目标阶段**）、`dpd`、`totalOutstanding`                                                                                             | `caseId`、`stage` 必填；`dpd`、`totalOutstanding` 可选，仅日切发布时携带（值取自 `t_ai_collection` 当日投影），非空则 carry-forward 时刷新新计划快照的同名字段，缺省保持旧值                                                                                                                                                              |
 | REPAYMENT_RECEIVED          | ingestion                                            | `caseId`、`userId`、`cancelReason=REPAID`、`cancelScope=CASE`                                                                                  | `caseId`、`userId` 必填；仅 `repaymentEvent.isFullCleared=true` 时发布，取消该案件活跃计划                                                                                                                                                                                                                     |
-| CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`                                                                            | `caseId`、`totalOutstanding` 必填；金额缺失或为负事件进入 poison                                                                                                                                                                                                                                                                          |
+| CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`isFullCleared`                                                                            | 部分还款事件必须有 `caseId`、非负 `totalOutstanding`；其余运行态字段按消息合并。该事件不携带或驱动 stage，阶段变化仍由 dailyRoll 产生 `STAGE_CHANGED`；金额缺失或为负事件进入 poison                                                                                                                                                                                                                                                                          |
 | PLAN_STEP_DUE               | collection-admin（调度订阅 `job=planStepDue`）             | `planId`、`stepId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CHANNEL_CALLBACK            | admin（webhook）                                       | `planId`、`stepId`、`result`、`providerMsgId`、`disposition`                                                                                          | `planId`、`stepId` 必填；其余为供应商回调字段，细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)                                                                                                                                                                               |
 | STEP_COMPLETED              | engine                                               | `caseId`、`userId`、`planId`、`stepId`                                                                                                               | 均必填                                                                                                                                                                                                                                                                                                                   |

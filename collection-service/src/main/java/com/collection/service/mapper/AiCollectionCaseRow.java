@@ -11,15 +11,18 @@ public class AiCollectionCaseRow {
 
     private Long caseId;
     private Long userId;
-    private Long caseVersion;
+    private String caseVersion;
     private Integer dpd;
     private String stage;
     private String collectionStatus;
     private String product;
+    private BigDecimal overdueAmount;
     private BigDecimal totalOutstanding;
     private BigDecimal penaltyAmount;
     private BigDecimal remainingAmount;
+    private BigDecimal upcomingAmount;
     private LocalDate dueDate;
+    private LocalDate nextDueDate;
     private String borrowerName;
     private String borrowerPhone;
     private String borrowerEmail;

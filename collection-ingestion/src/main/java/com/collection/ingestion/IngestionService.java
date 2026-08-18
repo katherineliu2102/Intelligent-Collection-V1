@@ -195,15 +195,34 @@ public class IngestionService {
                 userId);
     }
 
-    /** 部分还款只刷新后续渲染金额，不取消计划或改变渠道话术。 */
+    /** 部分还款刷新后续触达所需的可变案件字段，不取消计划或改变渠道策略。 */
     public void balanceUpdated(
             Long caseId, Long userId, java.math.BigDecimal totalOutstanding, Integer status) {
+        balanceUpdated(
+                caseId, userId, null, null, totalOutstanding, null, null, null, null);
+    }
+
+    public void balanceUpdated(
+            Long caseId,
+            Long userId,
+            Integer dpd,
+            java.math.BigDecimal overdueAmount,
+            java.math.BigDecimal totalOutstanding,
+            java.math.BigDecimal penaltyAmount,
+            java.math.BigDecimal upcomingAmount,
+            java.time.LocalDate nextDueDate,
+            String collectionStatus) {
         eventBus.publish(
                 CollectionEvent.of(EventType.CASE_BALANCE_UPDATED)
                         .with(CollectionEvent.CASE_ID, caseId)
                         .with(CollectionEvent.USER_ID, userId)
                         .with(CollectionEvent.TOTAL_OUTSTANDING, totalOutstanding)
-                        .with(CollectionEvent.REPAY_STATUS, status));
+                        .with(CollectionEvent.DPD, dpd)
+                        .with(CollectionEvent.OVERDUE_AMOUNT, overdueAmount)
+                        .with(CollectionEvent.PENALTY_AMOUNT, penaltyAmount)
+                        .with(CollectionEvent.UPCOMING_AMOUNT, upcomingAmount)
+                        .with(CollectionEvent.NEXT_DUE_DATE, nextDueDate)
+                        .with("collectionStatus", collectionStatus));
         log.info(
                 "[Ingestion] publish CASE_BALANCE_UPDATED case={} amount={}",
                 caseId,

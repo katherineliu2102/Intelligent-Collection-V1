@@ -300,7 +300,7 @@ flowchart LR
 
 **必须满足的拓扑约束**：
 
-- 调度 Topic / 订阅必须与案件 `collection-ai-events-v1` / `collection-ai-events-v1-sub` **物理隔离**；`collection.scheduler.enabled` 独立于 `collection.ingestion.enabled`。
+- 调度 Topic / 订阅必须与案件 `intelligent-collection-cases-v1` / `intelligent-collection-cases-v1-sub` **物理隔离**；`collection.scheduler.enabled` 独立于 `collection.ingestion.enabled`。
 - 三个应用任务共用一个调度订阅，按 `job` 路由；不为每个任务创建订阅。
 - 主系统是常驻内网服务：不注册调度执行器、不暴露 HTTP 调度端点。认证和授权由 Scheduler SA 的发布权限、应用 SA 的订阅权限承担。
 - 数仓也使用 Cloud Scheduler，但只触发 Publisher 往**案件 Topic** 发 `caseEvent` / `repaymentEvent`。两套 Topic、SA、IAM 和告警分别配置。
@@ -313,7 +313,7 @@ Phase 1 有 **3 个应用任务、4 条 Cloud Scheduler 规则**。时区统一 
 |---|---|---|---|
 | `planStepDue` | `* * * * *` | `t_contact_plan_step.trigger_time <= NOW`，步骤待触发，关联计划非终态 | `PLAN_STEP_DUE` |
 | `callbackTimeout` | `* * * * *` | `t_contact_plan_step.timeout_time <= NOW`，步骤为 `EXECUTING`，关联计划非终态 | `CALLBACK_TIMEOUT` |
-| `dailyRoll` | `35,40,45,50,55 3 * * *` | `t_ai_collection` 按 `case_id` keyset 分页，只读 DPD、stage、`collection_status` | `STAGE_CHANGED`、`CASE_CEASED`、复活 `CASE_INGESTED` |
+| `dailyRoll` | `35,40,45,50,55 3 * * *` | `t_ai_collection` 按 `case_id` keyset 分页，只读 DPD、stage、`collection_status` | `STAGE_CHANGED`、`CASE_CEASED` |
 | `dailyRoll`（续跑） | `*/5 4-5 * * *` | 同上；Redis 游标记录已处理页，当日完成后跳过 | 同上 |
 
 `planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影。
@@ -370,8 +370,8 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 
 | 顺序 | 交付项 | 运维操作与验收 |
 |---|---|---|
-| O1 | 调度 Topic | 创建 `collection-schedule-ai-v1`（或环境等价名称）；确认不指向案件 Topic |
-| O2 | 专用订阅 | 创建 `collection-schedule-ai-v1-sub`，绑定 O1；不与其他消费者共享 |
+| O1 | 调度 Topic | 创建 `intelligent-collection-schedule-v1`（或环境等价名称）；确认不指向案件 Topic |
+| O2 | 专用订阅 | 创建 `intelligent-collection-schedule-v1-sub`，绑定 O1；不与其他消费者共享 |
 | O3 | Scheduler SA 权限 | 仅向 O1 Topic 授予 `roles/pubsub.publisher` |
 | O4 | 应用 SA 权限 | 仅向 O2 Subscription 授予 `roles/pubsub.subscriber`；应用日志确认调度消费者已启动 |
 | O5 | 订阅参数 | `ack-deadline=60s`、消息保留 `10m`、不配置 DLQ；调度积压由应用侧陈旧过滤处理 |
@@ -402,14 +402,14 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 | `PLAN_STEP_DUE` | **prepareStepDue**（事务）：读并锁计划/步骤，写计划→EXECUTING、`markStarted`、清 `trigger_time`；**executeStep**：`PreFlightChecker` 经 `CaseService.getCaseInfo` 实时查还款状态，读 `getContactHistory`，写步骤状态、timeline、`timeout_time` |
 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
-| `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) |
-| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；仅写回 `context_snapshot.caseContext.totalOutstanding`，不变更计划/步骤/模板/渠道决策字段；发布条件见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) |
+| `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) |
+| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；受控写回 `context_snapshot.caseContext` 的运行态金额与下一期提醒字段（`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`），不变更计划/步骤/模板/渠道决策字段；stage 仍由 dailyRoll 的 `STAGE_CHANGED` 变更；发布条件见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) |
 | `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED` |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
 | `planStepDueHandler` / `callbackTimeoutHandler` | 分页读 `findDueSteps` / `findTimeoutSteps`，只发布事件 |
 | `dailyRoll` | keyset 分页读 `CaseService.findActiveCaseIdsAfter`，逐笔读 `getCaseInfo` 与 `findActivePlansByCase`；Redis 记录日切游标和完成状态 |
 
-> `repaymentEvent` 的结清判定（`isFullCleared`）与事件分流以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
+> `repaymentEvent` 的结清判定（`isFullCleared`）与事件分流以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
 
 ### 6.2 契约分工
 
@@ -660,7 +660,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 键 | 说明 |
 |---|---|
 | `GCP_PUBSUB_PROJECT` | GCP 项目 ID，与接入共用 |
-| `GCP_SCHEDULER_SUBSCRIPTION` | **调度专用**订阅，建议 `collection-schedule-ai-v1-sub`；不得复用 `GCP_PUBSUB_SUBSCRIPTION` |
+| `GCP_SCHEDULER_SUBSCRIPTION` | **调度专用**订阅，建议 `intelligent-collection-schedule-v1-sub`；不得复用 `GCP_PUBSUB_SUBSCRIPTION` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | 服务账号 JSON 路径，与接入共用同一 SA |
 
 **Nacos / 应用配置**
@@ -720,5 +720,5 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 日切去重 | Redis 去重且与旧系统隔离 | `RedisDailyRollDeduplicator` 已使用 `collection:ingestion:` 前缀和 2 天 TTL | 日切 Redis 与生产配置仍待 Pilot 验收 | 高 | 确认物理隔离、配置与运维检索口径 |
 | 接入去重 | 消息重投、乱序水位与周期内重复入催跨重启/跨实例一致 | `RedisIngestionDedupStore` 承载三类 key（`dedup:msg` 7d、`last-seen` 90d Lua 水位、`ingested` 90d），内存实现仅留本地与 CI | 真实 Redis 上的重启连续性待 Pilot 验收 | 高 | 重启后重复消息仍被拦截、结清后可再次入案 |
 | 调度 | Cloud Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | `PubSubScheduleConsumer` + `ScheduledJobRunner` 已实现：单订阅按 `job` 属性路由、按 `publishTime` 丢弃陈旧消息、一律 ack 不重投、按任务单飞、五个 `collection.schedule.*` 指标；`SchedulerEntrypointValidator` 强制配置完整性、阈值 ≤ 周期与调度入口唯一；XXL 运行时（类、依赖、配置、环境变量）已移除；全量 `dailyRoll` 仍按 Redis 游标 keyset 单页扫描并记录当日完成状态。27 例单测覆盖路由、陈旧丢弃、重复投递、并发单飞与入口唯一性 | 调度主题 / 专用订阅 / 双向 IAM / 四条 Cloud Scheduler Job / ack deadline 与消息保留 / Scheduler 失败与 06:00 未完成告警均属运维 GCP 交付（[§5.5](#55-运维--gcp-交付清单) O1–O8） | 高 | O1–O8 交付完成，且 Pilot 上观测到 `collection.schedule.triggered` 按周期增长、重启后 `stale.discarded` 出现一次尖峰后归零 |
-| 还款分流与金额 | 仅全额结清取消；部分还款刷新后续渲染金额 | 已按 `fullRepayTime` / `STATUS=4` 分流；部分还款仅受控更新活跃计划快照 `totalOutstanding`；两类分支已单测覆盖 | 缺真实 PubSub 回归及金额字段质量验收 | 高 | 以真实消息覆盖缺失/负值/重复/终态、部分还款与全额结清 |
+| 还款分流与金额 | 仅全额结清取消；部分还款刷新后续渲染所需运行态 | 已按 `fullRepayTime` / `STATUS=4` 分流；部分还款受控更新活跃计划快照的金额与下一期提醒字段；两类分支已单测覆盖 | 缺真实 PubSub 回归及金额字段质量验收 | 高 | 以真实消息覆盖缺失/负值/重复/终态、部分还款与全额结清 |
 | 可观测性 | Stream/PEL/DLQ、线程池、合规与调度均有指标和告警 | `/actuator/prometheus` 暴露 §7.3 全部指标（事件、PEL、Stream 长度、DLQ、线程池、跳过原因、SPI 超时），消费入口统一写 MDC | 告警规则、通知路由与 Dashboard 依赖 Prometheus/Alertmanager 部署 | 高（2026-08-05 决定：由阻断降级，可与渠道验证、切量并行） | 代偿期内每日人工巡检日志并手工抓取 `/actuator/prometheus` 记录 PEL/DLQ/跳过原因；最迟 T6 受控切量前完成抓取、告警路由与 Dashboard，并留存告警到达证据 |

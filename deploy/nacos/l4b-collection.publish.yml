@@ -14,6 +14,6 @@ collection:
   ingestion:
     enabled: true
     project-id: fintech-all
-    # L4b 联调指向测试订阅（见 L4b 交接清单）；Pilot/生产改 collection-ai-events-v1-sub
-    subscription: collection-ai-events-test1-sub
+    # L4b 联调指向测试订阅（见 L4b 交接清单）；Pilot/生产改 intelligent-collection-cases-v1-sub
+    subscription: intelligent-collection-cases-test1-sub
     loan-id-whitelist: [99000000, 99000001, 99000002, 99000003, 99000004, 99000005]

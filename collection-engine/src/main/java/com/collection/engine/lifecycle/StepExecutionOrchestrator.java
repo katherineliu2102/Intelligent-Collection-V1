@@ -409,6 +409,18 @@ public class StepExecutionOrchestrator {
         if (info.getTotalOutstanding() != null) {
             ctx.setTotalOutstanding(info.getTotalOutstanding());
         }
+        if (info.getOverdueAmount() != null) {
+            ctx.setOverdueAmount(info.getOverdueAmount());
+        }
+        if (info.getPenaltyAmount() != null) {
+            ctx.setPenaltyAmount(info.getPenaltyAmount());
+        }
+        if (info.getUpcomingAmount() != null) {
+            ctx.setUpcomingAmount(info.getUpcomingAmount());
+        }
+        if (info.getNextDueDate() != null) {
+            ctx.setNextDueDate(info.getNextDueDate());
+        }
     }
 
     private void writeDecisionLog(

@@ -6,9 +6,6 @@ import com.collection.common.model.CaseProjection;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeParseException;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
@@ -20,8 +17,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class CaseProjectionAssembler {
 
-    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
-
     public CaseProjection assemble(JSONObject json, CasePayloadMapper.AiSnapshot snapshot) {
         Map<String, Object> fields = snapshot.snapshotFields;
         CaseProjection projection = new CaseProjection();
@@ -30,12 +25,17 @@ public class CaseProjectionAssembler {
         projection.setCaseVersion(snapshot.caseVersion);
         projection.setDpd((Integer) fields.get(CollectionEvent.DPD));
         projection.setStage(snapshot.stage == null ? null : snapshot.stage.name());
-        projection.setCollectionStatus(requireStatus(json, snapshot.caseId));
+        projection.setCollectionStatus(deriveStatus(json, fields.get(CollectionEvent.DPD)));
         projection.setProduct((String) fields.get(CollectionEvent.PRODUCT));
         projection.setTotalOutstanding(decimal(fields.get(CollectionEvent.TOTAL_OUTSTANDING)));
+        BigDecimal overdueAmount = decimal(json.get("overdueAmount"));
+        projection.setOverdueAmount(
+                overdueAmount == null ? projection.getTotalOutstanding() : overdueAmount);
         projection.setPenaltyAmount(decimal(fields.get(CollectionEvent.PENALTY_AMOUNT)));
         projection.setRemainingAmount(remainingAmount(json, projection.getTotalOutstanding()));
+        projection.setUpcomingAmount(json.getBigDecimal("upcomingAmount"));
         projection.setDueDate(dueDate(fields.get(CollectionEvent.DUE_DATE), snapshot.caseId));
+        projection.setNextDueDate(dueDate(json.get("nextDueDate"), snapshot.caseId));
         projection.setBorrowerName((String) fields.get(CollectionEvent.NAME));
         projection.setBorrowerPhone((String) fields.get(CollectionEvent.PHONE));
         projection.setBorrowerEmail((String) fields.get(CollectionEvent.EMAIL));
@@ -45,12 +45,34 @@ public class CaseProjectionAssembler {
         return projection;
     }
 
-    private String requireStatus(JSONObject json, Long caseId) {
-        String status = StringUtils.trimToNull(json.getString("collectionStatus"));
-        if (status == null) {
-            throw new PoisonMessageException("v2 payload 缺 collectionStatus，caseId=" + caseId);
+    public CaseProjection assembleRepaymentDelta(CasePayloadMapper.RepaymentDelta delta) {
+        CasePayloadMapper.CaseProjectionFields fields = delta.fields;
+        CaseProjection projection = new CaseProjection();
+        projection.setCaseId(delta.caseId);
+        projection.setUserId(delta.userId);
+        projection.setDpd(fields.dpd);
+        projection.setStage(fields.stage == null ? null : fields.stage.name());
+        projection.setOverdueAmount(fields.overdueAmount);
+        projection.setTotalOutstanding(fields.overdueAmount);
+        projection.setPenaltyAmount(fields.penaltyAmount);
+        projection.setUpcomingAmount(fields.upcomingAmount);
+        projection.setNextDueDate(fields.nextDueDate);
+        projection.setNextDueDatePresent(fields.nextDueDatePresent);
+        projection.setCollectionStatus(
+                delta.fullCleared
+                        ? "SETTLED"
+                        : fields.dpd >= 91 ? "CEASED" : "IN_COLLECTION");
+        projection.setUpdatedAt(fields.occurredAt);
+        return projection;
+    }
+
+    private String deriveStatus(JSONObject json, Object dpdRaw) {
+        Boolean fullCleared = json.getBoolean("isFullCleared");
+        Integer dpd = dpdRaw instanceof Integer ? (Integer) dpdRaw : null;
+        if (Boolean.TRUE.equals(fullCleared)) {
+            return "SETTLED";
         }
-        return status;
+        return dpd != null && dpd >= 91 ? "CEASED" : "IN_COLLECTION";
     }
 
     /** 仅用于对账，缺失时退化为对客金额，避免 NOT NULL 列写空。 */
@@ -63,27 +85,16 @@ public class CaseProjectionAssembler {
     }
 
     private LocalDate dueDate(Object raw, Long caseId) {
-        if (raw == null) {
-            return null;
-        }
         try {
-            return LocalDate.parse(raw.toString().trim());
-        } catch (DateTimeParseException e) {
+            return CasePayloadMapper.parseDate(raw, "dueDate");
+        } catch (PoisonMessageException e) {
             throw new PoisonMessageException("非法 dueDate=" + raw + " caseId=" + caseId);
         }
     }
 
     /** 事实发生时间是投影新鲜度的唯一依据，缺失即无法判断数据是否迟到。 */
     private LocalDateTime occurredAt(JSONObject json, Long caseId) {
-        String raw = StringUtils.trimToNull(json.getString("occurredAt"));
-        if (raw == null) {
-            throw new PoisonMessageException("v2 payload 缺 occurredAt，caseId=" + caseId);
-        }
-        try {
-            return OffsetDateTime.parse(raw).atZoneSameInstant(PHT).toLocalDateTime();
-        } catch (DateTimeParseException e) {
-            throw new PoisonMessageException("非法 occurredAt=" + raw + " caseId=" + caseId);
-        }
+        return CasePayloadMapper.occurredAt(json, caseId, "caseEvent");
     }
 
     private String language(Object raw) {

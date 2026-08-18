@@ -65,7 +65,7 @@ App(JPush SDK) → 数仓完整快照 device.pushToken → ingestion → Context
   → StepCommand.targetAddress → POST /v1/app_notification/send { token }
 ```
 
-**无 token**：用户未注册 JPush 时消息不携带 token；ingestion 保留空值且不读 token 镜像，渠道按同槽 Push→SMS fallback。见 [数据接入 §3.1 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库)。
+**无 token**：用户未注册 JPush 时消息不携带 token；ingestion 保留空值且不读 token 镜像，渠道按同槽 Push→SMS fallback。见 [数据接入 §3.2 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库)。
 
 | 场景 | `jpushToken` | 渠道行为 |
 |------|--------------|----------|

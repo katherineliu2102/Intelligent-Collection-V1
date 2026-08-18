@@ -1,0 +1,29 @@
+{
+  "dataType": "caseEvent",
+  "data": {
+    "eventId": "d1908ba2-2dba-456f-ab26-5d5c3adbc801",
+    "caseVersion": "a48911a34fecdd3074f1acc8634d5043",
+    "caseId": 483877,
+    "userId": 3780028,
+    "product": "3",
+    "dpd": 70,
+    "occurredAt": "2026-08-17 10:40:12",
+    "stage": "S4",
+    "collectionStatus": "IN_COLLECTION",
+    "overduePenaltyAmount": 390.5,
+    "overduePrincipal": 4300.0,
+    "overdueInterest": 1384.7,
+    "overdueAmount": 6075.2,
+    "upcomingAmount": 0.0,
+    "nextDueDate": 0,
+    "borrower": {
+      "email": "audreygenica@gmail.com",
+      "language": "en",
+      "name": "GENICA AUDREY MORTE RESMA",
+      "phone": "9654453072"
+    },
+    "device": {
+      "pushToken": "141fe1da9ffd752596f"
+    }
+  }
+}

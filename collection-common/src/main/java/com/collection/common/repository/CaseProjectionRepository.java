@@ -26,6 +26,11 @@ public interface CaseProjectionRepository {
 
     Outcome apply(CaseProjectionCommand command);
 
+    /** 合并 repaymentEvent 增量；要求已有完整 caseEvent 投影作为基线。 */
+    default Outcome applyRepaymentDelta(CaseProjectionCommand command) {
+        return apply(command);
+    }
+
     /** 内部领域事件确认发布后调用；未调用的记录在消息重投时会被补发。 */
     void markEventPublished(String eventId);
 }

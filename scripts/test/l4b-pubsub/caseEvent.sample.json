@@ -1,18 +1,22 @@
 {
-  "eventId": "l4b-case-99000000-0001",
-  "eventType": "CASE_INGESTED",
-  "occurredAt": "2026-08-12T03:00:00+08:00",
-  "caseId": "99000000",
-  "userId": "99000000",
-  "caseVersion": 1,
-  "product": "3",
-  "stage": "S1",
-  "dpd": 2,
-  "collectionStatus": "IN_COLLECTION",
-  "totalOutstanding": 3000.00,
-  "penaltyAmount": 0.00,
-  "remainingAmount": 9000.00,
-  "dueDate": "2026-08-11",
-  "borrower": {"name": "Test Case", "phone": "+639451374358", "email": "l4b@example.com", "language": "en"},
-  "device": {"pushToken": "1a0018970bf0c19de04"}
+  "dataType": "caseEvent",
+  "data": {
+    "eventId": "l4b-case-99000000-0001",
+    "occurredAt": "2026-08-12 03:00:00",
+    "caseId": 99000000,
+    "userId": 99000000,
+    "caseVersion": "00000000000000000000000000000000",
+    "product": "3",
+    "stage": "S1",
+    "dpd": 2,
+    "collectionStatus": "IN_COLLECTION",
+    "overduePrincipal": 3000.00,
+    "overdueInterest": 0.00,
+    "overduePenaltyAmount": 0.00,
+    "overdueAmount": 3000.00,
+    "upcomingAmount": 0.00,
+    "nextDueDate": 0,
+    "borrower": {"name": "Test Case", "phone": "9451374358", "email": "l4b@example.com", "language": "en"},
+    "device": {"pushToken": "1a0018970bf0c19de04"}
+  }
 }

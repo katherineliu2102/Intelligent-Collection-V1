@@ -21,7 +21,7 @@ class CasePayloadMapperTest {
         JSONObject json =
                 JSON.parseObject(
                         "{\"eventId\":\"evt-1\",\"caseId\":\"525441\",\"userId\":\"2145521\","
-                                + "\"caseVersion\":7,\"stage\":\"S0\",\"dpd\":-2,\"product\":\"3\","
+                                + "\"caseVersion\":\"7c1e2a9b4d0f83a15e6b8c2d9f0a4e31\",\"stage\":\"S0\",\"dpd\":-2,\"product\":\"3\","
                                 + "\"totalOutstanding\":0,\"penaltyAmount\":0,\"dueDate\":\"2026-08-11\","
                                 + "\"borrower\":{\"name\":\"Cora\",\"phone\":\"+639563093217\","
                                 + "\"email\":\"cora@example.com\",\"language\":\"en\"},"
@@ -31,7 +31,7 @@ class CasePayloadMapperTest {
 
         assertEquals(525441L, snapshot.caseId);
         assertEquals(2145521L, snapshot.userId);
-        assertEquals(7L, snapshot.caseVersion);
+        assertEquals("7c1e2a9b4d0f83a15e6b8c2d9f0a4e31", snapshot.caseVersion);
         assertEquals(Stage.S0, snapshot.stage);
         assertEquals("Cora", snapshot.snapshotFields.get(CollectionEvent.NAME));
         assertEquals("+639563093217", snapshot.snapshotFields.get(CollectionEvent.PHONE));
@@ -43,9 +43,9 @@ class CasePayloadMapperTest {
     void snapshotWithMissingFinancialField_isPoison() {
         JSONObject json =
                 JSON.parseObject(
-                        "{\"caseId\":\"525441\",\"userId\":\"2145521\",\"caseVersion\":7,"
+                        "{\"caseId\":\"525441\",\"userId\":\"2145521\",\"caseVersion\":\"7c1e2a9b4d0f83a15e6b8c2d9f0a4e31\","
                                 + "\"stage\":\"S0\",\"dpd\":-2,\"product\":\"3\","
-                                + "\"totalOutstanding\":0,\"penaltyAmount\":0}");
+                                + "\"totalOutstanding\":0}");
 
         assertThrows(PoisonMessageException.class, () -> mapper.mapAiSnapshot(json));
     }
@@ -57,5 +57,27 @@ class CasePayloadMapperTest {
         assertThrows(
                 PoisonMessageException.class,
                 () -> mapper.isFullCleared(JSON.parseObject("{}")));
+    }
+
+    @Test
+    void mapAiSnapshot_acceptsProducerNumericIdsAndLocalOccurredAt() {
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"eventId\":\"evt-2\",\"caseId\":483877,\"userId\":3780028,"
+                                + "\"caseVersion\":\"a48911a34fecdd3074f1acc8634d5043\","
+                                + "\"occurredAt\":\"2026-08-17 10:40:12\",\"stage\":\"S4\",\"dpd\":70,"
+                                + "\"product\":\"3\",\"overdueAmount\":6075.2,\"overduePenaltyAmount\":390.5,"
+                                + "\"upcomingAmount\":0,\"nextDueDate\":0,"
+                                + "\"borrower\":{\"phone\":\"9654453072\"}}");
+
+        CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
+
+        assertEquals(483877L, snapshot.caseId);
+        assertEquals(3780028L, snapshot.userId);
+        assertEquals("+639654453072", snapshot.snapshotFields.get(CollectionEvent.PHONE));
+        assertEquals(
+                java.time.LocalDateTime.of(2026, 8, 17, 10, 40, 12),
+                CasePayloadMapper.occurredAt(json, snapshot.caseId, "caseEvent"));
+        assertEquals(null, CasePayloadMapper.parseDate(json.get("nextDueDate"), "nextDueDate"));
     }
 }

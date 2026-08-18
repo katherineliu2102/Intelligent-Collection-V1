@@ -20,8 +20,8 @@ import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
 /**
- * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code collection-ai-events-v1-sub}（topic {@code
- * collection-ai-events-v1}），按 {@code dataType} 路由 {@code caseEvent} / {@code repaymentEvent}，
+ * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code intelligent-collection-cases-v1-sub}（topic {@code
+ * intelligent-collection-cases-v1}），按 {@code dataType} 路由 {@code caseEvent} / {@code repaymentEvent}，
  * 交由 {@link AiCaseIngestionProcessor} 写投影并发布领域事件。
  *
  * <p><b>门控</b>：{@code @ConditionalOnProperty(collection.ingestion.enabled=true)} —— 本地 / CI （默认
@@ -110,7 +110,7 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
             String body = message.getData().toStringUtf8();
             JSONObject json = parse(body);
             String dataType = message.getAttributesOrDefault("dataType", json.getString("dataType"));
-            route(dataType, json, body);
+            route(dataType, payload(json), body);
             reply.ack();
         } catch (PoisonMessageException e) {
             log.warn(
@@ -132,6 +132,18 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         } else {
             log.warn("[Ingestion] 不支持的 dataType={}，ack 跳过", dataType);
         }
+    }
+
+    /** 每条 Pub/Sub 消息的业务体固定在顶层 data 中；兼容历史平铺 body。 */
+    private JSONObject payload(JSONObject outer) {
+        if (!outer.containsKey("data")) {
+            return outer;
+        }
+        JSONObject data = outer.getJSONObject("data");
+        if (data == null) {
+            throw new PoisonMessageException("消息 data 必须为 JSON object");
+        }
+        return data;
     }
 
     private JSONObject parse(String body) {

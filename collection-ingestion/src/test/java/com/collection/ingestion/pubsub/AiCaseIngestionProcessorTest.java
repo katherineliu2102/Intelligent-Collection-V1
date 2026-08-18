@@ -63,13 +63,13 @@ class AiCaseIngestionProcessorTest {
 
     @Test
     void caseIngested_writesProjectionThenPublishes() {
-        String body = caseIngestedBody(12L);
+        String body = caseIngestedBody("fingerprint-12");
 
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
         CaseProjection projection = repository.applied.get(0).getProjection();
         assertEquals(525441L, projection.getCaseId());
-        assertEquals(12L, projection.getCaseVersion());
+        assertEquals("fingerprint-12", projection.getCaseVersion());
         assertEquals("IN_COLLECTION", projection.getCollectionStatus());
         assertEquals(0, new BigDecimal("3000.00").compareTo(projection.getTotalOutstanding()));
         assertEquals("+639563093217", projection.getBorrowerPhone());
@@ -80,7 +80,7 @@ class AiCaseIngestionProcessorTest {
 
     @Test
     void caseIngested_publishFailure_leavesInboxPendingForRedelivery() {
-        String body = caseIngestedBody(12L);
+        String body = caseIngestedBody("fingerprint-12");
         doThrow(new IllegalStateException("bus down"))
                 .when(ingestionService)
                 .ingestCase(anyLong(), anyLong(), any(), any());
@@ -104,7 +104,7 @@ class AiCaseIngestionProcessorTest {
     @Test
     void caseIngested_staleVersion_skipsPublish() {
         repository.nextOutcome = CaseProjectionRepository.Outcome.STALE_VERSION;
-        String body = caseIngestedBody(11L);
+        String body = caseIngestedBody("fingerprint-11");
 
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
@@ -114,7 +114,9 @@ class AiCaseIngestionProcessorTest {
 
     @Test
     void externalStageEvent_isRejectedAsPoison() {
-        String body = caseIngestedBody(12L).replace("CASE_INGESTED", "CASE_STAGE_CHANGED");
+        String body =
+                caseIngestedBody("fingerprint-12")
+                        .replace("\"eventId\":\"evt-1\",", "\"eventId\":\"evt-1\",\"eventType\":\"CASE_STAGE_CHANGED\",");
 
         PoisonMessageException error =
                 assertThrows(
@@ -128,9 +130,10 @@ class AiCaseIngestionProcessorTest {
 
     @Test
     void dailyCaseEventForExistingCycle_refreshesProjectionWithoutDomainEvent() {
-        String initial = caseIngestedBody(12L);
+        String initial = caseIngestedBody("fingerprint-12");
         processor.handleCaseEvent(JSON.parseObject(initial), initial);
-        String refresh = caseIngestedBody(20L).replace("\"evt-1\"", "\"evt-2\"");
+        String refresh =
+                caseIngestedBody("fingerprint-20").replace("\"evt-1\"", "\"evt-2\"");
 
         processor.handleCaseEvent(JSON.parseObject(refresh), refresh);
 
@@ -147,11 +150,9 @@ class AiCaseIngestionProcessorTest {
         String body =
                 "{\"eventId\":\"pay-1\",\"eventType\":\"REPAYMENT\","
                         + "\"occurredAt\":\"2026-08-12T10:06:00+08:00\",\"caseId\":\"525441\","
-                        + "\"userId\":\"2145521\",\"caseVersion\":13,\"isFullCleared\":true,"
-                        + "\"product\":\"3\",\"stage\":\"S1\",\"dpd\":2,\"collectionStatus\":\"SETTLED\","
-                        + "\"totalOutstanding\":0.00,\"penaltyAmount\":0.00,\"remainingAmount\":0.00,"
-                        + "\"dueDate\":\"2026-08-11\","
-                        + "\"borrower\":{\"name\":\"CORA\",\"phone\":\"+639563093217\",\"language\":\"en\"}}";
+                        + "\"userId\":\"2145521\",\"isFullCleared\":true,"
+                        + "\"stage\":\"S1\",\"dpd\":2,\"overdueAmount\":0.00,"
+                        + "\"overduePenaltyAmount\":0.00,\"upcomingAmount\":0.00,\"nextDueDate\":null}";
 
         processor.handleRepaymentEvent(JSON.parseObject(body), body);
 
@@ -163,7 +164,7 @@ class AiCaseIngestionProcessorTest {
 
     @Test
     void duplicateEventId_isSkippedByDedupFastPath() {
-        String body = caseIngestedBody(12L);
+        String body = caseIngestedBody("fingerprint-12");
         processor.handleCaseEvent(JSON.parseObject(body), body);
         int appliedOnce = repository.applied.size();
 
@@ -172,12 +173,12 @@ class AiCaseIngestionProcessorTest {
         assertEquals(appliedOnce, repository.applied.size());
     }
 
-    private String caseIngestedBody(long caseVersion) {
-        return "{\"eventId\":\"evt-1\",\"eventType\":\"CASE_INGESTED\","
-                + "\"occurredAt\":\"2026-08-12T03:35:00+08:00\",\"caseId\":\"525441\","
-                + "\"userId\":\"2145521\",\"caseVersion\":"
+    private String caseIngestedBody(String caseVersion) {
+        return "{\"eventId\":\"evt-1\","
+                + "\"occurredAt\":\"2026-08-12 03:35:00\",\"caseId\":525441,"
+                + "\"userId\":\"2145521\",\"caseVersion\":\""
                 + caseVersion
-                + ",\"product\":\"3\",\"stage\":\"S1\",\"dpd\":2,"
+                + "\",\"product\":\"3\",\"stage\":\"S1\",\"dpd\":2,"
                 + "\"collectionStatus\":\"IN_COLLECTION\",\"totalOutstanding\":3000.00,"
                 + "\"penaltyAmount\":0.00,\"remainingAmount\":9000.00,\"dueDate\":\"2026-08-11\","
                 + "\"borrower\":{\"name\":\"CORA\",\"phone\":\"+639563093217\","
@@ -185,12 +186,12 @@ class AiCaseIngestionProcessorTest {
                 + "\"device\":{\"pushToken\":\"tok-1\"}}";
     }
 
-    /** 记录调用的投影仓储替身；默认按版本水位判定，可用 {@link #nextOutcome} 强制某一结果。 */
+    /** 记录调用的投影仓储替身；默认按内容指纹判定，可用 {@link #nextOutcome} 强制某一结果。 */
     private static final class RecordingProjectionRepository implements CaseProjectionRepository {
 
         private final List<CaseProjectionCommand> applied = new ArrayList<>();
         private final List<String> published = new ArrayList<>();
-        private final Map<Long, Long> versions = new HashMap<>();
+        private final Map<Long, String> versions = new HashMap<>();
         private Outcome nextOutcome;
 
         @Override
@@ -200,8 +201,8 @@ class AiCaseIngestionProcessorTest {
                 return nextOutcome;
             }
             CaseProjection projection = command.getProjection();
-            Long current = versions.get(projection.getCaseId());
-            if (current != null && current >= projection.getCaseVersion()) {
+            String current = versions.get(projection.getCaseId());
+            if (current != null && current.equals(projection.getCaseVersion())) {
                 return Outcome.STALE_VERSION;
             }
             versions.put(projection.getCaseId(), projection.getCaseVersion());

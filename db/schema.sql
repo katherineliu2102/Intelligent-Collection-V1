@@ -354,19 +354,22 @@ DROP PROCEDURE IF EXISTS sp_schema_add_event_dlq_redrive_columns;
 -- 7.2.5a AI 催收案件投影（collection-ingestion 消费数仓 Pub/Sub 事实流后写入）。
 -- t_ai_collection 是新系统运行时唯一案件来源；不得在引擎/日切路径回读旧 t_collection。
 -- 单写者约束：只有 ingestion 投影管道可以写本表，数仓不得直连业务库 SQL 写入，
--- 否则独立写入路径会互相覆盖、case_version 出现倒退。
+-- 否则独立写入路径会互相覆盖、case_version 内容指纹失去一致性。
 CREATE TABLE IF NOT EXISTS t_ai_collection (
     case_id                 BIGINT          NOT NULL PRIMARY KEY COMMENT 'loan_id，规范数字案件键',
     user_id                 BIGINT          NOT NULL,
-    case_version            BIGINT          NOT NULL COMMENT '同一案件单调递增版本，防 Pub/Sub 乱序',
+    case_version            CHAR(32)        NOT NULL COMMENT '数仓快照内容指纹；相同略过、不同刷新',
     dpd                     INT             NOT NULL,
     stage                   VARCHAR(16)     NULL COMMENT 'S0/S1/S2/S3/S4；D+91 可为空',
     collection_status       VARCHAR(32)     NOT NULL COMMENT 'IN_COLLECTION/SETTLED/CEASED',
     product                 VARCHAR(64)     NOT NULL,
+    overdue_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '已到期未结清总额，含罚息',
     total_outstanding       DECIMAL(18,2)   NOT NULL COMMENT '已到期且未结清，对客金额',
     penalty_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0,
-    remaining_amount        DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '全部未结清，仅对账',
+    remaining_amount        DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '废弃历史字段，不再表示全部未结清',
+    upcoming_amount         DECIMAL(18,2)   NULL COMMENT '三期下一期 D-3～D0 待还金额',
     due_date                DATE            NULL,
+    next_due_date           DATE            NULL COMMENT '三期下一期 D-3～D0 提醒日期',
     borrower_name           VARCHAR(256)    NOT NULL,
     borrower_phone          VARCHAR(64)     NOT NULL COMMENT 'E.164',
     borrower_email          VARCHAR(256)    NULL,
@@ -387,7 +390,7 @@ CREATE TABLE IF NOT EXISTS t_ai_collection_inbox (
     id                      BIGINT          AUTO_INCREMENT PRIMARY KEY,
     event_id                VARCHAR(64)     NOT NULL COMMENT '数仓 publish 时生成，重投复用',
     case_id                 BIGINT          NOT NULL,
-    case_version            BIGINT          NOT NULL,
+    case_version            CHAR(32)        NULL COMMENT 'caseEvent 内容指纹；repaymentEvent 增量可为空',
     message_type            VARCHAR(32)     NOT NULL COMMENT 'caseEvent/repaymentEvent',
     event_type              VARCHAR(64)     NOT NULL,
     payload                 JSON            NOT NULL COMMENT '完整外部 Pub/Sub payload，供审计与重放',
@@ -400,6 +403,54 @@ CREATE TABLE IF NOT EXISTS t_ai_collection_inbox (
     INDEX idx_ai_inbox_pending (publish_status, created_at),
     INDEX idx_ai_inbox_case_version (case_id, case_version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 催收入站事实收件箱（投影与内部事件的可靠桥接）';
+
+-- 既有环境迁移：case_version 从单调整数版本改为数仓内容指纹。
+DROP PROCEDURE IF EXISTS sp_schema_case_version_to_fingerprint;
+DELIMITER //
+CREATE PROCEDURE sp_schema_case_version_to_fingerprint()
+BEGIN
+    ALTER TABLE t_ai_collection
+        MODIFY COLUMN case_version CHAR(32) NOT NULL COMMENT '数仓快照内容指纹；相同略过、不同刷新';
+    ALTER TABLE t_ai_collection_inbox
+        MODIFY COLUMN case_version CHAR(32) NULL COMMENT 'caseEvent 内容指纹；repaymentEvent 增量可为空';
+END //
+DELIMITER ;
+CALL sp_schema_case_version_to_fingerprint();
+DROP PROCEDURE IF EXISTS sp_schema_case_version_to_fingerprint;
+
+-- 既有联调环境迁移：还款增量的运行态字段。
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_repayment_fields;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_collection_repayment_fields()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'overdue_amount'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN overdue_amount DECIMAL(18,2) NOT NULL DEFAULT 0 COMMENT '已到期未结清总额，含罚息'
+            AFTER product;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'upcoming_amount'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN upcoming_amount DECIMAL(18,2) NULL COMMENT '三期下一期 D-3～D0 待还金额'
+            AFTER remaining_amount;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'next_due_date'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN next_due_date DATE NULL COMMENT '三期下一期 D-3～D0 提醒日期'
+            AFTER due_date;
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_collection_repayment_fields();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_repayment_fields;
 
 -- 既有环境迁移：数仓不再写业务库，t_ai_collection_outbox 无发布器也无消费者。
 -- 归档需求由 t_ai_collection_inbox.payload 承接；确认数仓侧发布器已下线、无 PENDING 记录后再执行下一行。

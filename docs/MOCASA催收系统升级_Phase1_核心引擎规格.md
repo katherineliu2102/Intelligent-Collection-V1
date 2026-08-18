@@ -107,7 +107,7 @@ flowchart LR
 | `CASE_INGESTED`      | ① 创建        | 匹配模板 → 创建计划（PENDING）→ 注册首步 Job          | [§4.2](#42-计划创建)                   |
 | `STAGE_CHANGED`      | ① 创建 + ④ 中断 | 取消旧阶段活跃计划 → 为新阶段创建计划                    | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
 | `REPAYMENT_RECEIVED` | ④ 中断        | **整笔 loan 全额结清**：取消该案件活跃计划 + 清理已注册 Job  | [§4.4](#44-中断处理)                   |
-| `CASE_BALANCE_UPDATED` | ② 运行中更新 | **部分还款**：仅刷新该案件活跃计划快照的 `totalOutstanding` | [§4.6](#46-部分还款余额更新) |
+| `CASE_BALANCE_UPDATED` | ② 运行中更新 | **部分还款**：刷新该案件活跃计划快照的运行态金额与下一期提醒字段；不改 stage | [§4.6](#46-部分还款余额更新) |
 | `PLAN_STEP_DUE`      | ② 步骤循环      | 按状态分流：到期执行 / 观察期结转 → 触达                 | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
 | `CHANNEL_CALLBACK`   | ② 步骤循环      | 更新步骤结果 → 发布 `STEP_COMPLETED`            | [§4.3.3](#433-channel_callback)    |
 | `CALLBACK_TIMEOUT`   | ② 步骤循环      | 回调超时 → 标 `FAILED` → 发布 `STEP_COMPLETED` | [§4.3.4](#434-callback_timeout)    |
@@ -286,7 +286,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 **触发事件**：`CASE_INGESTED` / `STAGE_CHANGED`（链 [§2.1](#21-事件路由表ssot)）。
 **关联 SPI**：`PlanFactory`（链 [§6.1](#61-接口总览)）。
 
-`CASE_INGESTED` 的准入、DPD/停催口径与 payload 组装见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-入案处理主链路校验幂等与边界)；`STAGE_CHANGED` 的来源与目标 Stage 口径见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)。二者均复用下方创建逻辑。引擎仍防御性拒绝快照 `collectionStatus=CEASED` 的建计划请求，避免迟到/重放事件绕过停催边界。
+`CASE_INGESTED` 的准入、DPD/停催口径与 payload 组装见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-入案处理主链路校验幂等与边界)；`STAGE_CHANGED` 的来源与目标 Stage 口径见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)。二者均复用下方创建逻辑。`collectionStatus` 由接入派生；引擎仍防御性拒绝 `CEASED` 快照的建计划请求，避免迟到/重放事件绕过停催边界。
 
 ```python
 def on_case_ingested(event):
@@ -496,7 +496,7 @@ def on_callback_timeout(event):
 **触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`，见 [§7.3](#73-l1-基础设施异常)）。
 
-`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
+`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
 
 ```python
 def on_repayment_received(case_id, user_id):
@@ -586,7 +586,7 @@ def on_plan_exhausted(event):
 
 ### 4.6 部分还款余额更新
 
-**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §2.2.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#222-repaymentevent)；链 [§2.1](#21-事件路由表ssot)）。
+**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵)；链 [§2.1](#21-事件路由表ssot)）。
 **状态影响**：无。该事件只更新活跃计划的快照金额，不属于计划状态迁移。
 
 ```python

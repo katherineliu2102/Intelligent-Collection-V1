@@ -28,7 +28,7 @@ import org.springframework.stereotype.Component;
  * <p><b>路由</b>：三个任务共用<b>一个</b>调度订阅，按消息属性 {@code job} 路由（{@code planStepDue} / {@code
  * callbackTimeout} / {@code dailyRoll}，见 {@link ScheduledJob}）。未知取值记录并 ack，不重投。
  *
- * <p><b>与案件接入解耦</b>：不复用接入订阅 {@code collection-ai-events-v1-sub}；门控开关也独立于 {@code
+ * <p><b>与案件接入解耦</b>：不复用接入订阅 {@code intelligent-collection-cases-v1-sub}；门控开关也独立于 {@code
  * collection.ingestion.enabled}。沿用 {@link Subscriber} 流式拉取 + {@link SmartLifecycle}，与 {@code
  * PubSubCaseConsumer} 同一套生命周期，凭证经 {@code GOOGLE_APPLICATION_CREDENTIALS}（ADC）加载， 不启用
  * spring-cloud-gcp 自动装配。

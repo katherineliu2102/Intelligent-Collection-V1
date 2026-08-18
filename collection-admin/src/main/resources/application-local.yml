@@ -35,7 +35,7 @@ collection:
   ingestion:
     enabled: ${INGESTION_ENABLED:false}
     project-id: ${GCP_PUBSUB_PROJECT:}
-    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-ai-events-v1-sub}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:intelligent-collection-cases-v1-sub}
     ack-deadline-seconds: 60
     max-concurrency: 4
     # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）

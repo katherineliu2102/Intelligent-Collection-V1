@@ -18,15 +18,15 @@ import org.springframework.stereotype.Component;
  * 本类负责把它落成案件投影并驱动引擎：
  *
  * <ol>
- *   <li>事务内写收件箱 + 按 {@code caseVersion} 条件 upsert {@code t_ai_collection}；
+ *   <li>事务内写收件箱 + 按 {@code caseVersion} 内容指纹条件 upsert {@code t_ai_collection}；
  *   <li>提交后再 publish 内部领域事件，成功才标记收件箱已发布。
  * </ol>
  *
  * <p>顺序不可颠倒：先发事件后写投影会让引擎的实时守卫与日切读到旧快照。publish 失败时抛出异常由
  * {@link PubSubCaseConsumer} nack，重投命中 {@link Outcome#PENDING_PUBLISH} 只补发事件、不重复写投影。
  *
- * <p>外部 Topic 只受理 {@code CASE_INGESTED} 与 {@code REPAYMENT}；阶段变更、D+91 停催与结清反转
- * 复活由 {@code DpdStageRollHandler} 读投影后独占产出，避免同一状态被两个来源重复触发。
+ * <p>外部 Topic 只受理 {@code CASE_INGESTED} 与 {@code REPAYMENT}；阶段变更与 D+91 停催由
+ * {@code DpdStageRollHandler} 读投影后独占产出，避免同一状态被两个来源重复触发。
  */
 @Component
 public class AiCaseIngestionProcessor {
@@ -51,18 +51,12 @@ public class AiCaseIngestionProcessor {
             return;
         }
         String eventType = json.getString("eventType");
-        if (!EVENT_CASE_INGESTED.equals(eventType)) {
+        if (eventType != null && !EVENT_CASE_INGESTED.equals(eventType)) {
             throw new PoisonMessageException(
                     "外部 caseEvent 仅受理 CASE_INGESTED，阶段/停催由日切产出；收到 eventType=" + eventType);
         }
+        eventType = EVENT_CASE_INGESTED;
         CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
-        if (dedup.isStaleVersion(snapshot.caseId, snapshot.caseVersion)) {
-            log.info(
-                    "[Ingestion] caseEvent stale version skip caseId={} version={}",
-                    snapshot.caseId,
-                    snapshot.caseVersion);
-            return;
-        }
         // L4b-7：在投影落库之前注入瞬态失败，使重投走完整的收件箱补发路径（默认关闭，仅白名单案可命中）
         faultInjector.failIfArmed(snapshot.caseId);
         CaseProjection projection = assembler.assemble(json, snapshot);
@@ -94,19 +88,11 @@ public class AiCaseIngestionProcessor {
         if (dedup.isMessageProcessed(eventId)) {
             return;
         }
-        CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
-        if (dedup.isStaleVersion(snapshot.caseId, snapshot.caseVersion)) {
-            return;
-        }
-        boolean fullCleared = mapper.isFullCleared(json);
-        BigDecimal outstanding =
-                (BigDecimal) snapshot.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING);
-        if (!fullCleared && (outstanding == null || outstanding.signum() < 0)) {
-            throw new PoisonMessageException("repaymentEvent 缺有效 totalOutstanding");
-        }
-        CaseProjection projection = assembler.assemble(json, snapshot);
+        CasePayloadMapper.RepaymentDelta delta = mapper.mapRepaymentDelta(json);
+        boolean fullCleared = delta.fullCleared;
+        CaseProjection projection = assembler.assembleRepaymentDelta(delta);
         Outcome outcome =
-                projectionRepository.apply(
+                projectionRepository.applyRepaymentDelta(
                         command(
                                 eventId,
                                 MESSAGE_TYPE_REPAYMENT,
@@ -114,16 +100,26 @@ public class AiCaseIngestionProcessor {
                                 rawPayload,
                                 true,
                                 projection));
-        if (!shouldPublish(outcome, eventId, snapshot.caseId)) {
+        if (!shouldPublish(outcome, eventId, delta.caseId)) {
             return;
         }
         if (fullCleared) {
-            ingestionService.repayment(snapshot.caseId, snapshot.userId);
-            dedup.clearIngested(snapshot.caseId);
+            ingestionService.repayment(delta.caseId, delta.userId);
+            dedup.clearIngested(delta.caseId);
         } else {
-            ingestionService.balanceUpdated(snapshot.caseId, snapshot.userId, outstanding, null);
+            ingestionService.balanceUpdated(
+                    delta.caseId,
+                    delta.userId,
+                    projection.getDpd(),
+                    projection.getOverdueAmount(),
+                    projection.getTotalOutstanding(),
+                    projection.getPenaltyAmount(),
+                    projection.getUpcomingAmount(),
+                    projection.getNextDueDate(),
+                    projection.getCollectionStatus());
         }
-        confirmPublished(eventId, snapshot);
+        confirmPublished(eventId, new CasePayloadMapper.AiSnapshot(
+                delta.caseId, delta.userId, null, delta.fields.stage, java.util.Collections.emptyMap()));
     }
 
     private boolean shouldPublish(Outcome outcome, String eventId, Long caseId) {
@@ -144,7 +140,6 @@ public class AiCaseIngestionProcessor {
     }
 
     private void confirmProcessed(String eventId, CasePayloadMapper.AiSnapshot snapshot) {
-        dedup.recordVersion(snapshot.caseId, snapshot.caseVersion);
         dedup.markMessageProcessed(eventId);
     }
 

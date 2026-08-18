@@ -8,7 +8,7 @@ public class AiCollectionInboxRow {
 
     private String eventId;
     private Long caseId;
-    private Long caseVersion;
+    private String caseVersion;
     private String messageType;
     private String eventType;
     private String payload;

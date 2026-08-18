@@ -7,7 +7,6 @@ import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
-import java.math.BigDecimal;
 import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
@@ -24,11 +23,10 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}
  *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}
- *   <li>无活跃 plan 且 {@code total_outstanding > 0} → 发 {@code CASE_INGESTED}（复活）
  *   <li>已结清（{@code SETTLED}）→ 跳过
  * </ul>
  *
- * <p><b>唯一来源</b>：上述三类事件只由本 Job 产出。外部 Pub/Sub 只投递 {@code CASE_INGESTED} / {@code REPAYMENT}
+ * <p><b>唯一来源</b>：上述两类事件只由本 Job 产出。外部 Pub/Sub 只投递 {@code CASE_INGESTED} / {@code REPAYMENT}
  * 与每日全量校准（见 {@link com.collection.ingestion.pubsub.AiCaseIngestionProcessor}）；若数仓也发阶段/停催事件，
  * 同一状态会被两个来源重复触发，导致计划被反复取消重建。
  *
@@ -127,23 +125,6 @@ public class DpdStageRollHandler {
                 counters[1]++;
                 log.info("[DpdStageRollHandler] loanId={} dpd={} ≥91 → CASE_CEASED", loanId, dpd);
             }
-            return;
-        }
-
-        // t_ai_collection 结清反转（或日切恢复后无活跃计划）：重新以完整快照入案。
-        // 只对有已到期余额的在催案件执行，避免把正常完成或未到期零余额案件每日重复建计划。
-        if (active.isEmpty()
-                && newStage != null
-                && info.getTotalOutstanding() != null
-                && info.getTotalOutstanding().compareTo(BigDecimal.ZERO) > 0
-                && acquireDailyRollEvent("reactivate", loanId, dpd)) {
-            ingestionService.ingestCase(
-                    loanId,
-                    info.getUserId(),
-                    newStage,
-                    ingestionService.currentSnapshotFields(caseService.getContextSnapshot(loanId)));
-            counters[0]++;
-            log.info("[DpdStageRollHandler] loanId={} reactivated from t_ai_collection", loanId);
             return;
         }
 

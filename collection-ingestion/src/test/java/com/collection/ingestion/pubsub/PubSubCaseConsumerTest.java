@@ -7,11 +7,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.collection.ingestion.config.IngestionProperties;
 import com.google.cloud.pubsub.v1.AckReplyConsumer;
 import com.google.pubsub.v1.PubsubMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** 两类 v3 Pub/Sub 路由与 ACK/NACK 语义。 */
@@ -40,6 +42,20 @@ class PubSubCaseConsumerTest {
     }
 
     @Test
+    void envelopeBody_routesInnerDataAndRetainsRawPayload() {
+        String body = "{\"dataType\":\"caseEvent\",\"data\":{\"eventId\":\"evt-1\",\"caseId\":525441}}";
+        PubsubMessage message = message(null, body);
+        AckReplyConsumer reply = mock(AckReplyConsumer.class);
+
+        consumer.receiveMessage(message, reply);
+
+        ArgumentCaptor<JSONObject> payload = ArgumentCaptor.forClass(JSONObject.class);
+        verify(processor).handleCaseEvent(payload.capture(), eq(body));
+        org.junit.jupiter.api.Assertions.assertEquals(525441L, payload.getValue().getLong("caseId"));
+        verify(reply).ack();
+    }
+
+    @Test
     void transientProcessorFailure_nacks() {
         doThrow(new IllegalStateException("db unavailable"))
                 .when(processor)
@@ -63,10 +79,13 @@ class PubSubCaseConsumerTest {
     }
 
     private PubsubMessage message(String dataType, String body) {
-        return PubsubMessage.newBuilder()
-                .setMessageId("pubsub-id")
-                .putAttributes("dataType", dataType)
-                .setData(com.google.protobuf.ByteString.copyFromUtf8(body))
-                .build();
+        PubsubMessage.Builder builder =
+                PubsubMessage.newBuilder()
+                        .setMessageId("pubsub-id")
+                        .setData(com.google.protobuf.ByteString.copyFromUtf8(body));
+        if (dataType != null) {
+            builder.putAttributes("dataType", dataType);
+        }
+        return builder.build();
     }
 }

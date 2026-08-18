@@ -39,8 +39,12 @@ public class AiCollectionCaseService implements CaseService {
         info.setStage(stage(row));
         info.setProduct(row.getProduct());
         info.setCaseStatus(row.getCollectionStatus());
+        info.setOverdueAmount(row.getOverdueAmount());
         info.setTotalOutstanding(row.getTotalOutstanding());
+        info.setPenaltyAmount(row.getPenaltyAmount());
+        info.setUpcomingAmount(row.getUpcomingAmount());
         info.setDueDate(row.getDueDate());
+        info.setNextDueDate(row.getNextDueDate());
         info.setRepaid(isSettled(row));
         return info;
     }
@@ -54,9 +58,12 @@ public class AiCollectionCaseService implements CaseService {
         context.setDpd(row.getDpd());
         context.setStage(stage(row));
         context.setProduct(row.getProduct());
+        context.setOverdueAmount(row.getOverdueAmount());
         context.setTotalOutstanding(row.getTotalOutstanding());
         context.setPenaltyAmount(row.getPenaltyAmount());
+        context.setUpcomingAmount(row.getUpcomingAmount());
         context.setDueDate(row.getDueDate());
+        context.setNextDueDate(row.getNextDueDate());
         context.setCaseStatus(row.getCollectionStatus());
         context.setCollectionStatus(
                 "CEASED".equalsIgnoreCase(row.getCollectionStatus()) ? "CEASED" : "ACTIVE");

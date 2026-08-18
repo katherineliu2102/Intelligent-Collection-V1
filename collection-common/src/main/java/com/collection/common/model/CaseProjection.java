@@ -16,16 +16,21 @@ public class CaseProjection {
 
     private Long caseId;
     private Long userId;
-    /** 同一案件单调递增；仅更高版本可覆盖已有投影。 */
-    private Long caseVersion;
+    /** 数仓内容指纹；与已入库值不同才覆盖已有投影。 */
+    private String caseVersion;
     private Integer dpd;
     private String stage;
     private String collectionStatus;
     private String product;
+    private BigDecimal overdueAmount;
     private BigDecimal totalOutstanding;
     private BigDecimal penaltyAmount;
     private BigDecimal remainingAmount;
+    private BigDecimal upcomingAmount;
     private LocalDate dueDate;
+    private LocalDate nextDueDate;
+    /** 增量还款消息显式携带 nextDueDate（可为 null）时为 true。 */
+    private boolean nextDueDatePresent;
     private String borrowerName;
     private String borrowerPhone;
     private String borrowerEmail;

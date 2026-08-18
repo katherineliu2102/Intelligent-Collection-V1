@@ -68,7 +68,7 @@ flowchart TB
 |---|---|---|---|
 | `planStepDue` | `* * * * *` | 到期的待触发计划步骤（首步/后续步、退避重试到期） | `PLAN_STEP_DUE` |
 | `callbackTimeout` | `* * * * *` | 执行中 AI 步骤 Webhook 超时未到 | `CALLBACK_TIMEOUT` |
-| `dailyRoll` | `35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` | 日切窗口内读投影，检测 DPD/阶段/停催态变化（分页推进） | `STAGE_CHANGED` / `CASE_CEASED` / 复活 `CASE_INGESTED` |
+| `dailyRoll` | `35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` | 日切窗口内读投影，检测 DPD/阶段/停催态变化（分页推进） | `STAGE_CHANGED` / `CASE_CEASED` |
 
 ### 2.1 旧系统（XXL-Job）
 
@@ -190,7 +190,7 @@ XXL、Quartz、K8s Cron、Cloud Scheduler、EventBridge 等，都是 **时钟实
 
 | 项 | 状态 |
 |---|---|
-| 生产时钟 | Cloud Scheduler → `collection-schedule-ai-v1` → 专用订阅 |
+| 生产时钟 | Cloud Scheduler → `intelligent-collection-schedule-v1` → 专用订阅 |
 | 应用入口 | `PubSubScheduleConsumer` → `ScheduledJobRunner` |
 | 本地/测试 | `TriggerScanner` + `POST /mock/daily-roll`（与生产入口互斥） |
 | XXL 运行时 | 已移除 |

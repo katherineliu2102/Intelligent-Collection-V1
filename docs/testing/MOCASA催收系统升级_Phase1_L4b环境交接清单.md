@@ -8,8 +8,8 @@
 
 | 维度 | L4b 隔离联调 | Pilot / 生产（非本 Runbook） |
 |---|---|---|
-| Topic | `collection-ai-events-test1` | `collection-ai-events-v1` |
-| 新系统订阅 | `collection-ai-events-test1-sub` | `collection-ai-events-v1-sub` |
+| Topic | `intelligent-collection-cases-test1` | `intelligent-collection-cases-v1` |
+| 新系统订阅 | `intelligent-collection-cases-test1-sub` | `intelligent-collection-cases-v1-sub` |
 | 旧 L4b（已废弃） | `collection-cases-test1` | `collection-cases` / `collection-cases-ai-v1-sub` |
 | 测试数据 | `99000000`–`99000005`、`IC_TEST_*` | 批准后的灰度切片 |
 | SMS / Push | `sms-test-mode=true`、test token | 按批准配置 |
@@ -18,17 +18,17 @@
 
 **红线**
 
-- 禁止向生产 topic `collection-ai-events-v1`（及旧 `collection-cases`）发测试消息。
-- L4b 必须使用独立测试订阅；测试前确认没有其他活跃消费者争抢 `collection-ai-events-test1-sub`。
+- 禁止向生产 topic `intelligent-collection-cases-v1`（及旧 `collection-cases`）发测试消息。
+- L4b 必须使用独立测试订阅；测试前确认没有其他活跃消费者争抢 `intelligent-collection-cases-test1-sub`。
 - 只允许白名单测试 loan_id、测试手机/邮箱与渠道沙箱；凭证、数据库连接、白名单明细不得入仓。
 
 ## 2. 环境资源与责任人
 
 | 资源/配置 | 联调取值或动作 | 责任人 |
 |---|---|---|
-| PubSub topic / subscription / IAM | 建 `collection-ai-events-test1` / `collection-ai-events-test1-sub`；Outbox 发布 SA + 联调 Consumer SA | 运维 |
+| PubSub topic / subscription / IAM | 建 `intelligent-collection-cases-test1` / `intelligent-collection-cases-test1-sub`；Outbox 发布 SA + 联调 Consumer SA | 运维 |
 | GCP 凭证 | `authorized_user` ADC 或经批准的服务账号；配置应用和发布脚本 | 运维 + 主架构 |
-| Nacos | 发布 L4b delta，订阅指向 `collection-ai-events-test1-sub` | 主架构 |
+| Nacos | 发布 L4b delta，订阅指向 `intelligent-collection-cases-test1-sub` | 主架构 |
 | 旧库 seed | `db/seed-test-cases.sql`、`seed-device-token.sql` | 主架构 + 服务同事 |
 | 新库 | contact plan/step/timeline 等表可用 | 服务同事 + 运维 |
 | 渠道沙箱 | SMS testSend、Push test token、测试收件人 | 编排同事 + 主架构 |
@@ -48,7 +48,7 @@ collection:
   ingestion:
     enabled: true
     project-id: fintech-all
-    subscription: collection-ai-events-test1-sub
+    subscription: intelligent-collection-cases-test1-sub
     loan-id-whitelist: [99000000, 99000001, 99000002, 99000003, 99000004, 99000005]
     # L4b-7 受控 NACK 注入开关：仅联调环境为 true，生产必须 false（且端点只在 local/test profile 存在）
     fault-injection-enabled: true
@@ -71,7 +71,7 @@ channel:
 
 ```bash
 export GCP_PUBSUB_PROJECT=fintech-all
-export GCP_PUBSUB_SUBSCRIPTION=collection-ai-events-test1-sub
+export GCP_PUBSUB_SUBSCRIPTION=intelligent-collection-cases-test1-sub
 export GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/credentials.json
 source scripts/test/l4b-env.local.sh
 ```
@@ -96,7 +96,7 @@ source scripts/test/l4b-env.local.sh
 mysql -h<HOST> -P3306 -u<USER> -p ai_collection_db < db/seed-test-cases.sql
 mysql -h<HOST> -P3306 -u<USER> -p ai_collection_db < db/seed-device-token.sql
 
-export GCP_PUBSUB_TEST_TOPIC=collection-ai-events-test1
+export GCP_PUBSUB_TEST_TOPIC=intelligent-collection-cases-test1
 ./scripts/test/l4b-pubsub/publish-test-messages.sh case
 ./scripts/test/l4b-pubsub/publish-test-messages.sh repay 99000001
 ```

@@ -7,10 +7,11 @@
 
 | 关切 | 章节 |
 | --- | --- |
-| Topic / IAM / 双 Scheduler | [契约 §1](../数仓_PubSub交付契约.md#1-封面与边界) |
-| DPD / 金额 / `collectionStatus` | [契约 §2](../数仓_PubSub交付契约.md#2-数仓要算什么) |
-| `caseEvent` / `repaymentEvent` 样例 | [契约 §3](../数仓_PubSub交付契约.md#3-数仓要发什么) |
-| `eventId` / `caseVersion` / 360s | [契约 §4](../数仓_PubSub交付契约.md#4-怎么发才可靠) |
-| 谁发阶段/停催/复活 | [契约 §5](../数仓_PubSub交付契约.md#5-场景矩阵) |
-| 03:00 批次 vs 03:35 日切 | [契约 §6](../数仓_PubSub交付契约.md#6-日切门控) |
-| 上线验收签字 | [契约 §7](../数仓_PubSub交付契约.md#7-验收清单) |
+| 入站顺序 / Publisher 任务 | [契约 §1.1](../数仓_PubSub交付契约.md#11-入站顺序与-publisher-任务) |
+| 两条管道 / Topic / IAM | [契约 §1.2](../数仓_PubSub交付契约.md#12-gcp-资源) |
+| 两类事实事件 / 按事件字段 / 样例 | [契约 §2](../数仓_PubSub交付契约.md#2-计算口径与事件契约) |
+| 独立发布样例 | [caseEvent](./caseEvent.sample.json)；[repaymentEvent](./repaymentEvent.sample.json)；每份均为单条 `{dataType, data}` message body |
+| `eventId` / `caseVersion` / 360s | [契约 §3](../数仓_PubSub交付契约.md#3-发布可靠性) |
+| 阶段 / 停催场景 | [契约 §4](../数仓_PubSub交付契约.md#4-场景矩阵) |
+| 03:00 批次 vs 03:35 日切 | [契约 §5](../数仓_PubSub交付契约.md#5-日切窗口与批次门控) |
+| 上线验收签字 | [契约 §6](../数仓_PubSub交付契约.md#6-上线验收) |

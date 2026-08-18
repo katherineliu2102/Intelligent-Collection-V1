@@ -13,7 +13,7 @@ STRICT=0
 [[ "${1:-}" == "--strict" ]] && STRICT=1
 
 BASE="${L4B_BASE_URL:-http://localhost:8888}"
-EXPECTED_SUB="${GCP_PUBSUB_SUBSCRIPTION:-collection-ai-events-test1-sub}"
+EXPECTED_SUB="${GCP_PUBSUB_SUBSCRIPTION:-intelligent-collection-cases-test1-sub}"
 NACOS_DATA_ID="${NACOS_DATA_ID:-intelligent-collection-local.yml}"
 PASS=0
 WARN=0
@@ -206,7 +206,7 @@ check_db() {
 check_manual_reminders() {
   hdr "须人工确认（preflight 无法自动验）"
   ylw "  • L4a 8 条已通过（见 logs/run/l4a.last.log）"
-  ylw "  • 运维已建 PubSub 订阅 collection-ai-events-test1-sub（挂 topic collection-ai-events-test1）"
+  ylw "  • 运维已建 PubSub 订阅 intelligent-collection-cases-test1-sub（挂 topic intelligent-collection-cases-test1）"
   ylw "  • loan_id 白名单清单（不入仓）"
   ylw "  • L4b 日切走 POST /mock/daily-roll，不接生产调度；真实调度通道（Cloud Scheduler → 调度 PubSub → 应用订阅）在 T5 交付验收"
   ylw "  • /actuator/beans 核对 A1–A6 薄/全"

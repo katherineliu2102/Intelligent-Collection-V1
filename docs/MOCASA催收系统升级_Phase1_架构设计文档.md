@@ -65,7 +65,7 @@
 │  │                                      CASE_BALANCE_UPDATED               │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  ┌─ DPD 日切 ───────────────────────────────────────────────────────────────┐   │
-│  │ 只读 t_ai_collection → STAGE_CHANGED / CASE_CEASED / CASE_INGESTED（复活）│   │
+│  │ 只读 t_ai_collection → STAGE_CHANGED / CASE_CEASED                        │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  两路径均 publish 领域事件；context_snapshot 由引擎建计划时冻结。                │
 └───────────────────┬──────────────────────────────────────────────────────────────┘
@@ -167,7 +167,7 @@
 
 PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)。数仓计算口径、消息样例与验收 → [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md)。
 
-> 数仓 Cloud Scheduler 每日发布 `caseEvent` 完整快照，并每 15 分钟发布 `repaymentEvent`；消息均携带 `dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`dueDate` 等必填字段，缺失即按入站脏数据处置。`device.pushToken` 仅在用户有注册时携带，缺失不回查，渠道按 Push→SMS fallback 处理。接入层按 `eventId` / `caseVersion` 写投影后，引擎只消费 payload 并冻结为 `context_snapshot`。字段与衍生责任见 [领域模型 §4/§6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)。
+> 数仓 Cloud Scheduler 每日发布完整 `caseEvent`，并每 15 分钟发布增量 `repaymentEvent`。前者带 `dpd`、`product`、`overdueAmount`（含罚息）、`overduePenaltyAmount`、`isFullCleared` 及联系人设备；后者带还款及运行态增量（`dpd`、`stage`、金额和三期提醒字段），但不带产品、借款人或设备。接入将 `overdueAmount` / `overduePenaltyAmount` 映射为 `totalOutstanding` / `penaltyAmount`，并派生 `collectionStatus`：结清优先，否则 D+91 停催，否则在催。`upcomingAmount` / `nextDueDate` 只用于三期产品下一期 D-3～D0 提醒，不能替代历史 `dueDate`。`device.pushToken` 仅在完整快照中有注册时携带，缺失不回查，渠道按 Push→SMS fallback 处理。接入层按 `eventId` / `caseVersion` 写投影后，引擎只消费 payload 并冻结为 `context_snapshot`。字段与衍生责任见 [领域模型 §4/§6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)。
 
 #### 1.2.2 应用入站
 
@@ -184,7 +184,7 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 |---|---|---|---|---|---|
 | `planStepDue` | `ScheduledJobRunner` → `PlanStepTriggerPublisher`（admin） | `* * * * *`（每分钟） | `trigger_time <= NOW()` 且步骤待触发、计划非终态 | `PLAN_STEP_DUE` | 计划首步/后续步到期触发触达；退避重试到期 |
 | `callbackTimeout` | `ScheduledJobRunner` → `PlanStepTriggerPublisher`（admin） | `* * * * *`（每分钟） | `timeout_time <= NOW()` 且 step=`EXECUTING`、计划非终态 | `CALLBACK_TIMEOUT` | AI_CALL dispatch 后 Webhook 超时未到，步骤 FAILED 并推进 |
-| `dailyRoll` | `ScheduledJobRunner` → `DpdStageRollHandler`（ingestion） | `35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` | 数仓约 03:00 PHT 稳定后，只读 `t_ai_collection` 的 `dpd` / `stage` / `collection_status`；每次仅推进一页 keyset | `STAGE_CHANGED` / `CASE_CEASED` / `CASE_INGESTED` | 阶段变更、停催或结清反转复活；日切窗口 03:35–05:55 PHT |
+| `dailyRoll` | `ScheduledJobRunner` → `DpdStageRollHandler`（ingestion） | `35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` | 数仓约 03:00 PHT 稳定后，只读 `t_ai_collection` 的 `dpd` / `stage` / `collection_status`；每次仅推进一页 keyset | `STAGE_CHANGED` / `CASE_CEASED` | 阶段变更或停催；日切窗口 03:35–05:55 PHT |
 
 完整规格（含陈旧消息防抖、ACK 语义、单飞保护、运维交付清单）见 [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)。
 
@@ -331,13 +331,13 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 **不变量**：SPI 的静态决策输入（案件 / 画像等）读不可变 `context_snapshot`，不实时回查案件表；单个计划内所有步骤共享同一份决策上下文。（实时存活状态、合规频次计数、对外文案的日变字段为明确例外，见下。）
 
 **约束**：
-- 接入层消费 `caseEvent` 并组装 `CASE_INGESTED` payload（完整快照由数仓消息携带，缺失即脏数据）；引擎只将完整 payload 映射为不可变 `context_snapshot` 写入 plan 行，不在建快照时读 `t_ai_collection`。ProfileService 不进入主入案链路（见 [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界)）
+- 接入层消费 `caseEvent` 并组装 `CASE_INGESTED` payload（完整快照由数仓消息携带，缺失即脏数据）；引擎只将完整 payload 映射为不可变 `context_snapshot` 写入 plan 行，不在建快照时读 `t_ai_collection`。ProfileService 不进入主入案链路（见 [数据接入规格 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）
 - 新计划（入案、阶段变更、续建）均写入快照。`STAGE_CHANGED` 取消旧阶段计划并重建，carry-forward 后刷新 `stage`；日切事件另携带 `dpd` / `totalOutstanding` 刷新新快照。引擎内部升档未携带两字段，由下一条发送时覆盖兜底（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)）。
-- `CASE_BALANCE_UPDATED` 只持久化更新活跃计划快照的 `totalOutstanding`；不改变 `dpd`、阶段、模板、渠道或策略字段。
+- `CASE_BALANCE_UPDATED` 持久化更新活跃计划快照的运行态金额与下一期提醒字段（`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`）；不改变 `dpd`、阶段、模板、渠道或策略字段。阶段变化仍由 `dailyRoll` 产生 `STAGE_CHANGED`。
 - 实时读取例外：还款状态由 `PreFlightChecker`（骨架②）实时校验；合规频次 / 时段计数由 `ExecutionGuard`（骨架③）读实时计数器——二者均不走快照。争议冻结及其后台操作为 Phase 2 能力。
 - **对外文案日变字段例外**：骨架② 已实时读到 `CaseInfo`，其 `dpd` / `totalOutstanding` 在解析前覆盖内存中的快照副本（**不回写** `context_snapshot`，**不覆盖** `stage`）。快照的 `dpd` 冻结于建计划时刻，而单阶段最长跨 60 天（S4 = DPD 31–90），不刷新会连续数十天向用户播报错误逾期天数。实际渲染值随 `t_decision_log.input_snapshot` 落库可审计。
 
-> 规格：[领域模型 §4.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照) · [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#34-与-caseservice--profileservice-的调用边界) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
+> 规格：[领域模型 §4.4 ContextSnapshot](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#44-contextsnapshot决策上下文快照) · [数据接入规格 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等) · [核心引擎规格 §4.2 计划创建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建) · [§6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-共享-dto-定义)
 
 #### 1.6.3 幂等键契约
 
@@ -345,7 +345,7 @@ PubSub 字段映射、清洗与 DPD 日切算法见 [数据接入规格](./MOCAS
 
 **约束**：
 - 三层去重（Redis）：消费层事件去重（`collection:processed:`）→ 步骤级分布式锁（`collection:lock:plan:`）→ 渠道 SETNX 二次去重（`collection:idempotency:channel:`）
-- 上游 PubSub 的 `eventId` / `caseVersion` / 周期入催去重归接入层 `collection:ingestion:*`；其成功 publish 后才 ack，与本节三层键隔离（见 [数据接入 §2.3、§3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#23-消费可靠性)）。
+- 上游 PubSub 的 `eventId` / `caseVersion` / 周期入催去重归接入层 `collection:ingestion:*`；其成功 publish 后才 ack，与本节三层键隔离（见 [数据接入 §2.2、§3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）。
 - 每步生成唯一 `idempotency_key`；key 前缀与 TTL 见基础设施 §3
 - 残余边界：「外部渠道已发出但本地落记录失败」——`AI_CALL` 由 [§1.6.7](#167-异步回调对账) 回调/哨兵兜底；同步渠道（SMS/PUSH/EMAIL）接受极低概率残余，靠幂等键 + `StuckPlanReaper` 停摆巡检告警可观测，Phase 1 不做回调对账
 - 另一类「状态已落盘但派生事件没发出去」不属于残余边界：由 `t_event_outbox` 同事务落盘 + 兜底重发完整消除（[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)）
@@ -492,7 +492,7 @@ SPI 架构下，Phase 2 演进只需新增实现类或替换注入配置：
 | Lettuce 连接假死 | **Phase 1 已消除（2026-08-03）** | 消费模型改为轮询式 `@Scheduled`+`XREADGROUP`（非长连接监听），该风险的前提"长连接假死但进程不退出"不存在，因此不需要看门狗机制去兜底；决策依据见[基础设施交互规范 §3.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议) |
 | Webhook 回调丢失 | **Phase 1 加固** | Phase 1 靠 Webhook + `CALLBACK_TIMEOUT` 哨兵自愈；渠道对账扫描属 Phase 2（详见 §1.6.7） |
 | 派生事件因发布失败而丢失 | **Phase 1 已消除** | 状态迁移提交后发布失败时，原事件重投会因状态已是终态而按幂等 no-op 返回，派生事件不会被重新推导，计划静默停摆。改为事件与状态迁移同事务写 `t_event_outbox` + `OutboxPublisher` 兜底重发；正常链路仍是提交后即时发布，延迟不变（详见[核心引擎规格 §7.4 A](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） |
-| 案件投影双写者互相覆盖 | **Phase 1 已消除（2026-08-12）** | 原设计数仓直连业务库写 `t_ai_collection` 并维护自己的 Outbox。数仓在确认 Pub/Sub 事实流本身完整、持久、可重放后，改为只发消息不写库，`collection-ingestion` 成为投影唯一写入者：实时事件与每日全量校准走同一条按 `caseVersion` 判定的写入路径，不会互相覆盖或让版本倒退（详见[数据接入规格 §3.1 投影写入](./MOCASA催收系统升级_Phase1_数据接入规格.md#投影写入与单写者约束)） |
+| 案件投影双写者互相覆盖 | **Phase 1 已消除（2026-08-12）** | 原设计数仓直连业务库写 `t_ai_collection` 并维护自己的 Outbox。数仓在确认 Pub/Sub 事实流本身完整、持久、可重放后，改为只发消息不写库，`collection-ingestion` 成为投影唯一写入者：实时事件与每日全量校准走同一条按 `caseVersion` 判定的写入路径，不会互相覆盖或让版本倒退（详见[数据接入规格 §3.2 投影写入](./MOCASA催收系统升级_Phase1_数据接入规格.md#投影写入与单写者约束)） |
 | 入站事实入库后领域事件丢失 | **Phase 1 已消除（2026-08-12）** | 投影写 MySQL、领域事件走 Redis Stream，无法原子提交；若提交后进程被杀，消息重投会被版本判定为陈旧而永久丢事件。改为同事务写 `t_ai_collection_inbox` 记录发布状态，重投命中 `PENDING` 时只补发事件、不重写投影 |
 | 计划静默停摆 | **Phase 1 只检测不修复** | `StuckPlanReaper` 巡检「非终态但已无步骤可被 due/timeout 扫描拾取」的计划并告警。不自动重建步骤或重发触达——那是在依据不足时替用户做不可回滚的外部动作，误判代价（重复外呼、监管投诉）高于人工介入的延迟 |
 | DLQ 合规时段碰撞 | **Phase 1 加固** | 成本极低，避免触达计划空跑（详见 §1.6 附：基础设施实现索引） |

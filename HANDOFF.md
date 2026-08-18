@@ -65,7 +65,7 @@ SPI 签名与约束 → [核心引擎规格 §6](./docs/MOCASA催收系统升级
 | 日切 Pilot | 全量 keyset + Redis 游标；批次完成门控（固定时间窗 → 水位信号） |
 | inbox 补发 | PENDING 兜底 Job（现依赖 PubSub 重投） |
 
-已落地：v3 路由、投影单写者、静默日刷、dailyRoll 读投影产出阶段/停催/复活。
+已落地：v3 路由、投影单写者、静默日刷、dailyRoll 读投影产出阶段/停催。
 
 ### C · `collection-service`（服务同事）
 

@@ -28,8 +28,8 @@ T5 的目标是在不触达真实客户的前提下，准备并演练生产等�
 
 | 组件 | Pilot 约束 |
 |---|---|
-| PubSub（案件） | 专用 topic `collection-ai-events-v1` + 订阅 `collection-ai-events-v1-sub`（与调度订阅分离） |
-| PubSub（调度） | 调度专用主题 + 我们专用订阅（建议 `collection-schedule-ai-v1` / `collection-schedule-ai-v1-sub`）；**不得**复用案件订阅 |
+| PubSub（案件） | 专用 topic `intelligent-collection-cases-v1` + 订阅 `intelligent-collection-cases-v1-sub`（与调度订阅分离） |
+| PubSub（调度） | 调度专用主题 + 我们专用订阅（建议 `intelligent-collection-schedule-v1` / `intelligent-collection-schedule-v1-sub`）；**不得**复用案件订阅 |
 | 应用 | `pilot` profile，Redis EventBus 与幂等均启用；首期单活跃实例，跨实例用例临时启动第二实例。常驻内网服务，不部署在 Cloud Run，不开放入站调度端口 |
 | Redis | 独立于旧催收系统；Stream、幂等、合规频控按基础设施规范隔离 |
 | MySQL | 使用正式表结构；Pilot 数据必须可按案件、计划、事件追溯 |
@@ -73,8 +73,8 @@ T5 的目标是在不触达真实客户的前提下，准备并演练生产等�
 
 | # | 交付项 | 验收证据 |
 |---|---|---|
-| O1 | 调度专用 Pub/Sub 主题（建议 `collection-schedule-ai-v1`） | `gcloud pubsub topics describe` 输出（脱敏） |
-| O2 | 我们专用的调度订阅（建议 `collection-schedule-ai-v1-sub`），不复用案件订阅、不与他方共享 | `gcloud pubsub subscriptions describe` 输出，确认 topic 指向 O1 且状态 `ACTIVE` |
+| O1 | 调度专用 Pub/Sub 主题（建议 `intelligent-collection-schedule-v1`） | `gcloud pubsub topics describe` 输出（脱敏） |
+| O2 | 我们专用的调度订阅（建议 `intelligent-collection-schedule-v1-sub`），不复用案件订阅、不与他方共享 | `gcloud pubsub subscriptions describe` 输出，确认 topic 指向 O1 且状态 `ACTIVE` |
 | O3 | Scheduler 服务账号对 O1 的 `roles/pubsub.publisher` | IAM 绑定截图 / `get-iam-policy` 输出 |
 | O4 | 应用服务账号对 O2 的 `roles/pubsub.subscriber` | 同上；应用日志出现 `[Scheduler] 调度订阅消费已启动` |
 | O5 | 订阅 ack deadline 60s、`message-retention-duration` 10m、不配死信主题 | 订阅配置输出 |

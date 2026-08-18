@@ -195,7 +195,26 @@ public class PlanLifecycleManager {
                     || snapshot.getCaseContext() == null) {
                 continue;
             }
-            snapshot.getCaseContext().setTotalOutstanding(amount);
+            CaseContext context = snapshot.getCaseContext();
+            context.setTotalOutstanding(amount);
+            if (event.has(CollectionEvent.OVERDUE_AMOUNT)) {
+                context.setOverdueAmount(event.getBigDecimal(CollectionEvent.OVERDUE_AMOUNT));
+            }
+            if (event.has(CollectionEvent.DPD)) {
+                context.setDpd(event.getInt(CollectionEvent.DPD));
+            }
+            if (event.has(CollectionEvent.PENALTY_AMOUNT)) {
+                context.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
+            }
+            if (event.has(CollectionEvent.UPCOMING_AMOUNT)) {
+                context.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
+            }
+            if (event.has(CollectionEvent.NEXT_DUE_DATE)) {
+                context.setNextDueDate(parseDate(event.getString(CollectionEvent.NEXT_DUE_DATE)));
+            }
+            if (event.has("collectionStatus")) {
+                context.setCollectionStatus(event.getString("collectionStatus"));
+            }
             if (planRepository.updateActivePlanContextSnapshot(
                     locked.getId(), JsonUtil.toJson(snapshot))) {
                 log.info("[balanceUpdated] plan={} amount={}", locked.getId(), amount);
@@ -644,9 +663,12 @@ public class PlanLifecycleManager {
         ctx.setDpd(dpd);
         ctx.setStage(stage != null ? stage : Stage.fromDpd(dpd));
         ctx.setProduct(event.getString(CollectionEvent.PRODUCT));
+        ctx.setOverdueAmount(event.getBigDecimal(CollectionEvent.OVERDUE_AMOUNT));
         ctx.setTotalOutstanding(event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
         ctx.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
         ctx.setDueDate(parseDate(event.getString(CollectionEvent.DUE_DATE)));
+        ctx.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
+        ctx.setNextDueDate(parseDate(event.getString(CollectionEvent.NEXT_DUE_DATE)));
         ctx.setRepaymentUrl(repaymentUrlTemplate.replace("{caseId}", String.valueOf(caseId)));
         ctx.setComplaintFrozen(false);
         // D+91 完全停催：collectionStatus=CEASED；createPlanForStage / PlanFactory 据此拒建。
