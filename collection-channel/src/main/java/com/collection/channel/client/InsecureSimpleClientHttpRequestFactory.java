@@ -11,9 +11,7 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
-/**
- * 仅用于 Facade 联调：信任对方自签名证书，且不改 JVM 全局默认 SSL。 生产必须使用校验完整的 {@code RestTemplate}。
- */
+/** 仅用于 Facade 联调：信任对方自签名证书，且不改 JVM 全局默认 SSL。 生产必须使用校验完整的 {@code RestTemplate}。 */
 public final class InsecureSimpleClientHttpRequestFactory extends SimpleClientHttpRequestFactory {
 
     private final SSLSocketFactory socketFactory;
@@ -24,12 +22,12 @@ public final class InsecureSimpleClientHttpRequestFactory extends SimpleClientHt
                     new TrustManager[] {
                         new X509TrustManager() {
                             @Override
-                            public void checkClientTrusted(X509Certificate[] chain, String authType) {
-                            }
+                            public void checkClientTrusted(
+                                    X509Certificate[] chain, String authType) {}
 
                             @Override
-                            public void checkServerTrusted(X509Certificate[] chain, String authType) {
-                            }
+                            public void checkServerTrusted(
+                                    X509Certificate[] chain, String authType) {}
 
                             @Override
                             public X509Certificate[] getAcceptedIssuers() {

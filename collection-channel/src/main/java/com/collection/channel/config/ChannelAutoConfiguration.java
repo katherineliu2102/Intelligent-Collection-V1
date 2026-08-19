@@ -8,9 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
-/**
- * 渠道模块 Spring 配置：HTTP 客户端、配置属性扫描。
- */
+/** 渠道模块 Spring 配置：HTTP 客户端、配置属性扫描。 */
 @Configuration
 public class ChannelAutoConfiguration {
 
@@ -21,9 +19,7 @@ public class ChannelAutoConfiguration {
                 .build();
     }
 
-    /**
-     * Facade 专用客户端。{@code channel.facade.insecure-tls=true} 时信任自签名，且不改 JVM 全局 SSL。
-     */
+    /** Facade 专用客户端。{@code channel.facade.insecure-tls=true} 时信任自签名，且不改 JVM 全局 SSL。 */
     @Bean
     public RestTemplate facadeRestTemplate(ChannelProperties properties) {
         ChannelProperties.Facade facade = properties.getFacade();

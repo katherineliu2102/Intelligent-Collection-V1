@@ -88,6 +88,7 @@ public class ChannelProperties {
         private String apiKey = "";
         /** true：信任自签名（仅 local/test）。生产必须 false。 */
         private boolean insecureTls = false;
+
         private String productType = "Quick Loan";
         private String currency = "PHP";
         private String timezone = "Asia/Manila";
@@ -95,6 +96,7 @@ public class ChannelProperties {
         private String windowEnd = "21:00";
         /** 渠道冒烟默认被叫，E.164 或 63 开头均可。 */
         private String testCallee = "+639451373897";
+
         private int connectTimeoutSeconds = 5;
         private int readTimeoutSeconds = 30;
     }

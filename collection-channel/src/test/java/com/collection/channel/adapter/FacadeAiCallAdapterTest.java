@@ -42,7 +42,9 @@ class FacadeAiCallAdapterTest {
         adapter = new FacadeAiCallAdapter();
         ReflectionTestUtils.setField(adapter, "properties", properties);
         ReflectionTestUtils.setField(
-                adapter, "facadeRestTemplate", new RestTemplate(new SimpleClientHttpRequestFactory()));
+                adapter,
+                "facadeRestTemplate",
+                new RestTemplate(new SimpleClientHttpRequestFactory()));
     }
 
     @Test

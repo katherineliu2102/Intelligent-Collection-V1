@@ -112,8 +112,7 @@ public class MockTriggerController {
             @RequestParam(defaultValue = "false") boolean dryRun,
             @RequestParam(defaultValue = "false") boolean poll) {
         ChannelProperties.Facade facade = channelProperties.getFacade();
-        String callee =
-                StringUtils.isNotBlank(phone) ? phone.trim() : facade.getTestCallee();
+        String callee = StringUtils.isNotBlank(phone) ? phone.trim() : facade.getTestCallee();
         Map<String, Object> meta = new HashMap<String, Object>();
         meta.put(StepCommand.META_CASE_ID, 90001L);
         meta.put(

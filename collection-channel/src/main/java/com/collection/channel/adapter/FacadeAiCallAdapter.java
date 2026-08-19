@@ -118,10 +118,7 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
         out.put(
                 "case",
                 buildCaseBody(
-                        command,
-                        callee,
-                        overdue == null ? BigDecimal.ZERO : overdue,
-                        externalId));
+                        command, callee, overdue == null ? BigDecimal.ZERO : overdue, externalId));
         return out;
     }
 
