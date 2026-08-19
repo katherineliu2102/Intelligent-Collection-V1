@@ -1,7 +1,8 @@
 # MOCASA Phase 1 — AI Call（Valubo Facade）接入说明
 
-> **版本**: v1.1
-> **日期**: 2026-08-17
+> **版本**: v1.2
+> **日期**: 2026-08-19
+> **v1.2**：`script.language` 不传（用租户 Taglish）；`product_type=Quick Loan`；Facade TLS 为自签名（实测）；`AI_CALL` 日上限 2。
 > **v1.1**：D1 / D2 拍板——联调一案一批、上量同波次聚合；新增 `ContactResult.VOICEMAIL`。
 > **范围**: 仅覆盖菲律宾市场
 > **模块**: `collection-channel`（AI_CALL Adapter）+ `collection-admin`（Webhook）+ `collection-engine`（推进决策）
@@ -122,7 +123,7 @@ Facade 手册 §10 称信箱场景 `was_ai_connected=false`，但生产回传相
 | 未接通案 `dialed_at` → callback 为秒级；接通案为分钟级 | `timeoutMinutes=60` 足够，**前提是不做大 batch 排队** |
 | 当日 `RECONCILE_*` / `SIP_PLACE_CALL_FAILED` = 0 | 平台侧稳定，未接通主因在线路 |
 | 话术含 due date 口播（"past due since Agosto 10"） | `debt.due_date` 会被念出，取值需可信（见 §3.2） |
-| 实测话术语言 `fil` | 与文本渠道 `en` 解耦（见 §3.2） |
+| 实测话术为 Taglish | 出站不传 `script.language`，用租户默认（见 §3.2） |
 
 ---
 
@@ -154,7 +155,7 @@ PlanFactory 生成 AI_CALL step（09:15 *_VOICE_PRIMARY / 14:30 *_VOICE_RETRY）
 |---|---|---|
 | `external_batch_id` | `mocasa-{yyyyMMdd}-{stage}-{slot}-{seq}` | 同账户唯一；`slot` = `w1` / `w2` |
 | `script.domain` | 固定 `collection` | |
-| `script.language` | 固定 **`fil`** | **与文本渠道解耦**：SMS / Push / Email 用 `en`，AI 外呼用 `fil`；AI_CALL **不读** `userProfile.basic.language` |
+| `script.language` | **不传** | 用 Mocasa 租户默认 **Taglish**；勿传 `fil`/`en` 以免覆盖。文本渠道仍用 `en` |
 | `dial_policy.timezone` | `Asia/Manila` | |
 | `dial_policy.windows` | 与合规窗一致或略宽（如 `08:00–21:00`） | 防止 Facade 排队等窗导致 `CALLBACK_TIMEOUT` 误杀 |
 | `dial_policy.weekdays` | 按运营配置 | |
@@ -169,7 +170,7 @@ PlanFactory 生成 AI_CALL step（09:15 *_VOICE_PRIMARY / 14:30 *_VOICE_RETRY）
 | `caller_cli` | — | 不传 | 见批次级 |
 | `earliest_dial_at` | 否 | ≈ step `trigger_time` | 引擎决定何时允许拨 |
 | `business_context.borrower.name` | 是 | `borrower.name` | 空则不入批 |
-| `business_context.debt.product_type` | 是 | 固定 `personal_loan` | 与 `product`（1/3 期）无关 |
+| `business_context.debt.product_type` | 是 | 固定 **`Quick Loan`** | 与租户约定；不是手册通用枚举 `personal_loan` |
 | `business_context.debt.currency` | 是 | 固定 `PHP` | |
 | `business_context.debt.overdue_amount` | 是 | **`overdueAmount`** | 已到期未结清（含罚息），对客金额唯一来源；**禁用** `remainingAmount` |
 | `business_context.debt.days_past_due` | 是 | `dpd` | |
@@ -299,7 +300,8 @@ PlanFactory 生成 AI_CALL step（09:15 *_VOICE_PRIMARY / 14:30 *_VOICE_RETRY）
 |---|---|---|
 | M6 | 失败码表 | `MEDIA_NEGOTIATION_FAILED`（406）、`TEMP_UNAVAILABLE`（480）、`REQUEST_TIMEOUT`（408）纳入映射并**允许补呼**；仅 `INVALID_NUMBER` 停拨该号 |
 | M7 | 号码归一化 | 新 Pub/Sub 样例 `phone = "9898989898"` 非 E.164。`+63` 归一必须在入库或 Adapter 前置完成，否则整批 `INVALID_E164` |
-| M8 | 语言配置 | 新增 `channel.facade.voice.language=fil`，与 `userProfile.basic.language`（`en`）解耦；文本渠道不受影响 |
+| M8 | 语言配置 | **不传** `script.language` | 租户默认 Taglish；文本渠道 `en` 不变 |
+| M8b | TLS | Facade `https://34.158.34.184` 为 **Valubo 自签名**（CN=`valubo-voice-test`） | Java 默认校验证书会失败；Adapter 须导入该证或测试环境单独 TrustStore，**生产禁止**全局关闭校验 |
 | M9 | 拨号窗配置 | `channel.facade.voice.dial-policy.*` 与合规窗对齐，避免 Facade 排队 → 超时误杀 |
 | M10 | timeline 字段 | 落 `session_id`、`outcome_label`、`result_label`、`recording_url`、`script_url`、`due_date_derived` |
 
@@ -355,14 +357,24 @@ D1（批次粒度）、D2（`ContactResult.VOICEMAIL`）已于 2026-08-17 拍板
 - 验收：映射表逐条命中；信箱**不**取消 Wave-2；406 归 `FAILED` 且可补呼；`session_id` 重复投递不产生二次推进
 - 成本最低，优先完成，可拦住「信箱误判接通」这类致命错误
 
-### L1 — 引擎外小闭环（首次真拨）
+### L1 — 渠道层冒烟（不经引擎，已落地）
 
-- 从订阅抽 **20–30 案**：`stage ∈ S1..S4`、`overdueAmount > 0`、`phone` 可归一为 `+63`
-- **一案一批**（§3.6 已定），并发保守（≤5）
-- 走测试接收端，人工核对：`business_context` 是否被接受、金额构成是否加和通过、验签是否通过、录音/脚本可下载
-- 验收：0 例 `INVALID_E164` / `INVALID_BUSINESS_CONTEXT`；回调 100% 验签通过
+本地 `local` profile：
 
-### L2 — 单 step 进 channel
+```text
+# 只看将提交的 JSON，不拨号
+curl -X POST "http://localhost:8888/mock/send-ai-call?dryRun=true"
+
+# 真拨测试号 +639451373897（会振铃）。先 export FACADE_API_KEY
+curl -X POST "http://localhost:8888/mock/send-ai-call?poll=true"
+```
+
+配置：`channel.facade.base-url` / `FACADE_API_KEY` / `insecure-tls=true`（自签名）。Adapter 一案一批、不传 `script.language`、`product_type=Quick Loan`。
+
+- 验收：dryRun 预览无 `language`；真拨返回 `DELIVERED` + `batch_id`；`poll=true` 能查到 queued/dialing/终态
+- 此层不验证 Wave-2 / Webhook / 引擎推进
+
+### L2 — 单 step 进引擎
 
 - `FacadeAiCallAdapter` 接入 `ChannelGateway`；`POST /webhook/facade/voice` 上线
 - 只跑**一个** `AI_CALL` step（暂不排 Wave-2）
@@ -445,7 +457,7 @@ D1（批次粒度）、D2（`ContactResult.VOICEMAIL`）已于 2026-08-17 拍板
 | 联调即大 batch 聚合 | 联调一案一批，上量再同波次聚合（≤500） | §3.6 |
 | 业务重拨可用供应商 `/retry` | 由 plan `*_VOICE_RETRY` step 表达 | §1、§3.4 |
 | disposition 仅 `ANSWERED/NO_ANSWER/BUSY` | 原样存 `ai_result.result_label`（含 `partial_payment_plan` / `refused_to_discuss` / `incomplete`） | §2.2(4) |
-| AI 语言随快照 `borrower.language`（`en`） | AI_CALL 固定 `fil`；文本渠道保持 `en` | §3.2 |
+| AI 语言随快照 `borrower.language`（`en`） | **不传** `script.language`，用租户 Taglish；文本渠道保持 `en` | §3.2 |
 | `remainingAmount` 可对客 | 对客金额唯一来源 `overdueAmount` | 数仓对齐 v1.4 |
 | 回调形状参考 `eod_merged.json` | 以单通 `attempts.json` / `session.completed` 为准 | §2.2(5) |
 

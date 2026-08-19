@@ -1,5 +1,6 @@
 package com.collection.admin.web;
 
+import com.collection.channel.adapter.FacadeAiCallAdapter;
 import com.collection.channel.adapter.NotificationPushAdapter;
 import com.collection.channel.adapter.NotificationSmsAdapter;
 import com.collection.channel.adapter.SendGridEmailAdapter;
@@ -56,6 +57,8 @@ public class MockTriggerController {
     @Resource private StepResolver stepResolver;
     @Resource private SendGridEmailAdapter sendGridEmailAdapter;
 
+    @Resource private FacadeAiCallAdapter facadeAiCallAdapter;
+
     @Resource private NotificationSmsAdapter notificationSmsAdapter;
 
     @Resource private NotificationPushAdapter notificationPushAdapter;
@@ -93,6 +96,68 @@ public class MockTriggerController {
         Map<String, Object> result = new HashMap<>();
         result.put("remaining", ingestionFaultInjector.remaining());
         return result;
+    }
+
+    /**
+     * 直连 Facade 打一通 AI Call（不经 plan/引擎）。默认号码 {@code channel.facade.test-callee}。
+     *
+     * <p>{@code dryRun=true} 只返回将提交的 JSON，不拨号。{@code poll=true} 在 start 后再查批次。
+     */
+    @PostMapping("/send-ai-call")
+    public Map<String, Object> sendAiCall(
+            @RequestParam(required = false) String phone,
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String amount,
+            @RequestParam(required = false) Integer dpd,
+            @RequestParam(defaultValue = "false") boolean dryRun,
+            @RequestParam(defaultValue = "false") boolean poll) {
+        ChannelProperties.Facade facade = channelProperties.getFacade();
+        String callee =
+                StringUtils.isNotBlank(phone) ? phone.trim() : facade.getTestCallee();
+        Map<String, Object> meta = new HashMap<String, Object>();
+        meta.put(StepCommand.META_CASE_ID, 90001L);
+        meta.put(
+                FacadeAiCallAdapter.META_BORROWER_NAME,
+                StringUtils.isNotBlank(name) ? name : "Test Borrower");
+        meta.put(
+                FacadeAiCallAdapter.META_OVERDUE_AMOUNT,
+                StringUtils.isNotBlank(amount) ? amount : "1000");
+        meta.put(FacadeAiCallAdapter.META_DPD, dpd == null ? "5" : String.valueOf(dpd));
+
+        StepCommand command =
+                StepCommand.builder()
+                        .channelType(ChannelType.AI_CALL)
+                        .targetAddress(callee)
+                        .templateId("S1_VOICE_PRIMARY")
+                        .idempotencyKey("smoke:1:0")
+                        .metadata(meta)
+                        .build();
+
+        Map<String, Object> m = new HashMap<String, Object>();
+        m.put("callee", FacadeAiCallAdapter.normalizeE164(callee));
+        m.put("dryRun", dryRun);
+        m.put("preview", facadeAiCallAdapter.previewPayload(command));
+        if (dryRun) {
+            m.put("ok", true);
+            m.put("result", "PREVIEW");
+            return m;
+        }
+        if (!channelProperties.isFacadeConfigured()) {
+            return fail("AI_CALL_NOT_CONFIGURED", "set channel.facade.base-url and FACADE_API_KEY");
+        }
+        StepResult result = facadeAiCallAdapter.send(command);
+        m.put("ok", result.isSuccess());
+        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
+        m.put("retryable", result.isRetryable());
+        m.put("providerMsgId", result.getProviderMsgId());
+        if (result.isSuccess() && poll && result.getProviderMsgId() != null) {
+            try {
+                m.put("batch", facadeAiCallAdapter.getBatch(result.getProviderMsgId()));
+            } catch (Exception e) {
+                m.put("pollError", e.getMessage());
+            }
+        }
+        return m;
     }
 
     /**

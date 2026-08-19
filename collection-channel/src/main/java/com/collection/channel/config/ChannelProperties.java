@@ -25,6 +25,7 @@ public class ChannelProperties {
     private Lth lth = new Lth();
     private SendGrid sendgrid = new SendGrid();
     private Notification notification = new Notification();
+    private Facade facade = new Facade();
     private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
     private Map<String, PlanTemplate> planTemplates = new HashMap<>();
@@ -74,6 +75,28 @@ public class ChannelProperties {
         public static class Voice {
             private String url = "";
         }
+    }
+
+    /**
+     * Valubo Facade AI 外呼。密钥走环境变量 {@code FACADE_API_KEY}，勿写入 Git。
+     *
+     * <p>{@code insecureTls=true} 仅用于对方自签名证书的联调环境。
+     */
+    @Data
+    public static class Facade {
+        private String baseUrl = "";
+        private String apiKey = "";
+        /** true：信任自签名（仅 local/test）。生产必须 false。 */
+        private boolean insecureTls = false;
+        private String productType = "Quick Loan";
+        private String currency = "PHP";
+        private String timezone = "Asia/Manila";
+        private String windowStart = "08:00";
+        private String windowEnd = "21:00";
+        /** 渠道冒烟默认被叫，E.164 或 63 开头均可。 */
+        private String testCallee = "+639451373897";
+        private int connectTimeoutSeconds = 5;
+        private int readTimeoutSeconds = 30;
     }
 
     /**
@@ -159,7 +182,8 @@ public class ChannelProperties {
             limits.put("SMS", 1);
             limits.put("PUSH", 1);
             limits.put("EMAIL", 1);
-            limits.put("AI_CALL", 1);
+            // S1–S4a：上午主呼 + 下午补呼；S4b 由 PlanFactory 只生成 1 个 AI step。
+            limits.put("AI_CALL", 2);
             return limits;
         }
     }
@@ -237,5 +261,14 @@ public class ChannelProperties {
                 && !n.getBaseUrl().isEmpty()
                 && n.getAppCode() != null
                 && !n.getAppCode().isEmpty();
+    }
+
+    public boolean isFacadeConfigured() {
+        Facade f = facade;
+        return f != null
+                && f.getBaseUrl() != null
+                && !f.getBaseUrl().trim().isEmpty()
+                && f.getApiKey() != null
+                && !f.getApiKey().trim().isEmpty();
     }
 }
