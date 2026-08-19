@@ -21,15 +21,15 @@ import org.springframework.stereotype.Component;
 
 /**
  * B1 真实 PubSub 消费者（数据接入规格 §2）。订阅 {@code intelligent-collection-cases-v1-sub}（topic {@code
- * intelligent-collection-cases-v1}），按 {@code dataType} 路由 {@code caseEvent} / {@code repaymentEvent}，
- * 交由 {@link AiCaseIngestionProcessor} 写投影并发布领域事件。
+ * intelligent-collection-cases-v1}），按 {@code dataType} 路由 {@code caseEvent} / {@code
+ * repaymentEvent}， 交由 {@link AiCaseIngestionProcessor} 写投影并发布领域事件。
  *
  * <p><b>门控</b>：{@code @ConditionalOnProperty(collection.ingestion.enabled=true)} —— 本地 / CI （默认
  * false）不实例化本 bean，启动完全不依赖 GCP 凭证 / 网络。
  *
  * <p><b>ACK 语义（§2.3）</b>：处理成功（含按幂等 / 白名单 / 乱序<i>跳过</i>）→ ack；不可修复消息 （{@link
- * PoisonMessageException}，含违反契约的外部阶段/停催事件）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如投影写入或下游
- * publish 失败）→ nack 重投（支撑 L4b-7）。ack 只发生在投影事务已提交、领域事件已发布之后。
+ * PoisonMessageException}，含违反契约的外部阶段/停催事件）→ ack + 告警（不重投毒丸）；瞬态失败（解析以外的异常，如投影写入或下游 publish 失败）→ nack
+ * 重投（支撑 L4b-7）。ack 只发生在投影事务已提交、领域事件已发布之后。
  *
  * <p>未启用 spring-cloud-gcp 自动装配：直接用 {@link Subscriber} 自建，凭证经 {@code
  * GOOGLE_APPLICATION_CREDENTIALS}（ADC）加载。
@@ -109,7 +109,8 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         try {
             String body = message.getData().toStringUtf8();
             JSONObject json = parse(body);
-            String dataType = message.getAttributesOrDefault("dataType", json.getString("dataType"));
+            String dataType =
+                    message.getAttributesOrDefault("dataType", json.getString("dataType"));
             route(dataType, payload(json), body);
             reply.ack();
         } catch (PoisonMessageException e) {
@@ -161,5 +162,4 @@ public class PubSubCaseConsumer implements SmartLifecycle, MessageReceiver {
         }
         return json;
     }
-
 }

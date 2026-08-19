@@ -56,7 +56,7 @@
 
 > `errorCode` 仅由**核心引擎**落 timeline 对账，引擎不解析其值。`dispatch` 抛出未分类异常时引擎按 ③ 处理（`CHANNEL_OUTCOME_UNKNOWN`）——渠道层是唯一有信息做分档的一方，不应把分类责任留给引擎。
 
-> **Phase 1 消息类同步完成（2026-07-18 修订）**：SMS / PUSH / EMAIL 均 `dispatch` 成功即 `STEP_COMPLETED`，**不进** `STEP_WAITING`；DLR/打开等仅可 enrichment timeline，不用于完成步骤（与架构 §1.6.7、渠道编排 §3.5 一致）。
+> **Phase 1 消息类同步完成（2026-07-18 修订）**：SMS / PUSH / EMAIL 均 `dispatch` 成功即 `STEP_COMPLETED`，**不进** `STEP_WAITING`；DLR/打开等仅可 enrichment timeline，不用于完成步骤（与架构 §1.6.5、渠道编排 §3.5 一致）。
 > `errorCode` 体系沿用上方建议表，仅落 timeline 对账。
 
 ## 2. StepCommand 寻址与 metadata

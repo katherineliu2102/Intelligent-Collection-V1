@@ -66,5 +66,4 @@ public class InMemoryIngestionDedupStore implements IngestionDedupStore {
             ingestedLoans.remove(loanId);
         }
     }
-
 }

@@ -55,7 +55,10 @@
 ### 1.2 两条管道与 GCP 资源
 <a id="12-gcp-资源"></a><a id="60-gcp-资源"></a><a id="两条管道"></a>
 
-[§1.1](#11-入站顺序与-publisher-任务) 的每日快照与还款扫描只发到**案件 Topic**。日切不走这条管道：应用 Scheduler 打**调度 Topic**，只读已写入的 `t_ai_collection`。
+系统有两条物理隔离的 Pub/Sub 管道：
+
+- **案件 Topic**：数仓 Publisher 发布案件事实；接入层写入投影并发布内部事件。
+- **调度 Topic**：应用 Cloud Scheduler 发布时钟 tick；新系统消费 tick 后执行扫描、比对和内部事件发布。
 
 ```mermaid
 flowchart LR
@@ -65,23 +68,48 @@ flowchart LR
   ingestion --> projection["t_ai_collection"]
   ingestion --> inbox["t_ai_collection_inbox"]
   ingestion --> eventBus["内部 EventBus"]
-  appScheduler["应用 Cloud Scheduler"] --> scheduleTopic["调度 Topic · 只读"]
-  scheduleTopic --> dailyRoll["DpdStageRollHandler"]
-  projection -->|只读| dailyRoll
+  appScheduler["应用 Cloud Scheduler"] -->|"job tick"| scheduleTopic["调度 Topic"]
+  scheduleTopic --> app["新系统 / 催收引擎"]
+  projection -->|只读| app
 ```
 
-| 管道 | 谁触发 | 写 `t_ai_collection` 吗 | 产出 |
-| --- | --- | --- | --- |
-| 案件 Topic | GCP：数仓 Cloud Scheduler → Publisher → 本 Topic | 是。接入层按 `caseVersion` 指纹写入 | 内部 `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` |
-| 调度 Topic | GCP：应用 Cloud Scheduler → 本 Topic（只发 `job=dailyRoll` tick，不含案件快照） | **否**。日切只读 `t_ai_collection` | 应用比对后再发内部事件；不是读到就发。有变化才 `STAGE_CHANGED` / `CASE_CEASED` |
+| 管道 | 发布方与消息 | 业务处理 |
+| --- | --- | --- |
+| 案件 Topic | 数仓 Cloud Scheduler → Publisher → `caseEvent` / `repaymentEvent` | 接入层按 `caseVersion` 写 `t_ai_collection`，并发布内部事件 |
+| 调度 Topic | 应用 Cloud Scheduler → 三类 `job` tick | 引擎消费 tick 后处理；Scheduler 不读业务库、不写案件表 |
 
-- 两套 Topic / Scheduler / IAM / 告警**必须物理分离**。
-- 生产上都是 Cloud Scheduler 在 GCP 往各自 Topic 发 Pub/Sub。
-- Cloud Scheduler 只往调度 Topic 打一个 `job=dailyRoll` 的 tick，里面没有案件快照；应用收到后分页读 `t_ai_collection`，与活跃计划比对：
-  - 已结清 → 跳过
-  - `dpd≥91` 且有活跃计划 → `CASE_CEASED`
-  - 阶段变了（含回退）→ `STAGE_CHANGED`
-  - 无变化 → 不发
+两套 Topic、Scheduler、IAM 和告警必须物理分离：数仓只向案件 Topic 发布，应用 Scheduler 只向调度 Topic 发布。
+
+**调度 Tick 合约**
+
+**仅以 Pub/Sub attribute `job` 路由**；body 为任意非空字符串（纯文本或 JSON 均可），应用**完全不解析 body**。tick 不含案件快照或扫描条件，且数仓不发布此类消息。
+
+> **配置红线**：`job` 必须落在消息 **attribute** 上。把 `job` 只写进 body（例如 `{"type":"scheduled-tick","job":"planStepDue"}` 而不带 `--attributes`）会让每条 tick 被判为 `UNKNOWN_JOB`、记 WARN 后 ack 丢弃——**整条触达链路静默停摆**，表现为 `collection.schedule.triggered` 恒为 0 且 `skipped{reason=UNKNOWN_JOB}` 持续增长（告警见[基础设施规范 §7.4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)）。body 里额外带 JSON 不影响路由，但不构成路由依据。
+
+| `job` | 发布频率（PHT） | 消费方 |
+| --- | --- | --- |
+| `planStepDue` | 每分钟 | 催收引擎 |
+| `callbackTimeout` | 每分钟 | 催收引擎 |
+| `dailyRoll` | 03:35–05:55，每 5 分钟 | 催收引擎 |
+
+```text
+# 独立消息 1
+body: scheduled-tick
+attributes:
+  job: planStepDue
+
+# 独立消息 2
+body: scheduled-tick
+attributes:
+  job: callbackTimeout
+
+# 独立消息 3
+body: scheduled-tick
+attributes:
+  job: dailyRoll
+```
+
+每段均为一个独立 Pub/Sub 消息。引擎侧处理定义见[基础设施规范 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)；`dailyRoll` 的日切判断见 [§5](#5-日切窗口与批次门控)。
 
 **案件 Topic 资源（落地上表「案件 Topic」行）**
 

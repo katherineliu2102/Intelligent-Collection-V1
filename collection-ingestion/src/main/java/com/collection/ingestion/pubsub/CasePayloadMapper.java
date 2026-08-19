@@ -15,8 +15,8 @@ import java.util.Map;
 import org.springframework.stereotype.Component;
 
 /**
- * 把数仓 {@code caseEvent} / {@code repaymentEvent} 完整快照映射为领域事件 payload（语义字段 → {@link
- * CollectionEvent} 常量 key，契约见领域模型 §6.2）。
+ * 把数仓 {@code caseEvent} / {@code repaymentEvent} 完整快照映射为领域事件 payload（语义字段 → {@link CollectionEvent}
+ * 常量 key，契约见领域模型 §6.2）。
  */
 @Component
 public class CasePayloadMapper {
@@ -120,7 +120,8 @@ public class CasePayloadMapper {
         JSONObject borrower = json.getJSONObject("borrower");
         if (borrower != null) {
             putRawStr(fields, borrower, CollectionEvent.NAME);
-            String phone = normalizePhilippinePhone(trimToNull(borrower.getString(CollectionEvent.PHONE)));
+            String phone =
+                    normalizePhilippinePhone(trimToNull(borrower.getString(CollectionEvent.PHONE)));
             if (phone != null) {
                 fields.put(CollectionEvent.PHONE, phone);
             }
@@ -165,10 +166,9 @@ public class CasePayloadMapper {
         if (fields.dpd == null
                 || fields.overdueAmount == null
                 || fields.penaltyAmount == null
-                || fields.upcomingAmount == null
                 || fields.overdueAmount.signum() < 0
                 || fields.penaltyAmount.signum() < 0
-                || fields.upcomingAmount.signum() < 0) {
+                || (fields.upcomingAmount != null && fields.upcomingAmount.signum() < 0)) {
             throw new PoisonMessageException("repaymentEvent 缺有效增量金额或 dpd，caseId=" + caseId);
         }
         return new RepaymentDelta(caseId, userId, fullCleared, fields);
@@ -311,5 +311,4 @@ public class CasePayloadMapper {
         String t = s.trim();
         return t.isEmpty() ? null : t;
     }
-
 }

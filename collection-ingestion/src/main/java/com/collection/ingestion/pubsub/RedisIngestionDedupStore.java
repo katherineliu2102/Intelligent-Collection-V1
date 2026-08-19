@@ -8,10 +8,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
-/**
- * Pilot / 生产实现：三类去重标记落 Redis，跨重启保留、跨实例共享。
- *
- */
+/** Pilot / 生产实现：三类去重标记落 Redis，跨重启保留、跨实例共享。 */
 @Component
 @ConditionalOnProperty(
         prefix = "collection.ingestion",
@@ -92,5 +89,4 @@ public class RedisIngestionDedupStore implements IngestionDedupStore {
             redis.delete(INGESTED_PREFIX + loanId);
         }
     }
-
 }

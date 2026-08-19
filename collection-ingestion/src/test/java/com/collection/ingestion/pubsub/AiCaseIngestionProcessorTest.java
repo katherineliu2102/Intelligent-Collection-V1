@@ -8,13 +8,11 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.collection.common.enums.Stage;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
@@ -30,10 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/**
- * {@link AiCaseIngestionProcessor} 纯逻辑单测：投影先于领域事件、重放与乱序收敛、每日快照静默刷新、
- * 外部阶段事件被拒。不连数据库 / GCP。
- */
+/** {@link AiCaseIngestionProcessor} 纯逻辑单测：投影先于领域事件、重放与乱序收敛、每日快照静默刷新、 外部阶段事件被拒。不连数据库 / GCP。 */
 class AiCaseIngestionProcessorTest {
 
     private RecordingProjectionRepository repository;
@@ -97,7 +92,8 @@ class AiCaseIngestionProcessorTest {
 
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
-        verify(ingestionService).ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
+        verify(ingestionService)
+                .ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
         assertTrue(repository.published.contains("evt-1"));
     }
 
@@ -116,7 +112,9 @@ class AiCaseIngestionProcessorTest {
     void externalStageEvent_isRejectedAsPoison() {
         String body =
                 caseIngestedBody("fingerprint-12")
-                        .replace("\"eventId\":\"evt-1\",", "\"eventId\":\"evt-1\",\"eventType\":\"CASE_STAGE_CHANGED\",");
+                        .replace(
+                                "\"eventId\":\"evt-1\",",
+                                "\"eventId\":\"evt-1\",\"eventType\":\"CASE_STAGE_CHANGED\",");
 
         PoisonMessageException error =
                 assertThrows(
@@ -132,8 +130,7 @@ class AiCaseIngestionProcessorTest {
     void dailyCaseEventForExistingCycle_refreshesProjectionWithoutDomainEvent() {
         String initial = caseIngestedBody("fingerprint-12");
         processor.handleCaseEvent(JSON.parseObject(initial), initial);
-        String refresh =
-                caseIngestedBody("fingerprint-20").replace("\"evt-1\"", "\"evt-2\"");
+        String refresh = caseIngestedBody("fingerprint-20").replace("\"evt-1\"", "\"evt-2\"");
 
         processor.handleCaseEvent(JSON.parseObject(refresh), refresh);
 
@@ -158,8 +155,7 @@ class AiCaseIngestionProcessorTest {
 
         verify(ingestionService).repayment(525441L, 2145521L);
         assertTrue(repository.published.contains("pay-1"));
-        assertEquals(
-                "SETTLED", repository.applied.get(0).getProjection().getCollectionStatus());
+        assertEquals("SETTLED", repository.applied.get(0).getProjection().getCollectionStatus());
     }
 
     @Test

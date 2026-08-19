@@ -27,7 +27,10 @@ public class IngestionProperties {
     /** GCP 项目（映射环境变量 {@code GCP_PUBSUB_PROJECT}）。 */
     private String projectId;
 
-    /** 订阅短名（映射 {@code GCP_PUBSUB_SUBSCRIPTION}；生产 {@code intelligent-collection-cases-v1-sub}，联调 {@code intelligent-collection-cases-test1-sub}）。 */
+    /**
+     * 订阅短名（映射 {@code GCP_PUBSUB_SUBSCRIPTION}；生产 {@code intelligent-collection-cases-v1-sub}，联调
+     * {@code intelligent-collection-cases-test1-sub}）。
+     */
     private String subscription;
 
     /** ACK deadline（秒），默认 60（§2.1）。 */
@@ -57,5 +60,4 @@ public class IngestionProperties {
                 || loanIdWhitelist.isEmpty()
                 || (loanId != null && loanIdWhitelist.contains(loanId));
     }
-
 }

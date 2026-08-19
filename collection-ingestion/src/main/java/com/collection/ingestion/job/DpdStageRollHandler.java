@@ -21,7 +21,8 @@ import org.springframework.stereotype.Component;
  * collection_status}，本 Job <b>不重算</b> DPD：
  *
  * <ul>
- *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}
+ *   <li>dpd 1~90 且投影阶段<b>严重度高于</b>计划当前阶段 → 发 {@code STAGE_CHANGED}
+ *   <li>dpd 1~90 且投影阶段低于计划阶段 → <b>不发</b>（阶段单调前进，见 {@link #rollOne}）
  *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}
  *   <li>已结清（{@code SETTLED}）→ 跳过
  * </ul>
@@ -33,9 +34,8 @@ import org.springframework.stereotype.Component;
  * <p><b>范围</b>：联调扫 {@code collection.ingestion.loan-id-whitelist}；生产全量 keyset 扫描须 {@code
  * daily-roll-full-scan-enabled=true}（见 C-X-02）。
  *
- * <p>生产由 Cloud Scheduler 在 03:35–05:55 PHT 每 5 分钟发调度消息，应用侧调度订阅消费后调 {@link #dailyRoll()}；
- * 每次触发只推进一页 keyset，续跑依赖 Redis 游标与当日完成标记，不依赖消息重投。投影由接入层实时维护，
- * 日切前须确认当日全量校准已消费完毕，否则扫描基线不完整。
+ * <p>生产由 Cloud Scheduler 在 03:35–05:55 PHT 每 5 分钟发调度消息，应用侧调度订阅消费后调 {@link #dailyRoll()}； 每次触发只推进一页
+ * keyset，续跑依赖 Redis 游标与当日完成标记，不依赖消息重投。投影由接入层实时维护， 日切前须确认当日全量校准已消费完毕，否则扫描基线不完整。
  */
 @Component
 public class DpdStageRollHandler {
@@ -94,7 +94,7 @@ public class DpdStageRollHandler {
     }
 
     private void rollBatch(List<Long> loanIds, boolean fullScan) {
-        int[] counters = new int[2]; // [0]=stageChanged, [1]=ceased
+        int[] counters = new int[3]; // [0]=stageChanged, [1]=ceased, [2]=rollbackSkipped
         for (Long loanId : loanIds) {
             try {
                 rollOne(loanId, counters);
@@ -103,11 +103,12 @@ public class DpdStageRollHandler {
             }
         }
         log.info(
-                "[DpdStageRollHandler] daily roll completed fullScan={} scanned={} stageChanged={} ceased={}",
+                "[DpdStageRollHandler] daily roll completed fullScan={} scanned={} stageChanged={} ceased={} rollbackSkipped={}",
                 fullScan,
                 loanIds.size(),
                 counters[0],
-                counters[1]);
+                counters[1],
+                counters[2]);
     }
 
     private void rollOne(Long loanId, int[] counters) {
@@ -129,7 +130,23 @@ public class DpdStageRollHandler {
         }
 
         Stage current = active.isEmpty() ? null : active.get(0).getStage();
-        if (current != null && current != newStage && acquireDailyRollEvent("stage", loanId, dpd)) {
+        if (current == null || current == newStage) {
+            return;
+        }
+        // 阶段单调前进：引擎 ESCALATE 会把计划 stage 抬到高于 DPD 推导值，且引擎从不回写投影，
+        // 所以「计划 stage > 投影 stage」是升档后的正常稳态，不是漂移。此处若按「不同即发」
+        // 发回退事件，升档计划会被 STAGE_UPGRADE 取消并重建回低阶段，穷尽后再次升档 → 降档 ping-pong。
+        if (newStage.compareTo(current) < 0) {
+            counters[2]++;
+            log.info(
+                    "[DpdStageRollHandler] loanId={} dpd={} 投影 stage {} 低于计划 stage {}，按单调前进跳过回退",
+                    loanId,
+                    dpd,
+                    newStage,
+                    current);
+            return;
+        }
+        if (acquireDailyRollEvent("stage", loanId, dpd)) {
             ingestionService.changeStage(
                     loanId,
                     info.getUserId(),

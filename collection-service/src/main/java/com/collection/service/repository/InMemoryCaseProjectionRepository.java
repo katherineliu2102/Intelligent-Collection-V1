@@ -8,8 +8,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Repository;
 
 /**
- * 本地 / CI 默认投影仓储（与 {@code MockCaseService} 同层）。保留内容指纹比较与幂等语义，
- * 使接入链路不接数据库也能跑通；{@code collection.case-service=ai} 时由 {@link AiCaseProjectionRepository} 顶掉。
+ * 本地 / CI 默认投影仓储（与 {@code MockCaseService} 同层）。保留内容指纹比较与幂等语义， 使接入链路不接数据库也能跑通；{@code
+ * collection.case-service=ai} 时由 {@link AiCaseProjectionRepository} 顶掉。
  */
 @Repository
 public class InMemoryCaseProjectionRepository implements CaseProjectionRepository {

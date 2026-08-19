@@ -1,9 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 测试 SSOT
 
-> 版本：Phase 1 · 测试阶段模型 v3.0
-> 范围：仅菲律宾市场。
-> 文档定位：本文件是 Phase 1 测试的唯一 SSOT，只定义**准入、用例、出口与当前状态**。
-> 禁止事项：本文件不保存一次运行的完整日志、不替代环境 Runbook、不保存凭证，也不授权对真实用户触达。
+> **版本**: Phase 1 · 仅覆盖菲律宾市场  
+> **日期**: 2026-08-19  
+> **关联文档**: [数据接入规格](../MOCASA催收系统升级_Phase1_数据接入规格.md)、[数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md)、[T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)、[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
 
 ---
 
@@ -11,22 +10,64 @@
 
 ### 两个正交维度
 
+测试层级与测试阶段正交，不得混用：
+
+- **测试层级**：被测的集成边界。同一层级可在多个阶段复跑。
+- **测试阶段**：按风险与环境成熟度的准入顺序。一个阶段可覆盖多个层级。
+- **Mock（替身）**：测试策略，不是层级。可用于 SPI、Repository、事件源、供应商或测试数据；必须在用例的“允许替身”列中说明。
+
 | 维度 | 定义 | 取值 |
 |---|---|---|
-| 测试层级 | 被测集成边界 | L0、L0c、L1、L2、L3、L4a、L4b |
-| 测试阶段 | 准入顺序与环境成熟度 | T0、T1、T2、T3a、T3b、T4、T5、T6 |
-
-**Mock（替身）是测试策略，不是测试层级。** 它可用于 SPI、Repository、事件源、供应商或测试数据；必须在每条用例的“允许替身”列中说明。不得把 “Mock” 写成与 L0–L4 并列的层级。
+| 测试层级 | 被测集成边界 | L0、L1、L2、L3、L4a、L4b |
+| 测试阶段 | 准入顺序、风险与运行成熟度 | T0、T1、T2、T3、T3o、T4、T5、T6 |
 
 | 层级 | 定义 | 当前主载体 |
 |---|---|---|
-| L0 | 引擎纯逻辑单测；SPI/Repo/EventBus 可替身 | `collection-engine` unit tests |
-| L0c | 渠道纯逻辑单测；Adapter/策略映射 | `collection-channel` unit tests |
-| L1 | 引擎内存集成；真实引擎组件 + 内存总线/仓储 | `FullChainIntegrationTest` 等 |
-| L2 | 引擎↔渠道执行契约；双方以同一契约断言对接 | `ChannelContractL2RealSpiTest` + `ProductionChannelContractL2Test`（C1–C7 真实实现），`ChannelContractL2Test` 为契约替身基线 |
-| L3 | 真实 MyBatis/MySQL 持久化集成 | admin/service integration tests |
-| L4a | 合成数据源 + 真实渠道的端到端验证 | `l4a-official-test.sh` |
-| L4b | 隔离真实来源 + 真实渠道的端到端联调 | PubSub/旧库/DB/渠道组合 |
+| L0 | 单模块纯逻辑测试；外部边界可替身。按 engine、channel、ingestion 与 admin 组织，admin 再分运行入口与后台管理 | 各模块 unit tests |
+| L1 | 引擎内存集成；真实引擎组件 + 内存总线/仓储 | engine 集成测试 |
+| L2 | 引擎↔渠道执行契约；双方以同一契约断言对接 | engine 与 channel 契约测试 |
+| L3 | 真实 MyBatis/MySQL 持久化集成 | service/admin 集成测试 |
+| L4a | 合成数据源 + 真实渠道的端到端验证 | L4a 官方脚本 |
+| L4b | 隔离真实 Pub/Sub 来源 + 真实投影/渠道的端到端验证 | L4b 官方脚本与 SQL 断言 |
+
+### 阶段定义与放行边界
+
+Phase 1 测试覆盖 `caseEvent / repaymentEvent → 投影与 inbox → 内部事件 → 计划与触达` 全链路，以及其在 Pilot 和渐进切量中的可靠性、合规与回滚要求。
+
+| 阶段 | 目标 | 主要层级 | 放行条件 |
+| --- | --- | --- | --- |
+| T0 | 环境就绪与文档代码对齐 | — | 配置、权限、停止开关可用；断言依据无漂移 |
+| T1 | 契约与组件正确 | L0、L1、L2 | 单测/内存集成全绿 |
+| T2 | 持久化与可靠性 | L3 | 真实 MySQL 事务语义通过 |
+| T3 | 隔离端到端 | L4a、L4b | Pub/Sub 主路径闭合 |
+| T3o | 生产等价演练与简版观测 | 见 §7 | Redis、调度、观测 MVP 可操作 |
+| T4 | 50 案真实 Pilot | 真实白名单 | 数仓消息、逐案零安全阻断 |
+| T5 | 渐进切量 | 每日 cap 放量 | 每级观察窗达标 |
+| T6 | 稳态运营 | 生产 | 监控、告警、复盘闭合 |
+
+**阶段依赖**
+
+```text
+T0 → T1 → T2 → T3 → T3o → T4 → T5 → T6
+```
+
+- T1：任何代码变更后持续回归。
+- T2 与 T3 环境准备可并行；T3 出口未闭合前不得进入 T3o。
+- T3o 未闭合前不得启动 T4 真实客户触达。
+- T4 通过固定 50 案后，才进入 T5 按 cap 放量。
+
+**各阶段边界**
+
+| 阶段 | 边界 |
+| --- | --- |
+| T0 | 不验证业务语义，不触达客户 |
+| T1 | 外部依赖可替身；接入变更至少跑 ingestion 单测 |
+| T2 | 不允许用内存 Repository 替代被测持久化边界 |
+| T3 | L4b 主断言为 payload ↔ inbox ↔ 投影 ↔ plan；旧库仅作兼容对账 |
+| T3o | 只用隔离 topic、sandbox 或测试地址；不要求 Dashboard |
+| T4 | 数仓按正式契约发布；仅处理批准 50 案，其余 ACK 跳过 |
+| T5 | 每批 cap 由业务审批；未达标立即冻结或回退 |
+| T6 | 自动监控与告警为全量运营前置 |
 
 ### 事实来源与职责边界
 
@@ -35,568 +76,429 @@
 | 测试准入、用例、出口、当前状态 | **本文** | 唯一 SSOT |
 | 领域、契约、数据接入语义 | 核心引擎规格、契约文档、数据接入规格 | 作为断言依据引用，不复制为第二份规格 |
 | 渠道 `TC-*` 细节与供应商参数 | 渠道功能测试指南 | 本文仅索引 TC-ID |
-| L4b topic、订阅、Nacos、凭证、操作 | [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | Runbook，不承担测试裁决 |
-| 单次执行日志、测试结果 | 历史报告/日志 | 证据，不改变本文状态 |
+| 测试命令、脚本入参与日志路径 | [`scripts/README.md`](../../scripts/README.md) | 本文不写命令 |
+| L4b topic、订阅、Nacos、凭证、操作顺序 | [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | Runbook，不承担测试裁决 |
+| Pilot 配置、50 案执行、切量与回滚操作 | [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Runbook，不承担测试裁决 |
+| 指标口径与告警阈值 | 基础设施交互规范 | 引用，不在本文重复定义 |
+| 单次执行日志与历史报告 | 运行报告/日志 | 证据材料；历史结果不进入本文状态列 |
 
-### 通用状态与证据规则
+### 状态与证据规则
 
 | 标记 | 含义 |
 |---|---|
-| ✅ | 用例已满足退出条件，且有可追溯证据 |
-| 🟡 | 可运行或部分通过，但存在明确未关闭项 |
-| ⬜ | 未满足准入或未执行 |
+| ✅ | 本轮已执行并满足退出条件，且有可追溯证据 |
+| 🟡 | 本轮部分通过，存在明确未关闭项 |
+| ⬜ | 本轮未执行或未满足准入 |
 | ⏭ | Phase 2 或范围外 |
-| ❓ | 事实待核对；不得据此放行下一阶段 |
 
-每个状态必须能指向命令输出、JUnit/CI 记录、SQL/日志摘要或一次运行报告；报告事实只能更新“证据”列，**不得自行覆盖本文的当前状态**。
+- 状态只反映**当前代码与契约版本**的执行结果。
+- 本轮为全量重测：所有用例状态归零为 ⬜，逐条重跑后回填。
+- 历史运行结果可作参考，但不得直接回填状态列。
+- ⬜ 有三种成因（缺测试、缺实现、缺环境），闭合责任与排期方式不同，逐条登记见[附录 C](#附录-c缺口登记)。
 
 ---
 
-## 2. T0 环境预检
+## 2. T0 环境预检与基线对齐
 
 ### 目标
 
-证明所选环境、隔离范围、配置与可观测性允许开始后续测试；T0 不验证业务语义，不触达真实用户。
+确认环境、隔离、权限与停止能力允许开始测试，并确保断言依据（文档）与实现（代码）一致。T0 不验证业务语义，不触达真实用户。
 
-### 准入与用例
+### 准入用例
 
-| ID | 预检项 | 允许替身 | 必跑命令/操作 | 证据 | Owner | 当前状态 |
-|---|---|---|---|---|---|---|
-| T0-1 | 本地/CI JDK、Maven、模块可发现 | 不适用 | `mvn -B -ntp clean test` | CI job | 主架构 | ✅ |
-| T0-2 | L4a App、Nacos、健康检查 | 仅合成案 | `/actuator/health`、启动日志 | health=UP、配置加载日志 | 主架构 | ✅ |
-| T0-3 | L4b 联调隔离、白名单、渠道沙箱 | 合成 loan_id/测试地址 | `./scripts/test/l4b-preflight.sh --strict`；Nacos 指向 `intelligent-collection-cases-test1-sub` | preflight 输出、Nacos 片段 | 主架构 + 运维 | ✅：2026-07-27 strict preflight（旧订阅 `collection-cases-test1-sub`）；**2026-08-11 起**定稿 `intelligent-collection-cases-test1-sub` |
-| T0-4 | 测试订阅**独占消费**（无其他活跃 consumer 抢消息） | 不允许多实例共享同一 test-sub | 开跑前确认无他机 consumer；任选一 loan_id publish 一次，本机日志命中 `[Ingestion]` | 同 loan_id publish 后本地 consumer 必命中 | 运维 | ✅：运维确认独占；2026-07-27 publish 唯一消息后，本机命中 `CASE_INGESTED case=99000000` |
-| T0-5 | 数据库表、只读旧库访问、脱敏输出 | 测试 seed | preflight + SQL 连通性 | 表存在、账号范围确认 | 服务同事 + 运维 | ✅：六张业务/审计表及 timeline 审计字段齐备；`t_collection` 6 条 `IC_TEST_%` 行可读写，事务回滚验证无痕 |
-
-### 出口
-
-- T1 可在 T0-1 通过后开始。
-- T3a 需要 T0-5。
-- T3b 需要 T0-2 和受控测试渠道配置。
-- T4 需要 T0-3、T0-4、T0-5；仅可使用独立测试 topic，禁止向生产 `intelligent-collection-cases-v1`（及旧 `collection-cases`）发布。
-- T0-3 验证隔离/白名单，T0-4 验证独占消费，二者不可互相替代。
-- T0-1～T0-5 均已通过；L4b 官方闭环已于 2026-07-27 实跑通过（见 [§7](#7-t4-真实来源--真实渠道的隔离联调l4b)）。
-
----
-
-## 3. T1 CI / Mock：L0、L0c、L1
-
-### 目标与准入
-
-以纯逻辑与内存集成测试验证引擎状态机、七步管线、异常兜底、幂等和异步回调基础语义。替身仅用于隔离外部边界。
-
-| 层 | 覆盖 | 必跑命令 | 当前状态 | Owner |
+| ID | 预检项 | 证据 | Owner | 状态 |
 |---|---|---|---|---|
-| L0 | 生命周期、管线、PreFlight、SPI 超时、发件箱与停摆巡检 | `mvn -pl collection-common,collection-engine -am test -Dsurefire.failIfNoSpecifiedTests=false` | ✅（含新增发件箱 12 例、巡检 5 例） | 主架构 |
-| L0c | 渠道 Adapter 映射与策略 | `mvn -pl collection-channel -am test` | ✅ 27 例 | 编排同事 |
-| L1 | 内存总线/仓储的全链路和回调 | 同 L0 命令 | ✅ 6 例 | 主架构 |
-| CI 全仓 | 格式门禁与全仓单测 | `mvn -B -ntp clean test` | ✅ | 各模块 owner |
+| T0-1 | 构建与 CI 可用；全仓单测可执行 | CI 记录 | 主架构 | ⬜ |
+| T0-2 | L4a 应用、Nacos、健康检查正常 | health、配置加载日志 | 主架构 | ⬜ |
+| T0-3 | L4b 隔离 topic/订阅、白名单、渠道沙箱就位 | preflight 输出、Nacos 片段 | 主架构 + 运维 | ⬜ |
+| T0-4 | 测试订阅独占消费，无其他活跃 consumer | 单条 publish 命中本机消费日志 | 运维 | ⬜ |
+| T0-5 | 数据库表、只读旧库访问、脱敏输出可用 | 表结构与账号范围确认 | 服务同事 + 运维 | ⬜ |
+| T0-6 | **文档与代码对齐**：接入契约、事件语义、回调入口、配置键、脚本入参无漂移 | 对齐结论与修正记录 | 主架构 | ⬜ |
+| T0-7 | 观测基线盘点：确认 T3o 所需证据项当前是否可获取，缺口登记为代码交付 | 证据项清单与缺口列表 | 主架构 | ⬜ |
 
-### 必测用例集合
-
-| 域 | 用例/资产 | 退出条件 |
-|---|---|---|
-| 生命周期 | `PlanLifecycleManagerTest`；入案、还款、升档、停催、重建 | 状态迁移和取消原因正确 |
-| 七步管线 | `StepExecutionOrchestratorTest`、`PreFlightCheckerTest` | Guard/Resolver/Gateway 的 fail-close、retryable、终态拦截正确 |
-| SPI | `SpiInvokerTest` | 硬超时、异常透传、MDC 传递正确 |
-| 内存闭环 | `FullChainIntegrationTest`、`AsyncCallbackChainL1Test` | 事件到计划/步骤推进闭环正确 |
-| 事件不丢（[引擎 §7.4 A](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | `OutboxConsistencyTest`（5）、`OutboxPublisherTest`（7） | 步骤转终态与 `STEP_COMPLETED` 入箱同调用完成；CAS 失败不入箱；策略性跳过不写 timeline 但仍入箱；入箱与即时发布共享确定性 `eventId`、不同 `retryCount` 为不同事件；到期未销账重发并置 `PUBLISHED`；发布失败按退避推迟、耗尽转 `FAILED`；payload 不可反序列化直接 `FAILED`；关闭开关与扫描抛错均不影响主链 |
-| 停摆巡检（[引擎 §7.4](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | `StuckPlanReaperTest`（5） | 检出即计数告警且**不写库、不重发触达**；只看静默超 `idle-minutes` 的计划；开关与批次上限取自配置；扫描抛错不影响下一轮 |
-| 渠道逻辑 | channel `strategy/*`、`adapter/*` | 映射与本地策略断言通过 |
-| 调度入口 | `ScheduledJobRunnerTest`（8）、`PubSubScheduleConsumerTest`（11）、`SchedulerEntrypointValidatorTest`（8） | 按 `job` 属性路由、陈旧消息按 `publishTime` 丢弃（含停机 30 分钟积压只放行当前 tick）、重复投递均 ack、并发单飞、失败不上抛且闸门释放、缺订阅配置启动失败、阈值 ≤ 任务周期、调度入口唯一 |
+> T0-6 是本轮全量重测的前置。已知需重点核对：Pub/Sub envelope 与指纹规则、回调 URL 生成与实际入口、发布脚本的 `caseVersion` 取值、白名单与开关配置键。
 
 ### 出口
 
-所有命令必须通过；新增或变更契约语义时，T1 绿不是 T2 免检。未覆盖真实并发/跨存储故障项保留为 L3/T5 或 Phase 2 差集。
+- T1 需要 T0-1。
+- T2 需要 T0-5。
+- T3/L4a 需要 T0-2 与受控渠道配置；T3/L4b 需要 T0-3、T0-4、T0-5。
+- T0-6、T0-7 未闭合时，允许执行 T1/T2，但不得据其结论放行 T3 之后的阶段。
+- 禁止向生产案件 topic 发布人为构造的测试消息。
 
 ---
 
-## 4. T2 引擎↔渠道契约：L2
+## 3. T1 契约与组件回归：L0、L1、L2
 
 ### 目标
 
-冻结引擎调用渠道的语义边界，验证真实渠道实现接入后不改变引擎对 `PlanFactory`、`ExecutionGuard`、`StepResolver`、`ChannelGateway`、推进/穷尽策略的约束。
+以纯逻辑与内存集成验证接入映射、引擎状态机、七步管线、异常兜底、幂等与异步回调语义。替身仅用于隔离外部边界。
 
-| ID | 契约主题 | 允许替身 | 验证要点 / 当前证据 | 状态 | Owner |
-|---|---|---|---|---|---|
-| C1 | 计划结构、步骤顺序与成功落库 | 仅供应商 HTTP | SMS→PUSH→EMAIL 全部 `COMPLETED`，计划完成；3 条 timeline 含 `providerMsgId` 与审计元数据，且无 PII 摘要 | ✅ | 主架构 + 编排同事 |
-| C2 | PUSH 无 token → 同槽 fallback SMS | 仅供应商 HTTP | 仅发 1 次 SMS、0 次 Push；timeline 仍记 `PUSH` | ✅ | 主架构 + 编排同事 |
-| C3 | Guard block → SKIPPED | 无 | `NO_PHONE` → `SKIPPED` + `COMPLIANCE_BLOCKED`，无出网 | ✅ | 主架构 + 编排同事 |
-| C4/C5 | 渠道异常与重试 | 仅供应商 HTTP | 503 → `PENDING`/退避/不写 timeline；业务拒绝 → `FAILED` + 终态 timeline | ✅ | 主架构 + 编排同事 |
-| C6 | 步骤完成/推进语义 | 仅供应商 HTTP | EMAIL 同步完成，不进入 `STEP_WAITING` | ✅ | 主架构 + 编排同事 |
-| C7 | 重复 due 不重复 dispatch | 仅供应商 HTTP | 单次供应商请求、单条 timeline、步骤保持终态；迟到 due 为 no-op | ✅ | 主架构 + 编排同事 |
-| L2-CB | AI_CALL 异步回调契约 | 仅第 1–2 级允许脚本注入回调 | 尚无真实 AI_CALL Adapter；按下方分级方案闭合，未完成前不进入 T5 AI_CALL 验收 | ⬜ | 编排同事 + 主架构 |
+### 覆盖与状态
 
-#### L2-CB：AI_CALL 分级联调方案
+| 层级 | 覆盖范围 | Owner | 状态 |
+|---|---|---|---|
+| L0 · engine | 生命周期、七步管线、PreFlight、SPI 超时、发件箱、停摆巡检 | 主架构 | ⬜ |
+| L0 · channel | Adapter 映射、策略与本地合规逻辑 | 编排同事 | ⬜ |
+| L0 · ingestion | 消息路由、字段映射、投影决策、ACK/NACK、去重 | 主架构 | ⬜ |
+| L0 · admin 运行入口 | 调度入口路由、陈旧丢弃、单飞、DLQ 重放、Pilot 预检、回调入口验签与审计 | 主架构 | ⬜ |
+| L0 · admin 后台管理 | 鉴权、配置模板增删改与回滚、合规冻结解冻、异常队列、审计日志、目录查询 | 主架构 | ⏭ |
+| L1 | 内存总线/仓储下的全链路与异步回调闭环 | 主架构 | ⬜ |
+| L2 | 引擎↔渠道执行契约（见 §4） | 主架构 + 编排同事 | ⬜ |
 
-> **范围与安全边界**：AI_CALL 为异步渠道；dispatch 成功仅表示供应商受理，步骤必须保持 `STEP_EXECUTING`，仅 `CHANNEL_CALLBACK` 或 `CALLBACK_TIMEOUT` 才能收敛。未具备稳定 HTTPS 与签名时，**不得**对真实借款人外呼、不得进入 `pilot` profile。
+> **admin 拆分口径**：`collection-admin` 同时承载催收主体的运行入口与后台管理界面，两者风险与上线节奏不同，故分列。
+> 运行入口在 Pilot 主链路上，必测；后台管理后置到 Pilot 之后，**前提是其写接口在 Pilot 期间关闭或降为只读**（见 T4-6）。
+> 若 Pilot 期间需要启用任一后台写接口，该接口即回到本轮必测范围。
 
-| 级别 | 环境 / 允许外部依赖 | 操作 | 必验结果 | 准入下一步 |
-|---|---|---|---|---|
-| 1. 本地状态机 | `local` / `test`；不调用供应商；可关闭验签 | 创建 AI_CALL 步骤；脚本 POST 通用回调入口 | dispatch 后为 `STEP_EXECUTING`；`CHANNEL_CALLBACK` 后完成并推进；重复回调不重复计次；超时写 FAILED | L0/L1/L2 回归全绿 |
-| 2. Sandbox 下单 + 人工回调 | 供应商 sandbox；仅测试号码；回调仍由脚本注入 | Adapter 发起一次 sandbox 下单，记录供应商任务 ID；再按级别 1 注入终态回调 | 下单成功持久化 `providerMsgId`；回调可关联同一 plan/step；审计、状态推进正确 | 供应商任务 ID 可稳定透传 |
-| 3. 临时 HTTPS 回调 | 临时公网 HTTPS 网关；仅测试白名单；供应商固定出口 IP 白名单 | 供应商实际回调临时入口，网关转发通用回调入口 | 回调可达、仅允许 POST、限流与访问日志有效；错误回调被拒；不含真实借款人 PII | 稳定域名、证书、签名均已就绪 |
-| 4. Pilot 验收 | `pilot`；稳定公网 HTTPS；HMAC Secret；批准白名单 | 真实 Adapter sandbox/批准测试号码完成一次完整呼叫与终态回调 | HMAC 验签通过；`providerMsgId`、终态、审计和超时哨兵均正确；签名伪造与重复回调被拒/幂等吸收 | 可纳入 T5 §6.1 AI_CALL 验收 |
+### 必测用例域
 
-**通用回调契约**：当前代码入口为 `POST /webhook/channel-callback`，请求必须携带 `planId`、`stepId`、`providerMsgId`、`result`；`disposition` 按供应商业务结果传递。生产回调须携带 `X-Callback-Signature`（HMAC-SHA256），原文为 `planId:stepId:result:providerMsgId:disposition`。虽当前 Controller 对 `result` / `providerMsgId` 有默认或可选兼容，L2-CB 及以后测试均按**必填**执行。
-
-> **路由前置**：`ChannelProperties.voiceCallbackUrl()` 当前会生成 `{baseUrl}/lth/voice`，但实现入口是 `/webhook/channel-callback`。级别 2–4 开始前，必须统一为 `https://<domain>/webhook/channel-callback`，或实现供应商专用 `/webhook/.../voice` Parser 后再转换为通用回调；未闭合不得给供应商配置回调 URL。
-
-| 证据层 | 测试类 | 覆盖 |
-|---|---|---|
-| 渠道子图 | `ProductionChannelContractL2Test`（channel，7 tests） | 真实 PlanFactory/Guard/Resolver/Gateway/Adapter 的命令构造、结果映射、渠道幂等 |
-| 引擎状态推进 | `ChannelContractL2RealSpiTest`（engine，8 tests） | 真实 SPI 驱动的状态、timeline 审计、退避重试；覆盖 C1–C7/C7b |
-| 契约基线 | `ChannelContractL2Test`（engine，7 tests） | 编码契约替身下的回归基线 |
-
-| 已发现缺陷 | 根因与影响 | 修复 / 回归保障 |
-|---|---|---|
-| C7 终态步骤回退（2026-07-27） | 重复 `PLAN_STEP_DUE` 在幂等锁前将终态步骤改回 `EXECUTING`；扫描重叠、重投或多实例下可能造成重复外呼 | `StepStatus.isTerminal()` 直接 no-op；幂等 TTL 取 `max(idempotencyTtl, callbackTimeout)`，覆盖异步回调窗口 |
-
-| AI_CALL 回调差集 | 当前结论 | 后续闭合 |
-|---|---|---|
-| Adapter | 仅 SMS/PUSH/EMAIL 三个真实 Adapter（`collection-channel/adapter/`：`NotificationSmsAdapter`、`NotificationPushAdapter`、`SendGridEmailAdapter`）；**AI_CALL 无真实 Adapter**，只能落 Mock，不能以 Mock 改绿 | 编排补 AI_CALL/LTH 下单与回调签名；主架构补超时、幂等、终态断言 |
-| 回调端点 | 已有通用 `POST /webhook/channel-callback` 与 HMAC 验签骨架；**无 AI_CALL 专属 Parser、稳定 HTTPS 地址与供应商联调** | 统一通用入口或实现供应商专属 Parser；按 L2-CB 第 2–4 级闭合 |
-| `callbackTimeout` 调度入口 | **保留且已迁到新调度通道**（`job=callbackTimeout`，每分钟）。本轮 Pilot 只跑 SMS/PUSH/EMAIL，三者按渠道受理成功同步完成步骤、不需回调即可推进，因此该任务扫描结果预期为空——`collection.schedule.scan.rows{job=callbackTimeout}` 长期为 0 属正常，不作为故障信号 | AI_CALL 真实化后本任务才承载实际负载 |
-| 受理证据 | SMS/PUSH/Email 以 `DELIVERED + providerMsgId` 为证据，不要求回调审计行 | AI_CALL 的异步回调由 L2-CB 单独闭合，L4a/L4b 不可替代 |
-
-> **范围声明**：本轮调度迁移**不改变** AI 外呼的就绪状态。入口与领域模型（`CALLBACK_TIMEOUT` 事件、超时哨兵、`STEP_EXECUTING` 等回调语义）全部保留，但 AI 外呼**尚未生产可用**，不得因调度迁移完成而推断其可用。
-
-### 出口
-
-- 2026-07-27 全量 `mvn -o test`：channel 38、engine 90、ingestion 12，均 `0 failures / 0 errors`；JUnit 见各测试类对应的 `target/surefire-reports/TEST-*.xml`。
-- 真实 SPI/Gateway 已在 engine 状态机中验证；仅 Notification/SendGrid HTTP 使用 WireMock，未替身渠道逻辑。
-- 断言遵循 [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)。T3 可并行；进入 T4/T5 前关闭影响真实链路的契约差集。
-
----
-
-## 5. T3a 真实持久化：L3
-
-### 目标
-
-在真实 MySQL/MyBatis 环境中验证计划、步骤、timeline、快照和幂等的持久化语义。L3 不允许用内存 Repository 代替被测持久化边界。
-
-| ID | 用例 | 必跑命令/操作 | 证据 | 状态 | Owner |
-|---|---|---|---|---|---|
-| L3-1 | plan/step/timeline Mapper 往返与 timeline 幂等 upsert | `mvn -pl collection-admin -am test -Dgroups=integration` | `ContactPlanMapperIT` 2026-07-25 受控 MySQL：9 tests 全绿 | ✅ | 服务同事 + 主架构 |
-| L3-2 | `context_snapshot` JSON 往返 | 同上 | `ContactPlanMapperIT` 2026-07-25 受控 MySQL：语义字段断言通过 | ✅ | 服务同事 |
-| L3-3 | 取消/完成状态与 `completed_at` | 同上 | `ContactPlanMapperIT` 2026-07-25 受控 MySQL：plan/step 时间戳断言通过 | ✅ | 服务同事 |
-| L3-4 | 单活跃计划、并发串行化 | 同上 | 2026-07-25：唯一约束、REBUILD handoff、两连接 `FOR UPDATE` 阻塞/释放断言通过 | ✅ | 服务同事 + 主架构 |
-| L3-5 | due scanner 查询与状态推进 | 同上 | 2026-07-25：Mapper 查询 + `PlanStepTriggerPublisherIT` scan→event bus→dispatcher 的 due/timeout 状态断言通过 | ✅ | 主架构 + 服务同事 |
-| L3-6 | 发件箱与状态迁移的**真实事务**原子性：业务事务回滚时 `t_event_outbox` 不留记录；同 `eventId` 重入不重置重发进度（唯一键 + `ON DUPLICATE KEY UPDATE id=id`）；脱离事务调用 `enqueue` 因 `Propagation.MANDATORY` 失败 | `mvn -pl collection-admin -am test -Dgroups=integration` | ⬜ 待补 `EventOutboxMapperIT` | ⬜ | 主架构 |
-| L3-7 | 排期审计列与停摆判定 SQL：`original_trigger_time` 在 `updateTriggerTime`（退避/defer）后保持不变、`dispatched_at` 只记首次；`selectStuckPlanIds` 与 `selectDueSteps`/`selectTimeoutSteps` 严格互补（能被扫描拾取的计划不得被判停摆） | 同上 | ⬜ 待补 `ContactPlanMapperIT` 新增用例 | ⬜ | 主架构 + 服务同事 |
-| L3-8 | 案件投影的**真实事务**语义：收件箱与 `t_ai_collection` 同事务提交/回滚；`selectVersionForUpdate` 行锁使同案并发事实事件串行；`updateIfNewer` 拒绝相同或更低 `caseVersion`；同 `eventId` 重入返回 `PENDING_PUBLISH` 而不重写投影 | `mvn -pl collection-admin -am test -Dgroups=integration` | ⬜ 待补 `AiCaseProjectionRepositoryIT` | ⬜ | 主架构 + 服务同事 |
-
-### 当前技术障碍
-
-**Mapper/DDL 本身不是主障碍**——L4b 手工联调已证明 `ContactPlanRepositoryImpl`、相关 Mapper 与 `db/schema.sql` 可读写真实 MySQL。L3 未闭合的原因在**自动化与门禁**，不在“能不能落库”：
-
-| 障碍 | 说明 | 影响 |
-|---|---|---|
-| 专用环境依赖 | 2026-07-25 受控 MySQL：`ContactPlanMapperIT` 9 tests、`PlanStepTriggerPublisherIT` 2 tests 全绿；Surefire 默认排除 `integration` | 默认 CI 保持不连库；后续变更仍须在专用环境复跑并保存 JUnit/SQL 证据 |
-| 环境依赖 | 需可达 MySQL；连接信息不入仓，CI 默认不连库 | 本地/专用集成环境可跑，默认 CI 不能代替 L3 出口 |
-| 用例缺口 | L3-1…5 自动化已覆盖；L3-6/L3-7/L3-8 随发件箱、排期审计列与案件投影新增，尚未补 IT；真实渠道回调、PubSub NACK 与跨存储故障不属于 L3 | 分别由 T2/L4b/T5 覆盖，不得以 L3 替代 |
-
-**结论**：L3-1…5 已在受控 MySQL 自动化收口。L3-6/L3-7 的逻辑分支已由 `OutboxConsistencyTest` / `OutboxPublisherTest` / `StuckPlanReaperTest` 在 L0 覆盖，L3-8 的分支由 `AiCaseIngestionProcessorTest` 在 L0 覆盖（投影先于事件、`PENDING_PUBLISH` 补发、陈旧版本跳过、校准不发事件），但**事务边界与 SQL 语义只有真实 MySQL 能证明**，须补 IT 后才算收口。仅 L4b 手工 SQL 证据不能替代 L3 出口，但可作为后续 T4 的附加证据。
-
-### 受控 MySQL 执行
-
-集成测试只接受 MySQL 8+ 的非生产受控库；连接信息仅通过环境变量注入，不写入仓库。先在该库应用 `db/schema.sql`，再执行：
-
-```bash
-export L3_IT_DB_URL="jdbc:mysql://HOST:3306/ai_collection_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Manila"
-export L3_IT_DB_USER="ai_collection"
-export L3_IT_DB_PASS="从主架构负责人获取"
-mvn -pl collection-admin -am test -Dgroups=integration
-```
-
-`ContactPlanMapperIT` 的 mapper 用例默认在单一 MyBatis session 内回滚；跨连接锁测试和 `PlanStepTriggerPublisherIT` 为跨连接可见性而提交 sentinel 数据，并在 `finally` 按专用 caseId 删除。默认 CI 通过 Surefire 排除 `integration` 标签，仍保持不连库。
-
-### 出口
-
-真实 DB 上的上述用例全绿，连接信息不入仓。T3a 与 T3b **可并行**；T4 必须等待二者均通过。
-
----
-
-## 6. T3b 真实渠道 + 合成数据源：L4a
-
-### 目标与边界
-
-L4a 使用 `MockTriggerController`/`*CaseRegistry` 的合成案件驱动真实渠道，验证引擎到渠道的完整投递链路。它不接真实 PubSub、真实旧库或 L3 落库；不得将合成数据源误称为“Mock 测试层级”。
-
-当前装配采用临时 `Default*`/`ConfigurableExecutionGuard` 与真实 `DefaultStepResolver`、`ChannelGatewayImpl`。因此 L4a 是**临时实现可运行的全链路验证**，不是编排生产策略已评审完毕的证明；A1–A6 生产实现替换仍须经过 T2/T3b 回归。
-
-### L4a 用例
-
-| ID | 场景 | 关键断言 | 当前状态 | 证据/命令 |
-|---|---|---|---|---|
-| L4a-1 | 三渠道顺序完成 | SMS→PUSH→EMAIL、providerMsgId、计划完成 | ✅ | 2026-07-27 `restart-and-l4a.sh`（timeline 三渠道） |
-| L4a-2 | PUSH 无 token → SMS fallback | fallback 元数据、SMS 投递、步骤完成 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-3 | 整笔 loan 结清取消 | `fullRepayTime` 非空或 loan 级 `STATUS=4`，携带 `caseId=loanId` → 仅该案 `PLAN_CANCELLED(REPAID)`，后续不触达 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-3b | 部分还款运行态刷新 | 增量还款携带有效非负 `overdueAmount`（含罚息）及可选 `upcomingAmount` / `nextDueDate` → 活跃计划运行态快照更新；模板、步骤、计划状态和 stage 不变。stage 变化只能由 dailyRoll 的 `STAGE_CHANGED` 产生（[核心 §4.6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新)） | 单测已覆盖，待真实 PubSub 回归 | `PlanLifecycleManagerTest`（运行态刷新 / 终态跳过 / 脏值忽略）、`CasePayloadMapperTest` |
-| L4a-4 | 升档取消并新建 | 旧计划 `STAGE_UPGRADE`、新计划正确 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-5 | 停催 | `PLAN_CANCELLED(CEASED)`，不重建 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-6 | SMS 同步完成冒烟 | 同步 `COMPLETED`，不进入 `WAITING` | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-| L4a-7 | 重复 ingest 幂等 | 仅一个活跃计划、仅一轮投递 | ✅ | 2026-07-27 `restart-and-l4a.sh`（独立 case=92002） |
-| L4a-8 | Email scriptSlot × stage | S0/S1/S2 preview scriptSlot；S0 SMS、S1/S2 Email 的 providerMsgId | ✅ | 2026-07-27 `restart-and-l4a.sh`（stage 关联计划与 timeline） |
-| L4a-G | Guard / rebuild | NO_PHONE、FREQUENCY、穷尽路径 | ✅ | 2026-07-27 `restart-and-l4a.sh` |
-
-**L4a-6 裁决：** 旧版“消息类观察期（`observation-minutes=1`、等待约 90 秒）”已于 2026-07-18 撤销。Phase 1 SMS/PUSH/EMAIL 观察期为 0；不得再将该旧观察期 curl、配置或等待时间作为 L4a 用例。
-
-### 必跑命令与出口
-
-```bash
-# App 已启动时
-./scripts/test/l4a-official-test.sh
-
-# 重启、编译、启动后执行
-./scripts/test/restart-and-l4a.sh
-```
-
-出口已满足：2026-07-27 以 `COLLECTION_CASE_SERVICE=mock`、`ENGINE_SPI_TIMEOUT_ENABLED=false` 运行 `restart-and-l4a.sh`，固定案例先清理并获得 `PASS=25 FAIL=0`；L4a-8 将 preview 的 scriptSlot 与实际计划的 stage、channel、providerMsgId 关联验证。输出位于 `logs/run/l4a.last.log`，应用日志位于 `logs/run/admin.log`。T3b 已完成；T3a 也已闭合，因此下一授权阶段为 T4/L4b 的严格预检与隔离真实来源联调。
-
----
-
-## 7. T4 真实来源 + 真实渠道的隔离联调：L4b
-
-### 目标
-
-L4b 将 L4a 的合成入口替换为**真实 PubSub 消费 + 真实旧库 seed + 真实 MySQL 落库 + 渠道沙箱**，验证“来源真实性”与 L4a 已验过的渠道语义在落库后可复现。
-
-### 隔离如何实现（方案 B）
-
-“隔离真实来源”指：**走真实 GCP PubSub/Consumer/ingestion 代码路径，但与生产信贷链路物理隔离**。实现由五层叠加：
-
-| 层 | 做法 | 作用 |
-|---|---|---|
-| **独立 topic** | 联调用 `intelligent-collection-cases-test1` | 与生产 `intelligent-collection-cases-v1` 物理隔离 |
-| **独立订阅** | 新系统联调 `intelligent-collection-cases-test1-sub` | 与生产 `intelligent-collection-cases-v1-sub` 分离 |
-| **发布护栏** | `publish-test-messages.sh` 拒绝生产 topic | 防止误操作 |
-| **应用白名单** | Nacos `loan-id-whitelist: 99000000–99000005` | Consumer 只处理合成案 |
-| **触达沙箱** | `sms-test-mode`、`push-test-token`、受控测试邮箱/手机号 | 真实 adapter 代码、受控投递地址 |
-
-L4b 用完整单案 `caseEvent` 写入 `t_ai_collection` 投影；日切用手动 `POST /mock/daily-roll` 调真实 `DpdStageRollHandler`（真实调度通道留到 T5/T6）。
-
-### 是否最佳方案
-
-在 t_ai_collection / Outbox 新链路下，**独立测试 topic 是当前最优解**：
-
-| 方案 | 优点 | 为何未选 / 局限 |
-|---|---|---|
-| **B：独立测试 topic（当前）** | 真实 PubSub 全链路；专用 topic 与旧 `collection-cases` 完全分离 | 需运维建 topic/IAM；生产拓扑留 T5 |
-| A：生产 topic + 白名单 | 拓扑与生产一致 | 测试消息污染生产 Outbox 消费面，已禁止 |
-| Mock PubSub / 继续 `/mock/ingest` | 无运维依赖 | 不算“真实来源”，不能替代 L4b |
-
-因此 L4b 的“隔离”是**环境级隔离**（独立 topic + 白名单 + 沙箱），不是 mock ingestion。生产等价拓扑（含真实 topic 扇出、Cloud Scheduler → Pub/Sub 调度通道）在 **T5** 再验。
-
-### 订阅与快照
-
-| 场景 | topic / subscription |
+| 域 | 退出条件 |
 |---|---|
-| L4b 隔离联调 | `intelligent-collection-cases-test1` / `intelligent-collection-cases-test1-sub` |
-| Pilot/生产 | `intelligent-collection-cases-v1` / `intelligent-collection-cases-v1-sub`（T5/T6） |
-| 旧 L4b（已废弃） | `collection-cases-test1` / `collection-cases-test1-sub` |
+| 计划生命周期 | 入案、还款、升档、停催、重建的状态迁移与取消原因正确 |
+| 七步管线 | Guard/Resolver/Gateway 的 fail-close、retryable、终态拦截正确 |
+| SPI 调用 | 硬超时生效、异常透传、MDC 传递正确 |
+| 内存闭环 | 事件驱动计划/步骤推进与回调收敛正确 |
+| 事件不丢 | 步骤终态与事件入箱同事务；确定性 `eventId`；重发、退避与耗尽转终态正确 |
+| 停摆巡检 | 仅计数告警，不写库、不重发触达 |
+| 调度入口 | 按 `job` 路由、陈旧消息丢弃、重复投递均 ACK、并发单飞、入口唯一 |
+| 接入消息映射 | `caseEvent` 完整快照与 `repaymentEvent` 增量的字段映射与校验正确 |
+| 接入投影决策 | 首次入催发事件、同指纹静默刷新、投影先于事件、`PENDING` 补发正确 |
+| 接入异常处置 | 外部阶段事件 poison、无基线还款 poison、陈旧 `occurredAt` 跳过、未知类型 ACK |
+| 接入去重 | 同 `eventId` 重投不重复写投影或发事件 |
+| 日切逻辑 | 阶段变化与 D91 停催的产出条件、同日重跑不重复发事件 |
 
-快照主路径（v3 契约，2026-08-12）：
+> 本层级的已知缺口（含日切处理器、部分还款、陈旧与无基线还款、白名单过滤、回调入口验签）逐条登记于[附录 C](#附录-c缺口登记)，补齐后才算对应 L0 集合通过。
+
+### 出口
+
+全部层级绿；接入变更至少执行 ingestion 单测，事件 payload 或语义变化时追加 engine 回归。T1 通过不豁免 T2 的真实持久化验证。
+
+---
+
+## 4. T1 引擎↔渠道执行契约：L2
+
+### 目标
+
+冻结引擎调用渠道的语义边界，验证真实渠道实现接入后不改变引擎对计划构建、执行守卫、步骤解析、渠道网关与推进/穷尽策略的约束。
+
+| ID | 契约主题 | 允许替身 | 关键断言 | Owner | 状态 |
+|---|---|---|---|---|---|
+| C1 | 计划结构、步骤顺序与成功落库 | 仅供应商 HTTP | 三渠道顺序完成；timeline 含 `providerMsgId` 与审计元数据，无 PII | 主架构 + 编排同事 | ⬜ |
+| C2 | PUSH 无 token → 同槽 fallback SMS | 仅供应商 HTTP | 仅一次 SMS、零次 Push；timeline 仍记 PUSH | 主架构 + 编排同事 | ⬜ |
+| C3 | Guard 拦截 → SKIPPED | 无 | 空地址类拦截写 `COMPLIANCE_BLOCKED`，不出网 | 主架构 + 编排同事 | ⬜ |
+| C4/C5 | 渠道异常与重试分类 | 仅供应商 HTTP | 瞬态失败退避不写 timeline；业务拒绝转终态并写 timeline | 主架构 + 编排同事 | ⬜ |
+| C6 | 步骤完成与推进语义 | 仅供应商 HTTP | 同步渠道受理即完成，不进入等待态 | 主架构 + 编排同事 | ⬜ |
+| C7 | 重复 due 不重复 dispatch | 仅供应商 HTTP | 单次供应商请求与单条 timeline；终态步骤为 no-op | 主架构 + 编排同事 | ⬜ |
+| L2-CB | AI_CALL 异步回调契约 | 分级方案第 1–2 级允许脚本注入回调 | 见下方分级方案 | 编排同事 + 主架构 | ⬜ |
+
+### L2-CB：AI_CALL 分级联调
+
+> AI_CALL 为异步渠道：dispatch 成功仅表示供应商受理，步骤须保持执行中，仅回调或超时可收敛。未具备稳定 HTTPS 与签名前，不得对真实借款人外呼。
+
+| 级别 | 环境 | 必验结果 | 准入下一级 |
+|---|---|---|---|
+| 1 | 本地，不调供应商，可关闭验签 | dispatch 后保持执行中；回调后完成并推进；重复回调不重复计次；超时转失败 | L0/L1/L2 回归全绿 |
+| 2 | 供应商 sandbox，回调仍由脚本注入 | 下单持久化 `providerMsgId`；回调可关联同一 plan/step | 供应商任务 ID 可稳定透传 |
+| 3 | 临时 HTTPS 回调入口，测试白名单 | 回调可达、限流与访问日志有效；错误回调被拒；不含真实 PII | 稳定域名、证书与签名就绪 |
+| 4 | Pilot 环境，HMAC 验签与批准号码 | 验签通过；终态、审计与超时哨兵正确；伪造签名与重复回调被拒或幂等吸收 | 可纳入 T3o 渠道验收 |
+
+### 当前差集
+
+| 差集 | 结论 |
+|---|---|
+| AI_CALL Adapter | 仅 SMS/PUSH/EMAIL 有真实 Adapter；AI_CALL 不得以 Mock 改绿 |
+| 回调入口 | 通用回调端点与验签骨架已有；回调 URL 生成与实际入口需在 T0-6 对齐后才可对供应商配置 |
+| 回调超时任务 | 本轮 Pilot 只跑同步渠道，该任务扫描结果为空属预期，不作故障信号 |
+| 受理证据 | 同步渠道以受理成功与 `providerMsgId` 为证据，不要求回调审计行 |
+
+### 出口
+
+C1–C7 全绿且断言遵循[引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)。渠道生产实现替换后必须复跑。L2-CB 未闭合前不进入 AI_CALL 的真实验收。
+
+---
+
+## 5. T2 真实持久化与可靠性：L3
+
+### 目标
+
+在真实 MySQL 环境验证计划、步骤、timeline、快照、发件箱与案件投影的持久化与事务语义。不允许用内存 Repository 替代被测边界。
+
+| ID | 用例 | 证据 | Owner | 状态 |
+|---|---|---|---|---|
+| L3-1 | plan/step/timeline 往返与 timeline 幂等 upsert | IT 记录 | 服务同事 + 主架构 | ⬜ |
+| L3-2 | `context_snapshot` JSON 往返与语义字段一致 | IT 记录 | 服务同事 | ⬜ |
+| L3-3 | 取消/完成状态与完成时间戳 | IT 记录 | 服务同事 | ⬜ |
+| L3-4 | 单活跃计划约束与并发串行化 | IT 记录 | 服务同事 + 主架构 | ⬜ |
+| L3-5 | 到期扫描查询与状态推进 | IT 记录 | 主架构 + 服务同事 | ⬜ |
+| L3-6 | 发件箱事务原子性：业务回滚不留记录；同 `eventId` 重入不重置重发进度；脱离事务入队失败 | IT 记录 | 主架构 + 服务同事 | ⬜ |
+| L3-7 | 排期审计列与停摆判定 SQL：原始触发时间不被退避改写；停摆查询与到期/超时查询严格互补 | IT 记录 | 主架构 + 服务同事 | ⬜ |
+| L3-8 | 案件投影事务语义：inbox 与投影同事务提交/回滚；行锁使同案并发串行；拒绝相同或更低版本；重入不重写投影 | IT 记录 | 主架构 + 服务同事 | ⬜ |
+
+### 执行约束
+
+- 集成测试只接受非生产的受控 MySQL；连接信息经环境变量注入，不入仓。
+- 默认 CI 不连库，因此 CI 绿不能替代 L3 出口。
+- L3-6/L3-7/L3-8 的逻辑分支虽已在 L0 覆盖，但事务边界与 SQL 语义只有真实库能证明。
+- L3-8 目前缺少对应集成测试，需在本轮补齐。
+
+命令与连接注入方式见 [`scripts/README.md`](../../scripts/README.md)。
+
+### 出口
+
+上述用例在真实库全绿。L3 与 L4a 可并行；T3 的真实来源验证必须等待 L3-8 闭合。
+
+---
+
+## 6. T3 隔离端到端：L4a、L4b
+
+### 6.1 L4a 合成源渠道冒烟
+
+L4a 用合成案件驱动真实渠道，验证引擎到渠道的投递链路。它不接真实 Pub/Sub，也不承担投影验证。当前编排装配含临时策略实现，因此 L4a 是“可运行”的证明，不是生产策略已评审的证明。
+
+| ID | 场景 | 关键断言 | 状态 |
+|---|---|---|---|
+| L4a-1 | 三渠道顺序完成 | 顺序执行、`providerMsgId` 齐备、计划完成 | ⬜ |
+| L4a-2 | PUSH 无 token → SMS fallback | fallback 元数据正确、仅一次投递 | ⬜ |
+| L4a-3 | 整笔结清取消 | 仅该案计划按还款原因取消，后续不触达 | ⬜ |
+| L4a-3b | 部分还款运行态刷新 | 快照余额更新；模板、步骤、计划状态与 stage 不变 | ⬜ |
+| L4a-4 | 升档取消并新建 | 旧计划按升档取消，新计划 stage 正确 | ⬜ |
+| L4a-5 | 停催 | 计划按停催取消且不重建 | ⬜ |
+| L4a-6 | 同步渠道完成冒烟 | 受理即完成，不进入等待态 | ⬜ |
+| L4a-7 | 重复入案幂等 | 仅一个活跃计划、仅一轮投递 | ⬜ |
+| L4a-8 | 话术槽位 × stage | 各 stage 的槽位与渠道匹配，`providerMsgId` 可追溯 | ⬜ |
+| L4a-G | Guard 与重建 | 空地址、频控与穷尽路径行为正确 | ⬜ |
+
+> 同步渠道观察期为 0；不得再以旧版观察期等待时间作为用例。L4a 必须在 SPI 硬超时按生产默认启用的前提下执行，不得关闭该开关取得通过。
+
+### 6.2 L4b 隔离真实来源复验
+
+L4b 用真实 Pub/Sub 消费 + 真实投影落库 + 渠道沙箱，验证接入主路径。隔离由独立 topic、独立订阅、发布护栏、应用白名单与触达沙箱五层叠加实现；`t_collection` 及旧库仅作迁移兼容或附加对账，不作主断言来源。
+
+主断言链路：
 
 ```text
-caseEvent/CASE_INGESTED → AiCaseIngestionProcessor
-→ 事务内写 t_ai_collection_inbox + 按 caseVersion upsert t_ai_collection
-→ 提交后 IngestionService publish CASE_INGESTED payload
-→ buildSnapshotFromEvent → t_contact_plan.context_snapshot
+caseEvent / repaymentEvent
+→ 同事务写 inbox + t_ai_collection
+→ 提交后发布内部事件
+→ 计划、步骤与 timeline
 ```
 
-`CASE_INGESTED` payload 是 L4b-5 主断言来源；写投影与发事件取同一份 `snapshotFields`，因此 `t_ai_collection` 行与 `context_snapshot` 应逐字段一致。`t_collection`/`RealCaseService` 仅用于迁移期兼容路径与可选对账。
+| ID | 场景 | 关键断言 | 状态 |
+|---|---|---|---|
+| L4b-1 | 入案、建计划、投递、timeline | 投影落表、inbox 已发布、计划与 timeline 一致 | ⬜ |
+| L4b-2 | 还款取消与余额刷新 | 全额结清取消活跃计划；部分还款仅更新运行态 | ⬜ |
+| L4b-3 | 日切升档 | 旧计划按升档取消并新建目标 stage 计划 | ⬜ |
+| L4b-4 | 日切停催 | 活跃计划按停催取消且不重建 | ⬜ |
+| L4b-5 | 快照字段溯源 | payload、投影与计划快照逐字段一致 | ⬜ |
+| L4b-6 | 到期扫描执行 | 到期步骤投递成功，审计字段写入且摘要无 PII | ⬜ |
+| L4b-7 | NACK 重投与幂等 | 重投后仅新增一个计划，无重复 `providerMsgId` | ⬜ |
+| L4b-8 | 日切幂等 | 同日重复日切不重复升档或触达 | ⬜ |
+| L4b-9 | 投影与 inbox 状态一致 | 投影字段与快照一致；inbox 终态为已发布 | ⬜ |
+| L4b-10 | 乱序不回退 | 较新指纹后补投旧快照、或较新还款后补投旧增量，投影不回退且 inbox 记为跳过 | ⬜ |
+| L4b-11 | 投影已落库但事件未发出 | 重投只补发事件、不重复写投影，无重复计划与投递 | ⬜ |
+| L4b-12 | 每日快照静默刷新 | 在催案刷新投影但不重复入催与触达，日切据新投影升档 | ⬜ |
+| L4b-13 | 外部阶段事件被拒 | poison 后 ACK 并告警，投影与计划不变 | ⬜ |
+| L4b-14 | poison 消息处置 | 不可恢复契约错误记录 poison/告警后 ACK；投影、计划与渠道触达均不变 | ⬜ |
 
-### L4b 用例与当前状态
-
-2026-07-27 以 `l4b-official-test.sh` 实跑取证：**PASS=41 FAIL=0 SKIP=0**（run=`20260727-192112`，
-证据 `logs/run/l4b-rerun.log` / `logs/run/l4b.last.log`，应用日志 `logs/run/admin.log`）。
-本轮 SPI 硬超时按生产默认值启用（`timeoutEnabled=true`，PLAN_FACTORY/STEP_RESOLVER 各 50ms），
-全程 **0 次 SPI 超时、0 次 `RESOLVER_ERROR`**。
-
-| ID | 场景 | 真实触发/断言 | 状态 | 实跑证据 |
-|---|---|---|---|---|
-| L4b-1 | `caseEvent` 入案、建计划、投递、timeline | PubSub → projection → plan/step/timeline | ⬜ 待 v3 联调 | 首次案件建计划；同案内容指纹变化的每日快照只更新投影 |
-| L4b-2 | 还款取消 | `repaymentEvent` → REPAID | ⬜ 待 v3 联调 | 整笔结清取消活跃计划；部分还款更新余额 |
-| L4b-3 | 日切升档 | 手动 daily-roll → STAGE_UPGRADE | ✅ | 99000002 dpd 4→20：旧 S2 计划 `STAGE_UPGRADE` 取消 + 新建 S3 计划 |
-| L4b-4 | 日切停催 | 手动 daily-roll → CEASED | ✅ | 99000003 dpd 20→95：活跃计划 `CEASED` 取消，静置 20s 未重建 |
-| L4b-5 | 快照字段溯源 | enriched payload == context_snapshot | ✅ | 99000001/02/04 的 dpd、primaryPhone、stage 与旧库/计划三方一致 |
-| L4b-6 | due scanner 执行 | `trigger_time<=now` → 投递/timeline | ✅ | SMS/PUSH/EMAIL 均 `DELIVERED` + 真实 `provider_msg_id`；`script_slot`、`template_version=db:37` 已写入；`content_summary` 无 PII |
-| L4b-7 | NACK 重投与幂等 | 真实 PubSub 下游失败→重投一次 | ✅ | 注入命中未 ack → 重投后只新增 1 个计划；静置 30s 无重复，无重复 `provider_msg_id` |
-| L4b-8 | 日切幂等 | 同日重复 daily-roll 不重复升档/触达 | ✅ | 收敛后重复 daily-roll：计划数 6、取消数 3、timeline 14 三项均不变 |
-| L4b-9 | 投影落表与字段一致 | `caseEvent/CASE_INGESTED` 消费后 `t_ai_collection` 出现该案行，`case_version`/金额/联系人与 `context_snapshot` 一致；`synced_at` 晚于 `updated_at`；`t_ai_collection_inbox` 该 `eventId` 为 `PUBLISHED` | ⬜ 待 v3 联调 | 接入 |
-| L4b-10 | 版本乱序不回退 | 先投 `caseVersion=13` 的还款事件，再补投 `caseVersion=12` 的入案事件 → 投影仍为 13，收件箱记录 `SKIPPED`，不产生第二个计划 | ⬜ 待 v3 联调 | 接入 |
-| L4b-11 | 投影已入库但事件未发出 | 借 `POST /mock/ingestion-fault/arm` 在 publish 前后各注入一次失败 → 重投后投影不重复写入、领域事件补发一次、最终 `PUBLISHED`；无重复计划与重复 `provider_msg_id` | ⬜ 待 v3 联调 | 接入 |
-| L4b-12 | 每日 `caseEvent` 静默刷新 | 对在催案投更高 `caseVersion` 的 `caseEvent` → `t_ai_collection` 更新、收件箱 `SKIPPED`、无重复入催与触达；随后日切据新投影正常升档 | ⬜ 待 v3 联调 | 接入 + 数仓 |
-| L4b-13 | 外部阶段事件被拒 | 投 `caseEvent/CASE_STAGE_CHANGED` → poison ack + 告警，投影与计划均不变（阶段只由日切产出） | ⬜ 待 v3 联调 | 接入 |
-
-**本轮暴露并修复的产品缺陷（非测试脚本问题）**：`ConfigTemplateProvider` 在 `StepResolver` /
-`PlanFactory` 热路径上同步查库——`ensureFresh()` 按 TTL 轮询版本号，`getCurrentConfigVersion()`
-更是每次调用都无缓存直查 `t_config_version_seq`。跨区域 MySQL 单次往返约 300ms，必然击穿两者 50ms
-硬超时（[引擎 §6.1](../MOCASA催收系统升级_Phase1_核心引擎规格.md#61-接口总览) 要求 StepResolver 零 DB I/O），
-表现为步骤全量 `FAILED`/`RESOLVER_ERROR`、计划提前进终态，并连带压垮 L4b-4/5/6。
-修复：版本轮询与 reload 移到启动预热（`ApplicationReadyEvent`）+ 后台单线程刷新，读方法只读 volatile
-缓存；`getCurrentConfigVersion()` 返回**已生效**的缓存版本——这对审计字段 `template_version` 的语义也更准确
-（记录本次渲染实际使用的配置版本，而非查询瞬间的库中最新版本）。
-
-> L4a 曾以 `ENGINE_SPI_TIMEOUT_ENABLED=false` 运行，正是该开关掩盖了此缺陷；L4b 按生产默认启用硬超时才暴露。
-> 结论：**不应放宽 50ms 阈值**，SPI 侧消除 I/O 才是符合规格的修法。
-
-### `template_version` 语义与溯源边界
-
-2026-07-28 补跑 `L4B_ONLY=1,6` 取证：**PASS=28 FAIL=0 SKIP=0**（证据 `logs/run/l4b-audit.log`）。
-
-首轮 L4b 全部投递被标成 `db:37`，但 `t_config_version_seq.current_version` 是**管理后台每写一次配置就自增的全局
-epoch**，不是话术版本号，更不是模板数量。原实现按「DB 配置源整体是否可用」选标记，而
-`ScriptLibrary` 是**逐槽位** DB→YAML 回落的，导致 11 条里 9 条把 YAML/SendGrid 的内容误标为 DB 来源。
-已改为按该槽位的真实来源标记，本轮三种来源均取到证据：
-
-| 来源 | 标记格式 | 本轮实例 |
-|---|---|---|
-| DB `t_script_template` 命中 | `db:<该行 config_version>` | `S1_SMS_STANDARD`→`db:1`、`S2_SMS_STANDARD`→`db:35`、`S1_PUSH_STANDARD`→`db:36` |
-| 回落 Nacos/YAML | `nacos:<scripts.release-version>` | 库中无 ACTIVE 行的 `S0_DUE_TODAY`、`S3/S4_SMS_STANDARD`、`S2/S3_PUSH_STANDARD` |
-| EMAIL（正文托管在 SendGrid） | `sendgrid:<Dynamic Template ID>` | `S4_EMAIL_ENTRY`→`sendgrid:d-658d5be1…` |
-
-全局 epoch 仍保留在 `t_contact_timeline.config_version`，回答"进程当时加载的是第几代配置"，与逐槽位版本互补。
-
-**溯源能力的边界（重要）**：标记能**唯一指认**是哪一版内容，但不总能**复原文本**。
-`t_script_template` 的唯一键是 `(tenant_id, script_slot, channel, locale)`，**一槽一行、原地 UPDATE**，
-没有内容历史表；`t_config_change_log` 只记 `from_version→to_version` 与一句 `diff_summary`
-（形如 `update script SMS/S2_SMS_STANDARD`），**不存新旧正文**。因此：
-
-| 标记 | 能否复原当时正文 |
-|---|---|
-| `db:N` | 仅当该行仍停在版本 N；一旦被再次编辑，N 版正文在库中已不可得 |
-| `nacos:<release>` | 依赖 Nacos 配置历史留存，且要求内容变更时确实 bump `release-version`（当前为人工维护） |
-| `sendgrid:d-xxx` | 只锁定模板，不锁定 SendGrid 侧的模板版本 |
-
-`content_hmac` 补的是**校验**而非**复原**：可以证明某份候选文本确实是当时发出的那份，但无法凭它反推正文。
-若要做到任意时点完全可复原，需要给 `t_script_template` 增加只写历史表（按
-`script_slot + channel + config_version` 留存正文快照）——该项属于管理后台配置治理，不阻塞 T4/T5，建议记入 Phase 2。
-
-### 落库核对时机
-
-**哪些阶段需要查库、哪些不需要：**
-
-| 阶段 | 是否查 MySQL | 说明 |
-|---|---|---|
-| T0–T2（L0/L1/L2） | **否** | 纯内存/JUnit，无持久化 |
-| T3b / L4a | **否** | 合成入口 + 内存仓储；用 API/日志/终端触达断言 |
-| T3a / L3 | **是** | 集成测试跑完后查 Mapper 往返（自动化收口前可手工 SQL 抽检） |
-| **T4 / L4b** | **是（主路径）** | 每个真实触发动作后按下面节奏查 |
-
-**L4b 推荐操作顺序与查库点：**
-
-```text
-① seed 旧库 + 清白名单案落库          → SELECT 确认 9900000x 存在、t_contact_plan 计数为 0
-② preflight + 重启 App               → 不查业务表（重启是为清内存幂等标记）
-③ publish case（6 案）               → 查 t_contact_plan / _step（L4b-1、L4b-5）
-④ 立即停催 99000003（dpd→95 + roll） → 查 cancel_reason=CEASED（L4b-4，须趁计划仍活跃）
-⑤ 等待 TriggerScanner（~1–3 min）    → 查 _step 状态 + t_contact_timeline（L4b-6）
-⑥ publish repay 99000001             → 查 plan cancel_reason=REPAID（L4b-2）
-⑦ 日切升档 99000002（dpd→20 + roll） → 查 STAGE_UPGRADE + 新 stage 计划（L4b-3）
-⑧ 等收敛后重复 daily-roll            → 查计划数/取消数/timeline 三项不变（L4b-8）
-⑨ 故障注入 + 重投 99000000           → 查只新增 1 计划、无重复 provider_msg_id（L4b-7）
-⑩ 全部用例跑完                       → 跑 db/l4b-assert.sql 或按 loan_id 总查一遍
-```
-
-| 刚完成的动作 | 立刻查什么 | 期望 |
-|---|---|---|
-| `publish-test-messages.sh case` | `t_contact_plan` + `context_snapshot` | 每案有 plan；快照字段与 seed/payload 一致 |
-| 扫描器跑完（多步案如 99000002/03） | `t_contact_plan_step` + `t_contact_timeline` | 步推进、timeline 有 provider_msg_id |
-| `publish-test-messages.sh repay` | 最新 `t_contact_plan` | `PLAN_CANCELLED` / `REPAID` |
-| `POST /mock/daily-roll` | 同 case 全部 plan 行 | 升档：`STAGE_UPGRADE` + 新 stage；停催：`CEASED`；幂等：无新增取消 |
-
-工具：`db/l4b-assert.sql`（改 `@caseId`）；或 REST `GET /plans/by-case/{id}/history` 作快速预览，**终态裁决仍以 SQL 为准**。
-
-### 可执行资产与未关闭项
-
-```bash
-source scripts/test/l4b-env.local.sh
-export DB_HOST=... DB_PORT=3306 DB_USER=... DB_PASS=... DB_NAME=ai_collection_db
-export GCP_PUBSUB_TEST_TOPIC=intelligent-collection-cases-test1
-
-./scripts/test/l4b-preflight.sh --strict
-./scripts/dev/start-local.sh --detach           # 每轮必须重启：幂等标记是进程内内存态
-./scripts/test/l4b-official-test.sh             # L4b-1…8 官方闭环
-L4B_ONLY=1,5,6 ./scripts/test/l4b-official-test.sh   # 分段重跑
-L4B_RESET=0 ./scripts/test/l4b-official-test.sh      # 保留历史落库（默认清零）
-```
-
-**可重复性前置**（缺一即产生假失败，均已在脚本内固化）：
-
-| 前置 | 原因 |
-|---|---|
-| 清空白名单案的 `t_contact_plan`/`_step`/`_timeline` | 上轮遗留的终态计划与旧快照会污染 L4b-1 建计划判定与 L4b-5 逐字段溯源 |
-| 重放 `db/seed-test-cases.sql` | L4b-3/L4b-4 会改写 `t_collection.overdue_days`（S2→20、S3→95），不重放则第二轮 dpd 起点已被污染 |
-| 清除上轮去重标记 | `messageId`/`ingested` 标记会让本轮 `case_push` 被直接跳过。L4b（`redis-dedup-enabled=false`）重启应用即可清空内存标记；Pilot 起用 `RedisIngestionDedupStore` 后重启无效，须显式删除 `collection:ingestion:dedup:msg:*` / `ingested:*` |
-| L4b-4 紧跟 L4b-1 执行 | `onCaseCeased` 只取消 `findActivePlansByCase` 的结果；测试环境步骤延迟被压缩，S3 案 3 步计划约 90s 即转终态，放到 L4b-6 之后将无活跃计划可取消 |
-| L4b-8 先等测试案件全部收敛终态 | TriggerScanner 每 5s 独立扫描，若仍有未跑完步骤，timeline 会在观察窗内自然增长，使"重复触达"断言假失败 |
-
-`l4b-official-test.sh` 的裁决口径：入口一律走真实 topic（`publish-test-messages.sh`），断言一律查
-`t_contact_plan` / `t_contact_plan_step` / `t_contact_timeline`，不接受 REST 预览作为终态证据；
-L4b-3/L4b-4 通过改写 `t_collection.overdue_days`（仅 `IC_TEST_%` 行）制造跨档与 D91+ 条件后触发
-`POST /mock/daily-roll`；L4b-6 额外断言 `script_slot` 已写入且 `content_summary` 不含姓名。
-
-L4b-7 的故障注入采用**热态受控注入，不重启进程**：`POST /mock/ingestion-fault/arm?count=1` 预约后，
-`PubSubCaseConsumer` 在**落库与幂等标记之前**对下一条白名单 `case_push` 抛瞬态异常 → 不 ack → PubSub 重投，
-第二次处理走完整真实路径并成功。这样断言的是纯粹的重投幂等，不会把「内存幂等在重启后失效」这个变量混进来
-（后者是 T5-5 多实例幂等拓扑评审的议题）。三重安全约束：`collection.ingestion.fault-injection-enabled`
-默认 false、只对白名单 `loan_id` 生效、每次 arm 只失败一次；端点位于 `@Profile({"local","test"})` 的
-`MockTriggerController`。
-
-| 未关闭项 | 裁决 |
-|---|---|
-| `scripts/test/l4b-official-test.sh` | ✅ 2026-07-27 已实跑取证 `PASS=41 FAIL=0 SKIP=0` |
-| **Nacos YAML 重复 `channel:` 键** | ✅ 2026-07-27 已修复；preflight「顶层键无重复」PASS |
-| gcloud `pubsub.subscriptions.get` | ✅ 2026-07-27 已验证：`describe` 返回测试订阅、`ACTIVE` 状态及目标 topic；strict preflight 订阅检查 PASS |
-| 独占消费 | ✅ 2026-07-27 运维已确认测试订阅独占消费 |
-| 旧库 seed 写权限 | ✅ 2026-07-27 回滚验证通过：`UPDATE t_collection … WHERE id LIKE 'IC_TEST_%'` 影响 6 行且回滚无痕；preflight 已固化该检查 |
-| L4b-7 注入开关 | ✅ 2026-07-27 已实跑取证：注入命中→未 ack→重投→幂等收敛（**仅联调环境，生产必须 false**） |
-| SPI 零 DB I/O 约定 | ✅ 2026-07-27 修复 `ConfigTemplateProvider` 热路径查库；本轮 0 次 SPI 超时。**归属 `collection-channel`（编排同事模块），需同步告知** |
-| 内容审计 HMAC | ✅ 2026-07-28 注入 `CONTENT_AUDIT_HMAC_KEY`/`CONTENT_AUDIT_KEY_ID`（写入 gitignore 的 `.env`）后取证：9 条投递均带 `content_hmac` 与 `content_key_id=l4b-test-20260728`。**生产须换用 Secret 注入并纳入轮换** |
-| `template_version` 来源误标 | ✅ 2026-07-28 修复，见下文 |
-| T3a 出口 | ✅ 已闭合（见 §5） |
+> `repaymentEvent` 不携带 `caseVersion`：乱序验证须分别使用 `caseEvent` 内容指纹与 `repaymentEvent.occurredAt`。发布脚本必须使用真实契约 envelope 与真实指纹，占位值不可用于取证。
 
 ### 出口
 
-T4 入口 **T3a + T3b + T0 L4b 预检** 均已通过。T4 出口所需的 L4b-1…8 证据、独占订阅、真实 PubSub 的
-L4b-2 与 official 脚本实跑均已具备（`PASS=41 FAIL=0`），且 `mvn test` 全量回归 140 用例全绿。
-当前仅剩**内容审计 HMAC 待注入密钥后取证**一项；该项不阻塞触达链路正确性，可与 T5 并行关闭。
+- L4a 与 L4b 全部用例按当前契约取证；
+- 主证据为消息 payload、inbox、投影与 plan/step/timeline 的可追溯关联；
+- SPI 硬超时保持生产默认启用，且全程无 SPI 超时；
+- 环境准备、操作顺序、查库节奏与可重复性前置见 [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)。
 
 ---
 
-## 8. T5 Pilot / 预发生产等价拓扑
+## 7. T3o 生产等价演练与简版观测
 
 ### 目标
 
-在不影响真实客户的前提下，验证生产等价拓扑、并行消费、调度与告警。T5 必须等待 T4 通过。
+在不触达真实客户的隔离环境验证 Pilot 所需的 Redis、调度、回滚与最小观测能力。T3o 是 T4 的硬前置。
 
-> 环境申请、Secret/Nacos 配置、演练顺序、证据归档和回滚操作见 [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。本文只维护用例、证据与出口。
+> 环境申请、配置、演练顺序与回滚操作见 [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。用例编号沿用 `T5-R` / `T5-S`，避免打断既有证据索引。
 
-| ID | 准入/用例 | 允许替身 | 证据 | Owner | 状态 |
-|---|---|---|---|---|---|
-| T5-1 | T4 全部出口已通过 | 无 | T4 证据包 | 主架构 | ⬜ |
-| T5-2 | 生产订阅 `intelligent-collection-cases-v1-sub`（topic `intelligent-collection-cases-v1`） | 测试白名单 | 运维拓扑/消费证据 | 运维 | ⬜ |
-| T5-3 | 调度通道生产化，见 [T5-S](#t5-s-调度通道专项用例) | 可用白名单数据 | T5-S1…S7 证据 | 运维 + 主架构 | ⬜ |
-| T5-4 | 渠道 sandbox、白名单、脱敏、限频 | 测试地址 | 配置审查 | 编排同事 + 运维 | ⬜ |
-| T5-5 | Redis 事件总线/幂等专项用例组，见 [T5-R](#t5-r-redis-专项用例) | 不允许 memory-only 假设 | T5-R1…R10 证据 | 主架构 | ⬜ |
+| ID | 准入/用例 | Owner | 状态 |
+|---|---|---|---|
+| T3o-1 | T3 全部出口已通过 | 主架构 | ⬜ |
+| T3o-2 | Pilot 案件/调度订阅、Nacos 与 Redis 隔离配置就位 | 运维 | ⬜ |
+| T3o-3 | 调度通道生产化（T5-S1…S7） | 运维 + 主架构 | ⬜ |
+| T3o-4 | 渠道 sandbox、白名单、脱敏与限频 | 编排同事 + 运维 | ⬜ |
+| T3o-5 | Redis 总线/幂等专项（T5-R1…R15） | 主架构 | ⬜ |
+| T3o-6 | 简版观测 MVP（T3o-O1…O4） | 主架构 | ⬜ |
+| T3o-7 | Pub/Sub 死信演练：持续瞬态失败超过订阅最大投递次数后进入 DLQ；保留原始 payload 与 `eventId`，修复后受控重放 | 运维 + 主架构 | ⬜ |
 
-### T5-S 调度通道专项用例
+### T3o-O 简版观测 MVP
 
-> T5-3 的展开。对应实现：`collection-admin/job/PubSubScheduleConsumer.java`、`ScheduledJobRunner.java`、`config/SchedulerEntrypointValidator.java`。机制 SSOT 为[基础设施 §5](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)，运维交付与配置模板见 [T5 手册 §3.2 / §5.1](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8)。
->
-> **触发方式的变化**：迁出 XXL-Job 后不再有调度控制台的「手动执行」按钮。本组所有手动触发一律改为**向调度专用主题发布一条带 `job` 属性的消息**：
->
-> ```bash
-> gcloud pubsub topics publish <SCHEDULE_TOPIC> --project=<PROJECT_ID> \
->   --message="manual-tick" --attribute=job=dailyRoll
-> ```
->
-> **断言方式的变化**：没有执行记录页面，证据一律取自应用侧 `collection.schedule.*` 指标与日志（[基础设施 §7.3](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#调度指标的人工巡检口径)）。Cloud Scheduler 的执行记录只能证明消息已发出，**不可**作为「扫描跑过」的证据。
+> 不要求 Prometheus、Dashboard 或 Alertmanager。本组验收的是代码能提供可查询的最小证据；能力缺失时须先作为代码交付补齐，不能以事后人工推断替代。
 
-| ID | 场景 | 触发方式 | 断言 | 状态 | Owner |
-|---|---|---|---|---|---|
-| T5-S1 | 调度链路连通 | 四条 Scheduler Job 启用后静置 5 分钟 | `collection.schedule.triggered{job=planStepDue}` 与 `{job=callbackTimeout}` 各约 +5；日志有 `[Scheduler] job=... 扫描完成`；`failed` 为 0 | ⬜ | 运维 + 主架构 |
-| T5-S2 | 按属性路由 | 分别发布 `job=planStepDue` / `callbackTimeout` / `dailyRoll` 各一条 | 三个任务各自触发一次，互不串扰；`scan.rows` 按对应任务累加 | ⬜ | 主架构 |
-| T5-S3 | 未知 job 取值 | 发布 `job=ptpExpired` 一条 | 记录 WARN 并 ack 不重投；`skipped{reason=UNKNOWN_JOB}` +1；无任何扫描发生；订阅未确认数不增长 | ⬜ | 主架构 |
-| T5-S4 | **陈旧消息丢弃** | 停应用 10 分钟使消息累积，再启动 | 启动后 `stale.discarded{job=planStepDue}` 出现约 +9 的一次性尖峰后归零；`triggered` 增量 ≤ 1；**不得**出现连续多轮扫描（扫描风暴） | ⬜ | 主架构 |
-| T5-S5 | **重复投递** | 连发两条相同 `job=planStepDue`（间隔 >1s，串行到达） | 两条均 ack；扫描各跑一次；因步骤幂等锁与步骤状态迁出，**不产生重复触达**（无新增 `provider_msg_id`） | ⬜ | 主架构 |
-| T5-S6 | **并发单飞** | 制造一次耗时较长的 `dailyRoll`（大批量），执行中再发一条 `job=dailyRoll` | 第二条被单飞跳过，`skipped{reason=IN_FLIGHT}` +1；Redis 游标只推进一页，不出现重复推进 | ⬜ | 主架构 |
-| T5-S7 | 日切窗口续跑与完成标记 | 让两条 `dailyRoll` Job 按 03:35–05:55 自然运行一夜 | 窗口内 `triggered{job=dailyRoll}` 约 29 次；游标逐页推进；完成后写当日完成标记并跳过后续触发；06:00 前完成，未触发 O8 告警 | ⬜ | ingestion + 运维 |
+| ID | 受控场景 | 最小可查询证据 | 状态 |
+|---|---|---|---|
+| T3o-O1 | 正常消息消费 | ACK/NACK/poison、投影与 inbox 状态，可关联 event/case | ⬜ |
+| T3o-O2 | 发布失败与补发 | 失败原因、inbox 状态迁移与补发结果可查，不泄露 PII | ⬜ |
+| T3o-O3 | 调度、渠道与日切异常 | 任务成功/失败、扫描与完成标记、Guard 拦截与渠道失败可关联 plan/step | ⬜ |
+| T3o-O4 | Redis PEL/DLQ 与重复投递 | Stream/PEL/DLQ 深度、消费去重与重复投递证据可查 | ⬜ |
 
-> 单测已覆盖的等价语义（`ScheduledJobRunnerTest` 8 例、`PubSubScheduleConsumerTest` 11 例、`SchedulerEntrypointValidatorTest` 8 例）验证的是**逻辑正确**；本组验证的是**真实 Cloud Scheduler + Pub/Sub 上的投递与累积行为**，单测结果不能替代本组任何一条。
+### T5-S 调度通道专项
 
-### T5-R Redis 专项用例
+> 手动触发一律通过向调度主题发布带 `job` 属性的消息；证据取自应用侧调度指标与日志。Cloud Scheduler 的执行记录只能证明消息已发出，不能证明扫描已执行。
 
-> T5-5 的展开。对应实现：`collection-engine/bus/RedisStreamEventBus.java`、`RedisIdempotencyService.java`、`collection-ingestion/job/RedisDailyRollDeduplicator.java`（均为 Pilot 配置路径，激活 `application-pilot.yml` / `collection.eventbus=redis` + `collection.idempotency=redis`）。基础设施规范 [附录 C 生产就绪差集登记](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-c生产就绪差集登记)是差集权威来源；这里只维护验证方式和证据。
->
-> **与内存版测试的边界**：L0–L4b 验证的是业务语义在内存实现下正确；本组验证的是 Redis 实现特有的失败模式（崩溃恢复、PEL、DLQ、跨实例幂等），内存版测试结果不能替代本组任何一条。
+| ID | 场景 | 断言 | Owner | 状态 |
+|---|---|---|---|---|
+| T5-S1 | 调度链路连通 | 各周期任务按频率触发；失败计数为 0 | 运维 + 主架构 | ⬜ |
+| T5-S2 | 按属性路由 | 三类任务各自触发且互不串扰 | 主架构 | ⬜ |
+| T5-S3 | 未知 / 缺失 job 取值 | 记录并 ACK 不重投；无扫描发生。须含「`job` 只写在 body、未配 attribute」场景：计入 `skipped{reason=UNKNOWN_JOB}` 且 `triggered` 不增长 | 主架构 | ⬜ |
+| T5-S4 | 陈旧消息丢弃 | 停机积压重启后仅放行当前 tick，无扫描风暴 | 主架构 | ⬜ |
+| T5-S5 | 重复投递 | 均 ACK；因步骤幂等不产生重复触达 | 主架构 | ⬜ |
+| T5-S6 | 并发单飞 | 第二条被跳过；游标不重复推进 | 主架构 | ⬜ |
+| T5-S7 | 日切窗口续跑与完成标记 | 窗口内逐页推进并按时完成，写当日完成标记 | ingestion + 运维 | ⬜ |
+| T5-S8 | 调度订阅独占 | 调度 subscription 无第二个订阅者；四条 Job 的 `describe` 输出含正确 `job` attribute 与 `Asia/Manila`；tick 不被其他消费者分流 | 运维 + 主架构 | ⬜ |
 
-| ID | 场景 | 触发方式 | 断言 | 状态 | Owner |
-|---|---|---|---|---|---|
-| T5-R1 | Consumer Group 初始化 | 应用启动/重启，Stream/Group 已存在 | `initConsumerGroup()` 幂等，不因 `BUSYGROUP` 报错阻塞启动 | ⬜ | 主架构 |
-| T5-R2 | 正常消费与 XACK | `publish()` 一个事件 | 1s 内被 `consume()` 轮询到并处理成功，`XPENDING` 为空 | ⬜ | 主架构 |
-| T5-R3 | handler 异常 → 消息滞留 PEL | 注入 handler 抛异常 | 不 XACK；`XPENDING` 可见该消息；日志含 `leaving pending` | ⬜ | 主架构 |
-| T5-R4 | PEL 认领与重投 | R3 场景，验证 120s 内不认领；超过 `pel-min-idle-seconds`（默认 120s）后触发 `reclaimPending()` | 处理未结束时不发生 `XCLAIM`；超时消息被认领后重新处理，handler 恢复正常则最终 XACK 成功 | ⬜ | 主架构 |
-| T5-R5 | 毒消息进 DLQ | 令 handler 持续失败直到 `deliveryCount ≥ max-delivery-count`（默认 5） | 原消息从 PEL 移除（XACK）；`{stream}:dlq` 出现对应记录，含 `reason=MAX_DELIVERY_EXCEEDED` | ⬜ | 主架构 |
-| T5-R6 | DLQ 持久化与受控重放 | R5 后查 `t_event_dlq`，用 `POST /ops/dlq/redrive` 对可恢复消息执行一次重放；另在触达窗口外重放一条 `PLAN_STEP_DUE` | MySQL 记录原始信封、原因、投递次数与失败时间；重放置 `REDRIVEN` 且事件回到原 Stream；不可恢复原因置 `TERMINATED` 并告警；窗口外触达型事件计入 `deferred` 且保持 `PENDING`（状态机与门控已由 `DlqControllerTest` 单测覆盖，本项验收真实库与告警） | ⬜ | 主架构 |
-| T5-R7 | 幂等锁跨实例互斥 | 两个应用实例（或两条并发线程）对同一 `idempotencyKey` 调 `acquire()` | 仅一次返回 `true`；`TTL` 到期后 key 消失，之后可再次 `acquire` 成功 | ⬜ | 主架构 |
-| T5-R8 | Redis 合规频控连续性 | 触发单渠道与跨渠道计数后重启任一实例，并并发触发上限边界请求 | 计数不因应用重启清零；仅允许一个请求占用最后名额；Redis 不可用时 fail-close 并告警（键名、PHT 过期与 fail-close 已由 `RedisComplianceCounterServiceTest` 单测覆盖，本项验收跨实例与真实断连） | ⬜ | 主架构 |
-| T5-R11 | 指标与 MDC 抓取 | Pilot 起服务后抓 `/actuator/prometheus`，并制造一次 Guard fail-close 与一次 DLQ 入列 | 出现 `collection.event.published/consumed/pending/stream.length/dlq.size`、`executor.*`、`collection.step.skipped{reason=GUARD_ERROR}`、`collection.spi.timeout`；相关日志带 `event=`/`case=`/`plan=`/`step=` | ⬜ 手工抓取即可通过；Prometheus/告警接入可后置至 T6 前（2026-08-05 决定） | 主架构 + 运维 |
-| T5-R12 | 接入去重跨重启连续性 | 处理一条 `case_push` 后重启应用，重投同一条消息；再发全额结清消息后重投 | 重启后重复消息仍被 `dedup:msg` 拦截、`ingested` 仍拦截重复入案；结清清除 `ingested` 后允许再次 `CASE_INGESTED`；乱序旧 `publish_time` 仍被 `last-seen` 判定为旧 | ⬜ | 主架构 |
-| T5-R13 | 事件消费去重 | 让一条事件的 handler 处理成功但延迟 ACK 触发 PEL 认领重投；再对一条已成功处理的事件执行一次 DLQ 重放 | 重投与重放都不再次执行业务，直接 ACK 并计入 `collection.event.deduped`；`collection:processed:{event_id}` 存在且 TTL 约 24h；handler 失败的事件没有该标记，仍可重投重试（四条路径已由 `RedisStreamEventBusDedupTest` 单测覆盖，本项验收真实 Redis 行为） | ⬜ | 主架构 |
-| T5-R9 | Redis 断连恢复 | 联调环境短暂阻断 Redis 网络后恢复 | 恢复后 `consume()`/`reclaimPending()` 的下一轮调度自愈，无需重启应用；期间未处理事件在恢复后仍可被消费，不丢失 | ⬜ | 主架构 + 运维 |
-| T5-R10 | Consumer 并发与背压 | 并发 publish 数十个事件，其中一个 handler 人为 sleep 较长时间模拟慢渠道调用 | 其余事件可由空闲工作线程处理；队列有界；满载时触发 CallerRuns 背压而不丢消息；MDC 不丢失 | ⬜ | 主架构 |
-| T5-R14 | 发件箱兜底重发（[引擎 §7.4 A](../MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)） | 一个步骤转终态**提交后**阻断 Redis，使 `STEP_COMPLETED` 的即时发布失败；恢复 Redis 后等待宽限期 | 步骤终态与 `t_event_outbox` 的 `PENDING` 记录同时存在（证明同事务落盘）；宽限期后 `OutboxPublisher` 重发，计划继续推进至下一步；`collection.outbox.republished` +1；**全程只发出一次触达**（确定性 `eventId` 被消费侧去重吸收） | ⬜ | 主架构 |
-| T5-R15 | 停摆巡检（只告警） | 手工构造一个非终态计划，其步骤 `trigger_time`/`timeout_time` 均为空，等待超过 `engine.reaper.idle-minutes` | `collection.plan.stuck` +1 且日志给出 planId；**库中状态未被任何自动修复改写、无新增触达**；正常在跑的计划不被误报 | ⬜ | 主架构 + 运维 |
+### T5-R Redis 专项
 
-**设计选型（已确认，2026-08-03）**：`RedisStreamEventBus` 用 `@Scheduled` 轮询 `XREADGROUP` + 定期 `XCLAIM`，正式替代基础设施规范 §3.2 原规格的 `StreamMessageListenerContainer` 长连接监听；因此**没有独立看门狗线程**，也没有"连接假死"这一失败模式需要覆盖。规格文档已同步更新（[§3.2 决策记录](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#32-核心消费协议)），T5-R9 用于实测验证这一自愈假设。
+> 本组验证 Redis 实现特有的失败模式（崩溃恢复、PEL、DLQ、跨实例幂等），内存实现的测试结果不能替代任何一条。
+
+| ID | 场景 | 断言 | Owner | 状态 |
+|---|---|---|---|---|
+| T5-R1 | Consumer Group 初始化 | 重复初始化幂等，不阻塞启动 | 主架构 | ⬜ |
+| T5-R2 | 正常消费与 ACK | 事件被及时消费，待处理列表清空 | 主架构 | ⬜ |
+| T5-R3 | handler 异常滞留 PEL | 不 ACK，消息在待处理列表可见 | 主架构 | ⬜ |
+| T5-R4 | PEL 认领与重投 | 未超空闲阈值不认领；超时后认领并最终 ACK | 主架构 | ⬜ |
+| T5-R5 | 毒消息进 DLQ | 超投递上限后移出 PEL 并入 DLQ，附原因 | 主架构 | ⬜ |
+| T5-R6 | DLQ 落库与受控重放 | 落表含原始信封与原因；可恢复项重放成功；不可恢复项终止并告警；窗口外触达延后 | 主架构 | ⬜ |
+| T5-R7 | 幂等锁跨实例互斥 | 同一键仅一次获取成功，TTL 到期后可再获取 | 主架构 | ⬜ |
+| T5-R8 | 合规频控连续性 | 计数不因重启清零；边界并发只放行一个；断连 fail-close | 主架构 | ⬜ |
+| T5-R9 | Redis 断连恢复 | 恢复后消费与认领自愈，无需重启，事件不丢 | 主架构 + 运维 | ⬜ |
+| T5-R10 | 并发与背压 | 慢渠道不阻塞其他事件；队列有界；背压不丢消息 | 主架构 | ⬜ |
+| T5-R11 | 指标与 MDC | 关键指标可抓取，日志携带 event/case/plan/step | 主架构 + 运维 | ⬜ |
+| T5-R12 | 接入去重跨重启 | 重启后重复消息仍被拦截；相同快照跳过；陈旧还款不覆盖新投影 | 主架构 | ⬜ |
+| T5-R13 | 事件消费去重 | PEL 重投与 DLQ 重放都不重复执行业务 | 主架构 | ⬜ |
+| T5-R14 | 发件箱兜底重发 | 即时发布失败后由发件箱补发，全程只发出一次触达 | 主架构 | ⬜ |
+| T5-R15 | 停摆巡检 | 仅计数告警；不改库、不新增触达；正常计划不误报 | 主架构 + 运维 | ⬜ |
 
 ### 出口
 
-生产等价拓扑经演练，监控与回滚机制可操作，且所有真实触达均在白名单/沙箱范围内。T5-R1…R15 与 T5-S1…S7 全部 ✅ 方可进入 T6。
+T5-S、T5-R、T3o-O 与 T3o-7 全部通过，回滚机制可操作，演练触达均在 sandbox 或测试地址范围内。完整监控平台未接通不阻塞本出口，但阻塞 T5。
 
 ---
 
-## 9. T6 受控切量准入与回滚
+## 8. T4 固定 50 案真实白名单 Pilot
 
 ### 准入
 
+T4 使用业务批准的**固定 50 个真实案件**，由数仓按正式契约发布、系统消费驱动；不允许以人工构造消息替代。接入可订阅 Pilot/生产案件 Topic，但仅处理批准白名单，其余一律 ACK 跳过且不得触达。
+
 | ID | 准入项 | 退出条件 | Owner | 状态 |
 |---|---|---|---|---|
-| T6-1 | T5 已通过 | T5 证据包完整 | 主架构 | ⬜ |
-| T6-2 | 切量白名单/比例/观察窗口 | 已批准、可审计、可停止 | 业务 + 运维 | ⬜ |
-| T6-3 | 回滚开关与责任人 | subscription、路由、渠道开关、恢复步骤已演练 | 运维 + 主架构 | ⬜ |
-| T6-4 | 幂等/事件总线生产化 | [T5-R](#t5-r-redis-专项用例) 全部闭合（含 R6 DLQ 落库、R8 合规频控 Redis 化） | 主架构 | ⬜ |
-| T6-5 | 供应商额度与合规 | 限频、模板、审计、投诉处理就绪 | 编排同事 | ⬜ |
+| T4-1 | T3 与 T3o 已通过 | 证据包完整 | 主架构 | ⬜ |
+| T4-2 | 50 案审批与范围冻结 | 脱敏清单、渠道、触达窗口、值守人与观察期已批准 | 业务 + 运维 | ⬜ |
+| T4-3 | Pilot 配置双人复核 | 订阅、白名单、Redis、渠道与触达归属配置正确 | 运维 + 主架构 | ⬜ |
+| T4-4 | 停止与回滚已演练 | 订阅、路由、渠道开关与归属恢复步骤可执行 | 运维 + 主架构 | ⬜ |
+| T4-5 | 供应商额度与合规就绪 | 限频、模板、审计与投诉处理可用 | 编排同事 | ⬜ |
+| T4-6 | 后台管理写接口收口 | 配置模板增删改与回滚、合规冻结解冻在 Pilot 期间关闭或降为只读；配置变更一律走 Nacos 并留变更记录 | 主架构 + 运维 | ⬜ |
 
-### 回滚原则
+### 覆盖矩阵
 
-回滚不得通过删除数据或重放未知消息实现。必须先停止新路由/新订阅消费，保全证据，按已演练的配置切回旧系统，再进行对账与受控补偿。
+50 案按风险分层选取，而非随机抽样；每个关键路径至少有一个独立可审计样本：
+
+| 维度 | 需覆盖的取值 |
+|---|---|
+| 阶段 | S0–S4 各阶段，以及 D91 停催 |
+| 产品与金额 | 单期与三期产品；不同逾期金额档 |
+| 触达地址 | 手机、Push token、邮箱的有效与缺失组合 |
+| 案件事件 | 首次入案、每日静默刷新、部分还款、全额结清 |
+| 异常路径 | 重复投递、乱序、poison、窗口外与频控拦截 |
+
+### 观察与出口
+
+- 连续覆盖至少三个完整日循环。
+- 每日按消息类型对账：发布量、ACK/NACK/poison/去重、inbox、投影、计划与渠道受理结果。
+- 逐案归档：批准编号、脱敏案件标识、输入事件标识、预期与实际触达、证据位置、责任人与结论。文档内不保存 PII 或凭证。
+- **零容忍阻断**：错误或非白名单触达、重复触达、漏停催、越窗或越限、PII 泄露、无法解释的对账差异。任一发生即冻结，不得以总体成功率抵消。
+- 非安全性的短暂基础设施故障，可在根因修复后从受影响批次重新开始。
 
 ---
 
-## 10. 全局矩阵：阶段 × 环境 × 允许替身 × 命令 × 证据 × Owner × 出口
+## 9. T5 每日上限渐进切量
 
-| 阶段 | 环境 | 允许替身 | 必跑命令 | 最小证据 | Owner | 退出条件 |
-|---|---|---|---|---|---|---|
-| T0 | CI/local/L4 环境 | 基础设施可模拟 | `mvn -B -ntp clean test`；L4b preflight | CI、health、预检 | 主架构/运维 | 环境适用且隔离 |
-| T1 | CI/local | SPI、Repo、EventBus | engine/channel Maven tests | JUnit/CI | 模块 owner | L0/L0c/L1 全绿 |
-| T2 | CI/local | 契约替身仅临时允许 | L2 test suite | C1–C7 结果 | 主架构+编排 | 真实实现对接复跑 |
-| T3a | 集成 MySQL | 不允许内存持久化替代 | integration Maven tests（待补） | SQL + JUnit | 服务+主架构 | L3 持久化语义通过 |
-| T3b | 合成案+渠道沙箱 | 仅合成事件源/临时策略实现 | `l4a-official-test.sh` | 脚本、终端、API | 主架构+编排 | L4a 用例完成 |
-| T4 | 隔离 PubSub/旧库/DB/渠道 | 不允许 mock ingress；旧库仅兜底/对账 | `l4b-preflight.sh --strict` + `l4b-official-test.sh` | PubSub、SQL、日志 | 主架构+服务+运维 | L4b-1…13、独占订阅、official 脚本 |
-| T5 | Pilot/预发等价拓扑 | 仅白名单/沙箱 | Runbook 演练 + T5-R Redis 专项 + T5-S 调度专项 | 监控、调度、拓扑、T5-R 与 T5-S 证据 | 全员 | T4 已过且演练通过 |
-| T6 | 生产受控切量 | 不允许测试替身 | 批准的切量/回滚 Runbook | 变更记录、监控 | 业务+运维+主架构 | 可切、可停、可回滚 |
+每个台阶使用业务批准的每日上限 `cap[n]`；本文不预设未经批准的数量或比例。
 
-**依赖关系：**
+| ID | 动作 | 放行条件 | 失败处置 | 状态 |
+|---|---|---|---|---|
+| T5-1 | 50 案结论评审 | T4 出口达成、三方签字 | 留在 T4 或回滚 | ⬜ |
+| T5-2 | 提升至 `cap[1]` | 对账无差异、无安全阻断 | 冻结新增案件 | ⬜ |
+| T5-3 | 逐级提升至 `cap[n]` | 每级观察窗达标、归属切换审计通过、巡检正常 | 回退至上一已证明安全的 cap | ⬜ |
+| T5-4 | 申请移除白名单 | 自动抓取、阈值告警与通知路由已完成 | 不移除白名单 | ⬜ |
 
-```text
-T0 → T1 → T2
-          ├→ T3a ─┐
-          └→ T3b ─┴→ T4 → T5 → T6
-```
+每批放量前须重跑最小回归包：全仓单测、L4b 接入相关子集、接入去重跨重启用例与当日对账。
 
-T3a 与 T3b 可并行；T4 必须等待两者均通过；T5 必须等待 T4 通过。
+---
+
+## 10. T6 稳态运营与复盘
+
+前置为 T5 已批准全量切换。必须完成指标抓取、Dashboard、阈值告警与通知路由，并持续保留日对账、DLQ/PEL、渠道与合规审计、日切完成与回滚演练证据。业务 KPI 与工程质量门禁分开统计；50 案不用于得出长期 KPI 结论。
+
+### 回滚原则（T3o–T6 通用）
+
+回滚不得通过删除数据或重放未知消息实现。顺序为：停止新路由与调度触发 → 关闭渠道发送 → 保全 Pub/Sub、Redis、MySQL 与供应商证据 → 按已演练配置切回旧系统 → 对账与受控补偿。
+
+---
+
+## 11. 全局矩阵
+
+| 阶段 | 环境 | 允许替身 | 最小证据 | Owner | 退出条件 |
+|---|---|---|---|---|---|
+| T0 | CI / local / 联调环境 | 基础设施可模拟 | CI、健康检查、预检、对齐记录 | 主架构 + 运维 | 环境隔离且断言依据无漂移 |
+| T1 | CI / local | SPI、Repository、EventBus | JUnit / CI | 模块 owner | L0（后台管理除外）、L1、L2 全绿 |
+| T2 | 受控 MySQL | 不允许内存持久化替代 | IT 记录与 SQL | 服务同事 + 主架构 | L3 事务与投影语义通过 |
+| T3 | 合成源 + 隔离 Pub/Sub、DB、渠道 | L4a 仅合成事件源；L4b 不允许 mock 入口 | payload、inbox、投影、SQL、日志 | 主架构 + 服务同事 + 运维 | L4a 与 L4b 全部取证 |
+| T3o | Pilot 等价拓扑 + 隔离数据 | 仅 sandbox 或测试地址 | Redis、调度、观测与回滚证据 | 全员 | 可靠性与观测 MVP 通过 |
+| T4 | 真实数仓消息 + 批准 50 案 | 不允许伪造消息或名单外触达 | 逐案证据与日对账 | 业务 + 运维 + 主架构 | 三日循环且零安全阻断 |
+| T5 | 生产受控切量 | 不允许测试替身 | 变更记录、对账、巡检 | 业务 + 运维 + 主架构 | 每级观察窗达标 |
+| T6 | 稳态生产运营 | 不允许测试替身 | 自动监控、告警、复盘 | 业务 + 运维 + 主架构 | 可持续运行与复盘 |
 
 ---
 
 ## 附录 A：业务链路覆盖索引
 
-| 业务链路 | T1/T2 | T3a | T3b | T4 |
+| 业务链路 | T1 | T2 | T3 | T3o / T4 |
 |---|---|---|---|---|
-| 入案建计划 | L0/L1、C1 | Mapper/快照 | L4a-1/7 | L4b-1/5 |
-| 案件投影与校准 | `AiCaseIngestionProcessorTest` | L3-8 | 范围外（合成源不写投影） | L4b-9/10/11/12/13 |
-| 调度执行 | L0/L1、C3–C5/C7 | scanner/step | L4a-1/2/6/8 | L4b-6 |
-| 结果回收 | L0/L1、C6 | 状态/timeline | L4a-6 | L4b-1/6 |
-| 异步回调 | L0/L1；L2-CB 差集 | 回调落库 | 范围外 | 后续真实 Voice/AI Call |
-| 中断与重建 | L0/L1 | 取消/唯一约束 | L4a-3/4/5 | L4b-2/3/4/8 |
+| 入案建计划 | 接入映射、L1、C1 | plan/快照往返 | L4a-1/7、L4b-1 | 日对账 / 50 案真实入案 |
+| 案件投影与刷新 | 接入投影决策 | L3-8 | L4b-5/9/10/11/12/13 | 断连重启 / 每日对账 |
+| 调度执行 | 调度入口、C3–C5/C7 | 扫描与步骤推进 | L4a-1/2/6/8、L4b-6 | T5-S / 真实日切 |
+| 结果回收 | L1、C6 | 状态与 timeline | L4a-6、L4b-6 | `providerMsgId` 对账 |
+| 异步回调 | L1、L2-CB | 回调落库 | 范围外 | 真实 AI_CALL 接入后 |
+| 中断与重建 | 生命周期用例 | 取消与唯一约束 | L4a-3/4/5、L4b-2/3/4/8 | 真实停催与还款审计 |
+| 可靠性与恢复 | 发件箱、停摆巡检 | L3-6/L3-7 | L4b-7/14 | T5-R 全组 |
 
 ## 附录 B：外部测试资产索引
 
-- 渠道测试细节：[`docs/channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md`](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
-- ContextSnapshot 契约：[`docs/contracts/README_ContextSnapshot契约对齐.md`](../contracts/README_ContextSnapshot契约对齐.md)
-- 引擎渠道执行契约：[`docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md`](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)
-- L4b 环境和操作：[`MOCASA催收系统升级_Phase1_L4b环境交接清单.md`](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
-- 脚本目录：[`scripts/README.md`](../../scripts/README.md)
+- 测试命令与脚本：[`scripts/README.md`](../../scripts/README.md)
+- L4b 环境与操作：[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
+- 触达内容验收判据（T3 / T4 通用）：[触达内容验收清单](./MOCASA催收系统升级_Phase1_触达内容验收清单.md)
+- Pilot 与切量操作：[T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)
+- 渠道测试细节：[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
+- 快照契约：[ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)
+- 执行契约：[引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)
+
+## 附录 C：缺口登记
+
+> 本表解释状态列 ⬜ 的具体成因。三类缺口的闭合责任与排期方式不同：
+> **缺测试**由本轮测试工作直接闭合；**缺实现**必须先排开发，测试只能暴露不能补齐；**缺环境**依赖运维或外部交付。
+> 缺口闭合后从本表移除，并在对应用例回填状态。
+
+| 缺口 | 类型 | 闭合方式 | 卡住 | Owner |
+|---|---|---|---|---|
+| 日切处理器同日重复不重复发事件无单测（升档、回退保护、D91 停催、已结清/无案跳过、全量扫描门控已由 `DpdStageRollHandlerTest` 覆盖） | 缺测试 | 本轮补写 | T1 · L0 ingestion | 主架构 |
+| 部分还款 `CASE_BALANCE_UPDATED` 无单测；须按[引擎 §4.6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新) 可写字段全集断言：`totalOutstanding` 必填校验、可选字段「携带才覆盖」不写 null、`stage` 不被改写 | 缺测试 | 本轮补写 | T1 · L0 ingestion | 主架构 |
+| 无基线还款 poison 无单测 | 缺测试 | 本轮补写 | T1 · L0 ingestion | 主架构 |
+| 陈旧 `repaymentEvent.occurredAt` 跳过无单测（陈旧 `caseVersion` 已覆盖，两者判定依据不同） | 缺测试 | 本轮补写 | T1 · L0 ingestion | 主架构 |
+| 白名单过滤无单测 | 缺测试 | 本轮补写 | T1 · L0 ingestion | 主架构 |
+| 回调入口验签与审计落库无单测 | 缺测试 | 本轮补写 | T1 · L0 admin 运行入口 | 主架构 |
+| 案件投影事务集成测试缺失 | 缺测试 | 本轮补写 | T2 · L3-8 | 服务同事 + 主架构 |
+| AI_CALL Adapter 不存在（仅 SMS / Push / Email 有实现） | 缺实现 | 排开发 | AI_CALL 验收，Pilot 范围外 | 编排同事 |
+| AI_CALL 回调路由未定：Resolver 下发的地址与实际入口不一致，且存在供应商中立命名待清理 | 缺实现 | 先定路由再开发 | L2-CB 第 3/4 级 | 主架构 + 编排同事 |
+| 简版观测的可查询证据未齐 | 缺实现 | 排开发 | T3o-O | 主架构 |
+| Nacos 新 topic 与订阅未更新 | 缺环境 | 运维交付 | T0-3 | 运维 |
+| HTTPS 回调域名、证书与 HMAC secret | 缺环境 | 运维交付 | L2-CB 第 3/4 级 | 运维 |

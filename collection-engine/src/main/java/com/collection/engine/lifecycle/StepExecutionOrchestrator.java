@@ -92,7 +92,7 @@ public class StepExecutionOrchestrator {
         }
     }
 
-    /** 执行锁已获取后的管线。调用渠道前抛异常时，外层释放锁再 NACK，避免 PEL 重投被旧锁吸收； 一旦调用渠道，锁须保留到 TTL，由渠道幂等和 §7.4 处理外部副作用。 */
+    /** 执行锁已获取后的管线。调用渠道前抛异常时，外层释放锁再 NACK，避免 PEL 重投被旧锁吸收； 一旦调用渠道，锁须保留到 TTL，由渠道幂等和 §7.3 处理外部副作用。 */
     private void executeStepAfterLock(
             ContactPlan plan, ContactPlanStep step, ExecutionState state) {
         // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
@@ -113,15 +113,23 @@ public class StepExecutionOrchestrator {
         ExecutionContext context = contextAssembler.assemble(plan, step);
         refreshVolatileFields(context, preFlight.getCaseInfo());
 
-        // ── ③ 业务级守卫（合规，硬超时 20ms） ──
+        // ── ③ 业务级守卫（合规，硬超时见 engine.spi.execution-guard-timeout-ms，默认 50ms） ──
         GuardVerdict verdict;
         try {
             verdict =
                     spiInvoker.call(
                             SpiType.EXECUTION_GUARD, () -> executionGuard.evaluate(context));
         } catch (Exception e) {
-            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
+            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §5）
             log.warn("[execStep] ExecutionGuard failed (fail-close → SKIPPED): {}", e.getMessage());
+            markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
+            return;
+        }
+        // 非法 null 与抛异常同等处理：合规无法判断时宁可漏触达，也不得因 NPE 让事件反复重投直至 DLQ。
+        if (verdict == null) {
+            log.warn(
+                    "[execStep] ExecutionGuard returned null (fail-close → SKIPPED) step {}",
+                    step.getId());
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
             return;
         }
@@ -345,7 +353,7 @@ public class StepExecutionOrchestrator {
     }
 
     /**
-     * 提交后即时发布。事件已由状态迁移所在事务写入发件箱（核心引擎规格 §7.4），发布成功即销账； 发布抛错或进程在此处被杀，都只是留下一条待重发记录，由 {@code
+     * 提交后即时发布。事件已由状态迁移所在事务写入发件箱（核心引擎规格 §7.2），发布成功即销账； 发布抛错或进程在此处被杀，都只是留下一条待重发记录，由 {@code
      * OutboxPublisher} 兜底。
      */
     private void publishStepCompleted(ContactPlan plan, ContactPlanStep step) {

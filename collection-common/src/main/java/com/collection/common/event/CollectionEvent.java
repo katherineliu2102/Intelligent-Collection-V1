@@ -20,6 +20,7 @@ public class CollectionEvent {
     public static final String USER_ID = "userId";
     /** 外部 t_ai_collection 单案件内容指纹，接入层用于识别快照变化。 */
     public static final String CASE_VERSION = "caseVersion";
+
     public static final String PLAN_ID = "planId";
     public static final String STEP_ID = "stepId";
     public static final String STAGE = "stage";

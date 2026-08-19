@@ -2,7 +2,7 @@
 
 > **适用版本**：Phase 1 / Phase 1.5 切片（配置治理基础）
 > **读者**：运营、测试、策略、研发联调同事
-> **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [`P0 测试`](./testing/admin-p0-test.md) · [`L4b 触达核对清单`](../../AI%20collection/MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md)
+> **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md)
 
 ---
 

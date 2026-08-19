@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 外部渠道 I/O 完成后的短事务：只在状态迁移成功时记录最终触达事实。 事件由调用者在本事务提交返回后发布，避免消费者读取到未提交状态。
  *
- * <p>步骤转终态即意味着 STEP_COMPLETED 已产生，因此该事件在本事务内一并入发件箱（核心引擎规格 §7.4）： 调用者随后的即时发布若失败，重投的原事件会因步骤已是终态而按
+ * <p>步骤转终态即意味着 STEP_COMPLETED 已产生，因此该事件在本事务内一并入发件箱（核心引擎规格 §7.2）： 调用者随后的即时发布若失败，重投的原事件会因步骤已是终态而按
  * no-op 返回，事件不会被重新推导。 调用者用 {@link EngineEvents#stepCompleted} 构造要发布的事件，与入箱记录共享确定性 eventId。
  */
 @Component

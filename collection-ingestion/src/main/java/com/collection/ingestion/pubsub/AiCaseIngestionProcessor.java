@@ -1,32 +1,29 @@
 package com.collection.ingestion.pubsub;
 
 import com.alibaba.fastjson.JSONObject;
-import com.collection.common.event.CollectionEvent;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
 import com.collection.common.repository.CaseProjectionRepository;
 import com.collection.common.repository.CaseProjectionRepository.Outcome;
 import com.collection.ingestion.IngestionService;
-import java.math.BigDecimal;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * v2 入站事实的唯一处理管道（数据接入规格 §3）。数仓直发完整、持久、可重放的 Pub/Sub 事实流，
- * 本类负责把它落成案件投影并驱动引擎：
+ * v2 入站事实的唯一处理管道（数据接入规格 §3）。数仓直发完整、持久、可重放的 Pub/Sub 事实流， 本类负责把它落成案件投影并驱动引擎：
  *
  * <ol>
  *   <li>事务内写收件箱 + 按 {@code caseVersion} 内容指纹条件 upsert {@code t_ai_collection}；
  *   <li>提交后再 publish 内部领域事件，成功才标记收件箱已发布。
  * </ol>
  *
- * <p>顺序不可颠倒：先发事件后写投影会让引擎的实时守卫与日切读到旧快照。publish 失败时抛出异常由
- * {@link PubSubCaseConsumer} nack，重投命中 {@link Outcome#PENDING_PUBLISH} 只补发事件、不重复写投影。
+ * <p>顺序不可颠倒：先发事件后写投影会让引擎的实时守卫与日切读到旧快照。publish 失败时抛出异常由 {@link PubSubCaseConsumer} nack，重投命中 {@link
+ * Outcome#PENDING_PUBLISH} 只补发事件、不重复写投影。
  *
- * <p>外部 Topic 只受理 {@code CASE_INGESTED} 与 {@code REPAYMENT}；阶段变更与 D+91 停催由
- * {@code DpdStageRollHandler} 读投影后独占产出，避免同一状态被两个来源重复触发。
+ * <p>外部 Topic 只受理 {@code CASE_INGESTED} 与 {@code REPAYMENT}；阶段变更与 D+91 停催由 {@code
+ * DpdStageRollHandler} 读投影后独占产出，避免同一状态被两个来源重复触发。
  */
 @Component
 public class AiCaseIngestionProcessor {
@@ -118,19 +115,21 @@ public class AiCaseIngestionProcessor {
                     projection.getNextDueDate(),
                     projection.getCollectionStatus());
         }
-        confirmPublished(eventId, new CasePayloadMapper.AiSnapshot(
-                delta.caseId, delta.userId, null, delta.fields.stage, java.util.Collections.emptyMap()));
+        confirmPublished(
+                eventId,
+                new CasePayloadMapper.AiSnapshot(
+                        delta.caseId,
+                        delta.userId,
+                        null,
+                        delta.fields.stage,
+                        java.util.Collections.emptyMap()));
     }
 
     private boolean shouldPublish(Outcome outcome, String eventId, Long caseId) {
         if (outcome == Outcome.APPLIED || outcome == Outcome.PENDING_PUBLISH) {
             return true;
         }
-        log.info(
-                "[Ingestion] 投影未产生领域事件 outcome={} eventId={} caseId={}",
-                outcome,
-                eventId,
-                caseId);
+        log.info("[Ingestion] 投影未产生领域事件 outcome={} eventId={} caseId={}", outcome, eventId, caseId);
         return false;
     }
 

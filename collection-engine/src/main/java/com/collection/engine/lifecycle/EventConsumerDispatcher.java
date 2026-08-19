@@ -63,7 +63,7 @@ public class EventConsumerDispatcher {
     }
 
     /**
-     * 提交后发布。事件已由 {@link PlanLifecycleManager} 在同一事务内写入发件箱（核心引擎规格 §7.4），
+     * 提交后发布。事件已由 {@link PlanLifecycleManager} 在同一事务内写入发件箱（核心引擎规格 §7.2），
      * 这里成功即销账；抛错或进程被杀只是留下一条待重发记录，由 {@code OutboxPublisher} 兜底。
      *
      * <p>逐条独立 try：一条发布失败不应连带丢掉同批次其余事件的销账。

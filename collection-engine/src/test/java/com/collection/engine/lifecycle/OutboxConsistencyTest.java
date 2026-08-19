@@ -31,7 +31,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * 状态迁移与派生事件的原子性（核心引擎规格 §7.4）。
+ * 状态迁移与派生事件的原子性（核心引擎规格 §7.2）。
  *
  * <p>被守护的失败场景：步骤已提交为终态，提交后的 STEP_COMPLETED 发布失败。此时原事件重投会因步骤已终态 而按 no-op
  * 返回，派生事件不会被重新推导——若事件没有随状态一起落盘，计划就此静默停摆。

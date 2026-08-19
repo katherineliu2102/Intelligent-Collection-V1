@@ -6,7 +6,6 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.collection.ingestion.config.IngestionProperties;
 import com.google.cloud.pubsub.v1.AckReplyConsumer;
@@ -43,7 +42,8 @@ class PubSubCaseConsumerTest {
 
     @Test
     void envelopeBody_routesInnerDataAndRetainsRawPayload() {
-        String body = "{\"dataType\":\"caseEvent\",\"data\":{\"eventId\":\"evt-1\",\"caseId\":525441}}";
+        String body =
+                "{\"dataType\":\"caseEvent\",\"data\":{\"eventId\":\"evt-1\",\"caseId\":525441}}";
         PubsubMessage message = message(null, body);
         AckReplyConsumer reply = mock(AckReplyConsumer.class);
 
@@ -51,7 +51,8 @@ class PubSubCaseConsumerTest {
 
         ArgumentCaptor<JSONObject> payload = ArgumentCaptor.forClass(JSONObject.class);
         verify(processor).handleCaseEvent(payload.capture(), eq(body));
-        org.junit.jupiter.api.Assertions.assertEquals(525441L, payload.getValue().getLong("caseId"));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                525441L, payload.getValue().getLong("caseId"));
         verify(reply).ack();
     }
 

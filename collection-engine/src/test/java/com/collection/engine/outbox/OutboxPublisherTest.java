@@ -31,7 +31,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
-/** 发件箱兜底发布器（核心引擎规格 §7.4）。全 mock，不连库。 */
+/** 发件箱兜底发布器（核心引擎规格 §7.2）。全 mock，不连库。 */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class OutboxPublisherTest {

@@ -55,8 +55,26 @@ class CasePayloadMapperTest {
         assertTrue(mapper.isFullCleared(JSON.parseObject("{\"isFullCleared\":true}")));
         assertFalse(mapper.isFullCleared(JSON.parseObject("{\"isFullCleared\":false}")));
         assertThrows(
-                PoisonMessageException.class,
-                () -> mapper.isFullCleared(JSON.parseObject("{}")));
+                PoisonMessageException.class, () -> mapper.isFullCleared(JSON.parseObject("{}")));
+    }
+
+    @Test
+    void repaymentAllowsNullUpcomingAmountWhenNoNextInstallmentReminderExists() {
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"eventId\":\"evt-repayment-1\",\"eventType\":\"REPAYMENT\","
+                                + "\"occurredAt\":\"2026-08-11T10:06:00+08:00\","
+                                + "\"caseId\":\"525441\",\"userId\":\"2145521\","
+                                + "\"repayTime\":\"2026-08-11T10:00:00+08:00\","
+                                + "\"paidAmount\":3000.0,\"overdueAmount\":6061.14,"
+                                + "\"overduePenaltyAmount\":0.0,\"dpd\":34,\"stage\":\"S4\","
+                                + "\"upcomingAmount\":null,\"nextDueDate\":null,\"isFullCleared\":false}");
+
+        CasePayloadMapper.RepaymentDelta delta = mapper.mapRepaymentDelta(json);
+
+        assertEquals(null, delta.fields.upcomingAmount);
+        assertTrue(delta.fields.nextDueDatePresent);
+        assertEquals(null, delta.fields.nextDueDate);
     }
 
     @Test

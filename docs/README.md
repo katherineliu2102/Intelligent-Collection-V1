@@ -46,8 +46,8 @@
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4 测试地图、链路 × 层级矩阵、§L4a 用例与脚本索引 |
-| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 运维交付、Pilot 配置与演练 |
+| [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4b 测试层级、T0–T6 放行阶段、接入 v3 重测与 T3o 观测门槛 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | T3o 生产等价演练、50 案真实白名单 Pilot、渐进切量与回滚 |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 
@@ -56,7 +56,7 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [操作说明 Nacos 本地启动](./操作说明_Nacos本地启动.md) | ✅ | 本地/Docker 启动；与根 `../README.md` 互补 |
-| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis 资源申请、Pilot 配置/演练、证据归档与回滚；测试用例 SSOT 仍是测试主文档 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 交付、50 案 Pilot、渐进切量、证据归档与回滚；测试用例 SSOT 仍是测试主文档 |
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 

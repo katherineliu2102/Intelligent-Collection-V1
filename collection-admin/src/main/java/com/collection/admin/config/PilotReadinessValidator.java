@@ -8,7 +8,7 @@ import com.collection.common.channel.ChannelGateway;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.ingestion.config.IngestionProperties;
-import com.collection.service.impl.RealCaseService;
+import com.collection.service.impl.AiCollectionCaseService;
 import javax.annotation.PostConstruct;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.annotation.Profile;
@@ -44,8 +44,8 @@ public class PilotReadinessValidator {
     @PostConstruct
     public void validate() {
         require(
-                caseService instanceof RealCaseService,
-                "Pilot requires collection.case-service=real");
+                caseService instanceof AiCollectionCaseService,
+                "Pilot requires collection.case-service=ai");
         require(
                 ingestionProperties.getLoanIdWhitelist() != null
                         && !ingestionProperties.getLoanIdWhitelist().isEmpty(),

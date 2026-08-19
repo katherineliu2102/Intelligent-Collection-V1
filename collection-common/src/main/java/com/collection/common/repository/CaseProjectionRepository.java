@@ -5,8 +5,8 @@ import com.collection.common.model.CaseProjectionCommand;
 /**
  * 案件投影单写者入口（t_ai_collection + t_ai_collection_inbox）。
  *
- * <p>{@link #apply} 必须在一个事务内完成收件箱幂等落盘与版本条件 upsert：投影更新在 MySQL、领域事件在 Redis Stream，
- * 两者无法原子提交，收件箱记录的 publish 状态让消息重投时能区分"整条重复"与"投影已入库但事件未发出"。
+ * <p>{@link #apply} 必须在一个事务内完成收件箱幂等落盘与版本条件 upsert：投影更新在 MySQL、领域事件在 Redis Stream， 两者无法原子提交，收件箱记录的
+ * publish 状态让消息重投时能区分"整条重复"与"投影已入库但事件未发出"。
  */
 public interface CaseProjectionRepository {
 

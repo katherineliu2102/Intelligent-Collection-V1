@@ -35,5 +35,4 @@ public interface IngestionDedupStore {
 
     /** 全额结清：允许下一周期再次 {@code CASE_INGESTED}（§2.2.2）。 */
     void clearIngested(Long loanId);
-
 }

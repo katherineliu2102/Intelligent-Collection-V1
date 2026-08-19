@@ -8,8 +8,7 @@ import lombok.Data;
 /**
  * 案件投影行。对应表 t_ai_collection，字段口径与数仓 Pub/Sub 完整快照一一对应。
  *
- * <p>数仓不再直连业务库写入本表：接入层消费事实事件后按 {@link #caseVersion} 条件 upsert，
- * 使实时事件与每日全量校准共用同一个写入者，不会互相覆盖。
+ * <p>数仓不再直连业务库写入本表：接入层消费事实事件后按 {@link #caseVersion} 条件 upsert， 使实时事件与每日全量校准共用同一个写入者，不会互相覆盖。
  */
 @Data
 public class CaseProjection {
@@ -18,6 +17,7 @@ public class CaseProjection {
     private Long userId;
     /** 数仓内容指纹；与已入库值不同才覆盖已有投影。 */
     private String caseVersion;
+
     private Integer dpd;
     private String stage;
     private String collectionStatus;
@@ -31,6 +31,7 @@ public class CaseProjection {
     private LocalDate nextDueDate;
     /** 增量还款消息显式携带 nextDueDate（可为 null）时为 true。 */
     private boolean nextDueDatePresent;
+
     private String borrowerName;
     private String borrowerPhone;
     private String borrowerEmail;

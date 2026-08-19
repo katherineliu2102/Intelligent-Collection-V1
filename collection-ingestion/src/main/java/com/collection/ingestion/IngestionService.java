@@ -17,13 +17,12 @@ import org.springframework.stereotype.Service;
 /**
  * 数据接入服务。对应架构设计文档 §数据接入层、数据接入与事件规格。
  *
- * <p>生产职责：把已落库的入站事实与日切比对结果 publish 为内部领域事件。快照字段随事件 payload 带出，
- * 引擎据 payload 组装快照，运行时不读旧库 {@code t_collection}。CaseService 仅用于投影守卫与日切。
+ * <p>生产职责：把已落库的入站事实与日切比对结果 publish 为内部领域事件。快照字段随事件 payload 带出， 引擎据 payload 组装快照，运行时不读旧库 {@code
+ * t_collection}。CaseService 仅用于投影守卫与日切。
  *
  * <p>发布领域事件的最小能力，既供链路自测注入（{@code MockTriggerController}），也供 {@link
- * com.collection.ingestion.pubsub.AiCaseIngestionProcessor} 在投影事务提交后调用。本类只 publish、不写库；
- * 投影写入与收件箱幂等归 Processor，ack/nack/路由归 {@link
- * com.collection.ingestion.pubsub.PubSubCaseConsumer}。
+ * com.collection.ingestion.pubsub.AiCaseIngestionProcessor} 在投影事务提交后调用。本类只 publish、不写库； 投影写入与收件箱幂等归
+ * Processor，ack/nack/路由归 {@link com.collection.ingestion.pubsub.PubSubCaseConsumer}。
  */
 @Service
 public class IngestionService {
@@ -43,7 +42,7 @@ public class IngestionService {
      * ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
      *
      * @param snapshotFields key 用 {@link CollectionEvent} 快照常量（DPD/PRODUCT/TOTAL_OUTSTANDING/
-     *     PENALTY_AMOUNT/DUE_DATE/FULL_REPAY_TIME/NAME/PHONE/EMAIL/JPUSH_TOKEN）；缺失字段做 null 防御。
+     *     PENALTY_AMOUNT/UPCOMING_AMOUNT/NEXT_DUE_DATE/NAME/PHONE/EMAIL/JPUSH_TOKEN）；可选提醒和联系字段缺失时不阻断。
      */
     public void ingestCase(
             Long caseId, Long userId, Stage stage, Map<String, Object> snapshotFields) {
@@ -120,8 +119,7 @@ public class IngestionService {
         return fields.get(CollectionEvent.DPD) == null
                 || fields.get(CollectionEvent.PRODUCT) == null
                 || fields.get(CollectionEvent.TOTAL_OUTSTANDING) == null
-                || fields.get(CollectionEvent.PENALTY_AMOUNT) == null
-                || fields.get(CollectionEvent.DUE_DATE) == null;
+                || fields.get(CollectionEvent.PENALTY_AMOUNT) == null;
     }
 
     private void requireFinancialFields(Long caseId, Map<String, Object> fields) {
@@ -198,8 +196,7 @@ public class IngestionService {
     /** 部分还款刷新后续触达所需的可变案件字段，不取消计划或改变渠道策略。 */
     public void balanceUpdated(
             Long caseId, Long userId, java.math.BigDecimal totalOutstanding, Integer status) {
-        balanceUpdated(
-                caseId, userId, null, null, totalOutstanding, null, null, null, null);
+        balanceUpdated(caseId, userId, null, null, totalOutstanding, null, null, null, null);
     }
 
     public void balanceUpdated(

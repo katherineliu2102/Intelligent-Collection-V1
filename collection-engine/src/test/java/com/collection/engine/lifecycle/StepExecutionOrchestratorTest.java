@@ -316,6 +316,18 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
+    @DisplayName("#7a 业务守卫返回非法 null（fail-close）→ SKIPPED + 推进，不得 NPE 上抛")
+    void guardNullVerdict_failCloseSkipped() {
+        when(executionGuard.evaluate(any())).thenReturn(null);
+
+        orchestrator.executeStep(plan, step);
+
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.COMPLIANCE_BLOCKED);
+        verify(eventBus).publish(any());
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
     @DisplayName("#8a StepResolver 抛异常 → FAILED + 推进")
     void resolverException_failed() {
         when(stepResolver.resolve(any())).thenThrow(new RuntimeException("resolve error"));
