@@ -1,8 +1,10 @@
 package com.collection.channel.strategy;
 
 import com.collection.channel.config.ChannelProperties;
+import com.collection.common.enums.Stage;
 import com.collection.common.model.CaseContext;
 import com.collection.common.model.ContextSnapshot;
+import java.math.BigDecimal;
 import java.util.Locale;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
@@ -34,9 +36,7 @@ public class ScriptLibrary {
             }
             if (snapshot.getCaseContext() != null) {
                 CaseContext ctx = snapshot.getCaseContext();
-                if (ctx.getTotalOutstanding() != null) {
-                    amount = String.format(Locale.US, "%,.2f", ctx.getTotalOutstanding());
-                }
+                amount = formatAmount(resolveAmount(ctx));
                 dpd = ctx.getDpd();
             }
         }
@@ -60,6 +60,34 @@ public class ScriptLibrary {
             }
         }
         return defaultSmsRepaymentLink();
+    }
+
+    /**
+     * S0（D-3~D0）用 {@code upcomingAmount}（可空，不回退逾期总额）；S1+ 用快照 {@code totalOutstanding}（外部
+     * overdueAmount）。
+     */
+    static BigDecimal resolveAmount(CaseContext ctx) {
+        if (ctx == null) {
+            return null;
+        }
+        if (isS0(ctx)) {
+            return ctx.getUpcomingAmount();
+        }
+        return ctx.getTotalOutstanding();
+    }
+
+    static boolean isS0(CaseContext ctx) {
+        if (ctx.getStage() == Stage.S0) {
+            return true;
+        }
+        return ctx.getStage() == null && ctx.getDpd() <= 0;
+    }
+
+    private static String formatAmount(BigDecimal value) {
+        if (value == null) {
+            return "";
+        }
+        return String.format(Locale.US, "%,.2f", value);
     }
 
     /** 渲染 SMS 正文；未配置该槽返回 {@code null}。 */

@@ -11,15 +11,13 @@
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标/功能/渠道选型/合规（docs 根，唯一 PRD） |
+| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标/功能/渠道选型/合规（位置：docs 根；与 zoe 的 channel/ 版需统一） |
 | [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) | ✅ | 分层、SPI 边界、关键机制、技术栈 |
 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 事件路由、状态机、七步管线、SPI 定义 |
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
-| [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis/XXL-Job/Repository、**运行配置附录 A**、可观测性（生产目标） |
-| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（窄规格，模块 B 参考）；payload 字段见领域模型、配置键见 infra 附录 A |
-| [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) | 🟡 | 后台信息架构、模块设计、REST API / 扩展 DDL；Phase 1 只读 + 有限写 |
-
-> ✅ **2026-07-27**：根规格 merge conflict 已按 **`ca_branch` 侧**统一消解（投诉终态取消 / COMPLAINT → Phase 2；领域模型 TOC 以 2026-07-08 重构版为准：枚举 §2、EventPayload §6）。
+| [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis / **定时调度（Cloud Scheduler → Pub/Sub → 应用订阅，SSOT §5）** / Repository、**运行配置附录 A**、可观测性（生产目标） |
+| [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | PubSub 消费/路由/清洗/日切/迁移（接入实现 SSOT）；数仓字段与消息 → [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) |
+| [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) | ✅ | 数仓对外唯一 SSOT：计算口径、两类事件、可靠性、日切门控、验收 |
 
 ### collection-common 契约查阅
 
@@ -49,7 +47,7 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4 测试地图、链路 × 层级矩阵、§L4a 用例与脚本索引 |
-| [L4a 编排同事补全清单](./testing/MOCASA催收系统升级_Phase1_L4a全量前置_编排同事补全清单.md) | 🟡 | L4a-全 SPI 切换前置与官方脚本说明 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 运维交付、Pilot 配置与演练 |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 
@@ -58,17 +56,12 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [操作说明 Nacos 本地启动](./操作说明_Nacos本地启动.md) | ✅ | 本地/Docker 启动；与根 `../README.md` 互补 |
-| [CI 与 Git 提交操作手册](./CI与Git提交操作手册.md) | ✅ | PR 三道闸、Spotless/commit 规范、本地恢复与排障 |
+| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis 资源申请、Pilot 配置/演练、证据归档与回滚；测试用例 SSOT 仍是测试主文档 |
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 
-入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md) 或 [`channel/CONTEXT.md`](./channel/CONTEXT.md)。
-
-均在 **`docs/channel/`**：编排规格（V1.6）、collection-channel 总规格、开发执行/进度/功能测试、模板清单、策略手册、Notification（SMS+Push）/ SendGrid / LTH Voice 对接说明。  
-邮件 HTML 在 [`email-templates/`](./email-templates/)（docs 根）。
-
-> 历史会议纪要 [`渠道编排与引擎对齐待办`](./channel/MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md)（E1–E8）已归档口径；**现行规则以编排规格 V1.6 为准**（无 Offer/F10、无 PTP 策略）。
+入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。含编排规格、总规格、Notification（SMS/Push）/ SendGrid / LTH Voice 对接说明、开发执行指南与进度、策略迭代手册等。邮件模板见 [`email-templates/`](./email-templates/)。**本分支对 channel/ 只读**（编排同事维护）。
 
 ---
 
-> 2026-07-27：渠道索引与 adapter 说明已按 Notification（非 FCM）校正；根规格 merge conflict 已按 ca_branch 消解。
+> 2026-06-26：`docs/testing/`、`scripts/dev/` + `scripts/test/` 已落地；核心规格仍留 `docs/` 根。

@@ -22,14 +22,20 @@ mybatis:
 collection:
   scan:
     interval-ms: 5000
+  # 生产调度入口（Cloud Scheduler → Pub/Sub 调度订阅）。本地/CI 关闭，由 TriggerScanner(@Scheduled) 驱动扫描；
+  # 两者不得同时生效，SchedulerEntrypointValidator 会在启动时拒绝双入口。
+  scheduler:
+    enabled: ${COLLECTION_SCHEDULER_ENABLED:false}
   idempotency: memory
   eventbus: memory
+  webhook:
+    signature-required: false
   # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
   # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
   ingestion:
     enabled: ${INGESTION_ENABLED:false}
     project-id: ${GCP_PUBSUB_PROJECT:}
-    subscription: ${GCP_PUBSUB_SUBSCRIPTION:collection-cases-ai-v1-sub}
+    subscription: ${GCP_PUBSUB_SUBSCRIPTION:intelligent-collection-cases-v1-sub}
     ack-deadline-seconds: 60
     max-concurrency: 4
     # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
@@ -39,6 +45,15 @@ collection:
 channel:
   callback:
     base-url: http://localhost:8888/webhook
+  facade:
+    # api-key 由 Nacos channel.facade.api-key 下发（intelligent-collection-local.yml）
+    # 勿在此写 ${FACADE_API_KEY:}：空环境变量会把 Nacos 密钥覆盖成空，真拨会失败
+    # 本机紧急覆盖：环境变量 CHANNEL_FACADE_API_KEY（Spring 松散绑定，优先于 YAML/Nacos）
+    base-url: https://34.158.34.184/api/v1/facade
+    insecure-tls: true
+    product-type: "Quick Loan"
+    currency: PHP
+    test-callee: "+639451373897"
   # Level A 联调：未配密钥时不回退 Mock 伪装成功（Bugbot #3）
   fallback-to-mock: false
   notification:
@@ -61,6 +76,7 @@ channel:
     guard-frequency-case-id: 94805
     guard-frequency-daily-limit: 1
   plan-templates:
+    # local/L4 相对延迟回退模板；生产请在 dayBlocks 配置 PHT 固定槽位。
     S0:
       steps:
         - { channel: SMS, delayMin: 0, observeMin: 0, templateId: 101 }
@@ -88,7 +104,14 @@ channel:
     timezone: Asia/Manila
     quiet-hours-start: "21:00"
     quiet-hours-end: "08:00"
+    daily-total-limit: 3
+    daily-limit:
+      SMS: 1
+      PUSH: 1
+      EMAIL: 1
+      AI_CALL: 2
   scripts:
+    release-version: "2026.07.27.1"
     push-default-deep-link: https://app.mocasa.com/repay
     # ⚠ Phase 1 占位文案：仅为让各 stage 差异立即可见，非正式催收话术（待编排同事提供正式版）。
     sms:
@@ -141,3 +164,22 @@ logging:
     com.collection: DEBUG
     org.mybatis: INFO
     org.springframework.web: INFO
+
+# 由部署 Secret 注入；空值时仍记录 slot/version，但不会生成 content_hmac。
+engine:
+  delivery-audit:
+    hmac-key: ${CONTENT_AUDIT_HMAC_KEY:}
+    content-key-id: ${CONTENT_AUDIT_KEY_ID:}
+  # 事件发件箱：派生事件与状态迁移同事务落盘，提交后仍走原路径即时发布并销账；
+  # 只有宽限期内没销账的记录才会被兜底重发，正常链路扫不到任何行。
+  # 引擎内部可靠性守护，不经 Cloud Scheduler，故不受 SchedulerEntrypointValidator 的单入口约束。
+  outbox:
+    enabled: true
+    poll-interval-ms: 2000
+    grace-seconds: 30
+    lease-seconds: 60
+  # 停摆巡检：非终态但已无步骤可被 due/timeout 扫描拾取 → 告警转人工，不自动重发触达。
+  reaper:
+    enabled: true
+    interval-ms: 300000
+    idle-minutes: 75

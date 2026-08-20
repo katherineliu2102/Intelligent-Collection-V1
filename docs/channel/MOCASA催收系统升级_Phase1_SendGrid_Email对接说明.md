@@ -14,7 +14,7 @@
 |----|------|
 | Phase 1 Email | **仅里程碑**（§7.9）；不生成条件 Email step |
 | snapshot | `userProfile.basic.email`；空则 **不调用** SendGrid |
-| 无邮箱 | `ComplianceExecutionGuard` **BLOCK**，`blockedRuleType=NO_EMAIL`，步骤 SKIPPED |
+| 无邮箱 | `ComplianceExecutionGuard` **BLOCK**，`blockedRuleType=NO_EMAIL`；引擎记 `COMPLIANCE_BLOCKED` timeline 后推进 |
 | 模板 | SendGrid Dynamic Template `d-xxx`；映射见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
 
 ---
@@ -47,11 +47,11 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 |----|------|
 | borrower_name | snapshot.basic.name |
 | amount_due | caseContext 已到期应还合计 |
-| overdue_days | caseContext.maxDpd |
+| overdue_days | caseContext.dpd |
 | payment_link | caseContext.repaymentUrl |
 | assignment_date | Resolver 计算；仅 `S4_EMAIL_PRE_CLOSE`（final review 截止日 = 内部 D+91；**非委外**） |
 | stage | metadata.stage |
-| offer_* | snapshot offer 字段（F10 已写入 snapshot） |
+| offer_* | **Phase 2 预留**；Phase 1 不要求 snapshot 字段，也不得作为模板必填变量 |
 
 **custom_args（强制）**
 
@@ -142,7 +142,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 ## 10. 联调检查清单
 
 - [ ] 有邮箱：202 → step COMPLETED，timeline DELIVERED
-- [ ] 无邮箱：Guard SKIPPED，无 SendGrid 调用
+- [ ] 无邮箱：Guard `NO_EMAIL`→引擎 `COMPLIANCE_BLOCKED`，无 SendGrid 调用
 - [ ] custom_args 含 case_id，Webhook 可回写 timeline
 - [ ] hard bounce 后同案后续 Email 步骤 SKIPPED
 - [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) 中 S0 模板 ID 已填；Test Data 见 [`email-templates-test/`](./email-templates/email-templates-test/README.md)

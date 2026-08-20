@@ -25,6 +25,7 @@ public class ChannelProperties {
     private Lth lth = new Lth();
     private SendGrid sendgrid = new SendGrid();
     private Notification notification = new Notification();
+    private Facade facade = new Facade();
     private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
     private Map<String, PlanTemplate> planTemplates = new HashMap<>();
@@ -77,6 +78,30 @@ public class ChannelProperties {
     }
 
     /**
+     * Valubo Facade AI 外呼。密钥走环境变量 {@code FACADE_API_KEY}，勿写入 Git。
+     *
+     * <p>{@code insecureTls=true} 仅用于对方自签名证书的联调环境。
+     */
+    @Data
+    public static class Facade {
+        private String baseUrl = "";
+        private String apiKey = "";
+        /** true：信任自签名（仅 local/test）。生产必须 false。 */
+        private boolean insecureTls = false;
+
+        private String productType = "Quick Loan";
+        private String currency = "PHP";
+        private String timezone = "Asia/Manila";
+        private String windowStart = "08:00";
+        private String windowEnd = "21:00";
+        /** 渠道冒烟默认被叫，E.164 或 63 开头均可。 */
+        private String testCallee = "+639451373897";
+
+        private int connectTimeoutSeconds = 5;
+        private int readTimeoutSeconds = 30;
+    }
+
+    /**
      * MOCASA 通知中心（common-notification）对接配置。
      *
      * <p>SMS：{@code POST {baseUrl}/v1/sms/send}；App Push：{@code POST
@@ -113,6 +138,9 @@ public class ChannelProperties {
     /** SMS/Push 文案库（按 scriptSlot 存放，{@code DefaultStepResolver} 注入变量）。 见 [渠道模板清单 §4.1/§5.1]。 */
     @Data
     public static class Scripts {
+        /** YAML/Nacos 文案发布版本；DB 模板命中时由 config_version 覆盖。 */
+        private String releaseVersion = "unversioned";
+
         private Map<String, String> sms = new HashMap<>();
         private Map<String, PushScript> push = new HashMap<>();
         /** repaymentUrl 缺失时的兜底深链（到 App 还款页，待 App 确认）。 */
@@ -141,23 +169,59 @@ public class ChannelProperties {
 
     @Data
     public static class Compliance {
-        private Map<String, Integer> dailyLimit = new HashMap<>();
+        private Map<String, Integer> dailyLimit = defaultDailyLimit();
+        /** 单用户在一个 PHT 自然日内，所有自动化渠道合计最多触达次数。 */
+        private int dailyTotalLimit = 3;
+
         private String timezone = "Asia/Manila";
         private String quietHoursStart = "21:00";
         private String quietHoursEnd = "08:00";
         private String touchWindowStart = "08:00";
         private String touchWindowEnd = "21:00";
+
+        private static Map<String, Integer> defaultDailyLimit() {
+            Map<String, Integer> limits = new HashMap<>();
+            limits.put("SMS", 1);
+            limits.put("PUSH", 1);
+            limits.put("EMAIL", 1);
+            // S1–S4a：上午主呼 + 下午补呼；S4b 由 PlanFactory 只生成 1 个 AI step。
+            limits.put("AI_CALL", 2);
+            return limits;
+        }
     }
 
     @Data
     public static class PlanTemplate {
         private List<PlanStepDef> steps = new ArrayList<>();
+        /**
+         * 生产日程模板：按 DPD 日和 PHT 固定槽位预排绝对 trigger_time。 未配置时回落到 {@link #steps} 的相对 delayMin 模式，供
+         * local/L4 兼容。
+         */
+        private List<DayBlock> dayBlocks = new ArrayList<>();
     }
 
     @Data
     public static class PlanStepDef {
         private String channel;
         private int delayMin = 0;
+        private int observeMin = 0;
+        private long templateId = 0;
+    }
+
+    @Data
+    public static class DayBlock {
+        /** 相对 dueDate 的 DPD 日：D-3=-3、D0=0、D+1=1。 */
+        private int dpdDay;
+
+        private List<Slot> slots = new ArrayList<>();
+    }
+
+    @Data
+    public static class Slot {
+        private String channel;
+        /** PHT 固定槽位，HH:mm。 */
+        private String time;
+
         private int observeMin = 0;
         private long templateId = 0;
     }
@@ -199,5 +263,14 @@ public class ChannelProperties {
                 && !n.getBaseUrl().isEmpty()
                 && n.getAppCode() != null
                 && !n.getAppCode().isEmpty();
+    }
+
+    public boolean isFacadeConfigured() {
+        Facade f = facade;
+        return f != null
+                && f.getBaseUrl() != null
+                && !f.getBaseUrl().trim().isEmpty()
+                && f.getApiKey() != null
+                && !f.getApiKey().trim().isEmpty();
     }
 }

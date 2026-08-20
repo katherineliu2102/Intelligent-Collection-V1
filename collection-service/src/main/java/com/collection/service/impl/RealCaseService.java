@@ -12,6 +12,7 @@ import com.collection.service.mapper.CollectionCaseRow;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +53,6 @@ public class RealCaseService implements CaseService {
     private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
     @Resource private CollectionCaseMapper caseMapper;
-
     /** 还款深链模板，{caseId} 占位。 */
     @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
     private String repaymentUrlTemplate;
@@ -71,7 +71,6 @@ public class RealCaseService implements CaseService {
         info.setTotalOutstanding(row.getTotalNotPaid());
         info.setDueDate(row.getRepaymentDate());
         info.setRepaid(isRepaidRow(row));
-        info.setFrozen(false);
         return info;
     }
 
@@ -149,6 +148,11 @@ public class RealCaseService implements CaseService {
     public boolean isRepaid(Long caseId) {
         CollectionCaseRow row = caseMapper.selectByLoanId(String.valueOf(caseId));
         return row != null && isRepaidRow(row);
+    }
+
+    @Override
+    public List<Long> findActiveCaseIdsAfter(Long lastCaseId, int limit) {
+        return caseMapper.selectActiveLoanIdsAfter(lastCaseId == null ? 0L : lastCaseId, limit);
     }
 
     // ───────────────────────── helpers ─────────────────────────

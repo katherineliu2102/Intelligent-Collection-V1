@@ -1,7 +1,8 @@
 # MOCASA Phase 1 — collection-channel 开发执行指南
 
-> **版本**: v1.2  
-> **日期**: 2026-06-05  
+> **版本**: v1.3  
+> **日期**: 2026-08-18  
+> **v1.3**：默认 `language=en`；Push 上游 `device.pushToken`→内部 `jpushToken`；AI_CALL 改为 Facade（`/webhook/facade/voice`）。  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
 > **关联文档**: [渠道文档索引](./README_渠道文档索引.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)、[操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)
@@ -95,7 +96,7 @@ timeline 出现 **3 条**（SMS→PUSH→SMS，templateId 101/102/103）且 plan
 | # | 文件/模块 | 变更 | 验收 |
 |---|-----------|------|------|
 | 0-1 | `UserProfile.BasicInfo` | 增加 `email` | Mock Profile 可返回测试邮箱 |
-| 0-2 | `UserProfile.DeviceInfo` | 增加 `jpushToken`（JPush Registration ID） | Mock Profile 可返回测试 token |
+| 0-2 | `UserProfile.DeviceInfo` | 增加 `jpushToken`（JPush Registration ID）。上游消息键是 `device.pushToken`，ingestion mapper 改名写入本字段 | Mock Profile 可返回测试 token |
 | 0-3 | `CaseContext` | 增加 `repaymentUrl` | ingest/snapshot 可带入深链 |
 | 0-4 | `StepCommand` | 补全 metadata 常量：`META_SCRIPT_SLOT`、`META_SMS_BODY`、`META_DYNAMIC_TEMPLATE_DATA`、`META_CASE_ID`、`META_FALLBACK_SMS`（与总规格 §3.1 一致） | Resolver / Adapter 编译通过 |
 | 0-5 | `EventType` | 新增 **`CASE_CEASED`** | `mvn compile`；枚举与 [编排规格 §4.2](./MOCASA催收系统升级_Phase1_渠道编排规格.md#42-完全停催d91) 一致 |
@@ -169,10 +170,10 @@ collection-channel/src/main/java/com/collection/channel/
 
 | 渠道 | `targetAddress` | `metadata` 最小填充 |
 |------|-----------------|---------------------|
-| SMS | `primaryPhone` | `sms_body`（联调可用 `"[MOCK] " + scriptSlot`）、`scriptSlot`、`language=tl` |
-| PUSH | `jpushToken` | `title`、`body`、`data`（JSON 字符串）；无 token 时仍解析 phone 供 fallback |
+| SMS | `primaryPhone` | `sms_body`（联调可用 `"[MOCK] " + scriptSlot`）、`scriptSlot`、`language=en` |
+| PUSH | `jpushToken`（← `device.pushToken`） | `title`、`body`、`data`（JSON 字符串）；无 token 时仍解析 phone 供 fallback |
 | EMAIL | `email` | `dynamicTemplateData`（含 `repaymentUrl`）、`case_id` |
-| AI_CALL / TTS | `primaryPhone` | `callbackUrl` = `channel.callback.base-url` + `/lth/voice`；`timeoutMinutes=60` |
+| AI_CALL / TTS | `primaryPhone` | `callbackUrl` = `channel.callback.base-url` + `/facade/voice`；`timeoutMinutes=60` |
 
 异步渠道 **禁止** 使用相对路径 `"/webhook/channel-callback"`，必须拼完整 `base-url`。
 
@@ -200,7 +201,7 @@ steps.add(buildStep(1, ChannelType.SMS, 0, 0, 101L));
 | 1 | `NotificationSmsAdapter` | 通知中心 SMS | 同步 → STEP_COMPLETED（`requestSuccess=true`） | 阶段 1 占位完成（`LthSmsAdapter` 待替换） |
 | 2 | `NotificationPushAdapter` | 通知中心 Push（JPush） | 入队成功 → STEP_COMPLETED | 无 token → **同槽 SMS fallback**；JPush 投递失败 Phase 1 不 fallback |
 | 3 | `SendGridEmailAdapter` | SendGrid Email | 同步 | `custom_args.idempotency_key`；Event Webhook **不**完成 step |
-| 4 | `LthVoiceAdapter` | LTH Voice | 异步 | **`AI_CALL` 与 `TTS` 共用一个 Adapter** |
+| 4 | `FacadeAiCallAdapter` | Valubo Facade | 异步 | **`AI_CALL`**；回调 `POST /webhook/facade/voice` |
 
 ### 3.1 StepResult 映射（必读，防引擎误重试）
 
@@ -220,7 +221,7 @@ Voice **终态**由 `CHANNEL_CALLBACK` + `AdvancementPolicy` 处理；Adapter di
 `ChannelGatewayImpl.dispatch`（总规格 §5.2）：
 
 ```
-1. 渠道幂等 Redis GET/SET idempotency:channel:{idempotencyKey} TTL 24h
+1. 渠道幂等 Redis GET/SET collection:idempotency:channel:{idempotencyKey} TTL 24h
 2. switch(channelType) → adapter.send(command)
    HUMAN_CALL → 禁止路由（抛 IllegalStateException，对齐 E4）
 3. 返回最终 StepResult（熔断/fallback 在 adapter 内消化）
@@ -283,7 +284,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 | SMS | 按 `scriptSlot` + snapshot 渲染 **`sms_body`**（`repaymentUrl`、产品变量；**F10 Offer Phase 1 占位**，见下） |
 | EMAIL | `dynamicTemplateData` + SendGrid `templateId`（[渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) `channel.sendgrid.templates`） |
 | 异步 | `callbackUrl`、`timeoutMinutes`（默认 60） |
-| metadata | `stage`、`language`（默认 `tl`）、`scriptSlot`、`case_id` |
+| metadata | `stage`、`language`（默认 `en`）、`scriptSlot`、`case_id` |
 | 禁止 | 输出 `HUMAN_CALL`（E4） |
 
 **Phase 1 与 F10 Offer**：优先跑通链路；`sms_body` / `dynamicTemplateData` 中 **offer 减免字段可先留空或写固定占位文案**（如「详见 App 还款页」）。snapshot 中 offer 字段的完整注入留 Phase 2（[编排规格 §5.3](./MOCASA催收系统升级_Phase1_渠道编排规格.md#53-offer-与-bill-维度)）。
@@ -292,7 +293,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 
 | 规则 | 行为 | 依据 |
 |------|------|------|
-| 日限额 | Redis `compliance:daily:{userId}:{channel}:{date}` | §7.11 |
+| 日限额 | Redis `collection:compliance:daily:{userId}:{channel}:{date}` | §7.11 |
 | **`{date}` 时区** | **必须** `ZoneId.of("Asia/Manila")` 格式化为 `yyyy-MM-dd`；**禁止**用服务器默认时区（UTC/CST） | 与触达窗 PHT 一致 |
 | 触达窗 | **08:00–21:00 PHT**（与 `quiet-hours` 21:00–08:00 对称） | §7.11 |
 | 无邮箱 | EMAIL 步骤 → `BLOCK`，reason=`NO_EMAIL` | §3.5 |
@@ -304,7 +305,7 @@ S0 最小日块（验收必含）：D-3/D-2 `S0_REMINDER`、D-1 `S0_REMINDER_URG
 // 日限额 key 示例（PHT 自然日）
 ZoneId PHT = ZoneId.of("Asia/Manila");
 String date = LocalDate.now(PHT).format(DateTimeFormatter.ISO_LOCAL_DATE);
-String key = "compliance:daily:" + userId + ":SMS:" + date;
+String key = "collection:compliance:daily:" + userId + ":SMS:" + date;
 ```
 
 ### 4.4 `MockAdvancementPolicy` → `DefaultAdvancementPolicy`
@@ -330,7 +331,7 @@ String key = "compliance:daily:" + userId + ":SMS:" + date;
 | 路径 | 行为 | 文档 |
 |------|------|------|
 | `POST /webhook/channel-callback` | 扩展 `disposition`、`providerMsgId` → `CHANNEL_CALLBACK` | 总规格 §3.3 |
-| `POST /webhook/lth/voice` | 解析 LTH 话单 → `CHANNEL_CALLBACK`（`AI_CALL`/`TTS`） | LTH Voice |
+| `POST /webhook/facade/voice` | 解析 Facade `session.completed` → `CHANNEL_CALLBACK`（`AI_CALL`） | Facade |
 | `POST /webhook/sendgrid` | 验签（Phase 1 TODO 可开关）→ 按 `providerMsgId` **幂等**升级 timeline | SendGrid Email |
 
 建议在 `collection-channel/webhook/` 放 Parser 服务，admin 只写薄控制器。
@@ -394,7 +395,7 @@ spring:
 |------------|--------|------|
 | `channel.notification.*` | `NotificationSmsAdapter` / `NotificationPushAdapter` | `base-url`、`app-code`、`app-key`；见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §0.4 |
 | `channel.sendgrid.*` | `SendGridEmailAdapter` | API Key、发件人、退订组 |
-| `channel.lth.voice.*` | `LthVoiceAdapter` | 外呼 API |
+| `channel.facade.voice.*` | `FacadeAiCallAdapter` | Valubo Facade 外呼 API |
 | `channel.callback.base-url` | `DefaultStepResolver` / Mock 增强版 | 完整 callbackUrl |
 | `channel.compliance.*` | `ComplianceExecutionGuard` | 限额（含 AI_CALL/TTS）、时区、触达窗 |
 | `channel.plan-templates` | `DefaultPlanFactory` | 可选 YAML 模板 |
@@ -423,7 +424,7 @@ spring:
 [ ] 4.  NotificationSmsAdapter + ChannelGatewayImpl → TC-SMS-01
 [ ] 5.  NotificationPushAdapter（含 fallback）→ TC-PUSH-01/02
 [ ] 6.  SendGridEmailAdapter → TC-EMAIL-01/02
-[ ] 7.  LthVoiceAdapter（AI_CALL + TTS）+ /webhook/lth/voice → TC-VOICE-01/02
+[ ] 7.  FacadeAiCallAdapter（AI_CALL）+ /webhook/facade/voice → TC-VOICE-01/02
 [ ] 8.  DefaultPlanFactory（8 套骨架、晚进案、S4 分段、禁止条件 Email）
 [ ] 9.  DefaultStepResolver（渲染 + 附录 A 映射）
 [ ] 10. ComplianceExecutionGuard（限额 + 冻结 + NO_EMAIL）
@@ -454,7 +455,7 @@ spring:
 | 计划不推进 | `collection.scan.interval-ms`、`delay_minutes`、`trigger_time` |
 | SMS 调通但 LTH 收到空正文 | MockStepResolver 未填 `sms_body`；或 DefaultStepResolver 未上线 |
 | Email 目标地址是手机号 | StepResolver 未按渠道解析 `email` |
-| Voice 一直 STEP_EXECUTING | LTH 回调 `/webhook/lth/voice` 或手动 `CHANNEL_CALLBACK` |
+| Voice 一直 STEP_EXECUTING | Facade 回调 `/webhook/facade/voice` 或手动 `CHANNEL_CALLBACK` |
 | Voice 未接却反复重试 | Adapter 将 NO_ANSWER 误标 `success=false`；见 §3.1 |
 | 日限额零点不准 | Guard 未用 `Asia/Manila` 格式化 `{date}`；见 §4.3 |
 | 11:00 进案补发 08:00 SMS | PlanFactory 未跳过同日已过期 `trigger_time`；见 §4.1 |

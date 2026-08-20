@@ -7,6 +7,7 @@ import com.collection.common.enums.StepStatus;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 /** 核心引擎持久层接口。对应基础设施规范 §5 Repository 接口清单。 实现位于 collection-service（MyBatis）。 */
@@ -39,12 +40,20 @@ public interface ContactPlanRepository {
 
     void updatePlanStatus(Long planId, PlanStatus status, CancelReason reason);
 
+    /** 标记 REBUILD 中的旧计划。该标记只应在包含新计划插入与旧计划终态化的同一事务内短暂存在。 */
+    default void markRenewalPending(Long planId) {}
+
     /** 首步进入 EXECUTING 时写 startedAt（IF NULL THEN SET）。 */
     void markStarted(Long planId);
 
     void markCompleted(Long planId);
 
     void updateCurrentStep(Long planId, int currentStep);
+
+    /** 更新仍处于活跃态计划的快照余额。仅允许 {@code totalOutstanding} 这个明确的可变例外； 调用方必须先读取快照并保留其他决策字段。 */
+    default boolean updateActivePlanContextSnapshot(Long planId, String contextSnapshot) {
+        return false;
+    }
 
     // ── 步骤 ──
     ContactPlanStep findStepById(Long stepId);
@@ -54,6 +63,32 @@ public interface ContactPlanRepository {
     ContactPlanStep getNextStep(Long planId, int currentStepOrder);
 
     void updateStepStatus(Long stepId, StepStatus status, ContactResult result);
+
+    /** 条件状态迁移。返回 false 表示步骤已由回调、超时或取消路径处理，应作为幂等 no-op。 */
+    default boolean transitionStepStatus(
+            Long stepId,
+            List<StepStatus> expectedStatuses,
+            StepStatus targetStatus,
+            ContactResult result) {
+        updateStepStatus(stepId, targetStatus, result);
+        return true;
+    }
+
+    default boolean transitionStepStatus(
+            Long stepId, StepStatus expectedStatus, StepStatus targetStatus, ContactResult result) {
+        return transitionStepStatus(stepId, Arrays.asList(expectedStatus), targetStatus, result);
+    }
+
+    /** 首次开始执行只写 executed_at，绝不写 completed_at。 */
+    default void markStepExecuting(Long stepId) {
+        updateStepStatus(stepId, StepStatus.EXECUTING, null);
+    }
+
+    /** 观察期的预置最终结果，不改变步骤状态或完成时间。 */
+    default void updateStepResult(Long stepId, ContactResult result) {}
+
+    /** 渠道受理成功后写 dispatched_at（IF NULL THEN SET），不改变步骤状态。 */
+    default void markStepDispatched(Long stepId) {}
 
     void updateStepTriggerTime(Long stepId, LocalDateTime triggerTime, StepStatus status);
 
@@ -67,4 +102,16 @@ public interface ContactPlanRepository {
 
     /** timeout_time <= now 且 status=EXECUTING、关联计划非终态。带 LIMIT。 */
     List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit);
+
+    // ── 存活性巡检（安全网） ──
+    /**
+     * 停摆计划：非终态、没有任何步骤会被 due / timeout 扫描再次拾取，且没有仍在投递中的派生事件，因此不会自行推进。
+     *
+     * <p>只做检测与告警，不自动重发触达——触达是不可回滚的外部动作，误判的代价由用户承担。
+     *
+     * @param idleBefore 计划 updated_at 早于该时刻才纳入，避开正在处理中的计划
+     */
+    default List<Long> findStuckPlanIds(LocalDateTime idleBefore, int limit) {
+        return java.util.Collections.emptyList();
+    }
 }

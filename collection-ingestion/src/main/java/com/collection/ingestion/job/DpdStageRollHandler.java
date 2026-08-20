@@ -11,26 +11,30 @@ import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * DPD 日切处理器（对齐待办 E2 / 基础设施规范 §4 / 数据接入规格 C-D）。
+ * DPD 日切处理器（对齐数据接入规格 §4 / C-D）。
  *
- * <p><b>并行期口径（2026-07-06 主架构拍板，C-D 联调确认）</b>：旧系统每日已重算并写 {@code t_collection.overdue_days}，本 Job
- * <b>只读不重算</b>——直接取 {@code overdue_days} 作 Max DPD （经 {@link CaseService#getCaseInfo}，其内部 {@code
- * selectByLoanId} 已按 {@code create_time DESC} 取最新行、 {@code full_repay_time}/{@code total_not_paid}
- * 判在催）：
+ * <p>只读 {@code t_ai_collection}（经 {@link CaseService}）：数仓预计算 {@code dpd} / {@code stage} / {@code
+ * collection_status}，本 Job <b>不重算</b> DPD：
  *
  * <ul>
- *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}（引擎升/降档，carry-forward 快照）
- *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}（引擎 cancel plan，对齐 seed 99000005）
- *   <li>已结清（{@code repaid}）→ 跳过（还款事件另行取消计划）
+ *   <li>dpd 1~90 且新阶段 ≠ 计划当前阶段 → 发 {@code STAGE_CHANGED}
+ *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}
+ *   <li>已结清（{@code SETTLED}）→ 跳过
  * </ul>
  *
- * <p><b>范围</b>：仅扫 {@code collection.ingestion.loan-id-whitelist} 名单（Phase 1 / L4b 隔离，避免对全量
- * 真实在催案件发事件）。名单为空时跳过全量扫描（生产全量扫 {@code t_collection} 属切量后，见 C-X-02）。
+ * <p><b>唯一来源</b>：上述两类事件只由本 Job 产出。外部 Pub/Sub 只投递 {@code CASE_INGESTED} / {@code REPAYMENT}
+ * 与每日全量校准（见 {@link com.collection.ingestion.pubsub.AiCaseIngestionProcessor}）；若数仓也发阶段/停催事件，
+ * 同一状态会被两个来源重复触发，导致计划被反复取消重建。
  *
- * <p>由 XXL-Job 每日 0:05 PHT 调 {@link #dailyRoll()}（注册见 L4b 交接清单 O3）。
+ * <p><b>范围</b>：联调扫 {@code collection.ingestion.loan-id-whitelist}；生产全量 keyset 扫描须 {@code
+ * daily-roll-full-scan-enabled=true}（见 C-X-02）。
+ *
+ * <p>生产由 Cloud Scheduler 在 03:35–05:55 PHT 每 5 分钟发调度消息，应用侧调度订阅消费后调 {@link #dailyRoll()}； 每次触发只推进一页
+ * keyset，续跑依赖 Redis 游标与当日完成标记，不依赖消息重投。投影由接入层实时维护， 日切前须确认当日全量校准已消费完毕，否则扫描基线不完整。
  */
 @Component
 public class DpdStageRollHandler {
@@ -42,17 +46,55 @@ public class DpdStageRollHandler {
     @Resource private ContactPlanRepository planRepository;
     @Resource private IngestionService ingestionService;
 
-    /** 供 XXL-Job / 调度器调用。 */
-    public void dailyRoll() {
+    @Autowired(required = false)
+    private RedisDailyRollDeduplicator dailyRollDeduplicator;
+
+    /**
+     * 供调度入口（生产：Cloud Scheduler → Pub/Sub 调度订阅；本地：{@code POST /mock/daily-roll}）调用。
+     *
+     * @return 本次处理的 loan_id 条数（供调度指标记录）；跳过时为 0
+     */
+    public int dailyRoll() {
         List<Long> whitelist = props.getLoanIdWhitelist();
         if (whitelist == null || whitelist.isEmpty()) {
-            log.warn(
-                    "[DpdStageRollHandler] loan-id-whitelist 为空，Phase 1 / L4b 跳过全量扫描"
-                            + "（生产全量扫 t_collection 见 C-X-02）");
-            return;
+            return dailyRollFullScan();
         }
+        rollBatch(whitelist, false);
+        return whitelist.size();
+    }
+
+    private int dailyRollFullScan() {
+        if (!props.isDailyRollFullScanEnabled()) {
+            log.warn(
+                    "[DpdStageRollHandler] loan-id-whitelist 为空且 daily-roll-full-scan-enabled=false，跳过全量扫描");
+            return 0;
+        }
+        if (dailyRollDeduplicator == null) {
+            throw new IllegalStateException("全量日切需要 Redis 去重与游标存储");
+        }
+        if (dailyRollDeduplicator.completedToday()) {
+            log.info("[DpdStageRollHandler] full scan already completed today; skip");
+            return 0;
+        }
+        int limit = Math.max(1, props.getDailyRollBatchSize());
+        List<Long> loanIds =
+                caseService.findActiveCaseIdsAfter(dailyRollDeduplicator.currentCursor(), limit);
+        if (loanIds.isEmpty()) {
+            dailyRollDeduplicator.markCompletedToday();
+            log.info("[DpdStageRollHandler] full scan reached end; marked completed");
+            return 0;
+        }
+        rollBatch(loanIds, true);
+        dailyRollDeduplicator.advanceCursor(loanIds.get(loanIds.size() - 1));
+        if (loanIds.size() < limit) {
+            dailyRollDeduplicator.markCompletedToday();
+        }
+        return loanIds.size();
+    }
+
+    private void rollBatch(List<Long> loanIds, boolean fullScan) {
         int[] counters = new int[2]; // [0]=stageChanged, [1]=ceased
-        for (Long loanId : whitelist) {
+        for (Long loanId : loanIds) {
             try {
                 rollOne(loanId, counters);
             } catch (Exception e) {
@@ -60,8 +102,9 @@ public class DpdStageRollHandler {
             }
         }
         log.info(
-                "[DpdStageRollHandler] daily roll 完成 scanned={} stageChanged={} ceased={}",
-                whitelist.size(),
+                "[DpdStageRollHandler] daily roll completed fullScan={} scanned={} stageChanged={} ceased={}",
+                fullScan,
+                loanIds.size(),
                 counters[0],
                 counters[1]);
     }
@@ -76,7 +119,7 @@ public class DpdStageRollHandler {
         List<ContactPlan> active = planRepository.findActivePlansByCase(loanId);
 
         if (dpd >= 91) {
-            if (!active.isEmpty()) {
+            if (!active.isEmpty() && acquireDailyRollEvent("ceased", loanId, dpd)) {
                 ingestionService.caseCeased(loanId, dpd);
                 counters[1]++;
                 log.info("[DpdStageRollHandler] loanId={} dpd={} ≥91 → CASE_CEASED", loanId, dpd);
@@ -85,8 +128,12 @@ public class DpdStageRollHandler {
         }
 
         Stage current = active.isEmpty() ? null : active.get(0).getStage();
-        if (current != null && current != newStage) {
-            ingestionService.changeStage(loanId, newStage);
+        if (current != null && current != newStage && acquireDailyRollEvent("stage", loanId, dpd)) {
+            ingestionService.changeStage(
+                    loanId,
+                    info.getUserId(),
+                    newStage,
+                    ingestionService.currentSnapshotFields(caseService.getContextSnapshot(loanId)));
             counters[0]++;
             log.info(
                     "[DpdStageRollHandler] loanId={} dpd={} stage {}→{} → STAGE_CHANGED",
@@ -95,5 +142,9 @@ public class DpdStageRollHandler {
                     current,
                     newStage);
         }
+    }
+
+    private boolean acquireDailyRollEvent(String type, Long loanId, int dpd) {
+        return dailyRollDeduplicator == null || dailyRollDeduplicator.acquire(type, loanId, dpd);
     }
 }

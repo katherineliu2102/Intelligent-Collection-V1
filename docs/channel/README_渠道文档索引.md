@@ -1,16 +1,17 @@
 # 渠道编排与渠道执行 — 文档索引
 
-> **维护位置**：本目录 `docs/channel/` 为 **渠道规格 + L3 执行说明** 的唯一定稿位置，后续请只在此修改。  
-> **Agent 入口**：[`CONTEXT.md`](./CONTEXT.md)（分层导读）· 本页（文件清单）。  
-> **结构**：规格平铺；外部供应商/参考资料归入 [`reference/`](./reference/)。  
-> **编排 SSOT**：[渠道编排规格 V1.6](./MOCASA催收系统升级_Phase1_渠道编排规格.md)（Stage×渠道一览、无 Offer/PTP；SMS 观察期与引擎一致）。
+> **维护位置**：本目录 `docs/channel/` 为渠道规格与渠道执行说明的唯一定稿位置，后续请只在此修改。
+> **结构**：规格文档 **12 个文件 · 平铺**；外部供应商/参考资料统一归入 [`reference/`](./reference/)（不与规格平铺混放）。  
+> **引擎对齐**：Phase 1 渠道编排与核心引擎已对齐（`CASE_CEASED`、七步管线、禁止 `HUMAN_CALL` step 等）；交叉引用见 [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)。
+> **术语边界**：下文“编排策略 / 渠道执行”是渠道模块架构分区，不是测试层级。测试 L0–L4a/L4b 与 T0–T6 以[测试 SSOT](../testing/MOCASA催收系统升级_Phase1_测试文档.md)为准。
+
 ---
 
 ## 快速导航
 
 | 角色 | 从这里开始 |
 |------|-----------|
-| 开发 | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) → [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) |
+| 开发 | [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) · 进度板 [HANDOFF §3A](../../HANDOFF.md) |
 | 策略 / 运营 | [策略迭代与测试操作手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) |
 | QA | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
 | 模板 / 运营 | [渠道模板清单与配置](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) → [email-templates/](../email-templates/)（docs 根） |
@@ -18,22 +19,21 @@
 
 ---
 
-## L1 编排策略
+## 编排策略（渠道模块架构）
 
 | 文档 | 说明 |
 |------|------|
-| [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) | **§1 Stage×渠道一览**；§3.5 Phase 1 裁剪；§6 难催/FIRM |
+| [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md) | PlanFactory / Guard / Stage 槽位；**§3.5 Phase 1 实现范围** |
 
 ---
 
-## L3 渠道执行（collection-channel）
+## 渠道执行（collection-channel 模块架构）
 
 ### 手册与总规格
 
 | 文档 | 说明 |
 |------|------|
-| [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | **开发手册**：分阶段写代码、Nacos 配置、Checklist |
-| [开发进度](./MOCASA催收系统升级_Phase1_collection-channel开发进度.md) | **进度 SSOT**：Checklist 状态、现网对照、下一步、变更日志 |
+| [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | **开发手册**：分阶段写代码、Nacos 配置、Checklist；进度见 [HANDOFF](../../HANDOFF.md) |
 | [策略迭代与测试操作手册](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md) | **策略/运营手册**：怎么测、怎么改、DB 与 Nacos 分工 |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | **测试手册**：TC 用例、curl、验收标准 |
 | [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) | ChannelGateway、契约、Webhook；**附录 A** → [渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) |
@@ -50,7 +50,8 @@
 | 文档 | 说明 |
 |------|------|
 | [ContextSnapshot 字段透传说明](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md) | 快照 → StepCommand → 供应商 API 全链字段映射 SSOT |
-| [渠道编排与引擎对齐待办](./MOCASA催收系统升级_Phase1_渠道编排与引擎对齐待办.md) | E1–E8 引擎行为对齐待办清单（与主架构协调） |
+| [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | dispatch / 观察期 / 空地址 / token 等执行语义（已定稿） |
+| [编排同事对齐清单](../contracts/README_编排同事对齐清单.md) | SPI 实现与 E1–E8 收敛结论 |
 
 ### 供应商 Adapter 对接
 

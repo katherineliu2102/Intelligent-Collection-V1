@@ -2,7 +2,6 @@ package com.collection.ingestion.pubsub;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -10,120 +9,74 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
-import com.collection.ingestion.config.IngestionProperties;
-import java.math.BigDecimal;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
-/** {@link CasePayloadMapper} 纯逻辑单测（不连 GCP / Spring 上下文）。 */
+/** {@link CasePayloadMapper} 的 v3 完整快照映射测试。 */
 class CasePayloadMapperTest {
 
-    private IngestionProperties props;
-    private CasePayloadMapper mapper;
-
-    @BeforeEach
-    void setUp() {
-        props = new IngestionProperties();
-        mapper = new CasePayloadMapper();
-        ReflectionTestUtils.setField(mapper, "props", props);
-    }
+    private final CasePayloadMapper mapper = new CasePayloadMapper();
 
     @Test
-    void mapCasePush_byContractKeys_buildsSnapshotFieldsWithCleaning() {
+    void mapAiSnapshot_readsNestedCaseEvent() {
         JSONObject json =
                 JSON.parseObject(
-                        "{\"caseId\":99000001,\"userId\":12345,\"stage\":\"S2\",\"dpd\":20,"
-                                + "\"product\":\"SKYPAYLOANS\",\"totalOutstanding\":1500.50,"
-                                + "\"penaltyAmount\":120,\"phone\":\"09171234567\","
-                                + "\"email\":\"a@b.com\",\"jpushToken\":\"tok-1\"}");
+                        "{\"eventId\":\"evt-1\",\"caseId\":\"525441\",\"userId\":\"2145521\","
+                                + "\"caseVersion\":\"7c1e2a9b4d0f83a15e6b8c2d9f0a4e31\",\"stage\":\"S0\",\"dpd\":-2,\"product\":\"3\","
+                                + "\"totalOutstanding\":0,\"penaltyAmount\":0,\"dueDate\":\"2026-08-11\","
+                                + "\"borrower\":{\"name\":\"Cora\",\"phone\":\"+639563093217\","
+                                + "\"email\":\"cora@example.com\",\"language\":\"en\"},"
+                                + "\"device\":{\"pushToken\":\"push-1\"}}");
 
-        CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
+        CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
 
-        assertEquals(99000001L, ci.caseId);
-        assertEquals(12345L, ci.userId);
-        assertEquals(Stage.S2, ci.stage);
-        assertEquals(20, ci.snapshotFields.get(CollectionEvent.DPD));
-        assertEquals("SKYPAYLOANS", ci.snapshotFields.get(CollectionEvent.PRODUCT));
-        assertEquals(
-                0,
-                new BigDecimal("1500.50")
-                        .compareTo(
-                                (BigDecimal)
-                                        ci.snapshotFields.get(CollectionEvent.TOTAL_OUTSTANDING)));
-        assertEquals("+639171234567", ci.snapshotFields.get(CollectionEvent.PHONE));
-        assertEquals("a@b.com", ci.snapshotFields.get(CollectionEvent.EMAIL));
-        assertEquals("tok-1", ci.snapshotFields.get(CollectionEvent.JPUSH_TOKEN));
+        assertEquals(525441L, snapshot.caseId);
+        assertEquals(2145521L, snapshot.userId);
+        assertEquals("7c1e2a9b4d0f83a15e6b8c2d9f0a4e31", snapshot.caseVersion);
+        assertEquals(Stage.S0, snapshot.stage);
+        assertEquals("Cora", snapshot.snapshotFields.get(CollectionEvent.NAME));
+        assertEquals("+639563093217", snapshot.snapshotFields.get(CollectionEvent.PHONE));
+        assertEquals("push-1", snapshot.snapshotFields.get(CollectionEvent.JPUSH_TOKEN));
+        assertEquals("evt-1", mapper.eventId(json));
     }
 
     @Test
-    void mapCasePush_dirtyEmail_isDropped() {
-        JSONObject json =
-                JSON.parseObject("{\"caseId\":1,\"email\":\"0\",\"phone\":\"+639998887777\"}");
-        CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
-        assertFalse(ci.snapshotFields.containsKey(CollectionEvent.EMAIL));
-        assertEquals("+639998887777", ci.snapshotFields.get(CollectionEvent.PHONE));
-    }
-
-    @Test
-    void mapCasePush_missingCaseId_throwsPoison() {
-        JSONObject json = JSON.parseObject("{\"stage\":\"S1\"}");
-        assertThrows(PoisonMessageException.class, () -> mapper.mapCasePush(json));
-    }
-
-    @Test
-    void mapCasePush_invalidStage_fallsBackToNull() {
-        JSONObject json = JSON.parseObject("{\"caseId\":1,\"stage\":\"BOGUS\"}");
-        assertNull(mapper.mapCasePush(json).stage);
-    }
-
-    @Test
-    void fieldMap_aliasUpstreamKeys() {
-        props.getCasePush().getFieldMap().put(CollectionEvent.CASE_ID, "loan_id");
-        props.getCasePush().getFieldMap().put(CollectionEvent.DPD, "overdue_days");
-        JSONObject json = JSON.parseObject("{\"loan_id\":\"99000009\",\"overdue_days\":45}");
-
-        CasePayloadMapper.CaseIngest ci = mapper.mapCasePush(json);
-        assertEquals(99000009L, ci.caseId);
-        assertEquals(45, ci.snapshotFields.get(CollectionEvent.DPD));
-    }
-
-    @Test
-    void dataType_prefersAttributeOverJson() {
-        JSONObject json = JSON.parseObject("{\"dataType\":\"case_push\"}");
-        assertEquals("repayment_push_and_load", mapper.dataType(json, "repayment_push_and_load"));
-        assertEquals("case_push", mapper.dataType(json, null));
-    }
-
-    @Test
-    void repayment_keysAreContractNamed_notViaFieldMap() {
-        // 即使配了 case_push field-map（userId→userID / caseId→loanID），repayment 仍按真实小写键读。
-        props.getCasePush().getFieldMap().put(CollectionEvent.USER_ID, "userID");
-        props.getCasePush().getFieldMap().put(CollectionEvent.CASE_ID, "loanID");
+    void snapshotWithMissingFinancialField_isPoison() {
         JSONObject json =
                 JSON.parseObject(
-                        "{\"userId\":777,\"loanId\":88,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1,\"overdue\":0.0}");
-        assertEquals(777L, mapper.repaymentUserId(json));
-        assertEquals(88L, mapper.repaymentLoanId(json));
+                        "{\"caseId\":\"525441\",\"userId\":\"2145521\",\"caseVersion\":\"7c1e2a9b4d0f83a15e6b8c2d9f0a4e31\","
+                                + "\"stage\":\"S0\",\"dpd\":-2,\"product\":\"3\","
+                                + "\"totalOutstanding\":0}");
+
+        assertThrows(PoisonMessageException.class, () -> mapper.mapAiSnapshot(json));
     }
 
     @Test
-    void fullySettled_byFullRepayTimeOrStatus4() {
-        // 样例：STATUS=1（待还款）但 fullRepayTime 非空 → 结清（靠 fullRepayTime 命中）
-        assertTrue(
-                mapper.fullySettled(
-                        JSON.parseObject(
-                                "{\"userId\":1,\"fullRepayTime\":\"2026-07-01 10:00:00\",\"STATUS\":1}")));
-        // STATUS=4（结清）无 fullRepayTime → 结清
-        assertTrue(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":4}")));
-        // STATUS=2（逾期）无 fullRepayTime → 未结清
-        assertFalse(mapper.fullySettled(JSON.parseObject("{\"userId\":1,\"STATUS\":2}")));
-    }
-
-    @Test
-    void repaymentUserId_missing_throwsPoison() {
+    void repaymentRequiresExplicitFullClearSignal() {
+        assertTrue(mapper.isFullCleared(JSON.parseObject("{\"isFullCleared\":true}")));
+        assertFalse(mapper.isFullCleared(JSON.parseObject("{\"isFullCleared\":false}")));
         assertThrows(
-                PoisonMessageException.class,
-                () -> mapper.repaymentUserId(JSON.parseObject("{\"loanId\":1}")));
+                PoisonMessageException.class, () -> mapper.isFullCleared(JSON.parseObject("{}")));
+    }
+
+    @Test
+    void mapAiSnapshot_acceptsProducerNumericIdsAndLocalOccurredAt() {
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"eventId\":\"evt-2\",\"caseId\":483877,\"userId\":3780028,"
+                                + "\"caseVersion\":\"a48911a34fecdd3074f1acc8634d5043\","
+                                + "\"occurredAt\":\"2026-08-17 10:40:12\",\"stage\":\"S4\",\"dpd\":70,"
+                                + "\"product\":\"3\",\"overdueAmount\":6075.2,\"overduePenaltyAmount\":390.5,"
+                                + "\"upcomingAmount\":0,\"nextDueDate\":0,"
+                                + "\"borrower\":{\"phone\":\"9654453072\"}}");
+
+        CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
+
+        assertEquals(483877L, snapshot.caseId);
+        assertEquals(3780028L, snapshot.userId);
+        assertEquals("+639654453072", snapshot.snapshotFields.get(CollectionEvent.PHONE));
+        assertEquals(
+                java.time.LocalDateTime.of(2026, 8, 17, 10, 40, 12),
+                CasePayloadMapper.occurredAt(json, snapshot.caseId, "caseEvent"));
+        assertEquals(null, CasePayloadMapper.parseDate(json.get("nextDueDate"), "nextDueDate"));
     }
 }

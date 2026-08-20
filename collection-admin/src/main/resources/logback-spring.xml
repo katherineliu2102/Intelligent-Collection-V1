@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <configuration>
     <springProperty scope="context" name="LOG_PATH" source="collection.logging.path" defaultValue="./logs/collection"/>
     <springProperty scope="context" name="LOG_FILE_NAME" source="collection.logging.file-name" defaultValue="collection.log"/>
@@ -6,9 +6,11 @@
     <springProperty scope="context" name="MAX_HISTORY" source="collection.logging.max-history" defaultValue="30"/>
     <springProperty scope="context" name="TOTAL_SIZE_CAP" source="collection.logging.total-size-cap" defaultValue="10GB"/>
 
+    <property name="MDC_PATTERN" value="[event=%X{eventId:-} case=%X{caseId:-} plan=%X{planId:-} step=%X{stepId:-}]"/>
+
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} ${MDC_PATTERN} - %msg%n</pattern>
             <charset>UTF-8</charset>
         </encoder>
     </appender>
@@ -17,7 +19,7 @@
         <file>${LOG_PATH}/${LOG_FILE_NAME}</file>
         <append>true</append>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} ${MDC_PATTERN} - %msg%n</pattern>
             <charset>UTF-8</charset>
         </encoder>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">

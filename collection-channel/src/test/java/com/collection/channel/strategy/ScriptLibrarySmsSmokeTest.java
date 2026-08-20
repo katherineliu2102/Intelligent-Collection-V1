@@ -49,6 +49,62 @@ class ScriptLibrarySmsSmokeTest {
         assertTrue(body.contains("3 day(s) overdue"), "SMS body must contain dpd");
     }
 
+    @Test
+    void s0UsesUpcomingAmountAndDoesNotFallBackToOverdue() {
+        ChannelProperties props = new ChannelProperties();
+        props.getScripts()
+                .getSms()
+                .put(
+                        "S0_REMINDER",
+                        "MOCASA: {name}, your PHP {amount} payment is due soon. Pay: {repaymentUrl}");
+        try {
+            Field field = ScriptLibrary.class.getDeclaredField("channelProperties");
+            field.setAccessible(true);
+            field.set(scriptLibrary, props);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+
+        ContextSnapshot snapshot = sampleSnapshot();
+        snapshot.getCaseContext().setStage(com.collection.common.enums.Stage.S0);
+        snapshot.getCaseContext().setDpd(-3);
+        snapshot.getCaseContext().setUpcomingAmount(new BigDecimal("1000.00"));
+        snapshot.getCaseContext().setTotalOutstanding(new BigDecimal("28000.00"));
+
+        ScriptVars vars = scriptLibrary.buildVars(snapshot);
+        String body = scriptLibrary.renderSms("S0_REMINDER", vars);
+        assertTrue(body.contains("1,000.00"), "S0 must use upcomingAmount");
+        assertTrue(!body.contains("28,000.00"), "S0 must not fall back to overdue total");
+    }
+
+    @Test
+    void s0MissingUpcomingAmountDoesNotFallBackToOverdue() {
+        ChannelProperties props = new ChannelProperties();
+        props.getScripts()
+                .getSms()
+                .put(
+                        "S0_REMINDER",
+                        "MOCASA: {name}, your PHP {amount} payment is due soon. Pay: {repaymentUrl}");
+        try {
+            Field field = ScriptLibrary.class.getDeclaredField("channelProperties");
+            field.setAccessible(true);
+            field.set(scriptLibrary, props);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+
+        ContextSnapshot snapshot = sampleSnapshot();
+        snapshot.getCaseContext().setStage(com.collection.common.enums.Stage.S0);
+        snapshot.getCaseContext().setDpd(-2);
+        snapshot.getCaseContext().setUpcomingAmount(null);
+        snapshot.getCaseContext().setTotalOutstanding(new BigDecimal("28000.00"));
+
+        ScriptVars vars = scriptLibrary.buildVars(snapshot);
+        String body = scriptLibrary.renderSms("S0_REMINDER", vars);
+        assertTrue(!body.contains("28,000.00"), "S0 must not fall back to overdue total");
+        assertTrue(body.contains("PHP payment") || body.contains("PHP  payment"));
+    }
+
     private static ContextSnapshot sampleSnapshot() {
         UserProfile.BasicInfo basic = new UserProfile.BasicInfo();
         basic.setName("Maria");

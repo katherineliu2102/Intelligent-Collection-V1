@@ -1,0 +1,19 @@
+{
+  "dataType": "repaymentEvent",
+  "data": {
+    "eventId": "l4b-repay-99000001-0001",
+    "eventType": "REPAYMENT",
+    "occurredAt": "2026-08-12T10:06:00+08:00",
+    "caseId": "99000001",
+    "userId": "99000001",
+    "repayTime": "2026-08-12T10:00:00+08:00",
+    "paidAmount": 3000.00,
+    "isFullCleared": true,
+    "stage": "S0",
+    "dpd": -1,
+    "overdueAmount": 0.00,
+    "overduePenaltyAmount": 0.00,
+    "upcomingAmount": 3000.00,
+    "nextDueDate": "2026-09-11"
+  }
+}

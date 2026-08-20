@@ -11,8 +11,8 @@
 ## 1. 数据流
 
 ```
-数据接入层组装 ContextSnapshot（精简 JSON）
-  → 落库 t_contact_plan.context_snapshot
+数据接入层组装 CASE_INGESTED payload
+  → 引擎建计划时组装并落库 ContextSnapshot
   → ExecutionContext（SPI 零 DB）
   → StepResolver.resolve() → StepCommand
   → NotificationSmsAdapter / NotificationPushAdapter / SendGridEmailAdapter / LthVoiceAdapter
@@ -31,39 +31,41 @@
 
 ## 2. 快照精简字段（落库 SSOT）
 
-完整表见 [README §Phase 1 精简字段集](../../../AI%20collection/相关资料/README_ContextSnapshot契约对齐.md#phase-1-精简字段集落库-ssot)。本节只列**渠道消费**相关字段。
+完整表见 [ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)。本节只列**渠道消费**相关字段。
 
 | 块 | 字段 | 渠道消费 |
 |----|------|----------|
 | caseContext | `caseId`, `userId`, `dpd`, `stage`, `product`, `dueDate` | 选槽、模板变量、Guard |
 | caseContext | `totalOutstanding` | 文案 `amount_due`（金额 SSOT） |
+
+> **`dpd` / `totalOutstanding` 为发送时刻值**：引擎在步骤② 已实时读到案件数据，④ 解析前用它覆盖内存中的快照副本（不回写快照列、不覆盖 `stage`）。编排侧照常从 `ExecutionContext` 读快照即可，无需自行查库或校正逾期天数。
 | caseContext | `repaymentUrl` | SMS 链接、Push `deep_link`、Email `payment_link` |
-| caseContext | `strategyTone`, `complaintFrozen`, `collectionStatus` | PlanFactory / Guard；`strategyTone` 计算见 [渠道编排 §6.3.1](./MOCASA催收系统升级_Phase1_渠道编排规格.md#631-难催子条件计算口径ingestion-层) |
+| caseContext | `strategyTone`, `collectionStatus` | PlanFactory；Phase 1 固定 STANDARD，collectionStatus 仅审计 |
 | basic | `name`, `primaryPhone`, `email`, `language` | 文案、`targetAddress` |
-| device | `jpushToken`, `phoneValidity` | Push `targetAddress`；Guard |
-| contactHistory | `todayTouchCount`, `channelTouchCounts`, … | Guard 频控 |
+| device | `jpushToken` | Push `targetAddress`；Guard |
+| contactHistory | `todayTouchCount`, `channelTouchCounts`, … | 冻结审计；Phase 1 Guard 频控读实时计数器 |
 
 **不在快照中**：`title`、`body`、`sms_body`（Resolver 渲染）；`scene`（Adapter/Resolver 固定 `"collection"`）。
 
 ### 2.1 `jpushToken` 上游来源（Push 硬依赖）
 
-App Push **无法**由 channel 模块自行生成 token；必须从快照透传到通知中心 `token` 字段。**Phase 1 主路径（2026-07 确认）**：上游 `case_push` 消息体携带 `jpushToken`，与 `phone`/`email` 同源，ingestion 映射进 `CASE_INGESTED` payload → 引擎冻结进 `context_snapshot`。
+App Push **无法**由 channel 模块自行生成 token；必须从快照透传到通知中心 `token` 字段。**Phase 1 主路径**：上游完整快照 `caseEvent.device.pushToken`，与 `borrower.phone`/`email` 同源，ingestion 映射进 `CASE_INGESTED` payload → 引擎冻结进 `context_snapshot`。
 
 | 环节 | 责任方 | 说明 |
 |------|--------|------|
 | 1. 采集 | **App 客户端** | 登录/启动时向极光 SDK 注册，取得 **JPush Registration ID**（不是 FCM token） |
-| 2. 上报 | **App / 信贷后端** | 将 RID 写入用户设备表（现网：`t_user_equipment`）；**入案时由信贷组装进 `case_push` JSON** |
-| 3. 入案组装 | **数据接入层（ingestion）** | 解析 `case_push.jpushToken` → `CASE_INGESTED` payload → `userProfile.device.jpushToken`（**零读库**） |
+| 2. 上报 | **App / 数仓** | 将 RID 进入案件完整快照 `device.pushToken` |
+| 3. 入案组装 | **数据接入层（ingestion）** | 用户存在 JPush 注册时解析 `caseEvent.device.pushToken` → `CASE_INGESTED` payload → `userProfile.device.jpushToken`；缺失不回查 |
 | 4. 落库 | **引擎** | `buildSnapshotFromEvent` 组装精简快照 JSON → `t_contact_plan.context_snapshot` |
 | 5. 渠道执行 | **StepResolver** | `device.jpushToken` → `StepCommand.targetAddress` |
 | 6. 发送 | **NotificationPushAdapter** | `targetAddress` → 通知中心 API `token` → JPush |
 
 ```text
-App(JPush SDK) → 信贷后端 → case_push.jpushToken → ingestion → ContextSnapshot.device.jpushToken
+App(JPush SDK) → 数仓完整快照 device.pushToken → ingestion → ContextSnapshot.device.jpushToken
   → StepCommand.targetAddress → POST /v1/app_notification/send { token }
 ```
 
-**可选降级**：消息缺 token 且 `collection.ingestion.enrich-jpush-token=true` 时，ingestion 只读新库 `t_user_device_token` 补全（默认关）。见 [数据接入 §3.1 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库)。
+**无 token**：用户未注册 JPush 时消息不携带 token；ingestion 保留空值且不读 token 镜像，渠道按同槽 Push→SMS fallback。见 [数据接入 §3.2 读库](../MOCASA催收系统升级_Phase1_数据接入规格.md#读库)。
 
 | 场景 | `jpushToken` | 渠道行为 |
 |------|--------------|----------|
@@ -71,7 +73,7 @@ App(JPush SDK) → 信贷后端 → case_push.jpushToken → ingestion → Conte
 | 空 / null | 无 token | **PushAdapter 同槽 fallback SMS**（仍计一次 Push 槽位）；不是 Push 成功 |
 | 多设备 | 以最新登录设备为准，单 token | 见 §4.2；已与 App / 通知中心确认 |
 
-> 领域模型 `UserProfile.DeviceInfo`（见 [领域模型 §4](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)）、[数据接入 C-I-10](../MOCASA催收系统升级_Phase1_数据接入规格.md#c-i-入案字段与-pubsub-映射) 与本文一致。联调账号见功能测试指南 userId **90002**（有 token）、**90003**（无 token → fallback）。
+> 领域模型 §4.2 UserProfile.DeviceInfo、[数据接入 C-I](../MOCASA催收系统升级_Phase1_数据接入规格.md#c-i-入案联调确认) 与本文一致。联调账号见功能测试指南 userId **90002**（有 token）、**90003**（无 token → fallback）。
 
 ---
 
@@ -148,7 +150,7 @@ App(JPush SDK) → 信贷后端 → case_push.jpushToken → ingestion → Conte
 
 | ContextSnapshot | StepCommand | SendGrid API | 说明 |
 |-----------------|-------------|--------------|------|
-| `basic.email` | `targetAddress` | `personalizations[0].to` | `null` → Guard SKIP |
+| `basic.email` | `targetAddress` | `personalizations[0].to` | 空值 → Guard `NO_EMAIL` → `COMPLIANCE_BLOCKED` |
 | `caseContext.repaymentUrl` | `dynamicTemplateData.payment_link` | 模板变量 | |
 | `caseContext.totalOutstanding` | `dynamicTemplateData.amount_due` | 模板变量 | |
 | `caseContext.dpd` | `dynamicTemplateData.overdue_days` | 模板变量 | |
@@ -172,7 +174,7 @@ SMS   → targetAddress = basic.primaryPhone
         metadata.sms_body = render(scriptSlot, name, totalOutstanding, dpd, repaymentUrl, language)
         metadata.language = basic.language ?? "en"
 
-PUSH  → targetAddress = device.jpushToken（空则 metadata.fallbackPhone + 留给 Adapter fallback）
+PUSH  → targetAddress = device.jpushToken（空 token 时 Gateway 使用已解析的 basic.primaryPhone + sms_body fallback；不定义 metadata.fallbackPhone）
         metadata.title / body = renderPushTitleBody(scriptSlot, …)
         metadata.pushData = JSON.stringify({ scene, case_id, deep_link, script_slot })  // 全 string
         metadata.sms_body = 同槽 SMS 正文（供 fallback）

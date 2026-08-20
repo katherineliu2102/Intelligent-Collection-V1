@@ -1,4 +1,7 @@
-# MOCASA Phase 1 — AI Call 对接说明
+# MOCASA Phase 1 — AI Call 对接说明（已被取代）
+
+> ⚠️ **状态：已被取代（2026-08-17）**。机器轨 AI 外呼供应商已定为 **Valubo Facade**，`AI_CALL` 渠道 SSOT 迁至 [AI Call（Valubo Facade）接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md)。
+> 本文仅留作历史参考；其中「真人接通 = `was_ai_connected`」「disposition 仅 ANSWERED/NO_ANSWER/BUSY」等结论已被生产实测推翻，勿据此实现。LTH 现仅承接人工轨例外外呼。
 
 > **版本**: v1.1  
 > **日期**: 2026-07-02  

@@ -103,13 +103,26 @@ class NotificationSmsAdapterTest {
     }
 
     @Test
-    void transient5xxRetryable() {
+    void serverError5xxIsOutcomeUnknownAndNotRetried() {
         stubFor(post(urlEqualTo("/v1/sms/send")).willReturn(aResponse().withStatus(503)));
 
         StepResult result = adapter.send(smsCommand());
         assertFalse(result.isSuccess());
+        assertFalse(result.isRetryable());
+        assertEquals("NOTIFICATION_503_OUTCOME_UNKNOWN", result.getErrorCode());
+        // 5xx 下请求可能已被受理，渠道侧不得重发
+        verify(1, postRequestedFor(urlEqualTo("/v1/sms/send")));
+    }
+
+    @Test
+    void rateLimit429IsProvablyNotSentAndRetried() {
+        stubFor(post(urlEqualTo("/v1/sms/send")).willReturn(aResponse().withStatus(429)));
+
+        StepResult result = adapter.send(smsCommand());
+        assertFalse(result.isSuccess());
         assertTrue(result.isRetryable());
-        assertEquals("NOTIFICATION_TIMEOUT", result.getErrorCode());
+        assertEquals("NOTIFICATION_429_NOT_SENT", result.getErrorCode());
+        verify(2, postRequestedFor(urlEqualTo("/v1/sms/send")));
     }
 
     @Test

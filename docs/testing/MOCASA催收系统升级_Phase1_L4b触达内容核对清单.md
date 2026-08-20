@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 Phase 1 — L4b 触达内容核对清单
 
 > **用途**：供测试同事核对 L4b 端到端联调后，手机 / App / 邮箱是否收到预期触达。  
-> **关联**：[`L4b测试报告_20260707`](./MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) · [`L4b环境交接清单`](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) · [`db/l4b-assert.sql`](../db/l4b-assert.sql)
+> **关联**：[`L4b测试报告_20260707`（归档）](./_archive/MOCASA催收系统升级_Phase1_L4b测试报告_20260707.md) · [`L4b环境交接清单`](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) · [`db/l4b-assert.sql`](../../db/l4b-assert.sql)
 
 - **测试执行日期**：2026-07-07（UTC+8）
 - **触达地址（全案统一）**
@@ -137,7 +137,11 @@ Phase 1 Email **仅在精确 DPD 里程碑日**发信；Resolver 对非里程碑
 
 ## 5. 系统侧核对（不含完整正文）
 
-`t_contact_timeline.content_summary` Phase 1 **通常为空**（脱敏设计），库内无 SMS/邮件全文。可用以下方式确认「是否发出、发到哪」：
+`t_contact_timeline` Phase 1 不保存 SMS/邮件全文或变量值。已解析命令仅记录无 PII 的
+`content_summary`、`script_slot`、`template_version` 与 `content_hmac`；`content_key_id` 仅标识
+HMAC 密钥版本，不保存密钥。可用以下方式确认“是否发出、发到哪”，完整正文以受控 preview 或供应商侧取证为准：
+
+部署环境必须通过 Secret 注入 `CONTENT_AUDIT_HMAC_KEY` 与 `CONTENT_AUDIT_KEY_ID`；前者不得写入 Nacos、代码或数据库。未注入时系统保留 slot/version，但 `content_hmac` 保持 null，L4b 不可将其作为完整性证据。
 
 ### 5.1 REST
 

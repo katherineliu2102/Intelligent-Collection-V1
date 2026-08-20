@@ -6,20 +6,19 @@ import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
+import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.spi.ExecutionGuard;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 /**
- * Phase 1 简化版 ExecutionGuard —— 时段 + 空地址 + 内存频率计数器（无 Redis）。
+ * Phase 1 简化版 ExecutionGuard —— 时段 + 空地址 + 内存频率计数器（单渠道日上限及跨渠道日总上限，无 Redis）。
  *
  * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为 Redis Lua 原子计数的生产实现。
  */
@@ -29,7 +28,7 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
 
     @Resource private ChannelProperties channelProperties;
 
-    private final ConcurrentHashMap<String, AtomicInteger> frequencyMap = new ConcurrentHashMap<>();
+    @Resource private ComplianceCounterService complianceCounterService;
 
     @Override
     public GuardVerdict evaluate(ExecutionContext context) {
@@ -68,16 +67,27 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         }
 
         if (inQuiet) {
-            return GuardVerdict.block(
+            return GuardVerdict.defer(
                     "QUIET_HOURS "
                             + comp.getQuietHoursStart()
                             + "-"
                             + comp.getQuietHoursEnd()
                             + " "
                             + tz,
-                    "TIME_WINDOW");
+                    "TIME_WINDOW",
+                    nextAllowedAt(ZonedDateTime.now(zone), start, end));
         }
         return null;
+    }
+
+    private static java.time.LocalDateTime nextAllowedAt(
+            ZonedDateTime now, LocalTime start, LocalTime end) {
+        ZonedDateTime next =
+                now.withHour(end.getHour()).withMinute(end.getMinute()).withSecond(0).withNano(0);
+        if (start.isAfter(end) && !now.toLocalTime().isBefore(start)) {
+            next = next.plusDays(1);
+        }
+        return next.toLocalDateTime();
     }
 
     private GuardVerdict checkAddress(ExecutionContext context) {
@@ -127,23 +137,31 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
                 limit = limits.get(channel.name());
             }
         }
-        if (limit == null || limit <= 0) {
-            return null;
-        }
-
         Long userId = context.getPlan().getUserId();
-        String dateKey =
+        java.time.LocalDate date =
                 ZonedDateTime.now(ZoneId.of(channelProperties.getCompliance().getTimezone()))
-                        .toLocalDate()
-                        .toString();
-        String key = userId + ":" + channel.name() + ":" + dateKey;
-
-        AtomicInteger counter = frequencyMap.computeIfAbsent(key, k -> new AtomicInteger(0));
-        int current = counter.incrementAndGet();
-        if (current > limit) {
-            return GuardVerdict.block(
-                    "DAILY_LIMIT_EXCEEDED " + channel.name() + " " + current + "/" + limit,
-                    "FREQUENCY_LIMIT");
+                        .toLocalDate();
+        int channelLimit = limit == null ? 0 : limit;
+        int totalLimit = channelProperties.getCompliance().getDailyTotalLimit();
+        if (channelLimit > 0 || totalLimit > 0) {
+            ComplianceCounterService.Counts counts =
+                    complianceCounterService.tryConsume(
+                            userId, channel.name(), date, channelLimit, totalLimit);
+            if (channelLimit > 0 && counts.channel > channelLimit) {
+                return GuardVerdict.block(
+                        "DAILY_LIMIT_EXCEEDED "
+                                + channel.name()
+                                + " "
+                                + counts.channel
+                                + "/"
+                                + channelLimit,
+                        "FREQUENCY_LIMIT");
+            }
+            if (totalLimit > 0 && counts.total > totalLimit) {
+                return GuardVerdict.block(
+                        "DAILY_TOTAL_LIMIT_EXCEEDED " + counts.total + "/" + totalLimit,
+                        "FREQUENCY_LIMIT");
+            }
         }
         return null;
     }

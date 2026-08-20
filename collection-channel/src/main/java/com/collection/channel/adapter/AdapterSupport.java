@@ -1,17 +1,23 @@
 package com.collection.channel.adapter;
 
+import com.collection.channel.client.HttpFailureClassifier;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
 import com.collection.common.enums.ContactResult;
 import org.springframework.web.client.HttpStatusCodeException;
-import org.springframework.web.client.ResourceAccessException;
 
-/** Adapter 公共工具：HTTP 异常 → {@link StepResult}（§3.1 基础设施 vs 业务失败）。 */
+/**
+ * Adapter 公共工具：HTTP 异常 → {@link StepResult}。
+ *
+ * <p>失败三分类：可证明未发出（{@link #notSent}，可重试）／结果未知（{@link #outcomeUnknown}，不重试）／确定性失败（{@link
+ * #permanentFailure}，不重试）。判定依据见 {@link HttpFailureClassifier}。
+ */
 final class AdapterSupport {
 
     private AdapterSupport() {}
 
-    static StepResult channelDown(String errorCode, String detail) {
+    /** 可证明未发出：请求根本没到供应商，引擎重试安全（`retryable=true`）。 */
+    static StepResult notSent(String errorCode, String detail) {
         return StepResult.builder()
                 .success(false)
                 .contactResult(ContactResult.CHANNEL_DOWN)
@@ -20,8 +26,18 @@ final class AdapterSupport {
                 .build();
     }
 
+    /** 结果未知：请求可能已被供应商受理，重试即可能重复触达，故不重试。 */
+    static StepResult outcomeUnknown(String errorCode, String detail) {
+        return StepResult.builder()
+                .success(false)
+                .contactResult(ContactResult.FAILED)
+                .errorCode(errorCode)
+                .retryable(false)
+                .build();
+    }
+
     static StepResult notConfigured(String channel) {
-        return channelDown(
+        return notSent(
                 channel + "_NOT_CONFIGURED",
                 "Missing Nacos channel." + channel.toLowerCase() + " credentials");
     }
@@ -45,23 +61,26 @@ final class AdapterSupport {
     }
 
     static StepResult mapHttpException(String prefix, Exception e) {
-        if (e instanceof ResourceAccessException) {
-            return channelDown(prefix + "_TIMEOUT", e.getMessage());
-        }
         if (e instanceof HttpStatusCodeException) {
             HttpStatusCodeException ex = (HttpStatusCodeException) e;
             int code = ex.getRawStatusCode();
-            if (code >= 500 || code == 429) {
-                return channelDown(prefix + "_" + code, ex.getStatusText());
+            if (code == 429) {
+                return notSent(prefix + "_429_NOT_SENT", ex.getStatusText());
+            }
+            if (code >= 500) {
+                return outcomeUnknown(prefix + "_" + code + "_OUTCOME_UNKNOWN", ex.getStatusText());
             }
             return permanentFailure(prefix + "_" + code);
         }
-        return channelDown(prefix + "_ERROR", e.getMessage());
+        if (HttpFailureClassifier.provablyNotSent(e)) {
+            return notSent(prefix + "_NOT_SENT", e.getMessage());
+        }
+        return outcomeUnknown(prefix + "_OUTCOME_UNKNOWN", e.getMessage());
     }
 
-    /** 通知中心瞬时故障（连接超时 / 5xx / 429，重试耗尽）→ retryable，交引擎降级。 */
-    static StepResult notificationTimeout() {
-        return channelDown("NOTIFICATION_TIMEOUT", "transient HTTP failure after retry");
+    /** 通知中心故障（渠道侧短重试耗尽后上抛）→ 按可否证明未发出分流。 */
+    static StepResult notificationFailure(Exception e) {
+        return mapHttpException("NOTIFICATION", e);
     }
 
     /** 通知中心业务码 → 建议 errorCode（对接说明 §9；待编排最终拍板，仅落 timeline）。 */

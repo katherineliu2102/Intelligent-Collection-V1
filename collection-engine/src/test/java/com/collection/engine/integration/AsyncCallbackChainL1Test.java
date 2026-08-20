@@ -29,6 +29,7 @@ import com.collection.engine.lifecycle.EventConsumerDispatcher;
 import com.collection.engine.lifecycle.PlanLifecycleManager;
 import com.collection.engine.lifecycle.PreFlightChecker;
 import com.collection.engine.lifecycle.StepExecutionOrchestrator;
+import com.collection.engine.lifecycle.StepOutcomeRecorder;
 import com.collection.engine.spi.SpiInvoker;
 import java.lang.reflect.Field;
 import java.time.LocalDateTime;
@@ -79,12 +80,22 @@ class AsyncCallbackChainL1Test {
         inject(orchestrator, "contextAssembler", contextAssembler);
         inject(orchestrator, "planRepository", planRepo);
         inject(orchestrator, "timelineRepository", timelineRepo);
+        StepOutcomeRecorder outcomeRecorder = new StepOutcomeRecorder();
+        inject(outcomeRecorder, "planRepository", planRepo);
+        inject(outcomeRecorder, "timelineRepository", timelineRepo);
+        inject(orchestrator, "stepOutcomeRecorder", outcomeRecorder);
+        inject(
+                orchestrator,
+                "decisionLogRepository",
+                (com.collection.common.repository.DecisionLogRepository) dl -> {});
         inject(orchestrator, "eventBus", bus);
         inject(orchestrator, "spiInvoker", SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
         PlanLifecycleManager manager = new PlanLifecycleManager();
         inject(manager, "planRepository", planRepo);
+        inject(manager, "timelineRepository", timelineRepo);
+        inject(manager, "stepOutcomeRecorder", outcomeRecorder);
         inject(manager, "caseService", caseService);
         inject(manager, "planFactory", new AiCallPlanFactory());
         inject(
@@ -95,7 +106,10 @@ class AsyncCallbackChainL1Test {
                 manager,
                 "exhaustionPolicy",
                 (ExhaustionPolicy) (plan, info, snap) -> ExhaustionResult.complete("done"));
-        inject(manager, "predictiveDialerService", (PredictiveDialerService) userId -> {});
+        inject(
+                manager,
+                "predictiveDialerService",
+                (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();

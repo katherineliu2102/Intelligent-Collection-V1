@@ -10,3 +10,10 @@ channel:
     from-email: collections@mocasa.com
   notification:
     app-key: <运维下发>
+  facade:
+    base-url: https://34.158.34.184/api/v1/facade
+    api-key: sk_live_xxxx
+    insecure-tls: true
+    product-type: "Quick Loan"
+    currency: PHP
+    test-callee: "+639451373897"

@@ -84,7 +84,7 @@ curl "http://localhost:8080/plans/timeline/1001"
 mysql -h<HOST> -P<PORT> -u<USER> -p <DB_NAME> < db/schema.sql
 mysql -h<HOST> -P<PORT> -u<USER> -p <DB_NAME> < db/mock-data.sql   # 可选 mock 数据
 
-# 还款中断：取消该用户活跃计划（plan → CANCELLED, REPAID）
+# 整笔 loan 结清：取消该案件活跃计划（plan → CANCELLED, REPAID）
 curl -X POST "http://localhost:8080/mock/repayment?userId=1001&caseId=1001"
 # 阶段变更：取消旧阶段计划 + 建新阶段计划
 curl -X POST "http://localhost:8080/mock/stage-changed?caseId=1001&stage=S2"
@@ -121,4 +121,4 @@ curl -X POST "http://localhost:8080/webhook/channel-callback?planId=1&stepId=3&r
 
 ## 六、Phase 1 已知简化（非生产实现）
 
-内存事件总线 / 内存幂等锁 / SPI 仅异常兜底未启线程级硬超时 / `@Scheduled` 代替 XXL-Job / `CaseService`·`ProfileService` 为合成 Mock。生产化目标见 [`docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md`](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md)。
+内存事件总线 / 内存幂等锁 / SPI 仅异常兜底未启线程级硬超时 / `local`·`test` 用 `@Scheduled` 代替生产调度订阅（生产入口为 Cloud Scheduler → Pub/Sub → 应用订阅）/ `CaseService`·`ProfileService` 为合成 Mock。生产化目标见 [`docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md`](./docs/MOCASA催收系统升级_Phase1_基础设施交互规范.md)。

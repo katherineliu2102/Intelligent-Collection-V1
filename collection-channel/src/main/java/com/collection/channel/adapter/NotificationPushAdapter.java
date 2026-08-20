@@ -124,7 +124,7 @@ public class NotificationPushAdapter implements ChannelAdapter {
                     "[NotificationPushAdapter] transient failure caseId={}: {}",
                     caseId,
                     e.getMessage());
-            return AdapterSupport.notificationTimeout();
+            return AdapterSupport.notificationFailure(e);
         }
     }
 

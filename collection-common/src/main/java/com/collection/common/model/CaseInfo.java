@@ -18,8 +18,12 @@ public class CaseInfo {
     private Stage stage;
     private String product;
     private String caseStatus;
+    private BigDecimal overdueAmount;
     private BigDecimal totalOutstanding;
+    private BigDecimal penaltyAmount;
+    private BigDecimal upcomingAmount;
     private LocalDate dueDate;
+    private LocalDate nextDueDate;
     /** 实时还款状态：true 表示已结清（PreFlightChecker 使用）。 */
     private boolean repaid;
     /** 是否冻结（投诉冻结等）。 */

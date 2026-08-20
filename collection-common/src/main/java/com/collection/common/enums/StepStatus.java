@@ -6,5 +6,10 @@ public enum StepStatus {
     EXECUTING,
     COMPLETED,
     SKIPPED,
-    FAILED
+    FAILED;
+
+    /** 终态：已写 completed_at，不得再被 due/timeout 事件重新前置为 EXECUTING。 */
+    public boolean isTerminal() {
+        return this == COMPLETED || this == SKIPPED || this == FAILED;
+    }
 }
