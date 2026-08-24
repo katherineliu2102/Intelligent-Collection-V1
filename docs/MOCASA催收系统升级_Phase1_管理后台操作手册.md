@@ -1,9 +1,9 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
-> **适用版本**：Phase 1 / Phase 1.5 切片  
+> **适用版本**：Phase 1 / Phase 1.5 切片（**2026-08-24**：案件目录口径见 §3.4）  
 > **读者**：运营、测试、策略、研发联调同事  
 > **数据源**：当前连接 **测试 MySQL**（Nacos 下发 JDBC，与 L4b 联调同一库）；正式跑通后再切生产库。  
-> **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [`P0 测试`](./testing/admin-p0-test.md) · [`L4b 触达核对清单`](../../AI%20collection/MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md)
+> **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [`P0 测试`](./testing/admin-p0-test.md) · [`L4b 触达核对清单`](./testing/MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md) · [`e2e50 入案 JSONL`](./testing/e2e50_caseEvents.jsonl)
 
 ---
 
@@ -25,7 +25,7 @@
 | **Data Analysis** | `/dashboard` | **触达效果看板**（渠道/Stage/模板、送达率） | `GET /dashboard/outreach/realtime` ← `t_contact_timeline` |
 | Strategy Config | `/strategy` | 策略总览、Holdout、配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS/Push 热更新、计划模板、Email 只读 | `/config/script-templates`、`/config/plan-templates` |
-| Case Monitor | `/cases` | 案件检索 + 计划步骤 + 触达时间线 | `/cases/search`、`/plans/*` |
+| Case Monitor | `/cases` | 案件检索 + 计划步骤 + 触达时间线 | `/cases/search`、`/plans/*`（**现行检索仍读 `t_collection`，见 §3.4**） |
 | Ops Queue | `/ops` | 异常队列 ACK / Resolve | `/ops/exceptions` |
 | Compliance | `/compliance` | 冻结 / 解冻 / 升级 | `/compliance/*` |
 | System Admin | `/system` | 审计日志 | `/admin/audit-logs` |
@@ -121,7 +121,21 @@ curl -s -b cookies.txt "http://localhost:8888/dashboard/outreach/realtime?days=3
 
 1. 输入 Case ID / User ID → Search。
 2. **展开行**：Plans（含已完成）+ Contact Timeline。
-3. L4b 示例：`99000002` — 可见多计划、SMS/PUSH/EMAIL 步骤与 `DELIVERED`/`SKIPPED`。
+3. L4b 合成案示例：`99000002` — 可见多计划、SMS/PUSH/EMAIL 步骤与 `DELIVERED`/`SKIPPED`。
+
+**隐私（现在就会看到）**
+
+| 列 | 是否展示 | 说明 |
+|----|----------|------|
+| Phone | 是，**脱敏** | 如 `+63****358`，完整号不在列表 |
+| Email | 是，**脱敏** | 如 `w***@126.com` |
+| 姓名 | **否** | 话术里会用 `{name}`，后台列表不展示 |
+
+**真实案 / AI Call 注意（升级前）**
+
+- 新入案写在 **`t_ai_collection`**。当前 Search 查的是旧表 **`t_collection`**。只投了 `e2e50_caseEvents.jsonl`、旧库没有该 `loan_id` 时，**Case Monitor 会是空的**，引擎却可能已建计划。这是已知缺口，不是「没入案」。
+- 时间线能看到 `AI_CALL` 的 `result` / `providerMsgId`。接通原因、Facade `line_outcome` 在 `t_channel_callback_audit`，**页面上还没有**，SQL 自查见 §6.2。
+- 升级完成后：Search 以 `t_ai_collection` 为准；可用真实 `caseId`（如 e2e50）代替 `9900000x`。
 
 ### 3.5 Ops / Compliance / System
 
@@ -140,6 +154,8 @@ curl -s -b cookies.txt "http://localhost:8888/dashboard/outreach/realtime?days=3
 | `ERR_CONNECTION_REFUSED` | 前后端未同时运行 | `scripts\dev\start-admin.ps1` |
 | Email 送达率低但 Case 里 DELIVERED | Skipped 是**未发**，不应进分母 | 看板已按 Attempted 算率；Case 看 timeline 逐条 |
 | Case 有数据、看板没有 | 看板按**时间窗**聚合，Case 按案件查全量 | 放大看板天数 |
+| **投了 JSONL / 真实案，Case Monitor 为空** | Search 仍读 `t_collection`，新案在 `t_ai_collection` | 先 SQL 查投影（§6.2）；后台改查询源后重试 |
+| **有 AI_CALL 计划，页面看不出接通原因** | UI 未接回调审计 | 查 `t_channel_callback_audit`（§6.2） |
 
 ---
 
@@ -193,6 +209,17 @@ SELECT channel, result, COUNT(*) FROM t_contact_timeline
 SET @caseId = 99000002;
 SELECT channel, result, created_at FROM t_contact_timeline
  WHERE case_id=@caseId ORDER BY created_at;
+
+-- 新入案投影（真实 caseEvent / e2e50）
+SELECT case_id, user_id, dpd, stage, collection_status, overdue_amount, upcoming_amount,
+       borrower_phone, borrower_email
+  FROM t_ai_collection WHERE case_id = @caseId;
+
+-- AI Call 回调审计（disposition 为映射后枚举；原生 line_outcome 在 canonical_payload）
+SELECT plan_id, step_id, result, disposition, provider_msg_id, received_at
+  FROM t_channel_callback_audit
+ WHERE case_id = @caseId
+ ORDER BY received_at;
 ```
 
 | result | 含义 | 看板归类 |
@@ -234,4 +261,5 @@ SELECT channel, result, created_at FROM t_contact_timeline
 | 一键启动 | `scripts/dev/start-admin.ps1` |
 | L4b 触达 | 手机 `+639451374358` / 邮箱 `wzynju@126.com` |
 | L4b 案件 | `99000000`～`99000005` |
+| 真实入案样例 | `docs/testing/e2e50_caseEvents.jsonl`（Search 改投影表后才进 Case Monitor） |
 | 相关脚本 | `scripts/dev/start-local.ps1`、`scripts/dev/refresh-test-db.py` |

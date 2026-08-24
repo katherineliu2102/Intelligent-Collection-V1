@@ -274,8 +274,8 @@ DROP PROCEDURE IF EXISTS sp_schema_add_timeline_columns;
 -- 7.2.2 供应商回调审计：原始回调证据，与 timeline 最终触达事实分层。
 CREATE TABLE IF NOT EXISTS t_channel_callback_audit (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    plan_id             BIGINT          NOT NULL,
-    step_id             BIGINT          NOT NULL,
+    plan_id             BIGINT          NULL,
+    step_id             BIGINT          NULL,
     case_id             BIGINT          NULL,
     provider_msg_id     VARCHAR(128)    NULL,
     result              VARCHAR(32)     NULL,
@@ -287,6 +287,27 @@ CREATE TABLE IF NOT EXISTS t_channel_callback_audit (
     INDEX idx_plan_step_received (plan_id, step_id, received_at),
     INDEX idx_provider_msg_id (provider_msg_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商渠道回调原始审计';
+
+-- Facade 入站在身份未解析时仍须留痕；plan/step 可空。
+DROP PROCEDURE IF EXISTS sp_schema_relax_callback_audit_ids;
+DELIMITER //
+CREATE PROCEDURE sp_schema_relax_callback_audit_ids()
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 't_channel_callback_audit'
+          AND COLUMN_NAME = 'plan_id'
+          AND IS_NULLABLE = 'NO'
+    ) THEN
+        ALTER TABLE t_channel_callback_audit
+            MODIFY plan_id BIGINT NULL,
+            MODIFY step_id BIGINT NULL;
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_relax_callback_audit_ids();
+DROP PROCEDURE IF EXISTS sp_schema_relax_callback_audit_ids;
 
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (

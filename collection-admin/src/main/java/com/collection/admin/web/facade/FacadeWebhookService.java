@@ -254,6 +254,15 @@ public class FacadeWebhookService {
         audit.setCanonicalPayload(canonical);
         audit.setSignature(signature);
         audit.setSignatureValid(signatureValid);
-        callbackAuditRepository.save(audit);
+        try {
+            callbackAuditRepository.save(audit);
+        } catch (RuntimeException e) {
+            log.error(
+                    "[facade-callback] audit insert failed session={} planId={} stepId={}",
+                    providerMsgId,
+                    planId,
+                    stepId,
+                    e);
+        }
     }
 }

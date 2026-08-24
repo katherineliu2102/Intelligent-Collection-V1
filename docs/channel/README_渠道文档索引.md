@@ -60,7 +60,9 @@
 | [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) | **SSOT**：`NotificationSmsAdapter` + `NotificationPushAdapter`（SMS / App Push 均经通知中心） |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | `SendGridEmailAdapter` |
 | [AI Call（Valubo Facade）接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) | **SSOT**：机器轨 `AI_CALL`；LTH 仅人工例外 |
-| [Facade Webhook 实现规格（草案）](./MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md) | 入站 `POST /webhook/facade/voice`；待议项未拍板前不实现 |
+| [Facade Webhook 实现规格](./MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md) | 入站契约：`POST /webhook/facade-callback` |
+| [Facade 回调运维说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade回调运维说明.md) | 登记 URL/secret、Nacos、自测 curl |
+| [Pilot 发版手册](./MOCASA催收系统升级_Phase1_发版手册.md) | `bdp01` 打镜像 + `pilot-run.sh` |
 | [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) | 已被 Facade 文档取代；仅留人工轨例外外呼 |
 | [AI Call L1 真拨测试记录 20260819](../testing/MOCASA催收系统升级_Phase1_AI_Call_L1真拨测试记录_20260819.md) | 2026-08-19 渠道冒烟事实（10 通未接通：406/BUSY/480/NO_ANSWER） |
 

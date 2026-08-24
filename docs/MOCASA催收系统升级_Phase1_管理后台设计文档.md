@@ -1,16 +1,18 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.1  
-> **日期**: 2026-06-30  
-> **状态**: ✅ 设计草案（基于产品讨论与 Intelligent-Collection-V1 方案对齐）  
+> **版本**: v1.2  
+> **日期**: 2026-08-24  
+> **状态**: ✅ 现行基线（SPA 已落地）+ 真实案 / AI Call 观测待补齐  
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
 > **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
 > **关联文档**:  
-> - [产品需求文档 (PRD)](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
-> - [架构设计文档](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
-> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
-> - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
-> **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）
+> - [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
+> - [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
+> - [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
+> - [管理后台操作手册](./MOCASA催收系统升级_Phase1_管理后台操作手册.md)  
+> - [策略迭代与测试操作手册](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
+> - [Facade Webhook 实现规格](./channel/MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md)  
+> **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）；v1.2 对齐新 Pub/Sub 投影与 AI Call Facade
 
 ---
 
@@ -47,7 +49,9 @@
 
 Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的分层架构，`collection-admin` 作为**应用层**承载管理后台 REST API、Webhook 回调与调度订阅触发入口（Cloud Scheduler → Pub/Sub → 应用订阅）（详见 [架构设计文档 §1.7](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）。
 
-当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台仅有只读 API（`/catalog`、`/plans`）与开发用静态页（`catalog.html`、`orchestration.html`）。**运营与策略人员无法通过产品化界面完成日常配置与监控**，是 Phase 1 产品化缺口。
+当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台已有 React SPA（`collection-admin/ui`，菜单：看板 / 策略 / 模板 / 案件监控 / 异常队列 / 合规 / 系统）与对应 REST。`catalog.html`、`orchestration.html` 仅作开发观测页，不再是唯一入口。
+
+**仍未闭合的产品化缺口（v1.2）**：案件检索仍读旧库 `t_collection`，而入案主路径写 `t_ai_collection`；单案视图不展示投影摘要与 AI Call 回调细节。接入真实 `caseEvent` 与 Facade 后，运营会看到「引擎在催、后台搜不到 / 看不清外呼」。本版把该缺口升为 Phase 1 必补，而不是另起一套后台。
 
 PRD 场景 B 定义了策略配置员的核心闭环：
 
@@ -65,7 +69,7 @@ PRD 场景 B 定义了策略配置员的核心闭环：
 | **运行可观测** | 单案 360° 视图 + 全局异常队列，支撑日常运维 |
 | **配置产品化** | 逐步将 Nacos/代码中的策略配置迁移至 DB + 后台 UI |
 | **商业化预留** | 多租户、计费计量、多地区规则包在数据模型与模块边界上预留，Phase 1 不交付完整能力 |
-| **边界清晰** | 不含催收员坐席作业（LTH）、不含 Creditor Portal、不做重型合规子系统 |
+| **边界清晰** | 不含催收员坐席作业（Facade / 供应商侧），不含 Creditor Portal、不做重型合规子系统 |
 
 ### 1.3 成功标准
 
@@ -110,7 +114,7 @@ PRD 场景 B 定义了策略配置员的核心闭环：
 | **Creditor Portal（客户门户）** | ✅ 暂不做 | 当前服务 MOCASA 自用；商业化初期仍由运营侧提供报表，Phase 2+ 再评估 |
 | **强制审批发布流** | ✅ 不做 | 内部流程简单、合规要求较低；保存即生效 + 变更日志即可 |
 | **重型合规子系统** | ✅ 不做 | Consent 台账、DNC 统一管理、Dispute 工单流等不作为 Phase 1 重点；引擎层合规 Guard 仍保留 |
-| **催收员坐席作业** | ✅ 不做 | PRD 已锁定：人工外呼在 LTH，本系统仅查看与配置 |
+| **催收员坐席作业** | ✅ 不做 | PRD 已锁定：AI 外呼在 Facade，人工外呼不在本系统；本后台只查看、配置、收回调 |
 | **绩效报表导出** | ✅ 不做 | PRD 决策：绩效取数在信贷主系统，本系统只记录底层数据 |
 | **债务人自助门户** | ✅ 不做 | 非 Phase 1 范围 |
 
@@ -323,7 +327,7 @@ flowchart LR
 |------|----------|------|
 | SMS / Push | title / body / 变量占位符 | 变量填充预览 |
 | Email | SendGrid template_id + HTML | 已有 `/catalog/template/{slot}/preview` |
-| AI Call / TTS | 话术脚本参数 | 文本预览 ⏳ 供应商参数待 LTH 确认 |
+| AI Call / TTS | Facade 话术脚本参数（`script.domain` + `business_context`） | 文本预览；**不**在后台听录音或拨号 |
 
 **变量支持**（PRD F6）：姓名、金额、日期、还款链接等；Phase 1 英文。
 
@@ -387,33 +391,52 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 ### 5.3 案件与计划监控
 
-**定位**：运行态只读 + 有限干预。支撑 debug、客诉处理与异常排查。
+**定位**：运行态只读 + 有限干预。支撑 debug、客诉处理与异常排查。  
+**数据 SSOT（v1.2）**：案件列表与摘要读 **`t_ai_collection`**（ingestion 投影）。计划 / 步骤 / 时间线仍读 `t_contact_plan*` / `t_contact_timeline`。禁止再把旧库 `t_collection` 当作新系统案件目录。
 
 #### 5.3.1 案件检索
 
 | 检索条件 | 说明 |
 |----------|------|
-| caseId / userId | 精确检索 |
-| Stage | S0–S4 筛选 |
+| caseId / userId | 精确检索（`caseId` = `loan_id`） |
+| Stage | S0–S4；D+91 `stage` 可空 |
+| collectionStatus | `IN_COLLECTION` / `SETTLED` / `CEASED` |
 | plan 状态 | ACTIVE / COMPLETED / CANCELLED 等 |
-| 最近触达渠道 | timeline 聚合 |
 | 冻结状态 | 是否 complaint 冻结 |
 
-列表展示脱敏后的用户标识（PRD §9 脱敏决策）。
+**列表字段与隐私（PRD §8.2 / §9）**：
+
+| 字段 | 列表 | 详情 | 口径 |
+|------|------|------|------|
+| Case ID / User ID | 明文 | 明文 | 内部键 |
+| Stage / DPD / collectionStatus / 产品 | 明文 | 明文 | 运行态 |
+| Phone | **脱敏** | 默认脱敏；完整号不进列表 | `borrower_phone`，如前 3 + `****` + 后 3 |
+| Email | **脱敏** | 默认脱敏 | `borrower_email` |
+| 姓名 | **不展示** | 默认不展示；客诉排查可按角色点开展示 | `borrower_name` 仅存投影，不进列表 |
+
+现码（v1.1 实现）已脱敏电话/邮箱，但查询 `t_collection` 且无姓名列——与上表对齐后须改查询源，姓名策略保持「列表不展示」。
 
 #### 5.3.2 单案 360° 视图
 
-**功能**：一屏展示案件触达全链路，是 orchestration.html 的产品化版本。
+**功能**：一屏展示入案投影 + 触达全链路。React `CasesPage` 展开行是现行入口；`orchestration.html` 仅开发观测。
 
-| 区块 | 内容 | 现有 API |
-|------|------|----------|
-| 案件摘要 | Stage、DPD、产品、冻结状态 | 待扩展 |
-| 活跃计划 | plan 状态、步骤序列、各 step 状态 | `/plans/active/by-case/{caseId}` |
-| 步骤详情 | channel、template_id、config_version、trigger_time、result | `/plans/{planId}/steps` |
-| 触达时间线 | 全渠道触达记录 | `/plans/timeline/{userId}` |
-| 决策日志 | 规则命中（Phase 2 `t_decision_log`） | 预留 |
+| 区块 | 内容 | API |
+|------|------|-----|
+| 案件摘要 | Stage、DPD、产品、`collectionStatus`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（待建，读 `t_ai_collection`） |
+| 计划（含终态） | plan 状态、步骤序列、各 step 状态 | `/plans/by-case/{caseId}/history`、`/plans/{planId}/steps` |
+| 触达时间线 | 全渠道：channel、result、`providerMsgId`、scriptSlot、时间 | `/plans/timeline/{userId}` |
+| AI Call 回调解读 | 映射后的 `ContactResult`；审计表 `disposition` / 原始 `line_outcome`（只读） | timeline.result + `t_channel_callback_audit`（待接到 UI） |
+| 决策日志 | 规则命中 | Phase 2 `t_decision_log` |
 
-**交互**：步骤状态色标（已有 orchestration.html 样式可复用）；支持从看板/异常队列一键跳转。
+**AI Call 展示边界**：后台展示是否受理、是否接通、映射结果（如 `SENT_NO_RESPONSE`）、失败码、`batchId`/`session_id`。不内嵌录音播放、不提供坐席重拨。
+
+**交互**：步骤状态色标；异常队列 / 看板一键跳转本案。
+
+#### 5.3.3 真实案接入后的验收
+
+- 向测试 Topic 投 `e2e50_caseEvents.jsonl`（或白名单内真实 `caseId`）后，Case Monitor **必须能搜到**，且 DPD/stage/金额与投影一致。
+- `CEASED`（D+91）可检索、无活跃催收计划。
+- `SETTLED` 检索得到、活跃计划已取消。
 
 ---
 
@@ -504,17 +527,17 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 ---
 
-### 5.6 合规操作（Phase 2 预留）
+### 5.6 合规操作
 
-**定位**：投诉/争议冻结、解冻和终态取消不属于 Phase 1；接口实现由 `collection.phase2.compliance-ops.enabled=true` 显式启用。
+**定位**：轻量冻结/解冻/升级，不是 Consent / DNC / Dispute 子系统。P0 UI（`/compliance`）与 REST 已存在；须冻结 **`t_ai_collection.case_id`**，不能只认旧 `t_collection` 行。
 
 | 操作 | 行为 | 角色 |
 |------|------|------|
-| **投诉冻结** | Phase 2：对用户活跃 plan 写冻结标记 | 催收主管 |
-| **解冻** | Phase 2：清除冻结标记 | 催收主管 |
-| **终态取消** | Phase 2：确认违规后标记 COMPLAINT 终态，不再续建 | 催收主管 |
+| **投诉冻结** | 对用户活跃 plan 写冻结标记，后续步骤 Guard 拦截 | 催收主管 |
+| **解冻** | 清除冻结标记 | 催收主管 |
+| **升级 / 终态取消** | 标记后不再续建（`COMPLAINT` 等 Phase 2 枚举仍按引擎规格） | 催收主管 |
 
-Phase 2 记录操作人、时间、原因（操作日志）。Phase 1 不建设 Consent 台账、DNC 管理、Dispute 工单流。
+记录操作人、时间、原因。不做 Consent 台账、DNC 管理、Dispute 工单流。
 
 ---
 
@@ -667,7 +690,7 @@ Phase 1 为**单实例部署**（部署拓扑见 [架构文档 §2](./MOCASA催�
 
 | 层 | 技术选型 | 说明 |
 |----|----------|------|
-| 前端 | React / Vue SPA + Ant Design Pro 类组件库 ⏳ | PRD §8.1：管理后台英文界面 |
+| 前端 | React + Ant Design（`collection-admin/ui`） | 已选型；PRD §8.1 英文界面 |
 | 后端 | Spring Boot 2.7.18 `collection-admin` | 已有 |
 | 鉴权 | Shiro + RBAC | PRD §9 决策 |
 | BI 聚合 | **冷热分离**：热层 MySQL/ODS 直读（实时），冷层 BigQuery（趋势 T+1） | 看板数据源，见 §5.1.0 |
@@ -678,11 +701,13 @@ Phase 1 为**单实例部署**（部署拓扑见 [架构文档 §2](./MOCASA催�
 |------------|------|------|
 | `CatalogController` | 策略/模板只读目录 | ✅ 已有 |
 | `PlanQueryController` | 计划/时间线查询 | ✅ 已有 |
+| `CaseQueryController` | 案件检索 | ⚠️ 已有，仍读 `t_collection`，须改 `t_ai_collection` |
 | `MockTriggerController` | 测试触发 | ✅ 已有（dev） |
-| `ConfigController` | 配置 CRUD + 热加载 | ⏳ 待建 |
-| `OpsQueueController` | 异常队列查询与处理 | ⏳ 待建 |
-| `DashboardController` | 看板聚合 API | ⏳ 待建 |
-| `ComplianceOpsController` | 冻结/解冻/终态取消 | ⏳ 待建 |
+| `ConfigController` | 配置 CRUD + 热加载 | ✅ 已有 |
+| `OpsQueueController` | 异常队列查询与处理 | ✅ 已有 |
+| `DashboardController` | 看板聚合 API | ✅ 已有（热层 timeline） |
+| `ComplianceOpsController` | 冻结/解冻/升级 | ✅ 已有 |
+| `FacadeWebhookService` | Facade 回调入站 | ✅ 已有；**未**接到 Case Monitor UI |
 
 ### 7.3 现有页面资产
 
@@ -784,7 +809,8 @@ gantt
 
 | 交付项 | 说明 |
 |--------|------|
-| 单案 360° 视图 | 产品化 orchestration.html |
+| 单案 360° 视图 | 产品化 CasesPage：投影摘要 + 计划 + 时间线 + AI Call 审计 |
+| 案件检索 SSOT | `GET /cases/search` 改读 `t_ai_collection` |
 | 策略目录只读 | 产品化 catalog.html |
 | 异常队列 v1 | CALLBACK_TIMEOUT、PLAN_STUCK、CHANNEL_CIRCUIT_OPEN（逐条；折叠聚合见 Phase 1.5 §5.5.2） |
 | 基础合规操作 | 冻结 / 解冻 / 终态取消 |
@@ -837,6 +863,8 @@ gantt
 | 配置存储 | **Phase 1.5 迁 DB** | 摆脱 Nacos/代码发布依赖，实现场景 B |
 | 界面语言 | **英文** | PRD §8.1 |
 | 绩效报表 | **不在本系统** | PRD §9 决策 |
+| 案件目录 | **`t_ai_collection`** | 新 Pub/Sub 投影是运行时唯一案件来源；后台不得以旧 `t_collection` 为目录 |
+| PII 展示 | **电话/邮箱脱敏；列表不展示姓名** | PRD §8.2；姓名仅话术渲染 |
 
 ---
 
@@ -849,8 +877,9 @@ gantt
 | Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ❓ 待运维确认 |
 | Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ⏳ 默认跳转，嵌入成本高 |
 | Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ⏳ 默认 P1，手动回滚可先接受 |
-| Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ⏳ 默认 React + Ant Design Pro |
+| Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ✅ React + Ant Design（`collection-admin/ui`） |
 | Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ❓ 待策略/业务确认 |
+| Q8 | 案件检索是否切 `t_ai_collection`？ | §5.3 | ✅ **切**。旧 `t_collection` 仅兼容迁移期对账，不作目录 |
 
 ---
 
@@ -875,14 +904,17 @@ gantt
 
 | 资产 | 路径 | 说明 |
 |------|------|------|
-| CatalogController | `Intelligent-Collection-V1/collection-admin/.../CatalogController.java` | 策略目录只读 API |
-| PlanQueryController | `Intelligent-Collection-V1/collection-admin/.../PlanQueryController.java` | 计划/时间线查询 |
-| catalog.html | `Intelligent-Collection-V1/collection-admin/src/main/resources/static/catalog.html` | 策略目录静态页 |
-| orchestration.html | `Intelligent-Collection-V1/collection-admin/src/main/resources/static/orchestration.html` | 单案观测静态页 |
-| MockTriggerController | `Intelligent-Collection-V1/collection-admin/.../MockTriggerController.java` | 测试触发（可包装为沙箱入口） |
+| React SPA | `collection-admin/ui` | 现行门户（5173） |
+| CaseQueryController | `collection-admin/.../CaseQueryController.java` | 案件检索；v1.2 须改投影表 |
+| PlanQueryController | `collection-admin/.../PlanQueryController.java` | 计划/时间线查询 |
+| DashboardController | `collection-admin/.../DashboardController.java` | 热层触达看板 |
+| FacadeWebhookService | `collection-admin/.../web/facade/` | AI Call 回调入站 |
+| catalog.html / orchestration.html | `collection-admin/src/main/resources/static/` | 开发观测页，非运营主入口 |
+| MockTriggerController | `collection-admin/.../MockTriggerController.java` | 测试触发（可包装为沙箱入口） |
 
 ---
 
 > **修订历史**  
+> - v1.2 · 2026-08-24 · 对齐真实 Pub/Sub 投影与 AI Call Facade：案件 SSOT=`t_ai_collection`；PII（电话脱敏、列表不展示姓名）；单案补投影摘要与外呼审计；刷新「已实现 vs 待补」；合规 UI 承认为 P0 轻量能力  
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论
