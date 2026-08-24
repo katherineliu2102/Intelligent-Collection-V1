@@ -8,8 +8,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 复刻 Python {@code json.dumps(obj, separators=(",", ":"), sort_keys=True)}（默认 ensure_ascii）。
- * Facade 手册 §11.3：验签必须用 canonical JSON，不能对原始 body 字节 HMAC。
+ * 复刻 Python {@code json.dumps(obj, separators=(",", ":"), sort_keys=True)}（默认 ensure_ascii）。 Facade
+ * 手册 §11.3：验签必须用 canonical JSON，不能对原始 body 字节 HMAC。
  */
 public final class FacadeCanonicalJson {
 

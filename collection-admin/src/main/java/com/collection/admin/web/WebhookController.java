@@ -30,8 +30,8 @@ public class WebhookController {
     @Resource private FacadeWebhookService facadeWebhookService;
 
     /**
-     * Valubo Facade 终态回调。账户级 URL，JSON body + {@code X-Valubo-Signature}。
-     * 不要改 {@link #channelCallback} 去迁就 Facade。
+     * Valubo Facade 终态回调。账户级 URL，JSON body + {@code X-Valubo-Signature}。 不要改 {@link
+     * #channelCallback} 去迁就 Facade。
      */
     @PostMapping("/facade-callback")
     public Map<String, Object> facadeCallback(

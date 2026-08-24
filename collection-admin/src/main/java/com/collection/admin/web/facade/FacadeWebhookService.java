@@ -32,8 +32,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 §11.3； 事件 {@code disposition} 留空以免引擎把原生词当成
- * ANSWERED。
+ * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 §11.3； 事件 {@code disposition}
+ * 留空以免引擎把原生词当成 ANSWERED。
  */
 @Service
 public class FacadeWebhookService {
@@ -49,7 +49,8 @@ public class FacadeWebhookService {
     public Map<String, Object> handle(JsonNode root, String signature) {
         if (root == null || root.isMissingNode() || root.isNull()) {
             writeAudit(null, null, null, null, null, null, "null", signature, false);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid callback signature");
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED, "invalid callback signature");
         }
 
         String canonical = FacadeCanonicalJson.dumps(root);
@@ -71,7 +72,8 @@ public class FacadeWebhookService {
                     canonical,
                     signature,
                     false);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "invalid callback signature");
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED, "invalid callback signature");
         }
 
         Map<String, Object> ok = new HashMap<String, Object>();
