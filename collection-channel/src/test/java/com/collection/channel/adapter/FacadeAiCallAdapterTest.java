@@ -115,12 +115,24 @@ class FacadeAiCallAdapterTest {
                         .withRequestBody(
                                 matchingJsonPath(
                                         "$.cases[0].business_context.debt.product_type",
-                                        equalTo("Quick Loan"))));
+                                        equalTo("Quick Loan")))
+                        .withRequestBody(
+                                matchingJsonPath("$.cases[0].external_case_id", equalTo("90001")))
+                        .withRequestBody(
+                                matchingJsonPath(
+                                        "$.cases[0].business_context.client_metadata.plan_id",
+                                        equalTo("11")))
+                        .withRequestBody(
+                                matchingJsonPath(
+                                        "$.cases[0].business_context.client_metadata.step_id",
+                                        equalTo("22"))));
     }
 
     private static StepCommand command(String phone) {
         Map<String, Object> meta = new HashMap<String, Object>();
         meta.put(StepCommand.META_CASE_ID, 90001L);
+        meta.put(FacadeAiCallAdapter.META_PLAN_ID, 11L);
+        meta.put(FacadeAiCallAdapter.META_STEP_ID, 22L);
         meta.put(FacadeAiCallAdapter.META_BORROWER_NAME, "Test Borrower");
         meta.put(FacadeAiCallAdapter.META_OVERDUE_AMOUNT, "1000");
         meta.put(FacadeAiCallAdapter.META_DPD, "5");

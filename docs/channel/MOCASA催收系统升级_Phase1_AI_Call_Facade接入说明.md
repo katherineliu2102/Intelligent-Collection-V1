@@ -1,13 +1,14 @@
 # MOCASA Phase 1 — AI Call（Valubo Facade）接入说明
 
-> **版本**: v1.2
-> **日期**: 2026-08-19
+> **版本**: v1.3
+> **日期**: 2026-08-21
+> **v1.3**：对照 Facade 手册 2026-08-20。Callback 契约未改；`dial_policy` 旧字段会 422（Adapter 已合规）；`/retry` 补洞须带 `completed_reasons`。公网 Callback URL 仍待运维开通，见 §3.7。
 > **v1.2**：`script.language` 不传（用租户 Taglish）；`product_type=Quick Loan`；Facade TLS 为自签名（实测）；`AI_CALL` 日上限 2。
 > **v1.1**：D1 / D2 拍板——联调一案一批、上量同波次聚合；新增 `ContactResult.VOICEMAIL`。
 > **范围**: 仅覆盖菲律宾市场
 > **模块**: `collection-channel`（AI_CALL Adapter）+ `collection-admin`（Webhook）+ `collection-engine`（推进决策）
 > **供应商**: Valubo Voice / Facade 批次外呼
-> **关联文档**: [Facade 客户接入手册](../data-alignment/FACADE客户接入手册.md)、[渠道编排规格 V1.6](./MOCASA催收系统升级_Phase1_渠道编排规格.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[t_ai_collection 数仓最终对齐清单 v1.4](../data-alignment/MOCASA分流测试_t_ai_collection_数仓最终对齐清单.md)
+> **关联文档**: [Facade 客户接入手册](../data-alignment/FACADE客户接入手册.md)、[Facade Webhook 实现规格（草案）](./MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md)、[渠道编排规格 V1.6](./MOCASA催收系统升级_Phase1_渠道编排规格.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[t_ai_collection 数仓最终对齐清单 v1.4](../data-alignment/MOCASA分流测试_t_ai_collection_数仓最终对齐清单.md)
 >
 > **本文取代** [LTH Voice 对接说明](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md) 作为 `AI_CALL` 渠道 SSOT。LTH 仅保留人工轨例外外呼，不再承接机器轨 AI。
 
@@ -24,6 +25,8 @@
   - [3.4 编排规则（Wave-1 / Wave-2 / 互斥 / 停催）](#34-编排规则wave-1--wave-2--互斥--停催)
   - [3.5 幂等、超时与对账](#35-幂等超时与对账)
   - [3.6 批次粒度](#36-批次粒度)
+  - [3.7 公网 Callback URL 与运维开通](#37-公网-callback-url-与运维开通)
+  - [3.8 手册 2026-08-20 修订影响](#38-手册-2026-08-20-修订影响)
 - [4. 需要修改项](#4-需要修改项)
 - [5. 需要进一步讨论项](#5-需要进一步讨论项)
 - [6. 接入测试路线（L0–L3）](#6-接入测试路线l0l3)
@@ -278,6 +281,52 @@ PlanFactory 生成 AI_CALL step（09:15 *_VOICE_PRIMARY / 14:30 *_VOICE_RETRY）
 
 业务重拨继续用 plan 的 `*_VOICE_RETRY`，**不**用 Facade `/retry`。上量切聚合前，须先通过 L3（Wave-2 取消/保留）验收。
 
+### 3.7 公网 Callback URL 与运维开通
+
+Facade **不会**在建批请求里带回调地址。账户开通时由我方把 **HTTPS URL + Callback secret** 交给 Valubo，对方在推送侧配置。建议测试地址：
+
+```text
+https://<test-domain>/webhook/facade/voice
+```
+
+**现在缺的（给 Facade 之前必须齐）**
+
+| 项 | 现状 | 谁补 |
+|---|---|---|
+| `POST /webhook/facade/voice` | **未实现**。现有 `POST /webhook/channel-callback` 是 query 参数 + `X-Callback-Signature`，不能接 Facade JSON | 研发 |
+| Callback secret | Nacos `channel.facade` **没有** `callback-secret` | 研发加配置 + 运维注入 Secret |
+| `<test-domain>` | 未拍板；本机 `localhost:8888` 对方打不进来 | 运维 |
+| 公网 HTTPS 证书 | 对方出站会校验证书；不能用自签给回调入口 | 运维 |
+| 路由 | Ingress / LB 把该 path 转到 `collection-admin` | 运维 |
+| 推送开通 | 账户级配置，不是 API 字段 | 把 URL+secret 交给 Valubo |
+| 来源 IP 白名单 | 手册未给 egress IP | 向 Valubo 要；可选 |
+
+**签名格式（手册 §11.3，8/20 未改）**
+
+```text
+1. UTF-8 解析 JSON 为对象（不要用原始 body 字节）
+2. canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+3. X-Valubo-Signature = lowercase_hex( HMAC_SHA256(callback_secret, canonical_utf8) )
+4. 常量时间比较；失败 401；成功任意 2xx
+```
+
+联调风险：Python `json.dumps` 默认 `ensure_ascii=True`（中文变 `\uXXXX`）。Java 默认不转义。必须以 Valubo **实推报文**对拍，不要只按文档写死。
+
+`client_metadata` 会原样回传；Adapter 已写入 `case_id` / `plan_id` / `step_id`，Webhook 用它们发 `CHANNEL_CALLBACK`。`batch.completed` 只对账、按 `batch_id` 幂等，不推进 step。无会话失败不推 `session.completed`，继续靠超时 + `GET /batches/{id}/cases`。
+
+**建议顺序**：先实现接收端 → 运维出 HTTPS 与 secret → 交给 Valubo 开通 → 小批次对拍验签。URL 先给出去、接口未上线，对方会记 `callback_status=delivered` 但一直 4xx/超时并退避重试（L1 已出现过）。
+
+### 3.8 手册 2026-08-20 修订影响
+
+对照《FACADE客户接入手册_2026-08-20修订说明》：URL / Bearer / 建批上传启动 / Callback 字段结构 **没有换**。只收紧两处校验。
+
+| 修订 | 对我们 | 要改什么 |
+|---|---|---|
+| `dial_policy` 再传 `ring_timeout_sec` / `retry` / `predictive` / `terminal_sip_codes` / 顶层 `prepare_mode` → **HTTP 422** | `FacadeAiCallAdapter.buildBatchBody` 已只传 `timezone` / `windows` / `weekdays` | **出站代码不用改**。禁止以后加这些字段；单测保持请求体无 `retry` 键 |
+| `include_completed=true` 必须带 `completed_reasons`，首版只允许 `VOICEMAIL`、`CALL_SCREENING`；传 `NORMAL` → 422 | 日常业务重拨本来就不走 Facade `/retry` | 运维补洞脚本按新契约改。不要用 `/retry` 批量重打真人 |
+| 手册仍写：信箱 `was_ai_connected=false`；真人可用 `was_ai_connected` | 8/13 生产回传信箱 `was_ai_connected=true` | **不要改回** `was_ai_connected`。继续 §3.3：`reason=NORMAL` 或 `outcome_label=ANSWERED` |
+| 信箱 / 筛选案件状态是 `completed` 不是 `failed` | 与 `ContactResult.VOICEMAIL`、Wave-2 保留一致 | Webhook **禁止**把任意 `completed` 映射成 `ANSWERED`；必须看 `reason` |
+
 ---
 
 ## 4. 需要修改项
@@ -291,8 +340,8 @@ PlanFactory 生成 AI_CALL step（09:15 *_VOICE_PRIMARY / 14:30 *_VOICE_RETRY）
 | M1 | `DefaultAdvancementPolicy` | **完全不读 `contactResult`**，只按步序：非末步恒 `ADVANCE_NEXT` | 按 §3.3 分支：真人接通 → 取消当日 `*_VOICE_RETRY`；信箱/未接 → 保留。当前实现下「接通仍会补呼」，与规格 §7.3 相悖 |
 | M2 | `ContactResult` 枚举 | **已加** `VOICEMAIL(0)`（`collection-common`） | Webhook 必须回填合法枚举名 `VOICEMAIL`（信箱/筛选同此值）；**禁止**把信箱映射为 `ANSWERED`。`CALL_SCREENING` 走 `disposition`。`AdvancementPolicy` 仅对 `ANSWERED` 取消 Wave-2 |
 | M3 | 真人接通判定 | 早期设计写 `was_ai_connected == true` | 改为 `outcome_label==ANSWERED \|\| reason==NORMAL`（实测依据见 §2.2(1)） |
-| M4 | `WebhookController` | 仅 `POST /webhook/channel-callback`，`@RequestParam` 传参、无 body、无验签、不带 `disposition` | 新增 `POST /webhook/facade/voice`：接 JSON body、HMAC 验签（失败 401）、`session_id` 幂等、解析 `line_outcome`/`ai_result` → 发 `CHANNEL_CALLBACK`（含 `disposition`、`providerMsgId`）。原骨架接口保留供联调 |
-| M5 | AI_CALL Adapter | 文档与路由指向 `LthVoiceAdapter` / Mock | 新建 `FacadeAiCallAdapter`：batch 生命周期（create → cases → start）、E.164 归一、金额构成校验、`due_date` 兜底、`client_metadata` 注入、`pause/cancel` 撤单 |
+| M4 | `WebhookController` | 仅 `POST /webhook/channel-callback`（query + `X-Callback-Signature`）。**没有** Facade JSON / `X-Valubo-Signature` | **仍待做**：新增 `POST /webhook/facade/voice`：canonical JSON HMAC（失败 401）、`session_id` 幂等、解析 `line_outcome`/`ai_result` → `CHANNEL_CALLBACK`。原骨架接口保留，两套签名不要混 |
+| M5 | AI_CALL Adapter | **出站已落地** `FacadeAiCallAdapter`（create→cases→start） | 保持 `dial_policy` 仅窗口字段（8/20 后多传会 422）。Webhook / 引擎推进仍见 M1–M4 |
 
 ### 4.2 P1 — 影响正确性但可测试期规避
 

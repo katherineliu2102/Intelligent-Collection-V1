@@ -704,7 +704,7 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值兜底 ANSWERED")
+    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值兜底 FAILED")
     void onChannelCallback_mapsResultVariants() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
@@ -752,7 +752,7 @@ class PlanLifecycleManagerTest {
                         eq(step),
                         eq(StepStatus.EXECUTING),
                         eq(StepStatus.COMPLETED),
-                        eq(ContactResult.ANSWERED),
+                        eq(ContactResult.FAILED),
                         any(),
                         any(),
                         any());

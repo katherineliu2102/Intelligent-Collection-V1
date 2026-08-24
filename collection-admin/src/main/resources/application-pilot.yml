@@ -53,3 +53,5 @@ collection:
 
 channel:
   fallback-to-mock: false
+  # facade.callback-secret 由 Nacos 下发；勿用空的 ${FACADE_CALLBACK_SECRET:} 冲掉。
+  # 紧急覆盖：CHANNEL_FACADE_CALLBACK_SECRET。Pilot 启动要求非空。

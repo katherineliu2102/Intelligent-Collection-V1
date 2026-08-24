@@ -15,4 +15,12 @@ public class ChannelCallbackAuditRepositoryImpl implements ChannelCallbackAuditR
     public void save(ChannelCallbackAudit audit) {
         mapper.insert(audit);
     }
+
+    @Override
+    public boolean existsValidByProviderMsgId(String providerMsgId) {
+        if (providerMsgId == null || providerMsgId.isEmpty()) {
+            return false;
+        }
+        return mapper.countValidByProviderMsgId(providerMsgId) > 0;
+    }
 }

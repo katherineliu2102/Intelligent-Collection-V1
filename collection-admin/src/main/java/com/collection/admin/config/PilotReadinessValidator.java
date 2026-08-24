@@ -61,6 +61,9 @@ public class PilotReadinessValidator {
                 webhookProperties.isSignatureRequired()
                         && StringUtils.isNotBlank(webhookProperties.getHmacSecret()),
                 "Pilot requires collection.webhook signature verification and HMAC secret");
+        require(
+                StringUtils.isNotBlank(channelProperties.getFacade().getCallbackSecret()),
+                "Pilot requires channel.facade.callback-secret for Facade webhooks");
     }
 
     private void require(boolean condition, String message) {
