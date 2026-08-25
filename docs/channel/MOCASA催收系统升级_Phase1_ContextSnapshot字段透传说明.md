@@ -4,7 +4,7 @@
 > **日期**: 2026-06-09  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)、[Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md)、[collection-channel 总规格 §3](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#3-契约stepcommand--stepresult--channel_callback)
+> **关联文档**: [ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)、[Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)
 
 ---
 
@@ -15,8 +15,8 @@
   → 引擎建计划时组装并落库 ContextSnapshot
   → ExecutionContext（SPI 零 DB）
   → StepResolver.resolve() → StepCommand
-  → NotificationSmsAdapter / NotificationPushAdapter / SendGridEmailAdapter / LthVoiceAdapter
-  → 通知中心 / SendGrid / LTH
+  → NotificationSmsAdapter / NotificationPushAdapter / SendGridEmailAdapter / FacadeAiCallAdapter
+  → 通知中心 / SendGrid / Facade
 ```
 
 **分工**
@@ -91,7 +91,7 @@ App(JPush SDK) → 数仓完整快照 device.pushToken → ingestion → Context
 | `pushData` | String | Resolver 序列化 | Push API `data`（JSON object 字符串） |
 | `dynamicTemplateData` | Map | Resolver | SendGrid Handlebars |
 | `case_id` | Long | Resolver（来自 plan 或 `caseContext.caseId`） | 日志；Push `data` 内 `case_id` |
-| `callbackUrl`, `timeoutMinutes` | — | Resolver | Voice 异步 |
+| `callbackUrl`, `timeoutMinutes` | — | Resolver | AI_CALL 异步；Facade 回调为账户级配置，不随批次下发 |
 | `fallback_sms` | Boolean | PushAdapter | 标记已 fallback |
 
 ---
@@ -157,13 +157,17 @@ App(JPush SDK) → 数仓完整快照 device.pushToken → ingestion → Context
 | `basic.name` | `dynamicTemplateData.borrower_name` | 模板变量 | |
 | `caseContext.dueDate` | `dynamicTemplateData`（部分槽位） | 模板变量 | 如 S4 里程碑 |
 
-### 4.4 Voice（LTH，异步）
+### 4.4 AI_CALL（Facade，异步）
 
-| ContextSnapshot | StepCommand | LTH API |
-|-----------------|-------------|---------|
-| `basic.primaryPhone` | `targetAddress` | 被叫号码 |
-| `metadata.callbackUrl` | — | Adapter 拼回调 URL |
-| `contactHistory.todayPhoneAnswered` | — | Guard（接通即停） |
+| ContextSnapshot | StepCommand | Facade API |
+|-----------------|-------------|------------|
+| `basic.primaryPhone` | `targetAddress` | `callee_e164` |
+| `basic.name` | `metadata.borrower_name` | `business_context.borrower.name` |
+| `caseContext.totalOutstanding` | `metadata.overdue_amount` | `business_context.debt.overdue_amount` |
+| `caseContext.dpd` / `dueDate` | metadata | `business_context.debt.days_past_due` / `due_date` |
+| plan / step / case ID | `client_metadata` | 回调反查主键 |
+
+Facade 回调 URL 和 secret 在供应商账户级配置；完整入站映射见[回调入站交接](./MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md)。
 
 ---
 
@@ -211,7 +215,7 @@ EMAIL → targetAddress = basic.email
 | 文档 | 用途 |
 |------|------|
 | [Notification 对接说明 §6](./MOCASA催收系统升级_Phase1_Notification对接说明.md#6-contextsnapshot-字段映射) | Adapter 侧映射与附录 B 待决项 |
-| [总规格 §3.1](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#31-stepcommand) | StepCommand / StepResult |
+| [总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) | 执行边界与 Adapter 路由 |
 | [沟通提纲](../../../AI%20collection/相关资料/MOCASA_Notification_对接与测试沟通提纲.md) | 跨团队待对齐问题 |
 
 ---

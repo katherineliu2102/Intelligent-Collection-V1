@@ -26,6 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>步骤转终态即意味着 STEP_COMPLETED 已产生，因此该事件在本事务内一并入发件箱（核心引擎规格 §7.2）： 调用者随后的即时发布若失败，重投的原事件会因步骤已是终态而按
  * no-op 返回，事件不会被重新推导。 调用者用 {@link EngineEvents#stepCompleted} 构造要发布的事件，与入箱记录共享确定性 eventId。
+ *
+ * <p><b>本类所有 public 入口都必须带 {@code @Transactional}</b>：七步管线按设计跑在非事务上下文，而发件箱 仓储声明为 {@code
+ * Propagation.MANDATORY}；漏标的重载会在自调用绕过代理后无事务执行，导致状态与 timeline 各自单独提交、入箱抛错、STEP_COMPLETED
+ * 永不发出、计划停摆。该不变式由 {@code StepOutcomeRecorderTransactionBoundaryTest} 守护。
  */
 @Component
 public class StepOutcomeRecorder {
@@ -106,6 +110,7 @@ public class StepOutcomeRecorder {
         return true;
     }
 
+    @Transactional
     public boolean recordTerminal(
             ContactPlan plan,
             ContactPlanStep step,
@@ -126,6 +131,7 @@ public class StepOutcomeRecorder {
                 providerCallback);
     }
 
+    @Transactional
     public boolean recordTerminal(
             ContactPlan plan,
             ContactPlanStep step,

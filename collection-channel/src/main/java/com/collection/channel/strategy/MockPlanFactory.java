@@ -47,23 +47,40 @@ public class MockPlanFactory implements PlanFactory {
         return plan;
     }
 
-    /** §4.1 入口守卫：CEASED / D+91 拒建 plan（优先于 stage 匹配）。 */
+    /** §4.1 入口守卫：CEASED / SETTLED / D+91 / 尚未进入催收窗口，均拒建 plan（优先于 stage 匹配）。 */
     static boolean shouldRejectPlan(CaseInfo caseInfo, ContextSnapshot snapshot) {
         if (caseInfo == null) {
             return true;
         }
-        if ("CEASED".equalsIgnoreCase(caseInfo.getCaseStatus())) {
+        if (isNotCollectible(caseInfo.getCaseStatus()) || caseInfo.isRepaid()) {
             return true;
         }
         if (snapshot != null && snapshot.getCaseContext() != null) {
-            if ("CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
+            if (isNotCollectible(snapshot.getCaseContext().getCollectionStatus())) {
                 return true;
             }
-            if (snapshot.getCaseContext().getDpd() >= 91) {
+            int dpd = snapshot.getCaseContext().getDpd();
+            if (dpd >= 91) {
+                return true;
+            }
+            // 下界同样要拦：dpd < -3 表示下一个未还 dueDate 还有 3 天以上，数仓口径下此时 stage 为 null。
+            // 缺了这条，提前还清的客户会因为 Stage 兜底被建出 S0 计划。
+            if (dpd < Stage.S0.getMinDpd()) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * SETTLED 与 CEASED 同样不可催。
+     *
+     * <p>SETTLED 必须单列：数仓口径下无尾款时 {@code dpd=0}，落在 S0 的 [-3,0] 区间内，既躲过 D+91 上界也躲过 dpd&lt;-3
+     * 下界——只有结清状态本身能拦住它，否则已还清的客户会被建出 S0 计划并收到催收话术。
+     */
+    private static boolean isNotCollectible(String collectionStatus) {
+        return "CEASED".equalsIgnoreCase(collectionStatus)
+                || "SETTLED".equalsIgnoreCase(collectionStatus);
     }
 
     private List<ContactPlanStep> buildSteps() {

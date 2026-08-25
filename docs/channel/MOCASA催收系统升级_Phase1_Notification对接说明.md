@@ -310,7 +310,7 @@ collection-channel/
   adapter/NotificationPushAdapter.java
   adapter/NotificationClient.java          # 签名、HTTP、响应解析
   adapter/SendGridEmailAdapter.java
-  adapter/LthVoiceAdapter.java
+  adapter/FacadeAiCallAdapter.java
 ```
 
 ### 4.4 迁移对照
@@ -321,7 +321,7 @@ collection-channel/
 | `LthSmsAdapter`                      | `NotificationSmsAdapter`                             |
 | `FcmPushAdapter` + `channel.fcm.*`   | `NotificationPushAdapter` + `channel.notification.*` |
 | `SmsDispatchAdapter` / QH/Hiway/BORI | **删除**，路由由通知中心负责                                     |
-| `ChannelProperties.lth.sms`          | 废弃；`lth` 仅保留 `voice`                                 |
+| `ChannelProperties.lth.sms`          | 废弃；AI_CALL 使用 `channel.facade.*`，LTH 为系统外人工轨 |
 
 
 ### 4.5 幂等
@@ -489,7 +489,7 @@ Nacos：`biz.smartPrefix` / `globePrefix` / `ditoPrefix`（号段 → 运营商�
 
 ## 9. StepResult 映射（草案）
 
-> **状态**：供 `NotificationSmsAdapter` / `NotificationPushAdapter` 实现参考；与 [引擎渠道执行契约对齐（已定稿正本）](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) 对齐（4 项已于 2026-06-11 定稿）。`errorCode` 仅落 timeline，引擎不解析。
+> **状态**：供 `NotificationSmsAdapter` / `NotificationPushAdapter` 实现参考；与 [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) 的已定稿语义对齐。`errorCode` 仅落 timeline，引擎不解析。
 
 ### 9.1 SMS
 

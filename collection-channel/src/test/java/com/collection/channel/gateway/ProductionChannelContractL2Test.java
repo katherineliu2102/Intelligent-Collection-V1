@@ -75,6 +75,10 @@ class ProductionChannelContractL2Test {
                 .put(
                         "S1_SMS_STANDARD",
                         "MOCASA: {name}, PHP {amount} is {dpd} days overdue. Pay: {repaymentUrl}");
+        ChannelProperties.PushScript pushScript = new ChannelProperties.PushScript();
+        pushScript.setTitle("MOCASA Payment Reminder");
+        pushScript.setBody("{name}, PHP {amount} is {dpd} days overdue.");
+        properties.getScripts().getPush().put("S1_PUSH_STANDARD", pushScript);
 
         ScriptLibrary scriptLibrary = new ScriptLibrary();
         ReflectionTestUtils.setField(scriptLibrary, "channelProperties", properties);

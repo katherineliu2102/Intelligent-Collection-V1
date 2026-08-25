@@ -1,11 +1,11 @@
 {
   "dataType": "caseEvent",
   "data": {
-    "eventId": "l4b-case-99000000-0001",
+    "eventId": "688936d0-bed4-443b-8ee5-9a27eff0a0ba",
     "occurredAt": "2026-08-12 03:00:00",
     "caseId": 99000000,
     "userId": 99000000,
-    "caseVersion": "00000000000000000000000000000000",
+    "caseVersion": "60ecd3bdb44cfbb655df39a3528e2700",
     "product": "3",
     "stage": "S1",
     "dpd": 2,

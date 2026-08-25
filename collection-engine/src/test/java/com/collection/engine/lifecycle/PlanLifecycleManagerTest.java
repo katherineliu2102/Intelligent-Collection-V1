@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -34,8 +35,10 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.engine.spi.SpiInvoker;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,6 +76,7 @@ class PlanLifecycleManagerTest {
     @Mock private ExhaustionPolicy exhaustionPolicy;
     @Mock private PredictiveDialerService predictiveDialerService;
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
+    @Spy private CollectionMetrics metrics = CollectionMetrics.local();
 
     @InjectMocks private PlanLifecycleManager manager;
 
@@ -83,6 +87,8 @@ class PlanLifecycleManagerTest {
     void setUp() {
         plan = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);
         step = newStep(STEP_ID, 1, ChannelType.SMS, StepStatus.EXECUTING);
+        // 默认「抢到执行权」；抢占失败的分支由专门用例覆盖
+        lenient().when(planRepository.markStepExecuting(any())).thenReturn(true);
     }
 
     private ContactPlan newPlan(long id, PlanStatus status, Stage stage) {
@@ -182,6 +188,39 @@ class PlanLifecycleManagerTest {
         assertThat(prep.isExecute()).isTrue();
         verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_EXECUTING, null);
         verify(planRepository).markStarted(PLAN_ID);
+    }
+
+    @Test
+    @DisplayName("#17b 抢占失败（步骤已被并发投递终结）→ noop 且计划状态一律不动")
+    void prepareStepDue_claimLost_leavesPlanUntouched() {
+        // 生产 Pub/Sub 至少一次：重复的 PLAN_STEP_DUE 在读到非终态后、写入前被另一路终结。
+        // 此时若仍把计划按回 STEP_EXECUTING，已被上一次投递推进或终结的计划会停摆。
+        plan.setStatus(PlanStatus.PENDING);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(planRepository.markStepExecuting(STEP_ID)).thenReturn(false);
+
+        StepDuePreparation prep = manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
+
+        assertThat(prep.isExecute()).isFalse();
+        assertThat(prep.getEvents()).isEmpty();
+        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), any(), any());
+        verify(planRepository, never()).markStarted(PLAN_ID);
+    }
+
+    @Test
+    @DisplayName("#17c 抢占先于计划写入：抢到才允许改计划状态（顺序不可颠倒）")
+    void prepareStepDue_claimsStepBeforeTouchingPlan() {
+        plan.setStatus(PlanStatus.PENDING);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+
+        manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
+
+        InOrder order = org.mockito.Mockito.inOrder(planRepository);
+        order.verify(planRepository).markStepExecuting(STEP_ID);
+        order.verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_EXECUTING, null);
+        order.verify(planRepository).markStarted(PLAN_ID);
     }
 
     @Test
@@ -704,7 +743,7 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值兜底 ANSWERED")
+    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值 fail-close")
     void onChannelCallback_mapsResultVariants() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
@@ -752,7 +791,7 @@ class PlanLifecycleManagerTest {
                         eq(step),
                         eq(StepStatus.EXECUTING),
                         eq(StepStatus.COMPLETED),
-                        eq(ContactResult.ANSWERED),
+                        eq(ContactResult.FAILED),
                         any(),
                         any(),
                         any());
@@ -803,6 +842,68 @@ class PlanLifecycleManagerTest {
                         .with(CollectionEvent.CASE_ID, CASE_ID));
 
         verify(planRepository, never()).findActivePlansByCase(CASE_ID);
+    }
+
+    @Test
+    @DisplayName("部分还款：携带的可选字段才覆盖，未携带的保留原值不写 null")
+    void onCaseBalanceUpdated_onlyOverwritesFieldsPresentInEvent() {
+        ContextSnapshot before = snapshotWithOutstanding(new BigDecimal("5000"));
+        CaseContext context = before.getCaseContext();
+        context.setDpd(7);
+        context.setOverdueAmount(new BigDecimal("800"));
+        context.setPenaltyAmount(new BigDecimal("30"));
+        context.setUpcomingAmount(new BigDecimal("1200"));
+        context.setNextDueDate(LocalDate.of(2026, 9, 1));
+        context.setCollectionStatus("IN_COLLECTION");
+        plan.setContextSnapshot(JsonUtil.toJson(before));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.updateActivePlanContextSnapshot(eq(PLAN_ID), anyString()))
+                .thenReturn(true);
+
+        // 只携带 totalOutstanding 与 upcomingAmount：其余可选字段必须保持原值
+        manager.onCaseBalanceUpdated(
+                balanceEvent(new BigDecimal("3200.50"))
+                        .with(CollectionEvent.UPCOMING_AMOUNT, new BigDecimal("900")));
+
+        ArgumentCaptor<String> snapshotJson = ArgumentCaptor.forClass(String.class);
+        verify(planRepository).updateActivePlanContextSnapshot(eq(PLAN_ID), snapshotJson.capture());
+        CaseContext updated =
+                JsonUtil.fromJson(snapshotJson.getValue(), ContextSnapshot.class).getCaseContext();
+        assertThat(updated.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("3200.50"));
+        assertThat(updated.getUpcomingAmount()).isEqualByComparingTo(new BigDecimal("900"));
+        assertThat(updated.getDpd()).isEqualTo(7);
+        assertThat(updated.getOverdueAmount()).isEqualByComparingTo(new BigDecimal("800"));
+        assertThat(updated.getPenaltyAmount()).isEqualByComparingTo(new BigDecimal("30"));
+        assertThat(updated.getNextDueDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(updated.getCollectionStatus()).isEqualTo("IN_COLLECTION");
+    }
+
+    @Test
+    @DisplayName("部分还款：stage 不被改写，催收强度不因 DPD 下降而回退")
+    void onCaseBalanceUpdated_neverRewritesStage() {
+        ContextSnapshot before = snapshotWithOutstanding(new BigDecimal("5000"));
+        before.getCaseContext().setStage(Stage.S3);
+        plan.setContextSnapshot(JsonUtil.toJson(before));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.updateActivePlanContextSnapshot(eq(PLAN_ID), anyString()))
+                .thenReturn(true);
+
+        manager.onCaseBalanceUpdated(
+                balanceEvent(new BigDecimal("100"))
+                        .with(CollectionEvent.STAGE, Stage.S1.name())
+                        .with(CollectionEvent.DPD, 1));
+
+        ArgumentCaptor<String> snapshotJson = ArgumentCaptor.forClass(String.class);
+        verify(planRepository).updateActivePlanContextSnapshot(eq(PLAN_ID), snapshotJson.capture());
+        CaseContext updated =
+                JsonUtil.fromJson(snapshotJson.getValue(), ContextSnapshot.class).getCaseContext();
+        assertThat(updated.getStage()).isEqualTo(Stage.S3);
+        assertThat(updated.getDpd()).isEqualTo(1);
+        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), any(), any());
     }
 
     private CollectionEvent balanceEvent(BigDecimal amount) {

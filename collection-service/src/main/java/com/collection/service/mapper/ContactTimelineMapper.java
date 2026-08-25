@@ -4,7 +4,13 @@ import com.collection.common.model.ContactRecord;
 import java.util.List;
 import org.apache.ibatis.annotations.*;
 
-/** t_contact_timeline 持久化。 */
+/**
+ * t_contact_timeline 持久化。
+ *
+ * <p>{@code created_at} 由调用方以 {@code Asia/Manila} 传入（{@link
+ * com.collection.service.support.ServiceClock}），不使用 {@code NOW()}：本列是当日触达频控的比较列， 库端会话时区一旦为 UTC，PHT
+ * 00:00–08:00 的记录会被漏计，导致频控超发。
+ */
 @Mapper
 public interface ContactTimelineMapper {
 
@@ -14,7 +20,7 @@ public interface ContactTimelineMapper {
                     + " result, provider_msg_id, provider_callback, cost, source, created_at) "
                     + "VALUES "
                     + "(#{caseId}, #{userId}, #{planId}, #{stepId}, #{attemptKey}, #{channel}, #{direction}, #{templateId}, #{configVersion}, #{renderedRef}, #{contentSummary}, #{scriptSlot}, #{templateVersion}, #{contentHmac}, #{contentKeyId}, "
-                    + " #{result}, #{providerMsgId}, #{providerCallback}, #{cost}, #{source}, NOW()) "
+                    + " #{result}, #{providerMsgId}, #{providerCallback}, #{cost}, #{source}, #{createdAt}) "
                     + "ON DUPLICATE KEY UPDATE result = VALUES(result), provider_msg_id = COALESCE(VALUES(provider_msg_id), provider_msg_id), "
                     + "provider_callback = COALESCE(VALUES(provider_callback), provider_callback), "
                     + "config_version = COALESCE(config_version, VALUES(config_version)), "

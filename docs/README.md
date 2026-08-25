@@ -11,7 +11,7 @@
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
-| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标/功能/渠道选型/合规（位置：docs 根；与 zoe 的 channel/ 版需统一） |
+| [产品需求文档 PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) | 🤝✅ | 业务目标、功能、渠道选型与合规 |
 | [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) | ✅ | 分层、SPI 边界、关键机制、技术栈 |
 | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 事件路由、状态机、七步管线、SPI 定义 |
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 模型字段、枚举、DDL |
@@ -36,9 +36,7 @@
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md) + [样例 JSON](./contracts/ContextSnapshot.sample.json) | ✅ | 快照字段/来源/SSOT；StepResolver 唯一数据源 |
-| [编排同事对齐清单](./contracts/README_编排同事对齐清单.md) | ✅ | SPI 实现/超时/E1–E8 一页清单 |
-| [引擎渠道执行契约对齐(待编排确认)](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | ✅ | dispatch 回填/metadata/观察期/空地址 4 项**已定稿 2026-06-11**；token=jpushToken |
-| [ContextSnapshot 契约对齐回复 _re（归档）](./contracts/_archive/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 📦 | 编排同事一次性审阅；结论已并入 [活跃契约](./contracts/README_ContextSnapshot契约对齐.md) |
+| [引擎渠道执行契约](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) | ⚠️ | 已定稿的 dispatch/metadata/观察期/空地址/token 语义；供应商幂等透传与 Facade AI_CALL 回调未闭合 |
 
 ## 三、测试(🟦 主架构)
 
@@ -60,8 +58,4 @@
 
 ## 五、渠道(🟧 编排同事维护 · 本分支只读)
 
-入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。含编排规格、总规格、Notification（SMS/Push）/ SendGrid / LTH Voice 对接说明、开发执行指南与进度、策略迭代手册等。邮件模板见 [`email-templates/`](./email-templates/)。**本分支对 channel/ 只读**（编排同事维护）。
-
----
-
-> 2026-06-26：`docs/testing/`、`scripts/dev/` + `scripts/test/` 已落地；核心规格仍留 `docs/` 根。
+入口见 [`channel/README_渠道文档索引.md`](./channel/README_渠道文档索引.md)。含编排规格、总规格、Notification（SMS/Push）/ SendGrid / Facade AI Call 对接说明及策略迭代手册。邮件模板见 [`email-templates/`](./email-templates/)。**本分支对 channel/ 只读**（编排同事维护）。

@@ -3,6 +3,7 @@ package com.collection.service.repository;
 import com.collection.common.model.ContactRecord;
 import com.collection.common.repository.TimelineRepository;
 import com.collection.service.mapper.ContactTimelineMapper;
+import com.collection.service.support.ServiceClock;
 import java.time.LocalDateTime;
 import java.util.List;
 import javax.annotation.Resource;
@@ -15,6 +16,10 @@ public class TimelineRepositoryImpl implements TimelineRepository {
 
     @Override
     public void writeTimeline(ContactRecord record) {
+        // 重复投递会走 ON DUPLICATE KEY UPDATE，不覆盖 created_at，故首写时间即为频控计数依据。
+        if (record.getCreatedAt() == null) {
+            record.setCreatedAt(ServiceClock.now());
+        }
         timelineMapper.insert(record);
     }
 

@@ -10,6 +10,16 @@ spring:
       - nacos:${spring.application.name}-common.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
   main:
     web-application-type: servlet
+  datasource:
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+    hikari:
+      # MySQL 服务端 time_zone=SYSTEM(UTC)，NOW() 写出的时间列因此是 UTC；
+      # 而引擎侧一律用 Asia/Manila 的 LocalDateTime 参与比较（频控当日起点、停摆巡检宽限期）。
+      # 参与比较的列已改为应用侧按 PHT 传参（ServiceClock），不再依赖会话时区；
+      # 本项与 JDBC URL 的 connectionTimeZone/forceConnectionTimeZoneToSession 只影响
+      # 仍由 NOW() 写入的审计列（DLQ、收件箱、发件箱、回调审计），使其与应用侧时间同轴。
+      # 实测本项只覆盖到部分连接，故 pilot 另有 DatabaseClockValidator 启动比对偏差并拒启。
+      connection-init-sql: SET time_zone = '${COLLECTION_DB_TIME_ZONE:+08:00}'
   cloud:
     nacos:
       config:
@@ -26,6 +36,14 @@ spring:
         encoding: utf-8
         enabled: true
 
+# 列名映射与枚举处理器决定 Mapper 能否正确读写，属于随代码走的行为约定而非环境差异。
+# 此前只写在 application-local.yml 与 Nacos common.yml 里：pilot 一旦连不上 Nacos，
+# 这些默认值会静默消失——snake_case 列全部映射为 null，且不会有任何报错。
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+    jdbc-type-for-null: "NULL"
 
 ---
 spring:

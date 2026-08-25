@@ -4,7 +4,7 @@
 > **日期**: 2026-06-03  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`（策略子层）  
-> **关联文档**: [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[渠道文档索引](./README_渠道文档索引.md)、[HANDOFF.md](../HANDOFF.md)
+> **关联文档**: [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[架构设计](../MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](../MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道模板清单](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)、[渠道文档索引](./README_渠道文档索引.md)、[HANDOFF.md](../../HANDOFF.md)
 
 > **2026-07-24 Phase 1 SSOT 收敛（主架构裁决）**：本文件早期的 Offer/F10、投诉/争议冻结、Override/人工外呼、呼损率自动降级描述均为 **Phase 2 设计讨论**，不得作为 Phase 1 channel 实现或验收依据。Phase 1 仅实施 SMS/PUSH/EMAIL/AI_CALL 机器轨；空地址由 Guard 返回 `NO_*` 后引擎写 `COMPLIANCE_BLOCKED` timeline；动态 Offer、实时投诉冻结/Override、跨供应商切换均不实现。本文中与该裁决冲突的历史策略段落按此注记解释；字段以领域模型为 SSOT，执行语义以 contracts 为 SSOT。Owner：`collection-channel` 仅更新编排用法，不改 common 字段。
 
@@ -180,7 +180,7 @@ FIRM 由事实标记「难催」触发，仅 S2+ 模板生效
 | Push             | ✅       | 通知中心 → JPush；见 [Notification §2](./MOCASA催收系统升级_Phase1_Notification对接说明.md#2-app-push异步入队) |
 | SMS              | ✅       | 通知中心（`contentType=collection`，内部路由 QH/Hiway/BORI）；见 [Notification §1](./MOCASA催收系统升级_Phase1_Notification对接说明.md#1-sms同步) |
 | Email            | ✅       | SendGrid（SES 备）         |
-| AI 外呼            | ✅       | LTH；可对话则 disposition 分支 |
+| AI 外呼            | 🟡       | Facade L1 一案一批已接入；账户级回调未闭合，不进入 T4 |
 | 语音播报（TTS）        | —       | LTH 域外独立编排              |
 | Viber / WhatsApp | ❌       | Adapter 预留，Phase 2 评估   |
 | Human Call       | 人工轨     | 例外池；**不进** 机器轨 `ContactPlan`（无 `HUMAN_CALL` step，见对齐待办 #5） |
@@ -207,11 +207,11 @@ MOCASA 坐席有限、本次升级重点是机器自动化，方案主张 **后�
 
 ### 3.5 Phase 1 实现范围
 
-> 渠道**执行层**（通知中心 SMS/Push、SendGrid、LTH Voice API、Webhook、Adapter）见 [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) 及子渠道说明。本节仅界定 **编排策略在 Phase 1 的裁剪**，与本仓库 `collection-channel` 模块（见 [HANDOFF.md](../HANDOFF.md) 模块 A）的 `DefaultPlanFactory` / SPI 替换范围一致。
+> 渠道**执行层**（通知中心 SMS/Push、SendGrid、Facade AI_CALL、Webhook、Adapter）见 [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) 及子渠道说明。本节仅界定 **编排策略在 Phase 1 的裁剪**，与本仓库 `collection-channel` 模块（见 [HANDOFF.md](../../HANDOFF.md) 模块 A）的 `DefaultPlanFactory` / SPI 替换范围一致。
 
 | 主题 | Phase 1 | Phase 2 预留 |
 |------|---------|----------------|
-| **AI 外呼** | **可对话**；LTH 回调 `disposition` 驱动 `AdvancementPolicy` 与中断事件（§7.10、§9） | — |
+| **AI 外呼** | Facade L1 仅限批准号码的单 step 联调；账户级回调入站未实现，不能进入 T4 | 回调闭环、Wave-2 与批次治理 |
 | **条件 Email（16:00 `*_EMAIL_CONDITIONAL`）** | **不实现**：`PlanFactory` **不生成**对应 plan step；§7.0 逻辑保留作文档 | 依赖「无互动」标签与 Push/SMS/短链数据 |
 | **无互动判定** | **不接入** ingestion / Guard | 同上 |
 | **无邮箱** | `ExecutionGuard` **BLOCK**（`NO_EMAIL`）→ 引擎记 `COMPLIANCE_BLOCKED` timeline 后推进 | 可考虑加码 SMS |
@@ -230,12 +230,12 @@ MOCASA 坐席有限、本次升级重点是机器自动化，方案主张 **后�
 | D+75 | `S4_EMAIL_PRE_CLOSE` | S4 |
 
 > **不发 Email**：S1 D+3、S2 D+7/D+12、**S3 全程（D+16/23/30）**、S4 D+45/D+60。联调 case 注册表见 [`email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md) 与 `db/seed/email-e2e-test-cases.sql`。
-| **VoiceQueue / 外呼排队** | **引擎不管**；仅 `trigger_time`（09:15、14:30 等）；并发与 Wave-2 排队在 **LTH / `LthVoiceAdapter`** | 可选 channel 内 Redis 队列 |
+| **VoiceQueue / 外呼排队** | 引擎不管；Facade 当前一案一批，不启用 Wave-2 或批量排队 | 供应商限流、聚合批次与队列 |
 | **Push fallback** | 同槽 Push 失败或无 token → **PushAdapter 内**改 SMS（对引擎一次 `dispatch`） | — |
 | **人工外呼** | 不进 plan；LTH 预测式 + `human_dial_*` 标签（§7.2） | — |
 | **HUMAN_CALL step** | **禁止**（对齐待办 E4） | — |
 
-**与引擎步骤完成时机（必读）**：SMS / Push / Email 在 `ChannelGateway.dispatch` 成功即 **同步** `STEP_COMPLETED`；SendGrid `delivered`/`open` **不**用于完成 plan step。AI_CALL 保持 `STEP_EXECUTING` 直至 `CHANNEL_CALLBACK`（见 [核心引擎规格 §5⑦](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)）。
+**与引擎步骤完成时机（必读）**：SMS / Push / Email 在 `ChannelGateway.dispatch` 成功即 **同步** `STEP_COMPLETED`；SendGrid `delivered`/`open` **不**用于完成 plan step。AI_CALL 保持 `STEP_EXECUTING` 直至 `CHANNEL_CALLBACK`（见 [核心引擎规格 §5⑦](../MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)）。
 
 ---
 
@@ -642,7 +642,7 @@ VoiceQueue { dial_window, max_concurrent, per_case_daily_cap, retry_min_interval
 | 原则 | 说明 |
 |------|------|
 | **一 Stage 一 plan** | 进入 Stage 时 `PlanFactory.create` **一次**，将该 Stage 内全部 `DayBlock` 展开为带绝对 `trigger_time` 的 step 序列 |
-| **日切不靠 PLAN_EXHAUSTED** | DPD 变阶段由 ingestion 发布 **`STAGE_CHANGED`**（见 [基础设施交互规范 §4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)），非「每日步骤跑完 → REBUILD」 |
+| **日切不靠 PLAN_EXHAUSTED** | DPD 变阶段由 ingestion 发布 **`STAGE_CHANGED`**（见 [基础设施交互规范 §4](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)），非「每日步骤跑完 → REBUILD」 |
 | **REBUILD 语义** | 仅用于 **同 Stage 内**模板轮换/续建；`max_rebuild_count=2` **不**表示「每天可重建 2 次」。S4（约 60 个日块）须在 **单次 create** 中铺完全部未过期步骤 |
 | **晚进案** | create 时跳过已过期 `dpdDay` 对应日块及**当日已过 PHT 槽位**，不追溯补发；仅保留 `trigger_time >= create_time(PHT)` 的未来槽位 |
 
@@ -1126,7 +1126,7 @@ Phase 1 两系统 **独立运行**，一致性要求 **收敛**：
 
 ### 与现有文档的关系
 
-与核心引擎/基础设施的交叉引用见 [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)。业务对照见 [行业调研报告 §10.2](../../AI%20collection/MOCASA催收策略编排_行业调研报告_v1.md)（外部参考）。
+与核心引擎/基础设施的交叉引用见 [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)。业务对照见 外部调研材料不作为仓库内规范。
 
 ---
 
@@ -1140,7 +1140,7 @@ Phase 1 两系统 **独立运行**，一致性要求 **收敛**：
 | §3.5 / L3 渠道 | [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) + 四份子渠道说明 |
 | §7.2 Override | 引擎 Consumer **§2.4 中断** + 案件标签；非 Guard 单点 |
 | §7.11 触达窗 | `t_compliance_config` + `ExecutionGuard`；infra Cron **DLQ 重放** 同规则 |
-| §4.2 D+91 停催 | 事件 **`CASE_CEASED`**；引擎 §2.4 见 [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) |
+| §4.2 D+91 停催 | 事件 **`CASE_CEASED`**；引擎 §2.4 见 [核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md) |
 | §9 事件表 | Override 类事件 + `CASE_CEASED`；引擎 Consumer 路由待补 |
 | §5.3 Offer / F10 | **ingestion** 写 snapshot offer 字段；`StepResolver` 只读替换；账务核销在信贷/App |
 | §3 / §7.2 人工 | 机器轨 plan **无** `HUMAN_CALL`；Override 走 LTH 标签 |

@@ -4,6 +4,7 @@
 > **日期**: 2026-08-19
 > **用途**: 合并 Redis 资源申请、T3o 生产等价演练、T4 固定 50 案真实白名单 Pilot、渐进切量、证据归档与回滚操作。
 > **边界**: 生产基础设施契约与实现差集以[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)为准；T5 用例、状态与出口以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)为准。
+> **写作约定**: 本手册只写**怎么做、怎么验、失败怎么办**。逐次实测记录、缺口登记与裁定理由一律写进[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，此处只留结论与指针——手册被当作值班操作台使用，掺入过程叙述会让人在故障时读不到该做的动作。
 
 ---
 
@@ -68,27 +69,51 @@
 | 能力 | 运维交付 | 验收证据 |
 |---|---|---|
 | Redis | 独立实例、网络白名单、Secret、AOF 与 `noeviction` 策略 | 应用连通、Stream/PEL 可见、Redis 监控截图 |
-| 监控与通知（**可后置**） | Prometheus 抓取 `/actuator/prometheus`、Alertmanager 路由、钉钉机器人 Webhook | 测试告警到达钉钉及静默/恢复记录；未就绪期间以每日人工巡检日志 + 手工抓取指标代偿，最迟 T6 前闭合 |
+| 监控与通知（**可后置至 T6 准入**） | Prometheus 抓取 `/actuator/prometheus`、Alertmanager 路由、钉钉机器人 Webhook | 测试告警到达钉钉及静默/恢复记录；未就绪期间按下方代偿口径执行，最迟在申请移除白名单（T6 准入）前闭合 |
 | PubSub（案件） | 独立订阅、服务账号 IAM 与死信策略 | 白名单消息消费和权限检查记录 |
 | PubSub（调度）+ Cloud Scheduler | 见下方 [§3.2 调度交付清单](#32-调度交付清单o1o8) | `collection.schedule.triggered` 按周期增长的抓取记录；Scheduler Job 执行成功记录 |
 | 渠道 | sandbox 地址、额度、签名 Secret 与批准测试白名单 | 受控投递和回调验证记录 |
 
+#### 监控代偿口径（T3o 起生效，至 T6 准入闭合）
+
+监控平台后置的前提是代偿可执行且留痕。缺代偿记录时，该日不得作为放量观察窗的有效证据。
+
+| 项 | 要求 |
+|---|---|
+| 频率 | 每日至少一次；T4 三日循环与每次 T5 放量当日必须有记录 |
+| 内容 | 手工抓取 `/actuator/prometheus`，按[基础设施 §7.3 调度巡检口径](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#调度指标的人工巡检口径)判读调度指标，并记录 PEL 深度、Stream 长度、DLQ 入列与 `collection.step.skipped` 的跳过原因 |
+| 判据 | 异常口径复用[基础设施 §7.4 告警最低要求](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)：`collection.schedule.failed` 或 `skipped{reason=UNKNOWN_JOB}` 任意增长、`triggered` 停止增长、DLQ 持续入列、日切 06:00 PHT 未完成，均按该表处置并暂停下一批放量 |
+| 归档 | 巡检记录进入 [§8 证据包](#8-证据归档与阶段完成判定)，与当日对账同批留存 |
+| 责任人与时点 | **主架构**每日一次，固定在日切窗口收尾后（06:30 PHT 前）执行并归档（2026-08-21 确定）；主架构不可用时须提前指定代班人，不得跳过 |
+| 升级路径 | 命中判据即按[基础设施 §7.4](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)处置，并同步业务与运维值守人；涉及触达安全的（越窗、越限、非白名单、重复投递）立即暂停下一批放量 |
+
+> 代偿只覆盖“人能定期看到”的部分，不覆盖实时告警。因此代偿期内**不得**取消值守、也不得把停止条件的判断推迟到次日巡检；Cloud Scheduler 侧的 O7 / O8 告警仍应尽早交付。
+
 ### 3.2 调度交付清单（O1–O8）
 
-调度入口已从 XXL-Job 迁为「Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅」。应用侧代码、配置样例、启动校验与单测均已就位，下列各项**只能由运维 / GCP 交付**（SSOT：[基础设施 §5.5](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#55-运维--gcp-交付清单)）：
+调度入口已从 XXL-Job 迁为「Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅」。应用侧代码、配置样例、启动校验与单测均已就位。GCP 侧交付项与当前状态（口径 SSOT：[基础设施 §5.5](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#55-运维--gcp-交付清单)）：
 
-| # | 交付项 | 验收证据 |
-|---|---|---|
-| O1 | 调度专用 Pub/Sub 主题（建议 `intelligent-collection-schedule-v1`） | `gcloud pubsub topics describe` 输出（脱敏） |
-| O2 | 我们专用的调度订阅（建议 `intelligent-collection-schedule-v1-sub`），不复用案件订阅、不与他方共享 | `gcloud pubsub subscriptions describe` 输出，确认 topic 指向 O1 且状态 `ACTIVE` |
-| O3 | Scheduler 服务账号对 O1 的 `roles/pubsub.publisher` | IAM 绑定截图 / `get-iam-policy` 输出 |
-| O4 | 应用服务账号对 O2 的 `roles/pubsub.subscriber` | 同上；应用日志出现 `[Scheduler] 调度订阅消费已启动` |
-| O5 | 订阅 ack deadline 60s、`message-retention-duration` 10m、不配死信主题 | 订阅配置输出 |
-| O6 | 三个调度任务、共四条 Cloud Scheduler Job（`dailyRoll` 拆两条精确覆盖 03:35–05:55 PHT；cron 与消息属性见 [§5.1 配置模板](#51-应用配置)） | 各 Job 的 `describe` 输出与一次成功执行记录 |
-| O7 | Scheduler Job 失败告警 | 告警规则配置 + 一次测试告警到达记录 |
-| O8 | 日切 06:00 PHT 未完成告警 | 告警规则配置 + 触发条件说明 |
+| # | 交付项 | 状态 | 验收证据 |
+|---|---|---|---|
+| O1 | 调度专用 Pub/Sub 主题（`intelligent-collection-schedule-v1`） | ✅ 本就存在 | `provision-scheduler.py --verify` |
+| O2 | 我们专用的调度订阅（`intelligent-collection-schedule-v1-sub`），不复用案件订阅、不与他方共享 | ✅ 存在且已纠参数 | 同上：topic 指向 O1，无其他 subscriber |
+| — | **案件接入订阅** `intelligent-collection-cases-v1-sub`（非 O 系列，但同批发现同批修） | ✅ ack 已由 10s 纠为 60s | `--verify` 输出；[数据接入规格 §2.1](../MOCASA催收系统升级_Phase1_数据接入规格.md) 要求与 `collection.ingestion.ack-deadline-seconds=60` 一致 |
+| O3 | Scheduler 服务账号对 O1 的 `roles/pubsub.publisher` | ✅ 服务代理默认具备 | Job 成功发布即为证据（tick 已落订阅） |
+| O4 | 应用服务账号对 O2 的 `roles/pubsub.subscriber` | ⬜ 待应用侧凭证落位 | 应用日志出现 `[Scheduler] 调度订阅消费已启动` |
+| O5 | 订阅 ack deadline 60s、`message-retention-duration` 10m、不配死信主题 | ✅ 已 PATCH（原 10s / 7d） | `--verify` 输出 |
+| O6 | 三个调度任务、共四条 Cloud Scheduler Job（`dailyRoll` 拆两条精确覆盖 03:35–05:55 PHT；cron 与消息属性见 [§5.1 配置模板](#51-应用配置)） | 🟡 以当前环境 `--verify` 为准 | 四条 Job 的 `--verify` 输出 + 每分钟 Job 的 `lastAttemptTime` 推进 + 订阅内 tick 的 `job` attribute + 发布者全扫（逐 location 翻页）显示 ENABLED 恰为这四条 |
+| O7 | Scheduler Job 失败告警 | ⬜ 待运维 | 告警规则配置 + 一次测试告警到达记录 |
+| O8 | 日切 06:00 PHT 未完成告警 | ⬜ 待运维 | 告警规则配置 + 触发条件说明 |
 
-> **为什么这些不能由研发闭合**：主题、订阅、IAM 绑定与 Scheduler Job 都是 GCP 侧资源，仓库内只能提供可复制的配置模板与占位符，真值与资源创建必须由运维执行。
+操作要点（实测记录、证据与裁定理由见[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，本节不复述）：
+
+- **创建与复验一律用 `scripts/test/provision-scheduler.py`**（幂等，`--dry-run` / `--verify` / `--pause`），不要手敲 gcloud：漏 `--attributes="job=..."` 会让四条 Job 全部空转、触达链路静默停摆，而 Job 执行记录仍显示成功。
+- **location 必须与当前环境已验证的 Job 一致**。Cloud Scheduler 的 Job 可分布在多个 location；不得仅凭项目名假定唯一 location。
+- **资源用生产名，不加 `-pilot` 后缀**：重复创建会 `ALREADY_EXISTS` 显性失败；两套并存则是同一 topic 双发 tick，只能靠指标异常事后发现。
+- **四条 Job 全程保持 `ENABLED`**，T3o→T6 不需要暂停（`--pause` 只用于「T3o 长期推迟、不想让 tick 空转」，恢复后须 `--verify` 确认四条均 `ENABLED`）。
+- **调度订阅只允许应用一个 subscriber**：Pub/Sub 同订阅是竞争消费，任何验证用 subscriber 都会分走 tick，取证请另建独立订阅。
+- **发布者归属**：正式入口、旧 Job 的暂停或删除均以当次 `provision-scheduler.py --verify` 的全量输出和运维变更单为准；删除前必须确认不存在自动化重建或其他业务用途。
+- **排查发布者要逐 location 扫**：Cloud Scheduler 的 Job 可分布在多个 location（本项目 `asia-northeast1` + `asia-southeast1` 都有）。只查一个 location 会把同项目的 Job 误判成来源不明的发布者。
 
 T3o 开始前必须满足：
 
@@ -139,9 +164,14 @@ T3o 开始前必须满足：
 - `collection.eventbus=redis`、`collection.idempotency=redis`；
 - Redis Stream、Consumer Group 与 Consumer Name 已注入，Consumer Name 在组内唯一；
 - T3o：`collection.ingestion.enabled=true`，且 `collection.ingestion.loan-id-whitelist` 为非空测试名单；T4：同配置替换为批准的固定 50 案名单，并双人复核；
+- `collection.scan.case-id-whitelist` 非空（环境变量 `COLLECTION_SCAN_CASE_IDS`）。到期扫描不经过接入白名单、也没有租户维度，只配接入名单不足以把处理范围限制在批准案件内；`ScanIsolationGuard` 在 pilot 下会拒绝空名单启动，T6 全量切换时以 `collection.scan.allow-full-scan=true` 显式放开；
 - `collection.scheduler.enabled=true`，`project-id` 与 `subscription` 已注入且订阅**不同于**案件接入订阅；
 - Webhook 必须启用签名校验；
 - T3o 渠道不得回退到 mock，且 sandbox/测试地址与限频已生效；T4 必须切换为批准真实地址，仍保持限频；
+- `collection.repayment-url-template` 已显式配置（环境变量 `COLLECTION_REPAYMENT_URL_TEMPLATE`，Phase 1 取 App 官方短链 `https://mocasa.com/s/4cTu`）。该值会原样渲染进 SMS 正文、Push `deep_link` 与 Email `payment_link`，漏配会落到代码默认模板，客户点开是打不开的链接；
+- `channel.compliance.daily-total-limit=5`、`daily-limit.AI_CALL=2`。里程碑日单案槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，沿用默认的合计 3 次会让当天后两个槽位被静默拦掉；
+- `t_script_template` 中 **SMS 10 槽 + Push 7 槽全部 ACTIVE**（`db/seed-phase1-config.sql`）。`DefaultStepResolver` 对缺槽是跳过不发（与 Email 一致），漏配不会发占位串但会静默少触达，故 `PilotReadinessValidator` 在启动时逐槽校验并列出缺失项；
+- `t_contact_plan_template` 使用 **dayBlocks 绝对槽位**而非 `delayMin`。`delayMin` 是 L4 联调节奏（步骤间隔 1 分钟），在真实客户上会造成 3 分钟内连收 3 条；
 - `collection.ingestion.fault-injection-enabled=false`。
 
 > 缺 `collection.scheduler.project-id` / `subscription`、陈旧阈值大于任务周期，或误将 `local`/`test` profile 与调度同时启用（双调度入口），`SchedulerEntrypointValidator` 均会**拒绝启动**，不会静默降级。
@@ -245,7 +275,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 2. 启动应用并确认 health 为 UP、配置加载无缺失、Consumer Group 初始化可重复执行；日志出现 `[Scheduler] 调度订阅消费已启动`。
 3. 在 Redis 中检查 Stream、Consumer Group、Consumer Name 与 `collection:ingestion:*` 去重键；记录脱敏配置快照。
 4. 验证 T3o 简版观测 MVP：关键成功/失败路径可查到 event/case/plan/step 关联证据。若 `/actuator/prometheus` 已实现，手工抓一次；若尚未实现，须完成等价的可查询指标/日志/状态能力后再宣告 T3o 通过。
-5. **调度巡检**（迁出 XXL 后无调度控制台执行记录页，这一步不可省）：在观测 MVP 中验证计划任务的触发、失败、陈旧消息和完成状态可查询。自动抓取与告警通道可后置到 T5 放量前，但基础查询能力缺失时不得进入 T4。
+5. **调度巡检**（迁出 XXL 后无调度控制台执行记录页，这一步不可省）：在观测 MVP 中验证计划任务的触发、失败、陈旧消息和完成状态可查询。自动抓取与告警通道可后置，最迟在移除白名单（T6 准入）前闭合；但基础查询能力缺失时不得进入 T4。
 
 #### 调度排障速查
 
@@ -255,7 +285,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 启动即失败并提示 `collection.scheduler.subscription` | 环境变量 `GCP_SCHEDULER_SUBSCRIPTION` 未注入 | Nacos `intelligent-collection-pilot.yml` 是否覆盖了占位缺省 |
 | 启动即失败并提示 `TriggerScanner` | profile 里混入了 `local`/`test` | 确认 `SPRING_PROFILES_ACTIVE` 只含 `pilot` |
 | 重启后 `stale.discarded` 一次尖峰 | 正常：停机期间累积的 tick 被丢弃，属预期防抖 | 若持续增长则为消费跟不上，查 ack deadline 与扫描耗时 |
-| `skipped{reason=UNKNOWN_JOB}` 增长 | Scheduler Job 的 `--attributes` 里 `job` 拼写 | 是否有非预期发布者向调度主题写入 |
+| `skipped{reason=UNKNOWN_JOB}` 增长 | **已知项**：调度主题上的第二个发布者发的是畸形 tick（见 §3.2 与 SSOT 附录 C），首次消费时稳定增长属预期 | 排除已知项后，再查自家 Job `--attributes` 里的 `job` 拼写 |
 | `skipped{reason=IN_FLIGHT}` 持续增长 | 单次扫描耗时超过触发周期 | 降 `engine.consumer.scan_limit` / `daily-roll-batch-size`，查扫描 SQL |
 | 日切 06:00 未完成 | 窗口内 `triggered{job=dailyRoll}` 次数是否达到预期（约 29 次） | 游标推进速率与 `daily-roll-batch-size` |
 
@@ -281,7 +311,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 5. **DLQ 与重放**：构造持续失败消息，验证 Redis DLQ、MySQL `t_event_dlq`、可恢复消息的受控重放、窗口外延后与不可恢复消息的终止留存。
 6. **跨实例、接入去重与合规**：临时启动第二实例，验证同一幂等键只有一次获取成功；重启任一实例后验证 Redis 合规计数未清零、接入去重与结转标记仍生效、原子上限仍成立。
 7. **断连与背压**：短暂阻断 Redis 后恢复连接；制造慢渠道调用与并发事件，验证其他事件继续被工作线程处理、队列有界、背压日志限速且不丢消息。
-8. **监控与容量**（可后置）：采集 PEL、Stream 长度、线程池、渠道耗时、Redis 内存、Guard Lua p99 与 fail-close 比率，回填容量基线；抓取与告警未就绪期间以人工巡检代偿。
+8. **监控与容量**（可后置，最迟 T6 准入前）：采集 PEL、Stream 长度、线程池、渠道耗时、Redis 内存、Guard Lua p99 与 fail-close 比率，回填容量基线；抓取与告警未就绪期间以 [§3.1 的人工巡检代偿](#31-运维交付物与验收证据)顶替。
 9. **回滚**：停止新订阅、路由与调度；保全 Stream/PEL/DLQ/MySQL 证据；恢复旧链路；确认没有删除数据或未知重放。
 
 ### 6.1 渠道生产连通验证清单
@@ -299,11 +329,11 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 
 > 金额、姓名等渲染值来自计划快照；部分还款后须确认下一步话术里的金额已刷新（对应测试 SSOT L4a-3b）。
 
-> DLQ redrive 仅接受管理后台登录态提交的显式 eventId 列表与必填原因；`MAX_DELIVERY_EXCEEDED` 最多重放三次，解析失败/无 Handler 直接终止，触达窗口外的 `PLAN_STEP_DUE` 计入 `deferred` 并保持 `PENDING`。T3o 必须先完成可查询的简版观测 MVP；Prometheus 抓取及 Alertmanager 通知在首次 T5 放量前闭合。
+> DLQ redrive 仅接受管理后台登录态提交的显式 eventId 列表与必填原因；`MAX_DELIVERY_EXCEEDED` 最多重放三次，解析失败/无 Handler 直接终止，触达窗口外的 `PLAN_STEP_DUE` 计入 `deferred` 并保持 `PENDING`。T3o 必须先完成可查询的简版观测 MVP；Prometheus 抓取及 Alertmanager 通知最迟在移除白名单（T6 准入）前闭合，代偿期按 §3.1 人工巡检。
 
 ## 7. 待完成项与闭合口径
 
-以下项来自[交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)；除标注“可后置”的项外，未关闭不得将 T3o 标记为完成。简版观测 MVP 是 T4 阻断项，完整抓取/告警是 T5 阻断项。
+以下项来自[交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)；除标注“可后置”的项外，未关闭不得将 T3o 标记为完成。简版观测 MVP 是 T4 阻断项；完整抓取/告警/Dashboard 是 T6 阻断项（移除白名单前闭合），T3o–T5 期间以人工巡检代偿。
 
 DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 keyset 游标已有代码/测试基础；简版观测指标、结构化证据和查询能力仍须按测试 SSOT T3o-O1…O4 实施并验证，不能假定已完成。
 
@@ -317,9 +347,10 @@ DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 ke
 | 接入去重连续性 | 重启应用后 `dedup:msg` / `last-seen` / `ingested` 仍生效；结清后可再次入案 | ingestion + 运维 |
 | 渠道生产连通 | [§6.1](#61-渠道生产连通验证清单) 六项全部通过并留存投递与回调证据 | 编排同事 + 主架构 |
 | 事件消费去重 | 真实 Redis 上验证 PEL 重投与同一 `eventId` 重放只执行一次业务，`collection:processed:*` 按 24h 过期 | collection-engine + 运维 |
-| 调度通道生产化 | [§3.2](#32-调度交付清单o1o8) O1–O8 全部交付：调度主题、专用订阅、双向 IAM、四条 Scheduler Job（`35,40,45,50,55 3 * * *` + `*/5 4-5 * * *` 覆盖日切窗口）、ack deadline 与消息保留、Scheduler 失败与 06:00 未完成告警；并在 Pilot 上确认 Redis keyset 游标、当日完成标记与幂等行为 | ingestion / admin / 运维 |
+| 调度通道生产化 | [§3.2](#32-调度交付清单o1o8) 剩余项交付：**O4**（应用 SA 对调度订阅的 subscriber 权限与凭证落位）、**O7/O8**（Scheduler 失败与 06:00 未完成告警）；并处置第二个发布者，使同一 `job` 只剩一个发布者。O1/O2/O3/O5/O6 已闭合。此外在 Pilot 上确认 Redis keyset 游标、当日完成标记与幂等行为 | ingestion / admin / 运维 |
 | 简版观测 MVP（T4 阻断） | 按 T3o-O1…O4 提供可查询的接入、投影、调度、渠道和 Redis 证据；隔离故障注入验证通过 | 主架构 |
-| 完整可观测性（T5 阻断） | Prometheus 抓取、Alertmanager 路由与 Dashboard 接通，告警到达演练通过 | 运维 + 主架构 |
+| 完整可观测性（T6 阻断，移除白名单前） | Prometheus 抓取、Alertmanager 路由与 Dashboard 接通，告警到达演练通过；闭合前每日人工巡检记录连续无缺口 | 运维 + 主架构 |
+| 凭证一次性轮换（T4 阻断） | 联调期间 Redis 口令、渠道与第三方 API Key 曾以明文出现在协作记录与 `deploy/nacos/backup-*.yml` 中。进入 T4 前统一轮换一次（2026-08-21 决定：不逐项处理），确认历史明文全部失效，并核对仓库与备份文件不再含真值 | 运维 + 主架构 |
 
 ## 8. 证据归档与阶段完成判定
 
@@ -331,9 +362,24 @@ DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 ke
 - 容量基线与告警阈值；
 - 回滚演练记录、责任人与完成时间。
 
-T3o 的完成要求其全部出口及简版观测 MVP 通过，之后才可提交 T4 准入。T4 通过固定 50 案与三日循环后才可提交 T5；每次 T5 放量前，完整抓取、阈值告警和通知路由均须闭合。
+T3o 的完成要求其全部出口及简版观测 MVP 通过，之后才可提交 T4 准入。T4 通过固定 50 案与三日循环后才可提交 T5；每次 T5 放量前须有当日人工巡检与对账记录。完整抓取、阈值告警和通知路由最迟在申请移除白名单（T6 准入）前闭合，并留存告警到达证据。
 
 ## 9. T4 固定 50 案与 T5 渐进切量操作
+
+### 9.0 T3o → T4 之间必须「停掉」的测试资产
+
+调度侧**不需要**停任何东西：四条 Cloud Scheduler Job 就是生产配置本身，T3o / T4 / T5 / T6 全程保持 `ENABLED`（`provision-scheduler.py --pause` 只在「T3o 长期推迟、不想让 tick 空转」时用，进入 T4 前必须确认已恢复且 `--verify` 四条均 `ENABLED`）。要停的是**测试期专用资产**，它们共用生产 topic，留着就有向真实客户触达或污染对账的风险：
+
+| 要停 / 清理的 | 为什么 | 动作 |
+|---|---|---|
+| L4 合成消息发布 | L4a/L4b 脚本会向 topic 发合成 `caseEvent`；T4 起生产 topic 只允许数仓发真实消息 | 停止运行 `publish-test-messages.sh` / `l4b-official-test.sh`；契约已明确禁止注入 |
+| `intelligent-collection-cases-test1` topic 与 `-sub` | L4a 合成源，T4 无用 | `provision-l4-pubsub.py --delete` |
+| `intelligent-collection-cases-v1-l4b-sub` | 挂在**生产**案件 topic 上的测试订阅，留着会持续堆积真实案件消息（保留 1 天）并让对账多一个口子 | 同上（该脚本一并回收） |
+| `*-observer-tmp` 订阅 | 临时观测用；本身有 7 天空闲自动过期，但不应带进 T4 | `observe-upstream-topics.py --delete` |
+| `collection.ingestion.fault-injection-enabled` | 故障注入开关 | 确认为 `false`（§5.1 已列） |
+| `collection.scan.case-id-whitelist` / `collection.ingestion.loan-id-whitelist` | T3o 用的是 L4a 的 12 个合成案号 | **替换为批准的 50 案名单并双人复核**；两个白名单都要改——一个管接入、一个管到期扫描 |
+| `local` / `test` profile 与 `/mock/**` | 双调度入口与 mock 触达 | `SPRING_PROFILES_ACTIVE` 只含 `pilot`；`SchedulerEntrypointValidator` 会拒绝启动兜底 |
+| 仓库根 `credentials.json`（个人 ADC） | 审计不可追溯 | 换 Pilot 专用服务账号，见 §7 凭证一次性轮换 |
 
 ### T4 执行清单
 

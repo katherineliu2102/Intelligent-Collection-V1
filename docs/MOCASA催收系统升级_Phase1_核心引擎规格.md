@@ -492,7 +492,7 @@ def on_callback_timeout(event):
     return events                                  # 已随本事务入发件箱；提交后投递，由 AdvancementPolicy 决定下一步
 ```
 
-**默认 60 分钟**（`engine.step.callback_timeout_minutes`，见 [基础设施附录](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)）。等待不占 Consumer——Cron 扫表触发本事件；防重复拾取靠计划/步骤状态。
+**默认 10 分钟**（`engine.step.callback_timeout_minutes`，见 [基础设施附录](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)）。等待不占 Consumer——Cron 扫表触发本事件；防重复拾取靠计划/步骤状态。
 
 > **Phase 2 对账（AI_CALL）**：仅当独立 AI Call 合作方提供按其任务标识（`call_task_id` / `request_id`）查询终态的 API 时，才能以查询结果纠正 `CALLBACK_TIMEOUT` 造成的假 `FAILED` 并补齐 timeline。故 dispatch 成功必须把该标识落入 `t_contact_timeline.provider_msg_id`，回调原始证据落 `t_channel_callback_audit.provider_msg_id`。没有查询 API 时，只能保留「超时置失败 + 回调审计 + 告警」，不得自行重拨或推测改写结果；合作方底层线路（LTH / SIP / 其他）对该契约不可见。
 
@@ -960,7 +960,7 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 | `ExecutionContext`    | ExecutionGuard / StepResolver / AdvancementPolicy | 引擎 → 渠道编排（策略子层）；前两者取得窗口化 `recentTimeline`，`AdvancementPolicy` 仅取得轻量上下文（该字段为空）                              |
 | `GuardVerdict`        | ExecutionGuard                                    | 渠道编排（策略子层） → 引擎                                                                                            |
 | `StepCommand`         | StepResolver / ChannelGateway                     | 渠道编排内：策略子层 → 执行子层（引擎 ④⑤ 串联）                                                                                |
-| `StepResult`          | ChannelGateway / AdvancementPolicy                | 渠道编排（执行子层） → 引擎；`success`/`retryable` 运行时语义见 [执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) |
+| `StepResult`          | ChannelGateway / AdvancementPolicy                | 渠道编排（执行子层） → 引擎；`success`/`retryable` 运行时语义见 [执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) |
 | `AdvancementDecision` | AdvancementPolicy                                 | 渠道编排（策略子层） → 引擎                                                                                            |
 | `ExhaustionResult`    | ExhaustionPolicy                                  | 渠道编排（策略子层） → 引擎                                                                                            |
 
@@ -1030,7 +1030,7 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 
 | 保护措施     | 边界                                                                                             |
 | -------- | ---------------------------------------------------------------------------------------------- |
-| 执行锁      | 调用渠道后的路径不释放锁；TTL 取 `max(idempotency-ttl-minutes, callback-timeout-minutes)`，默认 60 分钟。锁内重投直接退出。 |
+| 执行锁      | 调用渠道后的路径不释放锁；TTL 取 `max(idempotency-ttl-minutes, callback-timeout-minutes)`，默认 15 分钟。锁内重投直接退出。 |
 | 供应商去重    | 锁失效后的重投依赖供应商去重。`providerIdempotencyKey` 已预留，供应商去重能力待编排接入确认，不作为正确性保证。                           |
 | timeline | 若 `t_contact_timeline` 已提交，触达结果可查询；状态机仍可能未推进。                                                  |
 

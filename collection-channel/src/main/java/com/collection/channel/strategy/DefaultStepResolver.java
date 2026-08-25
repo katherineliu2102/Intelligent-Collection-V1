@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import javax.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
@@ -34,9 +35,10 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>SMS/Push 文案从 {@code channel.scripts}（{@link ScriptLibrary}）读取并注入 {@code
- * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用
- * {@code push-default-deep-link} 兜底。
+ * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时返回 {@code null}（引擎 SKIPPED），与 EMAIL 一致。Push {@code
+ * data.deep_link} 取 repaymentUrl，缺失用 {@code push-default-deep-link} 兜底。
  */
+@Slf4j
 @Component
 public class DefaultStepResolver implements StepResolver {
 
@@ -75,6 +77,20 @@ public class DefaultStepResolver implements StepResolver {
             }
         }
 
+        // SMS/PUSH 同样 fail-close：槽位在 DB 与 YAML 都取不到文案时跳过，不发占位串。
+        // 曾经的兜底是 "[MOCK] <slot> <url>" 并照发，一次漏配就等于把内部槽位名与测试域名
+        // 投递到真实客户；而漏配是运营动作（新增 stage / 改槽位命名）必然复现的失误。
+        if (isMessageChannel(step.getChannelType())
+                && !hasScript(step.getChannelType(), scriptSlot, snapshot)) {
+            log.error(
+                    "[StepResolver] 缺少文案，跳过该步骤 channel={} scriptSlot={} caseId={} —— "
+                            + "请补 t_script_template(ACTIVE) 或 channel.scripts",
+                    step.getChannelType(),
+                    scriptSlot,
+                    context.getPlan().getCaseId());
+            return null;
+        }
+
         ScriptVars vars = scriptLibrary.buildVars(snapshot);
         Map<String, Object> metadata = new HashMap<>();
 
@@ -94,11 +110,17 @@ public class DefaultStepResolver implements StepResolver {
         if (caseId != null) {
             metadata.put(StepCommand.META_CASE_ID, caseId);
         }
+        if (context.getPlan().getId() != null) {
+            metadata.put("plan_id", context.getPlan().getId());
+        }
+        if (step.getId() != null) {
+            metadata.put("step_id", step.getId());
+        }
 
         fillChannelMetadata(step.getChannelType(), metadata, snapshot, scriptSlot, vars);
 
         if (step.getChannelType().isAsyncChannel()) {
-            String callbackUrl = channelProperties.voiceCallbackUrl();
+            String callbackUrl = channelProperties.callbackUrl();
             if (StringUtils.isBlank(callbackUrl)) {
                 callbackUrl = channelProperties.getCallback().getBaseUrl();
             }
@@ -187,45 +209,70 @@ public class DefaultStepResolver implements StepResolver {
             String scriptSlot,
             ScriptVars vars) {
         CaseContext caseCtx = snapshot != null ? snapshot.getCaseContext() : null;
-        String repaymentUrl = caseCtx != null ? caseCtx.getRepaymentUrl() : null;
 
-        if (channel == ChannelType.SMS) {
-            String body = scriptLibrary.renderSms(scriptSlot, vars);
-            metadata.put(
-                    StepCommand.META_SMS_BODY,
-                    body != null ? body : buildFallbackSmsBody(scriptSlot, repaymentUrl));
+        // SMS/PUSH 的文案完备性已由 resolve() 的 fail-close 前置保证，此处不再有占位兜底。
+        if (channel == ChannelType.AI_CALL) {
+            fillAiCallMetadata(metadata, snapshot);
+        } else if (channel == ChannelType.SMS) {
+            metadata.put(StepCommand.META_SMS_BODY, scriptLibrary.renderSms(scriptSlot, vars));
         } else if (channel == ChannelType.EMAIL) {
             metadata.put(
                     StepCommand.META_DYNAMIC_TEMPLATE_DATA,
                     buildEmailTemplateData(snapshot, scriptSlot));
         } else if (channel == ChannelType.PUSH) {
             PushContent push = scriptLibrary.renderPush(scriptSlot, vars);
-            metadata.put(
-                    StepCommand.META_TITLE,
-                    push != null && push.getTitle() != null
-                            ? push.getTitle()
-                            : "MOCASA Payment Reminder");
-            metadata.put(
-                    StepCommand.META_BODY,
-                    push != null && push.getBody() != null
-                            ? push.getBody()
-                            : "[MOCK] " + scriptSlot);
+            metadata.put(StepCommand.META_TITLE, push.getTitle());
+            metadata.put(StepCommand.META_BODY, push.getBody());
             metadata.put(
                     StepCommand.META_PUSH_DATA, buildPushDataJson(snapshot, scriptSlot, metadata));
 
             // Push 无 token → fallback SMS：复用同阶段 SMS 文案
             String smsSlot = deriveMsgScriptSlot(ChannelType.SMS, caseCtx);
-            String fallbackBody = scriptLibrary.renderSms(smsSlot, vars);
             metadata.put(
-                    StepCommand.META_FALLBACK_SMS_BODY,
-                    fallbackBody != null
-                            ? fallbackBody
-                            : buildFallbackSmsBody(scriptSlot, repaymentUrl));
+                    StepCommand.META_FALLBACK_SMS_BODY, scriptLibrary.renderSms(smsSlot, vars));
         }
     }
 
-    private static String buildFallbackSmsBody(String scriptSlot, String repaymentUrl) {
-        return "[MOCK] " + scriptSlot + (repaymentUrl != null ? " " + repaymentUrl : "");
+    /** Facade AI 外呼的必填业务上下文。缺失金额或姓名时不伪造值，Adapter 会安全拒绝该 dispatch。 */
+    private static void fillAiCallMetadata(Map<String, Object> metadata, ContextSnapshot snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        CaseContext caseCtx = snapshot.getCaseContext();
+        if (caseCtx != null) {
+            if (caseCtx.getOverdueAmount() != null) {
+                metadata.put("overdue_amount", caseCtx.getOverdueAmount().toPlainString());
+            }
+            metadata.put("dpd", String.valueOf(caseCtx.getDpd()));
+            if (caseCtx.getDueDate() != null) {
+                metadata.put("due_date", caseCtx.getDueDate().toString());
+            }
+        }
+        if (snapshot.getUserProfile() != null
+                && snapshot.getUserProfile().getBasic() != null
+                && StringUtils.isNotBlank(snapshot.getUserProfile().getBasic().getName())) {
+            metadata.put("borrower_name", snapshot.getUserProfile().getBasic().getName());
+        }
+    }
+
+    private static boolean isMessageChannel(ChannelType channel) {
+        return channel == ChannelType.SMS || channel == ChannelType.PUSH;
+    }
+
+    /**
+     * 该步骤能否渲染出真实文案。
+     *
+     * <p>PUSH 额外要求同阶段 SMS 槽位存在：无 token 或投递失败时 PushAdapter 会改发 SMS（[渠道编排规格 §7.1]）， 缺 SMS 文案时那条
+     * fallback 同样会退化成占位串。
+     */
+    private boolean hasScript(ChannelType channel, String scriptSlot, ContextSnapshot snapshot) {
+        if (channel == ChannelType.SMS) {
+            return scriptLibrary.hasSms(scriptSlot);
+        }
+        String fallbackSlot =
+                deriveMsgScriptSlot(
+                        ChannelType.SMS, snapshot != null ? snapshot.getCaseContext() : null);
+        return scriptLibrary.hasPush(scriptSlot) && scriptLibrary.hasSms(fallbackSlot);
     }
 
     private String buildPushDataJson(
@@ -268,10 +315,9 @@ public class DefaultStepResolver implements StepResolver {
         if (ctx.getRepaymentUrl() != null) {
             data.put("payment_link", ctx.getRepaymentUrl());
         }
-        if (ctx.getTotalOutstanding() != null) {
-            data.put("amount_due", ctx.getTotalOutstanding());
-        } else {
-            data.put("amount_due", BigDecimal.ZERO);
+        BigDecimal amountDue = ScriptLibrary.resolveAmount(ctx);
+        if (amountDue != null) {
+            data.put("amount_due", amountDue);
         }
         data.put("overdue_days", ctx.getDpd());
         if (snapshot.getUserProfile() != null && snapshot.getUserProfile().getBasic() != null) {

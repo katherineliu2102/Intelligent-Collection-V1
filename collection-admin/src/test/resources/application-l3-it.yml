@@ -22,6 +22,10 @@ collection:
   idempotency: memory
   ingestion:
     enabled: false
+  scan:
+    # 本 IT 连的是共享库，别的实例也在扫同一批表。收窄到本用例自己的案件，
+    # 否则扫描会捞到无关步骤，断言随他人数据漂移。
+    case-id-whitelist: 99009980,99009981
 
 channel:
   fallback-to-mock: true

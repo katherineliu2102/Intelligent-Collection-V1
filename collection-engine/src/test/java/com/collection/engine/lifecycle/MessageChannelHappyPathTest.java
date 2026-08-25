@@ -102,6 +102,7 @@ class MessageChannelHappyPathTest {
 
     /** mock 出"一切放行 + 渠道成功"的 happy path 前置条件。 */
     private void stubHappyPath() {
+        when(planRepository.markStepExecuting(any())).thenReturn(true);
         when(idempotencyService.acquire(anyString(), anyInt())).thenReturn(true);
         CaseInfo liveCase = new CaseInfo();
         liveCase.setCaseId(CASE_ID);

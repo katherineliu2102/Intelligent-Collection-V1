@@ -92,24 +92,27 @@ flowchart LR
 | `callbackTimeout` | 每分钟 | 催收引擎 |
 | `dailyRoll` | 03:35–05:55，每 5 分钟 | 催收引擎 |
 
-```text
-# 独立消息 1
-body: scheduled-tick
-attributes:
-  job: planStepDue
+三类 tick 各为一个独立 Pub/Sub 消息。下面直接给命令形式，**不再给「body / attributes」的示意块**——那种写法会被当成消息内容原样发出（本节末尾有实际事故记录）：
 
-# 独立消息 2
-body: scheduled-tick
-attributes:
-  job: callbackTimeout
+```bash
+# Cloud Scheduler Job（正式入口，四条规则见基础设施规范 §5.2）
+gcloud scheduler jobs create pubsub collection-plan-step-due \
+  --schedule="* * * * *" --time-zone="Asia/Manila" \
+  --topic=<SCHEDULE_TOPIC> \
+  --message-body="scheduled-tick" \
+  --attributes="job=planStepDue"      # ← 路由只看这里
 
-# 独立消息 3
-body: scheduled-tick
-attributes:
-  job: dailyRoll
+# 一次性手工触发（排障用）
+gcloud pubsub topics publish <SCHEDULE_TOPIC> \
+  --message="scheduled-tick" \
+  --attribute="job=callbackTimeout"
 ```
 
-每段均为一个独立 Pub/Sub 消息。引擎侧处理定义见[基础设施规范 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)；`dailyRoll` 的日切判断见 [§5](#5-日切窗口与批次门控)。
+`job` 取值只有 `planStepDue` / `callbackTimeout` / `dailyRoll` 三个，逐字小驼峰。`--message` / `--message-body` 的内容不参与路由，写什么都行但不能为空。
+
+> **已发生的实际事故（2026-08-21 观测确证）**：调度 Topic 上存在**第二个发布者**，每分钟在 `:01` 前后发两条消息，attributes 为**空**，而 body 是本节旧版示意块的原文（`body: scheduled-tick\nattributes:\n  job: callbackTimeout`）。即对方把「示意」当成了消息体逐字发布。这类 tick 到达应用后会被判 `UNKNOWN_JOB`、记 WARN 后 ack 丢弃，**不会触发任何扫描**——若正式入口只有这个发布者，触达链路会全程静默停摆。**已处置**：这三条 Job 在 `asia-southeast1`（`intelligent-collection-schedule-{planStepDue,callbackTimeout,dailyRoll}`），2026-08-21 已 `PAUSED`；正式入口是 `asia-northeast1` 的四条 Job。**同一 `job` 不得有两个发布者**，否则每分钟双发 tick，虽有单飞兜底但会持续制造 `IN_FLIGHT` 噪音。
+
+引擎侧处理定义见[基础设施规范 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)；`dailyRoll` 的日切判断见 [§5](#5-日切窗口与批次门控)。
 
 **案件 Topic 资源（落地上表「案件 Topic」行）**
 
@@ -476,4 +479,4 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 - 接入入口：[AiCaseIngestionProcessor.java](../collection-ingestion/src/main/java/com/collection/ingestion/pubsub/AiCaseIngestionProcessor.java)
 - 投影持久化：[AiCaseProjectionRepository.java](../collection-service/src/main/java/com/collection/service/repository/AiCaseProjectionRepository.java)
 - 运行态 CaseService：[AiCollectionCaseService.java](../collection-service/src/main/java/com/collection/service/impl/AiCollectionCaseService.java)
-- 开发索引（非字段 SSOT）：[contracts/README_t_ai_collection_PubSub契约.md](./contracts/README_t_ai_collection_PubSub契约.md)
+- 开发索引（非字段 SSOT）：[contracts/README.md](./contracts/README.md)

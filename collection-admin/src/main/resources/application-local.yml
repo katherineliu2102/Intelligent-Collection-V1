@@ -22,14 +22,36 @@ mybatis:
 collection:
   scan:
     interval-ms: 5000
+    # 本实例允许扫描的 case_id。扫描 SQL 无租户维度，空名单 = 对本库全部案件发起触达，
+    # 且共享库上会与其他实例互抢步骤（2026-08-21 实测），故 local/test 由 ScanIsolationGuard 强制非空。
+    case-id-whitelist: ${COLLECTION_SCAN_CASE_IDS:}
   # 生产调度入口（Cloud Scheduler → Pub/Sub 调度订阅）。本地/CI 关闭，由 TriggerScanner(@Scheduled) 驱动扫描；
   # 两者不得同时生效，SchedulerEntrypointValidator 会在启动时拒绝双入口。
   scheduler:
     enabled: ${COLLECTION_SCHEDULER_ENABLED:false}
   idempotency: memory
   eventbus: memory
+  # 案件来源与投影写入者：mock = 内存（L4a 用，不需要任何真实数据）；
+  # ai = 真实读写 t_ai_collection（AiCollectionCaseService + AiCaseProjectionRepository）。
+  # **L4b 必须为 ai**：日切 DpdStageRollHandler 只扫投影表，投影为空则升档/停催用例无对象可扫——
+  # 2026-08-21 首跑就因为这里默认 mock，L4b-4 报「120s 内无 PLAN_CANCELLED/CEASED」，看着像产品缺陷。
+  # Nacos 里该键写死为 mock，本文件优先级更高，故用环境变量在此覆盖。
+  case-service: ${COLLECTION_CASE_SERVICE:mock}
+  # 验签开关与密钥都走环境变量：密钥不入仓、也不进 Nacos（共用 Data ID 会被同事读到）。
+  # 验回调链路时 export COLLECTION_WEBHOOK_SIGNATURE_REQUIRED=true + CHANNEL_CALLBACK_HMAC_SECRET=<强随机串>。
   webhook:
-    signature-required: false
+    signature-required: ${COLLECTION_WEBHOOK_SIGNATURE_REQUIRED:false}
+    hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET:}
+  # 管理面账号。此处的固定弱口令（admin / local-dev）**仅供本地开发**，
+  # 之所以敢写进仓库，是因为 local profile 从不连生产库、也不对外暴露端口。
+  # pilot/生产的账号只经环境变量注入，且 PilotReadinessValidator 会强制至少配一个。
+  # 生成哈希：htpasswd -bnBC 10 <用户名> <口令> | cut -d: -f2
+  admin:
+    auth:
+      accounts:
+        - username: admin
+          password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
+          role: SYSTEM_ADMIN
   # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
   # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
   ingestion:
@@ -38,16 +60,34 @@ collection:
     subscription: ${GCP_PUBSUB_SUBSCRIPTION:intelligent-collection-cases-v1-sub}
     ack-deadline-seconds: 60
     max-concurrency: 4
-    # loan-id-whitelist: [99000001, 99000002]   # 联调白名单（缩小影响面，不入仓）
+    # 联调白名单：名单外案件在消费入口直接 ack 跳过，不进入任何处理。
+    # 走环境变量而非写死清单，理由同 scan.case-id-whitelist：名单是每轮联调的批准范围，不该入仓；
+    # 且 IngestionIsolationGuard 在 enabled=true 且名单为空时会拒绝启动，写死会让它形同虚设。
+    loan-id-whitelist: ${COLLECTION_INGESTION_LOAN_IDS:}
+    # L4b-7 / L4b-11 的受控 NACK 注入开关。放在环境变量而不是靠 Nacos：Nacos 是与编排同事共用的
+    # Data ID，谁重发一次配置都可能把它带回 false，而 L4b-7/11 只会「skip 不裁决」，看不出是环境掉了。
+    fault-injection-enabled: ${COLLECTION_INGESTION_FAULT_INJECTION:false}
     # case-push:                                  # 上游 JSON key 与契约不一致时配别名（C-I-01 待信贷联调）
     #   field-map: { caseId: loan_id, dpd: overdue_days }
 channel:
   callback:
     base-url: http://localhost:8888/webhook
-  # Level A 联调：未配密钥时不回退 Mock 伪装成功（Bugbot #3）
-  fallback-to-mock: false
+  # AI Call L1：base-url 与 api-key 应通过 Nacos / 部署 Secret 下发；本地自签名证书联调可临时开启 insecure-tls。
+  facade:
+    base-url: ${CHANNEL_FACADE_BASE_URL:}
+    insecure-tls: ${CHANNEL_FACADE_INSECURE_TLS:false}
+    product-type: Quick Loan
+    currency: PHP
+    test-callee: ${CHANNEL_FACADE_TEST_CALLEE:}
+  # Level A 联调：未配密钥时不回退 Mock 伪装成功（Bugbot #3）。
+  # ⚠ 本文件是 profile 专属配置，优先级**高于** Nacos 的 intelligent-collection-local.yml
+  #   （后者由 application.yml 通过 spring.config.import 引入，属被导入文档），
+  #   因此这里写死的值无法从 Nacos 覆盖。零真实触达的联调（L4a/L4b）改由环境变量切换。
+  fallback-to-mock: ${CHANNEL_FALLBACK_TO_MOCK:false}
   notification:
-    base-url: https://notification.mocasa.com   # 生产通知中心（真 key 须配此地址；测试服 collection 仅 Virtual）
+    # 零真实触达的联调（L4a/L4b）把 base-url 置空：testSend 端点免签名，只要 base-url+app-code 在
+    # 就会真的把请求打到通知中心（拿到 requestId）。置空后 Adapter 判为未配置，由 fallback-to-mock 接管。
+    base-url: ${CHANNEL_NOTIFICATION_BASE_URL:https://notification.mocasa.com}
     app-code: mocasa
     # app-key 由 Nacos channel.notification.app-key 下发（intelligent-collection-local.yml）
     sms-content-type: collection
@@ -92,14 +132,19 @@ channel:
         - { channel: EMAIL, delayMin: 1, observeMin: 0, templateId: 204 }
   compliance:
     timezone: Asia/Manila
-    quiet-hours-start: "21:00"
-    quiet-hours-end: "08:00"
-    daily-total-limit: 3
+    # 缺省即生产口径。做成环境变量只为让联调能在窗口外跑，覆盖后该轮不再验静默时段 Guard，
+    # 由 restart-and-l4a.sh 显式提示，不允许隐式生效。
+    quiet-hours-start: "${CHANNEL_QUIET_HOURS_START:21:00}"
+    quiet-hours-end: "${CHANNEL_QUIET_HOURS_END:08:00}"
+    # 缺省是生产口径（每渠道 1 次 / 跨渠道合计 3 次，按 userId 按天）。L4a 的计划模板本身就是同一
+    # userId 的 3–4 步，跑官方用例时会被自己的日限锁死，故联调脚本用环境变量放宽；
+    # 频控用例仍由 channel.l4a.guard-frequency-* 对 94805 单独限 1，不受这里影响。
+    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:3}
     daily-limit:
-      SMS: 1
-      PUSH: 1
-      EMAIL: 1
-      AI_CALL: 1
+      SMS: ${CHANNEL_DAILY_LIMIT_SMS:1}
+      PUSH: ${CHANNEL_DAILY_LIMIT_PUSH:1}
+      EMAIL: ${CHANNEL_DAILY_LIMIT_EMAIL:1}
+      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:1}
   scripts:
     release-version: "2026.07.27.1"
     push-default-deep-link: https://app.mocasa.com/repay

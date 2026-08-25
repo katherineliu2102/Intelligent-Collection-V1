@@ -3,6 +3,7 @@ package com.collection.service.repository;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
 import com.collection.common.repository.CaseProjectionRepository;
+import com.collection.common.repository.MissingCaseBaselineException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Repository;
@@ -26,7 +27,10 @@ public class InMemoryCaseProjectionRepository implements CaseProjectionRepositor
         }
         CaseProjection projection = command.getProjection();
         String current = versions.get(projection.getCaseId());
-        boolean applied = current == null || !current.equals(projection.getCaseVersion());
+        boolean applied =
+                current == null
+                        || (!current.equals(projection.getCaseVersion())
+                                && !isOlderThanStored(projection));
         if (applied) {
             versions.put(projection.getCaseId(), projection.getCaseVersion());
             projections.put(projection.getCaseId(), projection);
@@ -45,16 +49,25 @@ public class InMemoryCaseProjectionRepository implements CaseProjectionRepositor
         if (pendingPublish != null) {
             return pendingPublish ? Outcome.PENDING_PUBLISH : Outcome.ALREADY_PROCESSED;
         }
-        CaseProjection current = projections.get(command.getProjection().getCaseId());
-        if (current == null) {
-            throw new IllegalStateException(
-                    "repaymentEvent 缺完整 caseEvent 基线，caseId="
-                            + command.getProjection().getCaseId());
-        }
         CaseProjection delta = command.getProjection();
+        CaseProjection current = projections.get(delta.getCaseId());
+        if (current == null) {
+            throw new MissingCaseBaselineException(delta.getCaseId());
+        }
+        if (delta.getUpdatedAt() != null
+                && current.getUpdatedAt() != null
+                && delta.getUpdatedAt().isBefore(current.getUpdatedAt())) {
+            inbox.put(command.getEventId(), false);
+            return Outcome.STALE_VERSION;
+        }
+        // dpd/stage 需通过自洽性护栏：与 AiCaseProjectionRepository 同口径，否则 L4a 与 L4b 会对同一条重投给出不同结论
         current.setUserId(delta.getUserId());
-        current.setDpd(delta.getDpd());
-        current.setStage(delta.getStage());
+        if (RepaymentConsistencyGuard.acceptsDpdAndStage(current, delta)) {
+            current.setDpd(delta.getDpd());
+            if (delta.isStagePresent()) {
+                current.setStage(delta.getStage());
+            }
+        }
         current.setCollectionStatus(delta.getCollectionStatus());
         current.setOverdueAmount(delta.getOverdueAmount());
         current.setTotalOutstanding(delta.getTotalOutstanding());
@@ -66,6 +79,19 @@ public class InMemoryCaseProjectionRepository implements CaseProjectionRepositor
         current.setUpdatedAt(delta.getUpdatedAt());
         inbox.put(command.getEventId(), command.isPublishRequired());
         return command.isPublishRequired() ? Outcome.APPLIED : Outcome.APPLIED_WITHOUT_EVENT;
+    }
+
+    /**
+     * 与 {@link AiCaseProjectionRepository#upsert} 同口径：更旧的完整快照不得覆盖已落库的投影。
+     *
+     * <p>两处必须同构，否则 L4a（内存）与 L4b（真库）会对同一条重投消息给出不同结论，测试结果不可互推。
+     */
+    private boolean isOlderThanStored(CaseProjection projection) {
+        CaseProjection stored = projections.get(projection.getCaseId());
+        return stored != null
+                && projection.getUpdatedAt() != null
+                && stored.getUpdatedAt() != null
+                && projection.getUpdatedAt().isBefore(stored.getUpdatedAt());
     }
 
     @Override

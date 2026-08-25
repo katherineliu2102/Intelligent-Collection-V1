@@ -87,8 +87,7 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 
 | 渠道 | 素材位置 | template_id |
 |------|----------|-------------|
-| **EMAIL** | `docs/email-templates/milestones/` + SendGrid 控制台 | 每 milestone 一个 `d-xxx` |
-| **EMAIL Test Data** | `docs/email-templates/email-templates-test/` | — |
+| **EMAIL** | `docs/email-templates/` + SendGrid 控制台 | 每 milestone 一个 `d-xxx` |
 | **SMS** | Resolver → `sms_body` | 无 LTH template_id |
 | **PUSH** | 通知中心 `title`/`body`/`data`（JPush） | 无独立 template_id |
 | **Voice** | LTH 脚本参数 | 待 LTH 确认 |
@@ -137,7 +136,7 @@ collection:
 | D+91 停催（内部） | `POST /mock/case-ceased?caseId=&maxDpd=91` |
 | 阶段变更 | `POST /mock/stage-changed?caseId=&stage=S2` |
 
-> **注意**：D+91「停催」是**内部**生命周期；对外 Email **不得**写停催或委外，D+75 用 `assignment_date` 包装为 **final delinquency review**（见 [email-templates §2](./email-templates/README.md#2-催收心理学矩阵)）。
+> **注意**：D+91「停催」是**内部**生命周期；对外 Email **不得**写停催或委外，D+75 用 `assignment_date` 包装为 **final delinquency review**（见 [email-templates §2](../email-templates/README.md#2-催收心理学矩阵)）。
 
 ### 4.4 重复测试
 
@@ -162,14 +161,13 @@ Email 联调递增 caseId（92002、92003…），避免 plan 冲突。
 
 | 步骤 | 操作 | 文档 |
 |------|------|------|
-| 1 | 改 HTML 源码 | `email-templates/milestones/` 或 `conditionals/` |
+| 1 | 改 HTML 源码 | `collection-admin/src/main/resources/catalog/email-templates/` |
 | 2 | 同步 Subject / Preheader | `email-templates/subjects.md` |
-| 3 | SendGrid 控制台粘贴 HTML + Settings | [建站 SOP](./email-templates/README.md#6-sendgrid-建站-sop) |
-| 4 | Test Data 预览 | `email-templates/email-templates-test/` + `test-data-index.json` |
-| 5 | 填 Nacos `channel.sendgrid.templates.{scriptSlot}` | [§3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
-| 6 | 联调 | TC-EMAIL-D0-01；92002 → 126 邮箱 |
+| 3 | SendGrid 控制台粘贴 HTML + Settings | [建站 SOP](../email-templates/README.md#6-sendgrid-建站-sop) |
+| 4 | 填 Nacos `channel.sendgrid.templates.{scriptSlot}` | [§3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
+| 5 | 联调 | TC-EMAIL-D0-01；92002 → 126 邮箱 |
 
-**叙事合规**：改文案前阅读 [email-templates §2](./email-templates/README.md#2-催收心理学矩阵)——**无委外**；D+75 用 final delinquency review；禁 `collection will cease` / third-party。
+**叙事合规**：改文案前阅读 [email-templates §2](../email-templates/README.md#2-催收心理学矩阵)——**无委外**；D+75 用 final delinquency review；禁 `collection will cease` / third-party。
 
 #### SMS / Push
 
@@ -198,7 +196,7 @@ ingest → PlanFactory（策略：几步、什么渠道）
        → Adapter（供应商 API）
 ```
 
-进度见 [HANDOFF](../../HANDOFF.md) · Checklist 见 [开发执行指南](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)。
+进度与未闭合项见 [HANDOFF](../../HANDOFF.md)。
 
 ---
 
@@ -208,7 +206,6 @@ ingest → PlanFactory（策略：几步、什么渠道）
 |------|------|
 | 新增/改 Email HTML | `email-templates/` + `subjects.md` + [渠道模板清单 §2](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#2-全渠道-scriptslot-总表) |
 | 新增 SendGrid `d-xxx` | Nacos 映射 + `subjects.md` SendGrid ID 列 |
-| 新增 Test Data JSON | `email-templates/email-templates-test/` + `test-data-index.json` |
 | 新增测试 caseId | 本手册 §4 + [功能测试指南 §1.3](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) |
 | DefaultPlanFactory 上线 | §5.1 Phase 2 列、TC-PLAN-* |
 | 策略 DDL 上线 | 重写 §2，增加后台章节 |

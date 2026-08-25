@@ -6,10 +6,10 @@
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
 > **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
 > **关联文档**:  
-> - [产品需求文档 (PRD)](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9  
-> - [架构设计文档](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）  
-> - [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2  
-> - [策略迭代与测试操作手册](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)  
+> - [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md) §3、§6（F8/F11）、§9
+> - [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md) §1.7（应用层）
+> - [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2
+> - [策略迭代与测试操作手册](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md)
 > **输入来源**: 管理后台设计讨论（2026-06-30）、业内催收 SaaS 调研、同事评审优化（2026-06-30）
 
 ---
@@ -45,9 +45,9 @@
 
 ### 1.1 背景
 
-Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的分层架构，`collection-admin` 作为**应用层**承载管理后台 REST API、Webhook 回调与调度订阅触发入口（Cloud Scheduler → Pub/Sub → 应用订阅）（详见 [架构设计文档 §1.7](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）。
+Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的分层架构，`collection-admin` 作为**应用层**承载管理后台 REST API、Webhook 回调与调度订阅触发入口（Cloud Scheduler → Pub/Sub → 应用订阅）（详见 [架构设计文档 §1.7](./MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）。
 
-当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台仅有只读 API（`/catalog`、`/plans`）与开发用静态页（`catalog.html`、`orchestration.html`）。**运营与策略人员无法通过产品化界面完成日常配置与监控**，是 Phase 1 产品化缺口。
+当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台仅有只读 API（`/catalog`、`/plans`）与开发用静态页（`catalog.html`、`orchestration.html`）。**运营与策略人员无法通过产品化界面完成日常配置与监控**，是 Phase 1 产品化缺口。
 
 PRD 场景 B 定义了策略配置员的核心闭环：
 
@@ -327,7 +327,7 @@ flowchart LR
 
 **变量支持**（PRD F6）：姓名、金额、日期、还款链接等；Phase 1 英文。
 
-**关联 SSOT**：[渠道模板清单](../Intelligent-Collection-V1/docs/channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) 为 Phase 1 文档 SSOT；后台录入后与之对齐。
+**关联 SSOT**：[渠道模板清单](./channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) 为 Phase 1 文档 SSOT；后台录入后与之对齐。
 
 #### 5.2.3 策略规则矩阵
 
@@ -466,7 +466,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | **COMPLIANCE_BLOCK_SPIKE** | 合规拦截量突增 | 检查阈值配置是否误改 |
 | **INGESTION_FAILURE** | 上游 PubSub 消费失败 | 检查接入层日志 |
 
-来源：引擎 CALLBACK_TIMEOUT 机制（[架构文档 §1.8.9](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_架构设计文档.md#189-异步回调对账)）、渠道熔断、CollectionEventBus DLQ。
+来源：引擎 CALLBACK_TIMEOUT 机制（[架构文档 §1.8.9](./MOCASA催收系统升级_Phase1_架构设计文档.md#189-异步回调对账)）、渠道熔断、CollectionEventBus DLQ。
 
 #### 5.5.2 折叠聚合（防雪崩，核心设计）
 
@@ -651,7 +651,7 @@ Phase 2 记录操作人、时间、原因（操作日志）。Phase 1 不建设 
 | `t_contact_timeline` | `config_version` + `rendered_ref` | 实际发送时的配置版本 + 渲染内容引用（变量已填充的话术摘要） |
 
 - **快照粒度**✅：存 `config_version` + 关键参数 JSON 快照（已确认口径）——平衡存储成本与可复盘性；需要完整正文时按 `config_version` 回查配置表。
-- **跨文档影响** ⚠️：此为运行表 schema 变更，需在 [领域模型与数据定义](../Intelligent-Collection-V1/docs/MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §7 DDL 配合增列。本设计提出需求，DDL 落地以领域模型文档为准。
+- **跨文档影响** ⚠️：此为运行表 schema 变更，需在 [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §7 DDL 配合增列。本设计提出需求，DDL 落地以领域模型文档为准。
 
 ### 6.6 节点配置一致性（多实例演进项）
 

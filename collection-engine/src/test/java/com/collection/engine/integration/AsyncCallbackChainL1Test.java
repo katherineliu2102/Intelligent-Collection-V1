@@ -111,6 +111,7 @@ class AsyncCallbackChainL1Test {
                 "predictiveDialerService",
                 (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
+        inject(manager, "metrics", com.collection.engine.metrics.CollectionMetrics.local());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
@@ -163,7 +164,7 @@ class AsyncCallbackChainL1Test {
                         .with(CollectionEvent.STAGE, Stage.S1.name()));
         bus.drainAll();
 
-        List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100);
+        List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100, null);
         for (ContactPlanStep s : due) {
             bus.publish(
                     CollectionEvent.of(EventType.PLAN_STEP_DUE)

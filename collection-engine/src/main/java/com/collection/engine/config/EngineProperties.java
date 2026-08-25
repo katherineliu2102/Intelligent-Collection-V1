@@ -33,7 +33,12 @@ public class EngineProperties {
         private int retryBaseIntervalSeconds = 30;
         private int retryMaxIntervalSeconds = 300;
         private int retryBackoffFactor = 2;
-        private int callbackTimeoutMinutes = 60;
+        /**
+         * 异步渠道回调等待窗口。AI_CALL 一通外呼含排队通常几分钟内出结果，60 分钟等于把失败步骤 多压一个小时才收敛，计划推进被无谓拖慢；10 分钟仍显著大于单通时长。
+         *
+         * <p>调小的代价是迟到的回调会落在已终态的步骤上被忽略，结果记为 FAILED 而非真实结局。 AI_CALL 尚无真实回调延迟数据，T3o 跑通后应按实测分布复核本值。
+         */
+        private int callbackTimeoutMinutes = 10;
 
         /**
          * 幂等锁实际 TTL：不得短于回调等待窗口，否则异步渠道等回调期间收到重复 due 会重新拿锁并二次外呼。 退避重试不受影响——幂等 key 含 retryCount，重试后

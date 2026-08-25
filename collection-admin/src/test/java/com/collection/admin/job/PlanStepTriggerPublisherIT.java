@@ -22,6 +22,7 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.engine.lifecycle.StepExecutionOrchestrator;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
+import com.collection.service.support.ServiceClock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicReference;
@@ -78,7 +79,7 @@ class PlanStepTriggerPublisherIT {
     void publishDueSteps_dispatchesCommittedStepAndMarksItExecuting() {
         ContactPlanStep step = seedDueStep(DUE_CASE_ID);
         assertTrue(
-                stepMapper.selectDueSteps(LocalDateTime.now(), 10).stream()
+                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null).stream()
                         .anyMatch(candidate -> step.getId().equals(candidate.getId())),
                 "已提交 due 步骤必须可被真实 MyBatis 查询到");
         AtomicReference<CollectionEvent> received = new AtomicReference<>();
@@ -106,7 +107,7 @@ class PlanStepTriggerPublisherIT {
         verify(orchestrator, timeout(5000))
                 .executeStep(any(ContactPlan.class), any(ContactPlanStep.class));
         assertTrue(
-                stepMapper.selectDueSteps(LocalDateTime.now(), 10).stream()
+                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null).stream()
                         .noneMatch(candidate -> step.getId().equals(candidate.getId())),
                 "清空 trigger_time 后，重复扫描不得再次发布同一步骤");
     }
@@ -116,7 +117,7 @@ class PlanStepTriggerPublisherIT {
         when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.PLAN_COMPLETED);
         ContactPlanStep step = seedTimeoutStep(TIMEOUT_CASE_ID);
         assertTrue(
-                stepMapper.selectTimeoutSteps(LocalDateTime.now(), 10).stream()
+                stepMapper.selectTimeoutSteps(LocalDateTime.now(), 10, null).stream()
                         .anyMatch(candidate -> step.getId().equals(candidate.getId())),
                 "已提交 timeout 步骤必须可被真实 MyBatis 查询到");
         AtomicReference<CollectionEvent> received = new AtomicReference<>();
@@ -147,7 +148,9 @@ class PlanStepTriggerPublisherIT {
                     ContactPlan plan = newPlan(caseId, PlanStatus.PENDING);
                     planMapper.insert(plan);
                     ContactPlanStep step = newStep(plan.getId(), StepStatus.PENDING);
-                    step.setTriggerTime(LocalDateTime.now().minusMinutes(1));
+                    // 参照系必须与扫描 SQL 的比较值同轴（PHT），不能用 JVM 默认时区——
+                    // 否则换一台时区不是 +08 的机器，这个「1 分钟前」可能落在未来。
+                    step.setTriggerTime(ServiceClock.now().minusMinutes(1));
                     stepMapper.insert(step);
                     return step;
                 });
@@ -159,7 +162,7 @@ class PlanStepTriggerPublisherIT {
                     ContactPlan plan = newPlan(caseId, PlanStatus.STEP_EXECUTING);
                     planMapper.insert(plan);
                     ContactPlanStep step = newStep(plan.getId(), StepStatus.EXECUTING);
-                    step.setTimeoutTime(LocalDateTime.now().minusMinutes(1));
+                    step.setTimeoutTime(ServiceClock.now().minusMinutes(1));
                     stepMapper.insert(step);
                     return step;
                 });
@@ -177,6 +180,10 @@ class PlanStepTriggerPublisherIT {
         plan.setIdempotencyKey("l3-scan-it:" + caseId + ":" + System.nanoTime());
         plan.setRenewalPending(false);
         plan.setVersion(0);
+        // 时间列自 2026-08-21 起由调用方以 PHT 传入，不再由库端 NOW() 兜底；本测试绕过仓储直写 mapper，
+        // 因此必须自己赋值，否则 created_at 非空约束会直接拒绝插入。
+        plan.setCreatedAt(ServiceClock.now());
+        plan.setUpdatedAt(ServiceClock.now());
         return plan;
     }
 
@@ -191,6 +198,8 @@ class PlanStepTriggerPublisherIT {
         step.setObservationMinutes(0);
         step.setRetryCount(0);
         step.setIdempotencyKey(planId + ":1:0");
+        step.setCreatedAt(ServiceClock.now());
+        step.setUpdatedAt(ServiceClock.now());
         return step;
     }
 

@@ -240,7 +240,7 @@ Redis KV 负责幂等、步骤锁、频控和接入去重；Redis Stream 负责�
 |---|---|---|
 | 合规计数器（daily） | 当日 23:59:59 过期 | 自然日重置 |
 | 合规计数器（weekly） | 下一个 PHT 自然周结束时过期 | 自然周重置，不能按首次写入后固定 7 天过期 |
-| 步骤幂等锁 | `max(engine.step.idempotency_ttl_minutes, engine.step.callback_timeout_minutes)`；默认 60 分钟 | 覆盖异步回调窗口；代码不得仅按 15 分钟配置值解释 |
+| 步骤幂等锁 | `max(engine.step.idempotency_ttl_minutes, engine.step.callback_timeout_minutes)`；默认 15 分钟 | 必须覆盖异步回调窗口（当前 10 分钟）；调大回调窗口时本值随之抬升 |
 | 渠道层去重 | 24 小时 | 覆盖供应商回调延迟窗口 |
 | 事件消费去重 | 24 小时 | At-least-once 消费去重 |
 
@@ -456,7 +456,7 @@ Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-c
 |---|---|
 | `engine.*` | 引擎运行参数：Consumer 线程池与队列、Cron/日切扫描上限、步骤幂等与回调超时、SPI 执行超时、合规日频控与静默时段 |
 | `collection.*` | 接入与基础设施开关：PubSub 消费、eventbus/idempotency 实现切换、定时扫描间隔、数据迁移双写 |
-| `channel.*` | 渠道凭证与编排参数：API 密钥、endpoint、模板/号段（同 Nacos YAML 运维下发，不入 Git；详见 [渠道开发执行指南 §6](./channel/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)） |
+| `channel.*` | 渠道凭证与编排参数：API 密钥、endpoint、模板/号段（同 Nacos YAML 运维下发，不入 Git） |
 
 **写代码绑配置**以 `EngineProperties` / `@ConfigurationProperties` 为准。
 
@@ -567,7 +567,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 分册 | 内容 |
 |---|---|
-| **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`） |
+| **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`）；**A.2b** 应用侧开关与凭证（`collection.webhook.*` / `collection.ingestion.*` / `collection.compliance.counter` 等） |
 | **A.3** | 接入与 PubSub 部署索引（热更属性；行为 SSOT → [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)） |
 | **A.4** | 迁移与触达（`collection.notification.owner`） |
 | **A.6** | 定时调度（`collection.scheduler.*`、调度 GCP 环境变量） |
@@ -584,7 +584,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `engine.consumer.queue_capacity` | `256` | N | Consumer 有界队列容量 |
 | `engine.consumer.scan_limit` | `1000` | Y | Cron / 日切单批扫描上限 |
 | `engine.step.idempotency_ttl_minutes` | `15` | Y-注意 | 步骤幂等基础值；实际 TTL 取与 callback timeout 的较大值 |
-| `engine.step.callback_timeout_minutes` | `60` | Y-注意 | 异步渠道回调等待窗口；默认决定步骤幂等实际 TTL 为 60 分钟 |
+| `engine.step.callback_timeout_minutes` | `10` | Y-注意 | 异步渠道回调等待窗口；超过 `idempotency_ttl_minutes`(15) 时会抬升步骤幂等实际 TTL |
 | `engine.step.max_retry_count` | `3` | Y | `StepResult.retryable=true` 的步骤重试上限 |
 | `engine.step.retry_base_interval_seconds` | `30` | Y | 步骤首次退避间隔 |
 | `engine.step.retry_backoff_factor` | `2` | Y | 步骤重试退避倍数 |
@@ -618,8 +618,32 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `engine.reaper.interval-ms` | `300000` | Y | 停摆巡检周期 |
 | `engine.reaper.idle-minutes` | `75` | Y-注意 | 计划静默多久才判定停摆；须覆盖 Outbox 默认约 65min 的自动重试窗口，且 Reaper 会排除有活跃 Outbox 的计划 |
 | `engine.reaper.batch-size` | `200` | Y | 单次停摆巡检上限 |
-| `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限 |
-| `engine.compliance.quiet_hours_start` / `end` | `21:00` / `08:00` | Y | PHT 静默时段 |
+| `channel.compliance.daily-limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限。**2026-08-21 更正键名**：本行曾登记为 `engine.compliance.daily_limit`，但代码只读 `channel.compliance.*`（`ConfigurableExecutionGuard`），按旧键配置不生效 |
+| `channel.compliance.quiet-hours-start` / `-end` | `21:00` / `08:00` | Y | PHT 静默时段。键名更正同上行 |
+| `collection.db.clock-drift-threshold-seconds` | `120` | N | 启动时应用 PHT 时钟与 `SELECT NOW()` 的最大容许偏差。超过阈值时 `pilot` 拒启、其余 profile 仅告警；用于拦截会话时区未设为 +08:00（恒差 8 小时）导致的审计列错位 |
+| `engine.decision-log.enabled` / `.version` | `true` / 当前版本号 | N | 决策日志开关与版本标记 |
+| `engine.delivery-audit.hmac-key` / `.content-key-id` | 无默认（环境注入） | N | 触达内容审计的 HMAC 密钥与密钥标识；真值不入仓 |
+| `engine.plan.max-rebuild-count` | `2` | Y | 单案计划重建上限，穷尽策略据此收敛 |
+| `engine.context.history-max-records` | `50` | Y | 快照内保留的历史触达记录条数上限 |
+
+<a id="a2b-应用侧开关与凭证"></a>
+
+#### A.2b 应用侧开关与凭证（2026-08-21 补登）
+
+本组键 Pilot 已在用（见 `application-pilot.yml`），此前未入附录 A，导致照本附录配置 Pilot 会漏配验签与后端切换。
+
+| 参数 Key | 取值 | 热更 | 说明 |
+|---|---|---|---|
+| `collection.webhook.signature-required` | `true`（Java 默认与 pilot 强制；local 经环境变量默认 `false`） | N | 入站回调是否强制 HMAC 验签。`PilotReadinessValidator` 在 pilot 下校验为真，为假即拒启 |
+| `collection.webhook.hmac-secret` | 无默认（`CHANNEL_CALLBACK_HMAC_SECRET` 注入） | N | 回调验签密钥。签名 header 与 canonical 构造以 `WebhookController` 为准 |
+| `collection.case-service` | `ai`（pilot 强制） | N | 案件服务实现选择；决定读新库投影还是旧库 |
+| `collection.compliance.counter` | `memory` / `redis`（pilot 为 `redis`） | N | 频控计数后端。内存实现不跨实例，Pilot 必须为 `redis` |
+| `collection.ingestion.redis-dedup-enabled` | `false`（pilot `true`） | N | 接入去重是否走 Redis；为假时重启即失忆，只能用于本地 |
+| `collection.ingestion.reserved-subscriptions` | 含 `intelligent-collection-cases-v1-sub` 等正式订阅 | N | `IngestionIsolationGuard` 的保留清单，命中即拒启，防止联调消费正式订阅 |
+| `collection.ingestion.fault-injection-enabled` | `false` | N | L4b 故障注入开关；Pilot 与生产必须为假 |
+| `collection.repayment-url-template` | 无默认 | Y | 还款链接模板，参与话术渲染 |
+| `collection.scan.interval-ms` | 本地调度扫描间隔 | Y | 仅 local 使用；Pilot 与生产由 Cloud Scheduler 驱动，不用本项 |
+| `spring.redis.host` / `port` / `password` / `ssl` | 环境注入 | N | Redis 连接参数（区别于 `collection.redis.*` 行为参数）；真值不入仓 |
 
 <a id="a3-接入与-pubsub"></a>
 
@@ -652,7 +676,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 参数 Key | 取值 | 热更 | 说明 | 规格 |
 |---|---|---|---|---|
-| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
+| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属。**⚠️ 2026-08-21 核查：尚无实现**——全仓无任何读取点，配置该键不产生行为差异。迁移双写启用前须先补实现，或改由部署侧（旧系统停发）承担切换 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
 
 <a id="a6-定时调度"></a>
 
@@ -699,6 +723,8 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 观测证据 | 旧系统日志/监控入口、PubSub 速率与 lag、Redis 指标、渠道发送日志 | 容量基线、告警阈值与上线验收 | 待研发讨论后回填 |
 
 ### B.2 生产切换门槛
+
+本清单对应**移除白名单、进入稳态运营（T6 准入）**的门槛，不是 T4 / T5 逐级放量的门槛；放量阶段的可后置项与代偿口径见 [T5 手册 §3.1](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#31-运维交付物与验收证据)。
 
 - Consumer Pool 已接入 Redis Stream 消费路径，具备有界队列、背压和 MDC 透传。
 - Redis SETNX + TTL 幂等已覆盖步骤执行；key 前缀与隔离策略已统一。

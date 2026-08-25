@@ -51,7 +51,10 @@ public class CaseProjectionAssembler {
         projection.setCaseId(delta.caseId);
         projection.setUserId(delta.userId);
         projection.setDpd(fields.dpd);
+        // stage 与 dpd 同源同刻：只写 dpd 会让投影出现「stage 来自入案、dpd 来自还款」的矛盾组合。
+        // stagePresent=false（缺字段或取值非法）时保持基线；显式 null 是有效取值，代表不属任何催收阶段。
         projection.setStage(fields.stage == null ? null : fields.stage.name());
+        projection.setStagePresent(fields.stagePresent);
         projection.setOverdueAmount(fields.overdueAmount);
         projection.setTotalOutstanding(fields.overdueAmount);
         projection.setPenaltyAmount(fields.penaltyAmount);

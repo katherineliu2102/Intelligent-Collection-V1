@@ -25,6 +25,7 @@ public class ChannelProperties {
     private Lth lth = new Lth();
     private SendGrid sendgrid = new SendGrid();
     private Notification notification = new Notification();
+    private Facade facade = new Facade();
     private Scripts scripts = new Scripts();
     private Compliance compliance = new Compliance();
     private Map<String, PlanTemplate> planTemplates = new HashMap<>();
@@ -77,6 +78,27 @@ public class ChannelProperties {
     }
 
     /**
+     * Valubo Facade AI 外呼 L1 联调配置。API Key 仅由 Nacos 或部署 Secret 注入，禁止写入仓库。
+     *
+     * <p>{@code insecureTls=true} 仅用于 local/test 下对方的自签名证书；Pilot / production 必须使用受信任证书或专用
+     * TrustStore。
+     */
+    @Data
+    public static class Facade {
+        private String baseUrl = "";
+        private String apiKey = "";
+        private boolean insecureTls = false;
+        private String productType = "Quick Loan";
+        private String currency = "PHP";
+        private String timezone = "Asia/Manila";
+        private String windowStart = "08:00";
+        private String windowEnd = "21:00";
+        private String testCallee = "";
+        private int connectTimeoutSeconds = 5;
+        private int readTimeoutSeconds = 30;
+    }
+
+    /**
      * MOCASA 通知中心（common-notification）对接配置。
      *
      * <p>SMS：{@code POST {baseUrl}/v1/sms/send}；App Push：{@code POST
@@ -93,7 +115,14 @@ public class ChannelProperties {
         private String appKey = "";
         /** SMS 固定内容类型，对应后台路由 contentType。 */
         private String smsContentType = "collection";
-        /** true → SMS 走免签名测试端点 /v1/sms/testSend（联调用，appKey 可空）。 */
+        /**
+         * true → SMS 走免签名测试端点 /v1/sms/testSend（联调用，appKey 可空）。
+         *
+         * <p><b>这不是投递隔离开关。</b>2026-08-24 实测该端点返回的 {@code data.channel} 为 CreativeBlue / QHSms
+         * 等真实运营商通道，通知中心也不存在 Virtual 账号（显式指定即报 {@code no valid account}）。 Adapter 不替换手机号，payload
+         * 里始终是真实号码——开着它，短信照样真实送达。 要做到不触达真人，只能靠上游名单里放测试号（对照 PUSH 的 {@code pushTestToken} 与 AI_CALL 的
+         * {@code testCallee}，那两个才是真的改投目标）。
+         */
         private boolean smsTestMode = false;
         /** 测试端点可选指定的通道账号名（accountName），空=默认测试路由。 */
         private String smsTestAccountName = "";
@@ -200,13 +229,18 @@ public class ChannelProperties {
         private long templateId = 0;
     }
 
-    /** 完整 Voice 回调 URL：baseUrl + /lth/voice */
-    public String voiceCallbackUrl() {
+    /**
+     * 下发给异步渠道供应商的完整回调 URL：{@code baseUrl + /channel-callback}。
+     *
+     * <p>路径必须与应用唯一的入站端点一致。本方法此前拼 {@code /lth/voice}（LTH 供应商时代的遗留），而该路径从未有 Controller，供应商按下发地址回调只会拿到
+     * 404；系统已确定只对接 Facade，故 2026-08-21 统一指向 {@code /channel-callback} 并去掉供应商专有命名。
+     */
+    public String callbackUrl() {
         String base = callback.getBaseUrl();
         if (base == null || base.isEmpty()) {
             return "";
         }
-        return base.endsWith("/") ? base + "lth/voice" : base + "/lth/voice";
+        return base.endsWith("/") ? base + "channel-callback" : base + "/channel-callback";
     }
 
     public boolean isSendGridConfigured() {
@@ -237,5 +271,14 @@ public class ChannelProperties {
                 && !n.getBaseUrl().isEmpty()
                 && n.getAppCode() != null
                 && !n.getAppCode().isEmpty();
+    }
+
+    public boolean isFacadeConfigured() {
+        Facade f = facade;
+        return f != null
+                && f.getBaseUrl() != null
+                && !f.getBaseUrl().trim().isEmpty()
+                && f.getApiKey() != null
+                && !f.getApiKey().trim().isEmpty();
     }
 }

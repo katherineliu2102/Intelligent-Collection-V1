@@ -6,6 +6,7 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
+import com.collection.service.support.ServiceClock;
 import java.time.LocalDateTime;
 import java.util.List;
 import javax.annotation.Resource;
@@ -60,6 +61,9 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
         if (plan.getStatus() == null) {
             plan.setStatus(PlanStatus.PENDING);
         }
+        LocalDateTime now = ServiceClock.now();
+        plan.setCreatedAt(now);
+        plan.setUpdatedAt(now);
         planMapper.insert(plan);
         int order = 1;
         for (ContactPlanStep step : plan.getSteps()) {
@@ -73,6 +77,8 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
             if (step.getIdempotencyKey() == null) {
                 step.setIdempotencyKey(plan.getId() + ":" + step.getStepOrder());
             }
+            step.setCreatedAt(now);
+            step.setUpdatedAt(now);
             stepMapper.insert(step);
             order++;
         }
@@ -80,37 +86,39 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
 
     @Override
     public void updatePlanStatus(Long planId, PlanStatus status, CancelReason reason) {
-        planMapper.updateStatus(planId, status, reason);
+        LocalDateTime now = ServiceClock.now();
+        planMapper.updateStatus(planId, status, reason, now);
         if (status != null && status.isTerminal()) {
-            planMapper.markCompleted(planId);
+            planMapper.markCompleted(planId, now);
         }
     }
 
     @Override
     public void markRenewalPending(Long planId) {
-        if (planMapper.markRenewalPending(planId) != 1) {
+        if (planMapper.markRenewalPending(planId, ServiceClock.now()) != 1) {
             throw new IllegalStateException("unable to reserve plan for rebuild: " + planId);
         }
     }
 
     @Override
     public void markStarted(Long planId) {
-        planMapper.markStarted(planId);
+        planMapper.markStarted(planId, ServiceClock.now());
     }
 
     @Override
     public void markCompleted(Long planId) {
-        planMapper.markCompleted(planId);
+        planMapper.markCompleted(planId, ServiceClock.now());
     }
 
     @Override
     public void updateCurrentStep(Long planId, int currentStep) {
-        planMapper.updateCurrentStep(planId, currentStep);
+        planMapper.updateCurrentStep(planId, currentStep, ServiceClock.now());
     }
 
     @Override
     public boolean updateActivePlanContextSnapshot(Long planId, String contextSnapshot) {
-        return planMapper.updateActiveContextSnapshot(planId, contextSnapshot) > 0;
+        return planMapper.updateActiveContextSnapshot(planId, contextSnapshot, ServiceClock.now())
+                > 0;
     }
 
     @Override
@@ -130,7 +138,7 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
 
     @Override
     public void updateStepStatus(Long stepId, StepStatus status, ContactResult result) {
-        stepMapper.updateStatus(stepId, status, result);
+        stepMapper.updateStatus(stepId, status, result, ServiceClock.now());
     }
 
     @Override
@@ -139,47 +147,51 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
             List<StepStatus> expectedStatuses,
             StepStatus targetStatus,
             ContactResult result) {
-        return stepMapper.transitionStatus(stepId, expectedStatuses, targetStatus, result) == 1;
+        return stepMapper.transitionStatus(
+                        stepId, expectedStatuses, targetStatus, result, ServiceClock.now())
+                == 1;
     }
 
     @Override
-    public void markStepExecuting(Long stepId) {
-        stepMapper.markExecuting(stepId);
+    public boolean markStepExecuting(Long stepId) {
+        return stepMapper.markExecuting(stepId, ServiceClock.now()) == 1;
     }
 
     @Override
     public void updateStepResult(Long stepId, ContactResult result) {
-        stepMapper.updateResult(stepId, result);
+        stepMapper.updateResult(stepId, result, ServiceClock.now());
     }
 
     @Override
     public void markStepDispatched(Long stepId) {
-        stepMapper.markDispatched(stepId);
+        stepMapper.markDispatched(stepId, ServiceClock.now());
     }
 
     @Override
     public void updateStepTriggerTime(Long stepId, LocalDateTime triggerTime, StepStatus status) {
-        stepMapper.updateTriggerTime(stepId, triggerTime, status);
+        stepMapper.updateTriggerTime(stepId, triggerTime, status, ServiceClock.now());
     }
 
     @Override
     public void updateStepTimeoutTime(Long stepId, LocalDateTime timeoutTime) {
-        stepMapper.updateTimeoutTime(stepId, timeoutTime);
+        stepMapper.updateTimeoutTime(stepId, timeoutTime, ServiceClock.now());
     }
 
     @Override
     public void incrementRetryCount(Long stepId) {
-        stepMapper.incrementRetryCount(stepId);
+        stepMapper.incrementRetryCount(stepId, ServiceClock.now());
     }
 
     @Override
-    public List<ContactPlanStep> findDueSteps(LocalDateTime now, int limit) {
-        return stepMapper.selectDueSteps(now, limit);
+    public List<ContactPlanStep> findDueSteps(
+            LocalDateTime now, int limit, List<Long> caseIdFilter) {
+        return stepMapper.selectDueSteps(now, limit, caseIdFilter);
     }
 
     @Override
-    public List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit) {
-        return stepMapper.selectTimeoutSteps(now, limit);
+    public List<ContactPlanStep> findTimeoutSteps(
+            LocalDateTime now, int limit, List<Long> caseIdFilter) {
+        return stepMapper.selectTimeoutSteps(now, limit, caseIdFilter);
     }
 
     @Override

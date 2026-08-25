@@ -13,6 +13,7 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.engine.outbox.OutboxEventSink;
 import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
@@ -48,6 +49,7 @@ public class PlanLifecycleManager {
     @Resource private ExhaustionPolicy exhaustionPolicy;
     @Resource private PredictiveDialerService predictiveDialerService;
     @Resource private SpiInvoker spiInvoker;
+    @Resource private CollectionMetrics metrics;
 
     @Autowired(required = false)
     private OutboxEventSink outboxEventSink;
@@ -251,11 +253,16 @@ public class PlanLifecycleManager {
         if (plan.getStatus() == PlanStatus.PENDING
                 || plan.getStatus() == PlanStatus.STEP_SCHEDULED
                 || plan.getStatus() == PlanStatus.STEP_EXECUTING) {
+            // 先抢步骤再动计划：抢占失败时计划状态必须保持原样，否则会把已被上一次投递
+            // 推进到下一步（或已终结）的计划按回 STEP_EXECUTING，造成计划侧停摆。
+            // 清空 trigger_time 防止扫描器在处理窗口内重复投递（幂等锁亦兜底）。
+            if (!planRepository.markStepExecuting(stepId)) {
+                log.info("[stepDue] step {} 已终结或被并发抢占，跳过本次投递", stepId);
+                return StepDuePreparation.noop();
+            }
             // 状态前置（PENDING/SCHEDULED 首次执行；EXECUTING 为退避重试再触发）
             planRepository.updatePlanStatus(planId, PlanStatus.STEP_EXECUTING, null);
             planRepository.markStarted(planId);
-            // 清空 trigger_time 防止扫描器在处理窗口内重复投递（幂等锁亦兜底）
-            planRepository.markStepExecuting(stepId);
             plan.setStatus(PlanStatus.STEP_EXECUTING);
             return StepDuePreparation.toExecute(plan, step);
         }
@@ -503,6 +510,7 @@ public class PlanLifecycleManager {
             Long excludedActivePlanId) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
+            metrics.planCreation(null, "NO_STAGE");
             return false;
         }
         ContactPlan activePlan = planRepository.findActivePlanByCaseAndStage(caseId, stage);
@@ -511,6 +519,7 @@ public class PlanLifecycleManager {
                     "[create] caseId={} stage={} already has active plan, idempotent skip",
                     caseId,
                     stage);
+            metrics.planCreation(stage.name(), "IDEMPOTENT_SKIP");
             return false; // 单活跃计划约束 / 幂等
         }
         // 决策 B：优先用传入的 caseInfo / snapshot（事件 payload / carry-forward）；
@@ -519,6 +528,7 @@ public class PlanLifecycleManager {
                 providedCaseInfo != null ? providedCaseInfo : caseService.getCaseInfo(caseId);
         if (caseInfo != null && isCeased(caseInfo)) {
             log.info("[create] caseId={} is CEASED, skip PlanFactory.create", caseId);
+            metrics.planCreation(stage.name(), "CEASED");
             return false;
         }
         ContextSnapshot snapshot =
@@ -529,6 +539,7 @@ public class PlanLifecycleManager {
                 && snapshot.getCaseContext() != null
                 && "CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
             log.info("[create] caseId={} snapshot collectionStatus=CEASED, skip", caseId);
+            metrics.planCreation(stage.name(), "CEASED");
             return false;
         }
 
@@ -541,6 +552,7 @@ public class PlanLifecycleManager {
                     "[create] PlanFactory returned null for case {} stage {}, no plan",
                     caseId,
                     stage);
+            metrics.planCreation(stage.name(), "FACTORY_RETURNED_NULL");
             return false;
         }
         plan.setCaseId(caseId);
@@ -572,6 +584,7 @@ public class PlanLifecycleManager {
                 caseId,
                 stage,
                 plan.getTotalSteps());
+        metrics.planCreation(stage.name(), "CREATED");
         return true;
     }
 
@@ -624,12 +637,14 @@ public class PlanLifecycleManager {
 
     private ContactResult mapCallbackToResult(String raw) {
         if (raw == null) {
-            return ContactResult.ANSWERED;
+            return ContactResult.FAILED;
         }
         try {
             return ContactResult.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {
-            return ContactResult.ANSWERED;
+            // Unknown provider outcomes must fail closed. Treating a vendor-specific
+            // value (for example VOICEMAIL) as ANSWERED would falsely record contact.
+            return ContactResult.FAILED;
         }
     }
 

@@ -2,6 +2,7 @@ package com.collection.admin.web;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** 开发自测辅助接口：写入最小测试数据。 */
 @RestController
 @RequestMapping("/mock/admin")
+@Profile({"local", "test"})
 public class AdminMockDataController {
 
     private final JdbcTemplate jdbcTemplate;

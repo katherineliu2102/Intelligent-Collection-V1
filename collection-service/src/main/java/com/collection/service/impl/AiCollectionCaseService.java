@@ -26,7 +26,8 @@ public class AiCollectionCaseService implements CaseService {
 
     @Resource private AiCollectionCaseMapper mapper;
 
-    @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
+    // 默认值不能落在 .test 域：pilot/生产漏配时它会被渲染进真实短信正文。
+    @Value("${collection.repayment-url-template:https://app.mocasa.com/repay/{caseId}}")
     private String repaymentUrlTemplate;
 
     @Override
@@ -122,8 +123,32 @@ public class AiCollectionCaseService implements CaseService {
         return row;
     }
 
+    /**
+     * 投影 stage 列为准；仅在该列为空且案件确已进入催收窗口时，才按 dpd 推导兜底。
+     *
+     * <p>不能无条件退回 {@link Stage#fromDpd(int)}：数仓口径下 stage 为 null 有两种成因，而 {@code fromDpd} 会把两者都兜成
+     * {@code S0}，等于把数仓明确表达的「不属任何催收阶段」静默还原成催收目标：
+     *
+     * <ol>
+     *   <li><b>无尾款</b>（2026-08-24 数仓口径）：{@code dpd=0} 且 stage 为 null。此时 dpd 落在 S0 的 [-3,0] 区间内， 靠
+     *       dpd 无从与「今日到期」区分，只能凭 {@code isFullCleared} 派生的 {@code SETTLED} 判定——故结清判断必须排在最前。
+     *   <li><b>有尾款但下一个未还 dueDate 超过 3 天</b>：dpd 为负且 &lt; -3，由下界判断拦下。
+     * </ol>
+     *
+     * <p>dpd &gt; 0 仍走 {@code fromDpd} 兜底：此时确有到期未还，stage 缺失属数据质量问题，漏催的代价高于错档。
+     */
     private Stage stage(AiCollectionCaseRow row) {
-        return row.getStage() == null ? Stage.fromDpd(row.getDpd()) : Stage.valueOf(row.getStage());
+        if (isSettled(row)) {
+            return null;
+        }
+        if (row.getStage() != null) {
+            return Stage.valueOf(row.getStage());
+        }
+        Integer dpd = row.getDpd();
+        if (dpd != null && dpd < Stage.S0.getMinDpd()) {
+            return null;
+        }
+        return dpd == null ? null : Stage.fromDpd(dpd);
     }
 
     private boolean isSettled(AiCollectionCaseRow row) {

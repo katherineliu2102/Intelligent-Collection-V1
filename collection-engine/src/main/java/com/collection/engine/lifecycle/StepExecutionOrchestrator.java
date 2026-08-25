@@ -17,6 +17,7 @@ import com.collection.common.model.DecisionLog;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
+import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
@@ -64,6 +65,10 @@ public class StepExecutionOrchestrator {
     @Autowired(required = false)
     private OutboxEventSink outboxEventSink;
 
+    /** 可选：Guard 未预占配额（自定义实现或未配日限）时全程用不到，纯逻辑单测也不必注入。 */
+    @Autowired(required = false)
+    private ComplianceCounterService complianceCounterService;
+
     /** 字段默认值保证手工构造（纯逻辑单测）时不为 null；Spring 环境由容器覆盖为共享注册表。 */
     @Resource
     private com.collection.engine.metrics.CollectionMetrics metrics =
@@ -109,7 +114,12 @@ public class StepExecutionOrchestrator {
             return;
         }
 
-        planRepository.markStepExecuting(step.getId());
+        // 调用渠道前的最后一道闸：prepareStepDue 提交后到此处之间，回调或超时路径可能已把
+        // 步骤收敛为终态，此时继续执行就是一次重复触达。
+        if (!planRepository.markStepExecuting(step.getId())) {
+            log.info("[execStep] step {} 已终结，放弃执行（避免重复触达）", step.getId());
+            return;
+        }
         ExecutionContext context = contextAssembler.assemble(plan, step);
         refreshVolatileFields(context, preFlight.getCaseInfo());
 
@@ -152,6 +162,9 @@ public class StepExecutionOrchestrator {
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, verdict.getBlockedRuleType());
             return;
         }
+        // Guard 已预占日频配额；下面每条「确认未发出」的出口都要归还，否则这次没送达的尝试
+        // 会白扣客户当天该渠道的额度（生产日限为 1 时即当天零触达）。
+        GuardVerdict.QuotaReservation reservation = verdict.getQuotaReservation();
 
         // ── ④ 步骤解析（零 DB I/O，硬超时 50ms） ──
         StepCommand command;
@@ -161,6 +174,7 @@ public class StepExecutionOrchestrator {
         } catch (Exception e) {
             // 异常 / 超时 → FAILED → 推进（核心引擎规格 §4.1）
             log.warn("[execStep] StepResolver failed → FAILED: {}", e.getMessage());
+            releaseQuota(reservation, "RESOLVER_ERROR");
             markFailed(plan, step, "RESOLVER_ERROR");
             return;
         }
@@ -170,6 +184,7 @@ public class StepExecutionOrchestrator {
             log.info(
                     "[execStep] StepResolver returned null → SKIPPED (no-op) step {}",
                     step.getId());
+            releaseQuota(reservation, "RESOLVER_NO_OP");
             markStrategySkipped(plan, step);
             return;
         }
@@ -228,6 +243,13 @@ public class StepExecutionOrchestrator {
                         delaySec,
                         newCount);
                 return; // plan 保持 STEP_EXECUTING
+            }
+            // retryable=true 是渠道对「请求未写给供应商」的证明（熔断未调用、凭证缺失、连接被拒、
+            // 供应商显式拒绝受理），此时这次触达确定没出网，预占的配额必须还回去。
+            // retryable=false 属结果未知（读超时、写后中断、5xx），宁可少发一次也不归还——
+            // 重复骚扰是合规事故，漏一次只是少一次触达。
+            if (result.isRetryable()) {
+                releaseQuota(reservation, result.getErrorCode());
             }
             markFailed(plan, step, result.getErrorCode());
             return;
@@ -292,6 +314,30 @@ public class StepExecutionOrchestrator {
                     "[execStep] async step {} → STEP_EXECUTING, callback timeout {}min",
                     step.getId(),
                     timeout);
+        }
+    }
+
+    /** 归还 Guard 的配额预占。失败只告警：少还一次配额偏保守，不值得让已收敛的步骤重新抛错。 */
+    private void releaseQuota(GuardVerdict.QuotaReservation reservation, String reason) {
+        if (reservation == null || complianceCounterService == null) {
+            return;
+        }
+        try {
+            complianceCounterService.release(
+                    reservation.getUserId(), reservation.getChannel(), reservation.getDate());
+            log.info(
+                    "[execStep] released daily quota user={} channel={} date={} ({}, not dispatched)",
+                    reservation.getUserId(),
+                    reservation.getChannel(),
+                    reservation.getDate(),
+                    reason);
+        } catch (RuntimeException e) {
+            log.error(
+                    "[execStep] failed to release daily quota user={} channel={} date={}",
+                    reservation.getUserId(),
+                    reservation.getChannel(),
+                    reservation.getDate(),
+                    e);
         }
     }
 

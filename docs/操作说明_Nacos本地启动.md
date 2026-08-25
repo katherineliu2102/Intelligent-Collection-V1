@@ -33,7 +33,7 @@ NACOS_PASSWORD=<测试环境公共密码>
 | `intelligent-collection-local.yml`  | `local` profile 下的测试环境覆盖              |
 
 
-渠道开发时 Nacos 中典型配置项：`channel.notification.*`（SMS/Push）、`channel.sendgrid.*`、`channel.lth.voice.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。详见 [collection-channel 开发执行指南 §6](docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单渠道模块使用)。
+渠道开发时 Nacos 中典型配置项：`channel.notification.*`（SMS/Push）、`channel.sendgrid.*`、`channel.lth.voice.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。模板与配置映射见 [渠道模板清单](channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)。
 
 注意：不要将真实账号、密码提交到 Git 仓库。
 
@@ -70,7 +70,7 @@ APP_PORT=8080
 
 ## 4. 环境确认（开发前必跑）
 
-> 全部通过后再开始渠道开发。详细 TC 见 [功能测试指南 §4 TC-REG-01](docs/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md#4-回归基线)。
+> 全部通过后再开始渠道开发。详细 TC 见 [功能测试指南 §4 TC-REG-01](channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md#4-回归基线)。
 
 ### 4.1 前置检查
 
@@ -259,8 +259,7 @@ logs/
 
 | 文档                                                                                                           | 用途              |
 | ------------------------------------------------------------------------------------------------------------ | --------------- |
-| [docs/README_渠道文档索引.md](docs/README_渠道文档索引.md)                                                               | 渠道规格导航          |
-| [docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md](docs/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | 分阶段写代码、替换 Mock  |
-| [docs/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md](docs/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | 功能测试 TC、curl 命令 |
+| [channel/README_渠道文档索引.md](channel/README_渠道文档索引.md)                                                               | 渠道规格导航          |
+| [channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md](channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | 功能测试 TC、curl 命令 |
 
 

@@ -13,6 +13,7 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
 import com.collection.common.service.ComplianceCounterService;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -39,13 +40,54 @@ class ConfigurableExecutionGuardTest {
         ReflectionTestUtils.setField(
                 guard,
                 "complianceCounterService",
-                (ComplianceCounterService)
-                        (userId, channel, date, channelLimit, totalLimit) -> {
-                            throw new IllegalStateException("redis down");
-                        });
+                new ComplianceCounterService() {
+                    @Override
+                    public Counts tryConsume(
+                            Long userId,
+                            String channel,
+                            LocalDate date,
+                            int channelLimit,
+                            int totalLimit) {
+                        throw new IllegalStateException("redis down");
+                    }
+
+                    @Override
+                    public void release(Long userId, String channel, LocalDate date) {
+                        throw new UnsupportedOperationException();
+                    }
+                });
 
         assertThatThrownBy(() -> guard.evaluate(context(ChannelType.SMS)))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void firstAttemptReportsQuotaReservationForEngineToReleaseOnFailure() {
+        GuardVerdict verdict = guard.evaluate(context(ChannelType.SMS));
+
+        assertThat(verdict.isAllowed()).isTrue();
+        assertThat(verdict.getQuotaReservation()).isNotNull();
+        assertThat(verdict.getQuotaReservation().getUserId()).isEqualTo(1001L);
+        assertThat(verdict.getQuotaReservation().getChannel()).isEqualTo("SMS");
+    }
+
+    /** F2：日限为 1 时，若重试再占一次配额，退避后的重试必被自己的首次尝试挡掉，且终态被记成合规拦截。 */
+    @Test
+    void retryReusesFirstAttemptQuotaInsteadOfConsumingAnother() {
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
+
+        GuardVerdict retry = guard.evaluate(retryContext(ChannelType.SMS, 1));
+
+        assertThat(retry.isAllowed()).isTrue();
+        assertThat(retry.getQuotaReservation()).isNull();
+    }
+
+    @Test
+    void retryDoesNotBurnQuotaForOtherTouchesOfTheSameDay() {
+        assertThat(guard.evaluate(retryContext(ChannelType.SMS, 2)).isAllowed()).isTrue();
+
+        // 重试未计数，当天首次真实触达仍应放行。
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
     }
 
     @Test
@@ -71,11 +113,16 @@ class ConfigurableExecutionGuardTest {
     }
 
     private static ExecutionContext context(ChannelType channel) {
+        return retryContext(channel, 0);
+    }
+
+    private static ExecutionContext retryContext(ChannelType channel, int retryCount) {
         ContactPlan plan = new ContactPlan();
         plan.setUserId(1001L);
 
         ContactPlanStep step = new ContactPlanStep();
         step.setChannelType(channel);
+        step.setRetryCount(retryCount);
 
         UserProfile.BasicInfo basic = new UserProfile.BasicInfo();
         basic.setPrimaryPhone("+639171234567");

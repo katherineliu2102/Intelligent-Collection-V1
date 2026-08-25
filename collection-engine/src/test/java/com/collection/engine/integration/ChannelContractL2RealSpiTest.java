@@ -193,6 +193,7 @@ class ChannelContractL2RealSpiTest {
                 "predictiveDialerService",
                 (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
+        inject(manager, "metrics", com.collection.engine.metrics.CollectionMetrics.local());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
@@ -393,7 +394,8 @@ class ChannelContractL2RealSpiTest {
         bus.drainAll();
         for (int round = 0; round < 10; round++) {
             List<ContactPlanStep> due =
-                    planRepo.findDueSteps(LocalDateTime.now().plusMinutes(lookaheadMinutes), 100);
+                    planRepo.findDueSteps(
+                            LocalDateTime.now().plusMinutes(lookaheadMinutes), 100, null);
             if (due.isEmpty()) {
                 return;
             }
@@ -445,6 +447,10 @@ class ChannelContractL2RealSpiTest {
                 .put(
                         "S1_SMS_STANDARD",
                         "MOCASA: {name}, PHP {amount} is {dpd} days overdue. Pay: {repaymentUrl}");
+        ChannelProperties.PushScript pushScript = new ChannelProperties.PushScript();
+        pushScript.setTitle("MOCASA Payment Reminder");
+        pushScript.setBody("{name}, PHP {amount} is {dpd} days overdue.");
+        props.getScripts().getPush().put("S1_PUSH_STANDARD", pushScript);
 
         props.getSendgrid().setApiKey("test-sendgrid-key");
         props.getSendgrid().setFromEmail("collections@example.test");

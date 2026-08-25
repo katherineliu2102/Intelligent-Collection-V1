@@ -1,0 +1,31 @@
+# =====================================================================
+# L4a 合成源联调：深合并进 Nacos Data ID `intelligent-collection-local.yml`
+#   python3 scripts/dev/merge-nacos-config.py deploy/nacos/l4a-collection.publish.yml --apply
+#
+# 与 l4b-collection.publish.yml 的差别只有两个键，但都会让对方阶段直接跑不通：
+#   1) case-service：L4a 的入口是 POST /mock/ingest，且 /mock/reset-l4a 断言
+#      `caseService instanceof MockCaseService`；配 ai/real 会让 MockCaseService 被 @Primary 顶掉。
+#   2) ingestion.enabled：L4a 不需要 PubSub 消费；开着会同时把测试订阅里的案件也建计划，污染断言。
+#
+# 零真实触达：这里把三个供应商密钥置空（这三个键 jar 内不存在，Nacos 能覆盖）。
+# ⚠ 配置优先级（2026-08-21 实测纠正）：Nacos 的 intelligent-collection-local.yml 由 application.yml 经
+#   spring.config.import 引入，属**被导入文档**，优先级低于 profile 专属的 application-local.yml，
+#   也低于系统环境变量。因此：
+#     · jar 内已写死的键（如 channel.fallback-to-mock）**无法**从这里覆盖 → 改用环境变量
+#       CHANNEL_FALLBACK_TO_MOCK=true（restart-and-l4a.sh 已默认导出）。
+#     · 环境变量能压住本文件，restart-and-l4a.sh 的 COLLECTION_CASE_SERVICE=mock 会生效；
+#       这里仍显式写 mock，避免忘记导出环境变量时静默跑成 real。
+# ⚠ 该 Data ID 与编排同事共用，且 ChannelProperties 带 @RefreshScope（渠道相关键会热生效）。
+#   发布前须同步；验真实送达时用 deploy/nacos/backup-*.yml 整份恢复。
+# =====================================================================
+collection:
+  case-service: mock
+  ingestion:
+    enabled: false
+channel:
+  sendgrid:
+    api-key: ""
+  notification:
+    app-key: ""
+  facade:
+    api-key: ""

@@ -4,7 +4,7 @@
 > **日期**: 2026-06-05  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[email-templates/](./email-templates/README.md)
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[email-templates/](../email-templates/README.md)
 
 ---
 
@@ -145,7 +145,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 - [ ] 无邮箱：Guard `NO_EMAIL`→引擎 `COMPLIANCE_BLOCKED`，无 SendGrid 调用
 - [ ] custom_args 含 case_id，Webhook 可回写 timeline
 - [ ] hard bounce 后同案后续 Email 步骤 SKIPPED
-- [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) 中 S0 模板 ID 已填；Test Data 见 [`email-templates-test/`](./email-templates/email-templates-test/README.md)
+- [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) 中 S0 模板 ID 已填
 
 ---
 

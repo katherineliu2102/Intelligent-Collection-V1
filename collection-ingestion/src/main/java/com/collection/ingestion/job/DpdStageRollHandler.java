@@ -117,7 +117,7 @@ public class DpdStageRollHandler {
             return; // 无案 / 已结清：不在催，跳过（结清由还款事件取消计划）
         }
         int dpd = info.getDpd();
-        Stage newStage = info.getStage(); // = Stage.fromDpd(dpd)
+        Stage newStage = info.getStage(); // 投影 stage 列（数仓口径），仅在该列为空时才退回 Stage.fromDpd
         List<ContactPlan> active = planRepository.findActivePlansByCase(loanId);
 
         if (dpd >= 91) {
@@ -131,6 +131,12 @@ public class DpdStageRollHandler {
 
         Stage current = active.isEmpty() ? null : active.get(0).getStage();
         if (current == null || current == newStage) {
+            return;
+        }
+        if (newStage == null) {
+            // 数仓口径下 stage 为 null = 下一个未还 dueDate 超过 3 天，不属任何催收阶段。
+            // 既没有可升到的目标档，也不该按「回退」处理，直接跳过等还款事件取消计划。
+            log.info("[DpdStageRollHandler] loanId={} dpd={} 投影无 stage（未进入催收窗口），跳过升档", loanId, dpd);
             return;
         }
         // 阶段单调前进：引擎 ESCALATE 会把计划 stage 抬到高于 DPD 推导值，且引擎从不回写投影，

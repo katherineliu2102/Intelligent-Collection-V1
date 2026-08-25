@@ -8,8 +8,9 @@
 
 | 维度 | L4b 隔离联调 | Pilot / 生产（非本 Runbook） |
 |---|---|---|
-| Topic | `intelligent-collection-cases-test1` | `intelligent-collection-cases-v1` |
-| 新系统订阅 | `intelligent-collection-cases-test1-sub` | `intelligent-collection-cases-v1-sub` |
+| Topic | 合成源 `intelligent-collection-cases-test1`；真实源沿用 `intelligent-collection-cases-v1` | `intelligent-collection-cases-v1` |
+| 新系统订阅 | 合成源 `intelligent-collection-cases-test1-sub`；真实源 `intelligent-collection-cases-v1-l4b-sub` | `intelligent-collection-cases-v1-sub` |
+| 死信 | `intelligent-collection-cases-dlq(+sub)`，最大投递 5 次 | 待运维为正式订阅配置 |
 | 旧 L4b（已废弃） | `collection-cases-test1` | `collection-cases` / `collection-cases-ai-v1-sub` |
 | 测试数据 | `99000000`–`99000005`、`IC_TEST_*` | 批准后的灰度切片 |
 | SMS / Push | `sms-test-mode=true`、test token | 按批准配置 |
@@ -18,19 +19,20 @@
 
 **红线**
 
-- 禁止向生产 topic `intelligent-collection-cases-v1`（及旧 `collection-cases`）发测试消息。
-- L4b 必须使用独立测试订阅；测试前确认没有其他活跃消费者争抢 `intelligent-collection-cases-test1-sub`。
+- 禁止向生产 topic `intelligent-collection-cases-v1`（及旧 `collection-cases`）发测试消息。**只读取、不发布**：
+  真实源验证靠挂在该 topic 上的独立订阅拿消息副本，正式订阅 `-v1-sub` 的投递不受影响。
+- L4b 必须使用独立测试订阅；测试前确认没有其他活跃消费者争抢本轮订阅。
 - 只允许白名单测试 loan_id、测试手机/邮箱与渠道沙箱；凭证、数据库连接、白名单明细不得入仓。
 
 ## 2. 环境资源与责任人
 
 | 资源/配置 | 联调取值或动作 | 责任人 |
 |---|---|---|
-| PubSub topic / subscription / IAM | 建 `intelligent-collection-cases-test1` / `intelligent-collection-cases-test1-sub`；Outbox 发布 SA + 联调 Consumer SA | 运维 |
+| PubSub topic / subscription / IAM | ✅ 2026-08-20 由主架构自助开通，脚本 `scripts/test/provision-l4-pubsub.py`（幂等，`--delete` 可回收）；参数 ack 60s / 保留 1 天 / 闲置 7 天过期 / 死信 5 次 | 主架构 |
 | GCP 凭证 | `authorized_user` ADC 或经批准的服务账号；配置应用和发布脚本 | 运维 + 主架构 |
-| Nacos | 发布 L4b delta，订阅指向 `intelligent-collection-cases-test1-sub` | 主架构 |
+| Nacos | 发布 L4b delta（`deploy/nacos/l4b-collection.publish.yml`）；同名顶层键已存在，须用 `scripts/dev/merge-nacos-config.py` 深合并而非追加 | 主架构 |
 | 旧库 seed | `db/seed-test-cases.sql`、`seed-device-token.sql` | 主架构 + 服务同事 |
-| 新库 | contact plan/step/timeline 等表可用 | 服务同事 + 运维 |
+| 新库 | ✅ 2026-08-20 已在 `ai_collection_db` 执行 `db/schema.sql`（幂等），补齐 `t_ai_collection`、`t_ai_collection_inbox`、`t_event_outbox` 与 `t_contact_plan_step.original_trigger_time` / `dispatched_at` | 主架构 |
 | 渠道沙箱 | SMS testSend、Push test token、测试收件人 | 编排同事 + 主架构 |
 
 ## 3. Nacos 与本地环境配置
@@ -63,8 +65,8 @@ channel:
 发布前先检查 `deploy/nacos/l4b-collection.publish.yml` 的订阅仍为测试订阅：
 
 ```bash
-./scripts/dev/publish-l4b-config-to-nacos.sh
-./scripts/dev/publish-l4b-config-to-nacos.sh --apply
+python3 scripts/dev/merge-nacos-config.py deploy/nacos/l4b-collection.publish.yml
+python3 scripts/dev/merge-nacos-config.py deploy/nacos/l4b-collection.publish.yml --apply
 ```
 
 本地环境变量：

@@ -779,7 +779,7 @@ loan_id（上游）
 > **落库**：内嵌 `ContextSnapshot.userProfile`（§4.4）；扩展维度 Phase 2 见 [附录 A A.2.2](#a22-t_user_profile_ext--用户画像扩展表phase-1-不建表押后-phase-2)  
 > **用途**：用户画像快照；SPI 取号、语言等决策输入。
 
-> **Phase 1 范围**：渠道实际消费 `basic.{name,primaryPhone,email,language}` + `device.jpushToken`；其余维度 🅿️2 不填充。`repayment`/`risk` 已移除（[contracts 变更记录](./contracts/README_ContextSnapshot契约对齐.md#变更记录)）。
+> **Phase 1 范围**：渠道实际消费 `basic.{name,primaryPhone,email,language}` + `device.jpushToken`；其余维度 🅿️2 不填充。`repayment`/`risk` 已移除（[ContextSnapshot 契约](./contracts/README_ContextSnapshot契约对齐.md)）。
 
 #### 顶层字段
 
@@ -1065,7 +1065,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | fallback_sms        | META_FALLBACK_SMS          | String/Boolean | PUSH 同槽 fallback SMS 标记/开关                   |
 
 
-> **Phase 1 执行语义**：`StepResolver=null` 仅表示策略性跳过，结果为 `SKIPPED` 且不写 timeline；空地址必须在 Guard 截断，不能以 null 表达。SMS/PUSH/EMAIL 成功 dispatch 即同步完成，`observationMinutes=0`，不进 `STEP_WAITING`；AI_CALL 等待回调。详细交互用法见 [contracts 引擎渠道执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md)。
+> **Phase 1 执行语义**：`StepResolver=null` 仅表示策略性跳过，结果为 `SKIPPED` 且不写 timeline；空地址必须在 Guard 截断，不能以 null 表达。SMS/PUSH/EMAIL 成功 dispatch 即同步完成，`observationMinutes=0`，不进 `STEP_WAITING`；AI_CALL 等待回调。详细交互用法见 [contracts 引擎渠道执行契约对齐](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)。
 
 ### 5.5 StepResult（步骤结果）
 
@@ -1297,7 +1297,7 @@ CREATE TABLE IF NOT EXISTS t_contact_timeline (
 
 > **决定（2026-06-18）**：Phase 1 **不建** `t_user_profile_ext`。其承载字段（bestContactHour / preferredChannel / phoneValidity / viber·whatsapp 注册态 / sensitivityTag / ptpFulfillRate）Phase 1 无代码消费、无 mapper 接线（`MockProfileService` 仅填 `BasicInfo` + `DeviceInfo.jpushToken`）。
 > 待 Phase 2 数仓/号码检测供应商就绪、或坐席标记功能上线时再建表，DDL 一并同步 `[../db/schema.sql](../db/schema.sql)`。
-> `UserProfile` 内存模型对应字段（§4.2）**结构保留**（快照契约冻结，见 [contracts 开放问题 #4](./contracts/README_ContextSnapshot契约对齐.md)），Phase 1 返回 null。
+> `UserProfile` 内存模型对应字段（§4.2）**结构保留**（快照契约冻结，见 [ContextSnapshot 契约](./contracts/README_ContextSnapshot契约对齐.md)），Phase 1 返回 null。
 
 #### A.2.3 t_user_device_token — Push Token 镜像（Phase 1）
 

@@ -27,17 +27,12 @@
 email-templates/
 ├── README.md                    # 本文件
 ├── subjects.md                  # Subject / Preheader SSOT
-├── _layouts/                    # friendly / standard / formal / legal-letter / conditional
-├── conditionals/                # 4 个条件 Email HTML ✅（Phase 2）
-└── email-templates-test/        # SendGrid Test Data JSON
-    ├── README.md
-    ├── test-data-index.json
-    └── test-data*.json
+└── email-e2e-test-cases.md      # 5 封里程碑联调案例
 ```
 
-> **HTML 源码 SSOT**：13 个里程碑模板已统一移至 `collection-admin/src/main/resources/catalog/email-templates/`（代码仓 SSOT）。本目录不再保留 `milestones/` 副本，避免漂移。
+> **HTML 源码 SSOT**：里程碑模板在 `collection-admin/src/main/resources/catalog/email-templates/`。Phase 2 条件邮件尚未入库。
 
-**关联文档**：[渠道模板清单与配置](../MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) · [E2E 联调案例](./email-e2e-test-cases.md) · [策略迭代手册 §5.2](../MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
+**关联文档**：[渠道模板清单与配置](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md) · [E2E 联调案例](./email-e2e-test-cases.md) · [策略迭代手册 §5.2](../channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
 
 ---
 
@@ -138,10 +133,9 @@ email-templates/
 ## 6. SendGrid 建站 SOP
 
 1. Template Name = `scriptSlot`
-2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/`（里程碑）或本目录 `conditionals/`（Phase 2）HTML
+2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/` 对应 HTML
 3. **Settings** 填 Subject / Preheader（`subjects.md`）
-4. **Test Data** 粘贴 [`email-templates-test/`](./email-templates-test/README.md) 对应 JSON
-5. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
+4. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
 
 | 场景 | 要求 |
 |------|------|
@@ -156,7 +150,7 @@ email-templates/
 |------|------|---------------|
 | S0 | ✅ | ✅ 已联调 |
 | S1–S4 里程碑 | ✅ | 待运营 |
-| 条件 Email ×4 | ✅ | Phase 2 |
+| 条件 Email ×4 | 未入库 | Phase 2 |
 | S4_PRE_CLOSE | ✅ · 法务审 | 待运营 |
 
 ---
@@ -166,7 +160,6 @@ email-templates/
 | 层 | 位置 |
 |----|------|
 | HTML 源码（里程碑） | `collection-admin/src/main/resources/catalog/email-templates/`（SSOT） |
-| HTML 源码（布局/条件） | `docs/email-templates/_layouts/` · `docs/email-templates/conditionals/` |
 | 线上模板 | SendGrid `d-xxx` |
 | 映射 | Nacos `channel.sendgrid.templates` |
 

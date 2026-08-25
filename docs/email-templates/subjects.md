@@ -18,13 +18,13 @@
 
 | scriptSlot | 原 DPD | 说明 |
 |------------|--------|------|
-| `S1_EMAIL_STAGE_WARNING` | D+3 | 素材在 `milestones/` |
+| `S1_EMAIL_STAGE_WARNING` | D+3 | 素材在 `collection-admin/src/main/resources/catalog/email-templates/` |
 | `S2_EMAIL_MID` | D+7 | 同上 |
 | `S2_EMAIL_PRE_S3` | D+12 | 同上 |
 | `S3_EMAIL_*` ×3 | D+16/23/30 | 同上 |
 | `S4_EMAIL_FINAL_REMINDER` | D+45 | 同上 |
 | `S4_EMAIL_MID` | D+60 | 同上 |
-| `S*_EMAIL_CONDITIONAL` ×4 | Phase 2 | `conditionals/` |
+| `S*_EMAIL_CONDITIONAL` ×4 | Phase 2 | 无仓库草稿 |
 
 ## Nacos / 本地配置
 
@@ -46,4 +46,4 @@ channel:
 
 | Stage | scriptSlot | Subject |
 |-------|------------|---------|
-| S1–S4 | `S*_EMAIL_CONDITIONAL` | 见 `conditionals/` · Phase 2 Plan 启用后再评估 |
+| S1–S4 | `S*_EMAIL_CONDITIONAL` | Phase 2 Plan 启用后再起草 |

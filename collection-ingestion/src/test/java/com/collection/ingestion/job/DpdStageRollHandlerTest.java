@@ -2,10 +2,12 @@ package com.collection.ingestion.job;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
+import java.util.Arrays;
 import java.util.Collections;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -177,5 +180,109 @@ class DpdStageRollHandlerTest {
 
         assertThat(processed).isZero();
         verify(caseService, never()).getCaseInfo(anyLong());
+    }
+
+    // ─────────── 同日重跑去重（去重器接入后才成立，L4b-8 的单测对位） ───────────
+
+    /** 注入去重器，并按调用序返回 acquire 结果。 */
+    private RedisDailyRollDeduplicator givenDeduplicator(Boolean first, Boolean... rest) {
+        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
+        when(dedup.acquire(any(), anyLong(), anyInt())).thenReturn(first, rest);
+        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
+        return dedup;
+    }
+
+    @Test
+    @DisplayName("同日重复日切 → 升档事件只发一次，去重键带 dpd")
+    void sameDayRerunPublishesStageChangedOnce() {
+        givenProjection(20); // S3
+        givenActivePlanAtStage(Stage.S1);
+        RedisDailyRollDeduplicator dedup = givenDeduplicator(true, false);
+
+        handler.dailyRoll();
+        handler.dailyRoll();
+
+        verify(dedup, times(2)).acquire("stage", LOAN_ID, 20);
+        verify(ingestionService, times(1))
+                .changeStage(eq(LOAN_ID), eq(USER_ID), eq(Stage.S3), any());
+    }
+
+    @Test
+    @DisplayName("同日重复日切 → 停催事件只发一次")
+    void sameDayRerunPublishesCaseCeasedOnce() {
+        givenProjection(95);
+        givenActivePlanAtStage(Stage.S4);
+        RedisDailyRollDeduplicator dedup = givenDeduplicator(true, false);
+
+        handler.dailyRoll();
+        handler.dailyRoll();
+
+        verify(dedup, times(2)).acquire("ceased", LOAN_ID, 95);
+        verify(ingestionService, times(1)).caseCeased(LOAN_ID, 95);
+    }
+
+    @Test
+    @DisplayName("去重未放行 → 不读快照也不发事件")
+    void deniedByDeduplicatorSkipsSnapshotRead() {
+        givenProjection(20);
+        givenActivePlanAtStage(Stage.S1);
+        givenDeduplicator(false);
+
+        handler.dailyRoll();
+
+        verify(caseService, never()).getContextSnapshot(anyLong());
+        verify(ingestionService, never())
+                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
+    }
+
+    /** 阶段回退与阶段一致都在取键之前返回，不消耗去重配额。 */
+    @Test
+    @DisplayName("阶段回退跳过 → 不申请去重键")
+    void stageRollbackDoesNotConsumeDedupKey() {
+        givenProjection(2); // S1
+        givenActivePlanAtStage(Stage.S3);
+        RedisDailyRollDeduplicator dedup = givenDeduplicator(true);
+
+        handler.dailyRoll();
+
+        verify(dedup, never()).acquire(any(), anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("当日全量扫描已完成 → 不再扫描")
+    void fullScanSkippedAfterCompletedToday() {
+        IngestionProperties props = new IngestionProperties();
+        props.setLoanIdWhitelist(Collections.emptyList());
+        props.setDailyRollFullScanEnabled(true);
+        ReflectionTestUtils.setField(handler, "props", props);
+        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
+        when(dedup.completedToday()).thenReturn(true);
+        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
+
+        int processed = handler.dailyRoll();
+
+        assertThat(processed).isZero();
+        verify(caseService, never()).findActiveCaseIdsAfter(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("全量扫描末页 → 推进游标并标记当日完成")
+    void fullScanMarksCompletedOnLastPage() {
+        IngestionProperties props = new IngestionProperties();
+        props.setLoanIdWhitelist(Collections.emptyList());
+        props.setDailyRollFullScanEnabled(true);
+        props.setDailyRollBatchSize(10);
+        ReflectionTestUtils.setField(handler, "props", props);
+        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
+        when(dedup.completedToday()).thenReturn(false);
+        when(dedup.currentCursor()).thenReturn(null);
+        when(caseService.findActiveCaseIdsAfter(null, 10)).thenReturn(Arrays.asList(1L, LOAN_ID));
+        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
+
+        int processed = handler.dailyRoll();
+
+        assertThat(processed).isEqualTo(2);
+        verify(dedup).advanceCursor(LOAN_ID);
+        verify(dedup).markCompletedToday();
     }
 }

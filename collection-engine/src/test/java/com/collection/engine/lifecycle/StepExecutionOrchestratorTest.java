@@ -63,6 +63,7 @@ class StepExecutionOrchestratorTest {
     private static final long PLAN_ID = 100L;
     private static final long STEP_ID = 200L;
     private static final long CASE_ID = 1002L;
+    private static final java.time.LocalDate QUOTA_DATE = java.time.LocalDate.of(2026, 8, 24);
 
     @Mock private IdempotencyService idempotencyService;
     @Mock private PreFlightChecker preFlightChecker;
@@ -75,6 +76,7 @@ class StepExecutionOrchestratorTest {
     @Mock private StepOutcomeRecorder stepOutcomeRecorder;
     @Mock private DecisionLogRepository decisionLogRepository;
     @Mock private CollectionEventBus eventBus;
+    @Mock private com.collection.common.service.ComplianceCounterService complianceCounterService;
     @Spy private EngineProperties props = new EngineProperties();
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
 
@@ -100,6 +102,7 @@ class StepExecutionOrchestratorTest {
         step.setRetryCount(0);
 
         // 默认放行到渠道调度前的各步骤（具体测试按需覆盖）
+        when(planRepository.markStepExecuting(any())).thenReturn(true);
         when(idempotencyService.acquire(anyString(), anyInt())).thenReturn(true);
         when(preFlightChecker.inspect(CASE_ID)).thenReturn(PreFlightResult.passed(liveCaseInfo()));
         when(contextAssembler.assemble(any(), any()))
@@ -287,6 +290,20 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
+    @DisplayName("#6d 调用渠道前步骤已被终结 → 放弃执行，不得触达")
+    void claimLostBeforeDispatch_doesNotTouch() {
+        // prepareStepDue 提交后到此处之间，回调或超时路径可能已收敛该步骤；
+        // 继续执行就是一次重复触达，这是催收场景最不可接受的失效方式。
+        when(planRepository.markStepExecuting(STEP_ID)).thenReturn(false);
+
+        orchestrator.executeStep(plan, step);
+
+        verify(channelGateway, never()).dispatch(any());
+        verify(contextAssembler, never()).assemble(any(), any());
+        verify(timelineRepository, never()).writeTimeline(any());
+    }
+
+    @Test
     @DisplayName("#6c dispatch 后写库异常 → 保留执行锁，避免不确定结果重复触达")
     void postDispatchFailure_keepsExecutionLock() {
         stubResolver(ChannelType.SMS);
@@ -409,6 +426,103 @@ class StepExecutionOrchestratorTest {
         verify(planRepository, never()).incrementRetryCount(STEP_ID);
         verify(planRepository, never())
                 .updateStepTriggerTime(eq(STEP_ID), any(), eq(StepStatus.PENDING));
+    }
+
+    // ── F2：Guard 预占的日频配额，在确认未发出的终态必须归还 ──
+
+    /** 生产单渠道日限为 1；不归还就等于一次瞬态故障吃掉该客户当天该渠道的唯一名额。 */
+    @Test
+    @DisplayName("F2 retryable 终态（证明未写给供应商）→ 归还配额")
+    void retryableTerminalFailure_releasesQuota() {
+        guardAllowsConsumingQuota();
+        stubResolver(ChannelType.SMS);
+        stubDispatch(fail(true));
+        step.setRetryCount(3); // 已达 maxRetryCount，本次即终态
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService).release(eq(9001L), eq("SMS"), eq(QUOTA_DATE));
+    }
+
+    /** 读超时 / 写后中断 / 5xx 属结果未知，可能已送达：重复骚扰是合规事故，宁可少发一次。 */
+    @Test
+    @DisplayName("F2 结果未知的终态 → 不归还配额")
+    void unknownOutcomeTerminalFailure_keepsQuota() {
+        guardAllowsConsumingQuota();
+        stubResolver(ChannelType.SMS);
+        stubDispatch(fail(false));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService, never()).release(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("F2 退避重试尚未终结 → 配额继续为这次触达持有，不归还")
+    void retryScheduled_keepsQuotaHeld() {
+        guardAllowsConsumingQuota();
+        stubResolver(ChannelType.SMS);
+        stubDispatch(fail(true));
+        step.setRetryCount(0); // 未超上限，走退避
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).incrementRetryCount(STEP_ID);
+        verify(complianceCounterService, never()).release(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("F2 供应商已受理 → 配额如实消耗，不归还")
+    void successfulDispatch_keepsQuota() {
+        guardAllowsConsumingQuota();
+        stubResolver(ChannelType.SMS);
+        stubDispatch(ok(ContactResult.DELIVERED));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService, never()).release(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("F2 解析失败 → 根本没走到渠道，归还配额")
+    void resolverException_releasesQuota() {
+        guardAllowsConsumingQuota();
+        when(stepResolver.resolve(any())).thenThrow(new RuntimeException("resolve error"));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService).release(eq(9001L), eq("SMS"), eq(QUOTA_DATE));
+    }
+
+    @Test
+    @DisplayName("F2 策略性跳过 → 未触达，归还配额")
+    void resolverNoOp_releasesQuota() {
+        guardAllowsConsumingQuota();
+        when(stepResolver.resolve(any())).thenReturn(null);
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService).release(eq(9001L), eq("SMS"), eq(QUOTA_DATE));
+    }
+
+    /** Guard 未声明预占（自定义实现或未配日限）时引擎不得擅自归还，否则会把计数扣成负数。 */
+    @Test
+    @DisplayName("F2 Guard 未预占配额 → 引擎不归还")
+    void noReservation_neverReleases() {
+        stubResolver(ChannelType.SMS);
+        stubDispatch(fail(true));
+        step.setRetryCount(3);
+
+        orchestrator.executeStep(plan, step);
+
+        verify(complianceCounterService, never()).release(any(), any(), any());
+    }
+
+    private void guardAllowsConsumingQuota() {
+        when(executionGuard.evaluate(any()))
+                .thenReturn(
+                        GuardVerdict.allowAfterConsumingQuota(
+                                new GuardVerdict.QuotaReservation(9001L, "SMS", QUOTA_DATE)));
     }
 
     @Test
