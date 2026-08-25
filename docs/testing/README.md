@@ -5,6 +5,7 @@
 | 文档 | 职责 |
 |---|---|
 | [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) | 测试准入、用例、出口、当前状态的唯一来源（T0–T6） |
+| [AI Call L1 真拨测试记录 20260819](./MOCASA催收系统升级_Phase1_AI_Call_L1真拨测试记录_20260819.md) | 📦 Facade 渠道冒烟单次运行事实；10 通未接通（406/BUSY/480/NO_ANSWER），不作测试 SSOT |
 | [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | L4b 的 topic/订阅、Nacos、凭证约定和操作 Runbook；不作测试裁决 |
 | [L4b 触达内容核对清单](./MOCASA催收系统升级_Phase1_L4b触达内容核对清单.md) | 手工终端核对工作纸；不定义用例或环境 |
 | [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Redis / GCP 运维交付、Pilot 配置与演练 |

@@ -1,5 +1,6 @@
 package com.collection.admin.web;
 
+import com.collection.admin.web.facade.FacadeWebhookService;
 import com.collection.common.enums.EventType;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
@@ -26,6 +27,18 @@ public class WebhookController {
     @Resource private CollectionEventBus eventBus;
     @Resource private WebhookSecurityProperties securityProperties;
     @Resource private ChannelCallbackAuditRepository callbackAuditRepository;
+    @Resource private FacadeWebhookService facadeWebhookService;
+
+    /**
+     * Valubo Facade 终态回调。账户级 URL，JSON body + {@code X-Valubo-Signature}。 不要改 {@link
+     * #channelCallback} 去迁就 Facade。
+     */
+    @PostMapping("/facade-callback")
+    public Map<String, Object> facadeCallback(
+            @RequestBody com.fasterxml.jackson.databind.JsonNode body,
+            @RequestHeader(value = "X-Valubo-Signature", required = false) String signature) {
+        return facadeWebhookService.handle(body, signature);
+    }
 
     /**
      * 渠道供应商回调 → 发布 CHANNEL_CALLBACK。

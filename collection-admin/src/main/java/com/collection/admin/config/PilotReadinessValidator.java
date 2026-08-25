@@ -8,9 +8,13 @@ import com.collection.common.channel.ChannelGateway;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.ingestion.config.IngestionProperties;
+import com.collection.service.impl.AiCollectionCaseService;
 import com.collection.service.impl.RealCaseService;
 import javax.annotation.PostConstruct;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -19,12 +23,15 @@ import org.springframework.stereotype.Component;
 @Profile("pilot")
 public class PilotReadinessValidator {
 
+    private static final Logger log = LoggerFactory.getLogger(PilotReadinessValidator.class);
+
     private final CaseService caseService;
     private final ChannelGateway channelGateway;
     private final ExecutionGuard executionGuard;
     private final IngestionProperties ingestionProperties;
     private final WebhookSecurityProperties webhookProperties;
     private final ChannelProperties channelProperties;
+    private final boolean schedulerEnabled;
 
     public PilotReadinessValidator(
             CaseService caseService,
@@ -32,20 +39,23 @@ public class PilotReadinessValidator {
             ExecutionGuard executionGuard,
             IngestionProperties ingestionProperties,
             WebhookSecurityProperties webhookProperties,
-            ChannelProperties channelProperties) {
+            ChannelProperties channelProperties,
+            @Value("${collection.scheduler.enabled:true}") boolean schedulerEnabled) {
         this.caseService = caseService;
         this.channelGateway = channelGateway;
         this.executionGuard = executionGuard;
         this.ingestionProperties = ingestionProperties;
         this.webhookProperties = webhookProperties;
         this.channelProperties = channelProperties;
+        this.schedulerEnabled = schedulerEnabled;
     }
 
     @PostConstruct
     public void validate() {
         require(
-                caseService instanceof RealCaseService,
-                "Pilot requires collection.case-service=real");
+                caseService instanceof RealCaseService
+                        || caseService instanceof AiCollectionCaseService,
+                "Pilot requires collection.case-service=real or ai (not mock)");
         require(
                 ingestionProperties.getLoanIdWhitelist() != null
                         && !ingestionProperties.getLoanIdWhitelist().isEmpty(),
@@ -61,6 +71,15 @@ public class PilotReadinessValidator {
                 webhookProperties.isSignatureRequired()
                         && StringUtils.isNotBlank(webhookProperties.getHmacSecret()),
                 "Pilot requires collection.webhook signature verification and HMAC secret");
+        if (!schedulerEnabled) {
+            log.warn(
+                    "[PilotReadiness] collection.scheduler.enabled=false：本实例只接入不触达，跳过 Facade 就绪校验。"
+                            + "开启调度前必须补齐 channel.facade.callback-secret");
+            return;
+        }
+        require(
+                StringUtils.isNotBlank(channelProperties.getFacade().getCallbackSecret()),
+                "Pilot requires channel.facade.callback-secret for Facade webhooks");
     }
 
     private void require(boolean condition, String message) {

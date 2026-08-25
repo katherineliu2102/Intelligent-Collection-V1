@@ -3,6 +3,7 @@ package com.collection.engine.reaper;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.metrics.CollectionMetrics;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import javax.annotation.Resource;
@@ -31,13 +32,20 @@ public class StuckPlanReaper {
     @Resource private EngineProperties props;
     @Resource private CollectionMetrics metrics;
 
+    /** 时钟源。生产默认系统时钟；测试可注入固定时钟以消除时基竞态。 */
+    private Clock clock = Clock.systemDefaultZone();
+
+    void setClock(Clock clock) {
+        this.clock = clock;
+    }
+
     @Scheduled(fixedDelayString = "${engine.reaper.interval-ms:300000}")
     public void detectStuckPlans() {
         EngineProperties.Reaper cfg = props.getReaper();
         if (planRepository == null || !cfg.isEnabled()) {
             return;
         }
-        LocalDateTime idleBefore = LocalDateTime.now().minusMinutes(cfg.getIdleMinutes());
+        LocalDateTime idleBefore = LocalDateTime.now(clock).minusMinutes(cfg.getIdleMinutes());
         List<Long> stuck;
         try {
             stuck = planRepository.findStuckPlanIds(idleBefore, cfg.getBatchSize());

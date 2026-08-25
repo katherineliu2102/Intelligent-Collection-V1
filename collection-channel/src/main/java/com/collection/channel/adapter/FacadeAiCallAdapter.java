@@ -247,7 +247,6 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
         if (stepId != null) {
             metadata.put("step_id", stepId);
         }
-        metadata.put("smoke", Boolean.TRUE);
         Map<String, Object> context = new LinkedHashMap<String, Object>();
         context.put("borrower", borrower);
         context.put("debt", debt);
@@ -303,8 +302,10 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
                 command.getMetadata() == null
                         ? null
                         : command.getMetadata().get(StepCommand.META_CASE_ID);
-        String suffix = caseId != null ? String.valueOf(caseId) : callee.replace("+", "");
-        return "mocasa-smoke-" + suffix + "-" + System.currentTimeMillis();
+        if (caseId != null) {
+            return String.valueOf(caseId);
+        }
+        return callee == null ? "unknown" : callee.replace("+", "");
     }
 
     private static BigDecimal overdueAmount(StepCommand command) {

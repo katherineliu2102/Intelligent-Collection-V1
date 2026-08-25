@@ -6,4 +6,7 @@ import com.collection.common.model.ChannelCallbackAudit;
 public interface ChannelCallbackAuditRepository {
 
     void save(ChannelCallbackAudit audit);
+
+    /** 已成功验签并落过审计的 session / provider 键；用于 Facade session_id 幂等。 */
+    boolean existsValidByProviderMsgId(String providerMsgId);
 }

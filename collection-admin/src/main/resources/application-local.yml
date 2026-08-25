@@ -46,9 +46,9 @@ channel:
   callback:
     base-url: http://localhost:8888/webhook
   facade:
-    # api-key 由 Nacos channel.facade.api-key 下发（intelligent-collection-local.yml）
-    # 勿在此写 ${FACADE_API_KEY:}：空环境变量会把 Nacos 密钥覆盖成空，真拨会失败
-    # 本机紧急覆盖：环境变量 CHANNEL_FACADE_API_KEY（Spring 松散绑定，优先于 YAML/Nacos）
+    # api-key / callback-secret 由 Nacos channel.facade 下发
+    # 勿在此写 ${FACADE_API_KEY:} / ${FACADE_CALLBACK_SECRET:}：空环境变量会把 Nacos 覆盖成空
+    # 本机紧急覆盖：CHANNEL_FACADE_API_KEY / CHANNEL_FACADE_CALLBACK_SECRET
     base-url: https://34.158.34.184/api/v1/facade
     insecure-tls: true
     product-type: "Quick Loan"

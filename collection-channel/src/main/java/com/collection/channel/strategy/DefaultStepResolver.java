@@ -1,6 +1,7 @@
 package com.collection.channel.strategy;
 
 import com.alibaba.fastjson.JSON;
+import com.collection.channel.adapter.FacadeAiCallAdapter;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.StepCommand;
@@ -93,6 +94,12 @@ public class DefaultStepResolver implements StepResolver {
         Long caseId = context.getPlan().getCaseId();
         if (caseId != null) {
             metadata.put(StepCommand.META_CASE_ID, caseId);
+        }
+        if (context.getPlan().getId() != null) {
+            metadata.put(FacadeAiCallAdapter.META_PLAN_ID, context.getPlan().getId());
+        }
+        if (step.getId() != null) {
+            metadata.put(FacadeAiCallAdapter.META_STEP_ID, step.getId());
         }
 
         fillChannelMetadata(step.getChannelType(), metadata, snapshot, scriptSlot, vars);
@@ -221,6 +228,37 @@ public class DefaultStepResolver implements StepResolver {
                     fallbackBody != null
                             ? fallbackBody
                             : buildFallbackSmsBody(scriptSlot, repaymentUrl));
+        } else if (channel == ChannelType.AI_CALL) {
+            fillAiCallMetadata(metadata, snapshot, vars);
+        }
+    }
+
+    private void fillAiCallMetadata(
+            Map<String, Object> metadata, ContextSnapshot snapshot, ScriptVars vars) {
+        if (vars != null && StringUtils.isNotBlank(vars.getName())) {
+            metadata.put(FacadeAiCallAdapter.META_BORROWER_NAME, vars.getName().trim());
+        } else if (snapshot != null
+                && snapshot.getUserProfile() != null
+                && snapshot.getUserProfile().getBasic() != null
+                && StringUtils.isNotBlank(snapshot.getUserProfile().getBasic().getName())) {
+            metadata.put(
+                    FacadeAiCallAdapter.META_BORROWER_NAME,
+                    snapshot.getUserProfile().getBasic().getName().trim());
+        }
+        CaseContext ctx = snapshot != null ? snapshot.getCaseContext() : null;
+        if (ctx == null) {
+            return;
+        }
+        BigDecimal overdue = ctx.getOverdueAmount();
+        if (overdue == null) {
+            overdue = ctx.getTotalOutstanding();
+        }
+        if (overdue != null) {
+            metadata.put(FacadeAiCallAdapter.META_OVERDUE_AMOUNT, overdue.toPlainString());
+        }
+        metadata.put(FacadeAiCallAdapter.META_DPD, String.valueOf(ctx.getDpd()));
+        if (ctx.getDueDate() != null) {
+            metadata.put(FacadeAiCallAdapter.META_DUE_DATE, ctx.getDueDate().toString());
         }
     }
 

@@ -96,6 +96,8 @@ public class ChannelProperties {
         private String windowEnd = "21:00";
         /** 渠道冒烟默认被叫，E.164 或 63 开头均可。 */
         private String testCallee = "+639451373897";
+        /** Facade 回调 HMAC（手册 §11.3）。与 collection.webhook.hmac-secret 不是同一把。 */
+        private String callbackSecret = "";
 
         private int connectTimeoutSeconds = 5;
         private int readTimeoutSeconds = 30;

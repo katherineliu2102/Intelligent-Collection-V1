@@ -624,12 +624,12 @@ public class PlanLifecycleManager {
 
     private ContactResult mapCallbackToResult(String raw) {
         if (raw == null) {
-            return ContactResult.ANSWERED;
+            return ContactResult.FAILED;
         }
         try {
             return ContactResult.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {
-            return ContactResult.ANSWERED;
+            return ContactResult.FAILED;
         }
     }
 
