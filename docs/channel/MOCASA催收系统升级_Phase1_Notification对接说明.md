@@ -571,9 +571,9 @@ fallback 成功后按 **§9.1 SMS** 映射；`metadata.fallback_sms=true`。
 
 | ID  | Account Name        | Operator           | Weight | 底层供应商文档                                                                |
 | --- | ------------------- | ------------------ | ------ | ---------------------------------------------------------------------- |
-| 340 | QHSmsNotice         | other, globe, dito | 3      | [QH SMS](../../../AI%20collection/相关资料/QH%20SMS%20接口.md)               |
-| 341 | HiWaySmsOther       | dito, other, globe | 2      | [HiwayIO API](../../../AI%20collection/相关资料/HiwayIO-API%201.5.2.docx)  |
-| 339 | bori Mocasa-MKT-002 | smart              | 1      | [BORI HTTP](../../../AI%20collection/相关资料/【BORI】HTTP%20对接开发文档1.0.docx) |
+| 340 | QHSmsNotice         | other, globe, dito | 3      | [QH SMS](./reference/QH%20SMS%20接口.md)               |
+| 341 | HiWaySmsOther       | dito, other, globe | 2      | [HiwayIO API](./reference/HiwayIO-API%201.5.2.docx)  |
+| 339 | bori Mocasa-MKT-002 | smart              | 1      | [BORI HTTP](./reference/【BORI】HTTP%20对接开发文档1.0.docx) |
 | —   | 新 Smart 线路（测试中）     | smart              | TBD    | 同上                                                                     |
 
 

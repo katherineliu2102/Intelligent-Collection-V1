@@ -66,7 +66,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 
 > 禁止使用 `loan_id` 作为业务主键；与引擎 `case_id` 一致。
 
-**asm**：退订组 ID（NPC 合规），见 [接入指南 §4.2](../../AI%20collection/SendGrid催收邮件接入指南.md)。
+**asm**：退订组 ID（NPC 合规），见供应商资料《SendGrid 催收邮件接入指南》§4.2（仓外，向主架构负责人索取）。
 
 **from**：催收独立子域，如 `notice.collections.{brand}.ph`（与 OTP 子域隔离）。
 
@@ -151,4 +151,4 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 
 ---
 
-> API 细节（curl、SDK、重试退避）见 [SendGrid催收邮件接入指南](../../AI%20collection/SendGrid催收邮件接入指南.md)
+> API 细节（curl、SDK、重试退避）见供应商资料《SendGrid 催收邮件接入指南》（仓外，向主架构负责人索取）

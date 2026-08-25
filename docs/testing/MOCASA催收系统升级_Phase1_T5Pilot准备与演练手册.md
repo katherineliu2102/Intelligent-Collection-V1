@@ -144,12 +144,19 @@ T3o 开始前必须满足：
 
 ### 4.1 连接信息落位与变更方式
 
-`application-pilot.yml` 只写 `${COLLECTION_REDIS_*}` 占位符，仓库不含真值。真值有两处来源，优先级为 Nacos > 环境变量：
+`application-pilot.yml` 只写 `${COLLECTION_REDIS_*}` 占位符，仓库不含真值。配置生效优先级为 **环境变量 > `application-pilot.yml` > Nacos 导入配置**：
 
-| 位置 | 用法 | 适用 |
+| 优先级 | 位置 | 说明 |
 |---|---|---|
-| 部署机 `.env.pilot`（已 gitignore，`docker-compose` 经 `APP_ENV_FILE` 加载） | `COLLECTION_REDIS_HOST/PORT/PASSWORD/SSL`；含 `#` 等特殊字符的口令**必须加双引号**，否则可能被当作行内注释截断 | 首次拉起 Pilot，改完重启容器即生效 |
-| Nacos `intelligent-collection-pilot.yml`（`optional:` 导入，未创建不阻塞启动） | 直接写 `spring.redis.*` 覆盖占位缺省 | 后续改地址或轮换口令时集中下发，无需重新构建镜像 |
+| 高 | 部署机 `.env.pilot`（已 gitignore，`pilot-run.sh` 经 `--env-file` 注入） | 所有 `${...}` 占位符从这里取值。含 `#` 等特殊字符的口令**必须加双引号**，否则可能被当作行内注释截断；`docker --env-file` 不做 shell 解析，引号会进值里，注意区分两种加载方式 |
+| 中 | `application-pilot.yml`（profile 专属，随镜像走） | 写进这里的键**无法被 Nacos 覆盖**，`spring.redis.*` 全在此列 |
+| 低 | Nacos `intelligent-collection-pilot.yml`（`optional:` 导入，未创建不阻塞启动） | 只对**没有**写进 `application-pilot.yml` 的键生效，如 `channel.facade.api-key` / `callback-secret` |
+
+**因此 Redis 地址与口令不能靠 Nacos 轮换**：改 Nacos 后重启，容器仍用 `.env.pilot` 里的旧值，且不报错。轮换路径是改 `.env.pilot` + 重启容器。
+
+> 同一口径在代码里有两处佐证：`application-pilot.yml` 注释说明 `facade.api-key`/`callback-secret` 之所以**故意不写占位符**，正是因为写了会把 Nacos 下发的值冲掉；`application-local.yml` 也注明 profile 专属文件优先级高于 Nacos 被导入文档。
+>
+> **待 Pilot 机实测确认**（无副作用、一条命令可判读）：在 Nacos `intelligent-collection-pilot.yml` 里写 `management.endpoints.web.exposure.include: health`（该键在 `application-pilot.yml` 中是字面量 `health,info,prometheus`，不涉及环境变量），重启容器后 `curl -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/actuator/prometheus`：得 **200** 即上表成立（profile 文件胜出），得 **404** 则说明 Nacos 胜出、上表需推翻。测完删掉该 Nacos 键并重启还原。
 
 > `spring.redis.timeout` 必须大于消费轮询的 `XREADGROUP BLOCK`（当前 1s），Pilot 取 2s；短命令（合规 Lua 等）的延迟上界由 `SpiInvoker` 的 50ms 硬超时兜底，不靠客户端超时收紧。
 

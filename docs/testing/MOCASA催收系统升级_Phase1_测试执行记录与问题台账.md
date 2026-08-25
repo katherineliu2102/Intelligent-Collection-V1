@@ -736,7 +736,7 @@ L4b-1 报「90s 内未落 t_contact_plan」——这一轮已因漏做烧掉一�
 
 #### 环境实况（2026-08-24 17:30–18:00 PHT 摸底）
 
-开发机到 `172.16.15.55:6379` 仍不通，生产机 `34.87.136.20` 可达且自带 `redis-cli`，故本组全部在生产机执行。
+开发机到 Redis（内网 `:6379`）仍不通，Pilot 机可达且自带 `redis-cli`，故本组全部在 Pilot 机执行。
 pilot 应用（`SPRING_PROFILES_ACTIVE=pilot`、`COLLECTION_SCHEDULER_ENABLED=false`、50 案白名单、
 `allow-full-scan=false`）已在跑并真连 Redis，Stream `collection:pilot:events` 长度 91、消费组
 `collection-engine-pilot` pending=0 / lag=0，说明消费链路本身是通的。
@@ -755,7 +755,7 @@ Redis 一旦重启，幂等锁、合规计数、接入去重键与事件流全�
 
 #### F6（已修）：消费组消失后总线永久停摆，且健康检查全程报 UP
 
-2026-08-25 复核运维交付时发现：`172.16.15.55` 已开 AOF（`appendfsync everysec`），
+2026-08-25 复核运维交付时发现：`<PILOT_INTERNAL_IP>` 已开 AOF（`appendfsync everysec`），
 但开启过程伴随一次重启，而重启发生在 AOF 生效**之前**——全库数据丢失（`detect:*` 从 26069 掉到 71），
 我方 `collection:*` 188 个键**一个不剩**，Stream、消费组、接入去重键、合规计数全没了。
 
@@ -846,7 +846,7 @@ OUT_OF_SERVICE。
 本以为它只在开发机上跑，遂核对生产暴露面，结论是三项条件同时成立：
 
 1. 容器映射为 `0.0.0.0:8080`（`docker port` 与宿主 `ss` 均确认），宿主 `iptables INPUT` 策略为 `ACCEPT`；
-2. **从公司外的开发机直接访问 `http://34.87.136.20:8080/actuator/health` 得 HTTP 200**，即 GCP 防火墙未拦 8080；
+2. **从公司外的开发机直接访问 `http://<PILOT_HOST>:8080/actuator/health` 得 HTTP 200**，即 GCP 防火墙未拦 8080；
 3. 从同一台开发机 `POST /auth/login` 带任意用户名即得 `SYSTEM_ADMIN` 会话，再以该会话调
    `POST /ops/dlq/redrive` 返回正常业务结果（用了不存在的 id，无副作用）；无会话时对照请求为 401。
 
@@ -921,15 +921,15 @@ pilot 账号只经 `pilot.env` 注入，哈希不入仓。
 
 **根因二（更要紧）：F8 的暴露面判断有缺口。** 本机装有 nginx，
 `/etc/nginx/conf.d/collection-admin.mocasa.com.conf` 把
-`https://collection-admin.mocasa.com` 整站反代到上游 `172.16.15.55:8080`，
-而 **`172.16.15.55` 正是本机 `ens4` 的地址**（Redis 也在这台机器上，此前一直以为是独立主机）。
+`https://collection-admin.mocasa.com` 整站反代到上游 `<PILOT_INTERNAL_IP>:8080`，
+而 **`<PILOT_INTERNAL_IP>` 正是本机 `ens4` 的地址**（Redis 也在这台机器上，此前一直以为是独立主机）。
 关键是它用的是 `location /`——**放通全部路径**，不只是回调。
 
-于是此前的真实暴露面是两扇门而非一扇：裸端口 `34.87.136.20:8080`（我已封堵），
+于是此前的真实暴露面是两扇门而非一扇：裸端口 `<PILOT_HOST>:8080`（我已封堵），
 以及 `https://collection-admin.mocasa.com/`（**带 TLS、有正式域名、更容易被发现，一直开着**）。
 访问日志显示该域名自 2026-08-24 06:04 UTC 起接受公网请求。**我先前"绑回环即封堵完成"的结论不成立。**
 
-**连带影响：绑回环反而打断了公网回调。** nginx 连的是 `172.16.15.55:8080`，
+**连带影响：绑回环反而打断了公网回调。** nginx 连的是 `<PILOT_INTERNAL_IP>:8080`，
 而 Docker 现在只绑 `127.0.0.1:8080`，两者不通。应用恢复后经域名访问仍会是 502。
 
 **入侵痕迹排查（无实际利用证据）**：access log 中 52 条 401 全部来自自动化扫描器探测
@@ -972,7 +972,7 @@ pilot 账号只经 `pilot.env` 注入，哈希不入仓。
 |---|---|---|---|---|---|
 | 1 | 开启 AOF（`appendonly yes`，`appendfsync everysec`） | 合规日计数与接入去重键只存在于 Redis，没有任何持久化兜底 | 实例重启后当日合规计数归零 → **同一客户当天可被重复触达，属合规事故**；接入去重键丢失 → 数仓重推的旧消息被当新消息重复入案 | 高 | ✅ 2026-08-25 已开（开启过程的重启已致一次全量丢失，见 F6） |
 | 2 | 设置 `maxmemory` 上限并保持 `noeviction` | 现为 `maxmemory 0`（无上限），与另外几个服务共用 28K key 的实例 | 邻居服务写爆内存时由 OS OOM 决定杀谁，可能直接杀掉整个 Redis；设了上限才会以可预期的写入报错方式暴露 | 高 | ⬜ 仍为 0 |
-| 3 | 独立实例，或至少独立 `db` 编号 | 当前与 `detect:*`（26069 key，id_detection_agent）等混用 | ①任何全库操作一律禁止，故障时无法快速重置我方状态；②**T5-R9（断连恢复）无法通过重启实例演练**，重启会同时打断邻居服务 | 中 | 🟡 运维称已提供，但 `172.16.15.55` 上 `detect:*` 仍在，新实例地址待确认 |
+| 3 | 独立实例，或至少独立 `db` 编号 | 当前与 `detect:*`（26069 key，id_detection_agent）等混用 | ①任何全库操作一律禁止，故障时无法快速重置我方状态；②**T5-R9（断连恢复）无法通过重启实例演练**，重启会同时打断邻居服务 | 中 | 🟡 运维称已提供，但 `<PILOT_INTERNAL_IP>` 上 `detect:*` 仍在，新实例地址待确认 |
 | 4 | 若维持共用，需一条可对我方连接做网络隔离的手段 | T5-R9 必须验证断连后消费与 PEL 认领能自愈 | 该用例只能降级为"客户端侧 `CLIENT KILL`"，覆盖不到服务端不可达期间的重连行为 | 中 | 🟡 若第 3 项落实则不再需要 |
 | 5 | Redis 侧监控接入（内存、连接数、Stream 长度） | 简版观测 MVP（T3o-O4）要求 Stream/PEL/DLQ 深度可查 | 只能靠应用侧 gauge 单点自证，Redis 自身异常无外部佐证 | 低 | ⬜ |
 

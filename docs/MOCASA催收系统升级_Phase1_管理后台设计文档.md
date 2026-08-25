@@ -51,7 +51,7 @@ Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的�
 
 当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台已有 React SPA（`collection-admin/ui`，菜单：看板 / 策略 / 模板 / 案件监控 / 异常队列 / 合规 / 系统）与对应 REST。`catalog.html`、`orchestration.html` 仅作开发观测页，不再是唯一入口。
 
-**仍未闭合的产品化缺口（v1.2）**：案件检索仍读旧库 `t_collection`，而入案主路径写 `t_ai_collection`；单案视图不展示投影摘要与 AI Call 回调细节。接入真实 `caseEvent` 与 Facade 后，运营会看到「引擎在催、后台搜不到 / 看不清外呼」。本版把该缺口升为 Phase 1 必补，而不是另起一套后台。
+**产品化缺口（v1.2）**：案件检索读源已于 2026-08-25 切到 `t_ai_collection`，与入案主路径一致，「引擎在催、后台搜不到」已消除。仍未闭合的是单案视图：不展示投影摘要与 AI Call 回调细节（`GET /cases/{caseId}` 待建）。本版把该缺口列为 Phase 1 必补，而不是另起一套后台。
 
 PRD 场景 B 定义了策略配置员的核心闭环：
 
@@ -414,7 +414,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | Email | **脱敏** | 默认脱敏 | `borrower_email` |
 | 姓名 | **不展示** | 默认不展示；客诉排查可按角色点开展示 | `borrower_name` 仅存投影，不进列表 |
 
-现码（v1.1 实现）已脱敏电话/邮箱，但查询 `t_collection` 且无姓名列——与上表对齐后须改查询源，姓名策略保持「列表不展示」。
+现码已按上表实现：读 `t_ai_collection`，电话/邮箱脱敏，`borrower_name` 不进查询。检索条件支持 `caseId`/`userId`/`stage`/`collectionStatus`/`planStatus`/`frozen`；`stage` 与 `collectionStatus` 取自投影表，`planStatus` 取自该案**最新一条** `t_contact_plan`（一案多条历史计划时列表状态才稳定）。
 
 #### 5.3.2 单案 360° 视图
 

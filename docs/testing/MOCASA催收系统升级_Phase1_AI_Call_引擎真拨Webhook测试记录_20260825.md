@@ -2,7 +2,7 @@
 
 > **层级**：引擎闭环（调度 `planStepDue` → `ChannelGateway(AI_CALL)` → Facade `create → cases → start` → `POST /webhook/facade-callback` → 步骤终态）。  
 > **对比 L1**：2026-08-19 的 L1 记录走 `/mock/send-ai-call`，**不经引擎、无 Webhook 入库**；本记录补上那两条缺口。（该 L1 记录尚未入仓，需向编排同事索取后补进 `docs/testing/`。）  
-> **环境**：`ubuntu@34.87.136.20`（bdp01）；容器 `collection-admin-aicall`；镜像 `intelligent-collection-admin:aicall-e2e`；域名 `https://collection-admin.mocasa.com`。  
+> **环境**：Pilot 机 `bdp01`（登录地址见 `docs/ops/生产访问凭据.local.md`，不入库）；容器 `collection-admin-aicall`；镜像 `intelligent-collection-admin:aicall-e2e`；域名 `https://collection-admin.mocasa.com`。  
 > **时区**：业务时间为 **PHT（UTC+8）**。库内 `executed_at` / 回调 `received_at` 为 UTC。  
 > **PII**：手机号脱敏；只写 `loan_id` / `user_id`。  
 > **关联**：[Webhook 实现规格 v0.3](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md) · [发版手册](../channel/MOCASA催收系统升级_Phase1_发版手册.md)
@@ -66,7 +66,7 @@ Webhook 路径：**`POST /webhook/facade-callback`**（不是 L1 文档里的 `/
 | 步骤 | PHT | 步骤结果 | 原因 | 回调 |
 |---|---|---|---|---|
 | 1392 | 12:16 | `SKIPPED` / `COMPLIANCE_BLOCKED` | `ExecutionGuard` SPI 硬超时 50ms（Redis 频控） | 无 |
-| 1393 | 14:27 / 14:29 | 未发出，随后 `SKIPPED` | `POST https://34.158.34.184/api/v1/facade/batches` **PKIX**（Valubo 自签名 `CN=valubo-voice-test`）；第三次命中日上限 `AI_CALL 3/2` | 无 |
+| 1393 | 14:27 / 14:29 | 未发出，随后 `SKIPPED` | `POST <FACADE_BASE_URL>/batches` **PKIX**（Valubo 自签名 `CN=valubo-voice-test`）；第三次命中日上限 `AI_CALL 3/2` | 无 |
 | 1414 | 14:41 | `COMPLETED` / `NO_ANSWER` | 容器 JRE 导入该证书 + 清当日频控计数后重试 | **有** |
 
 L1 用 `insecure-tls=true` 绕过证书；本窗口按「导入证书、不关全局 TLS」处理。证书写在**当前容器** JRE `cacerts`，`docker rm` 后再起会丢掉。
@@ -85,7 +85,7 @@ L1 用 `insecure-tls=true` 绕过证书；本窗口按「导入证书、不关�
 | `engine.spi.execution-guard-timeout-ms` | `500`（env） |
 | `engine.spi.step-resolver-timeout-ms` | `500`（env） |
 | MyBatis `map-underscore-to-camel-case` | `true`（打进 `aicall-e2e` 镜像的 `application-pilot.yml`） |
-| Facade | `https://34.158.34.184/api/v1/facade`，账户级 callback URL，HMAC-SHA256 验签 |
+| Facade | Valubo 测试环境（地址由 `channel.facade.base-url` 下发，见 `docs/ops/生产访问凭据.local.md`），账户级 callback URL，HMAC-SHA256 验签 |
 
 计划创建：向 Redis DB 0 stream（`COLLECTION_REDIS_STREAM`）写入 `CASE_INGESTED`，payload 含 `dueDate` / `dpd` / 联系人字段。缺 `dueDate` 时 `PhtSlotScheduleCalculator` 生成 0 个槽位。
 

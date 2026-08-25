@@ -216,7 +216,7 @@ EMAIL → targetAddress = basic.email
 |------|------|
 | [Notification 对接说明 §6](./MOCASA催收系统升级_Phase1_Notification对接说明.md#6-contextsnapshot-字段映射) | Adapter 侧映射与附录 B 待决项 |
 | [总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md) | 执行边界与 Adapter 路由 |
-| [沟通提纲](../../../AI%20collection/相关资料/MOCASA_Notification_对接与测试沟通提纲.md) | 跨团队待对齐问题 |
+| 《MOCASA Notification 对接与测试沟通提纲》（仓外资料） | 跨团队待对齐问题 |
 
 ---
 

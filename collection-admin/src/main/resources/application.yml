@@ -54,8 +54,10 @@ spring:
       - nacos:${spring.application.name}-local.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
 
 ---
-# Pilot 专属配置（Redis / 调度订阅 / 白名单等）可集中放 Nacos 覆盖 application-pilot.yml 的占位缺省，
-# 便于改地址或口令时无需重新构建；optional 保证 Nacos 上尚未创建该配置时不阻塞启动。
+# 被导入文档的优先级低于导入方与 profile 专属文件，故这里下发的值只对**没有**写进
+# application-pilot.yml 的键生效（如 channel.facade.api-key / callback-secret）。
+# 已写在 application-pilot.yml 里的键（spring.redis.* 等）改 Nacos 不生效，也不会报错——
+# 要改这些值必须走 .env.pilot 环境变量并重启。optional 保证 Nacos 上尚未创建该配置时不阻塞启动。
 spring:
   config:
     activate:

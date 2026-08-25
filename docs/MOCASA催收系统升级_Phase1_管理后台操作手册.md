@@ -25,7 +25,7 @@
 | Data Analysis | `/dashboard` | **触达效果看板**：按渠道 / Stage / 模板看送达率与 result 分布 | `GET /dashboard/outreach/realtime` ← `t_contact_timeline` |
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
-| Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（**仍读旧库 `t_collection`，见 §3.4**）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
+| Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（读 `t_ai_collection` 投影，见 §3.4）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
 | Ops Queue | `/ops` | 异常队列（ACK / Resolve） | `/ops/exceptions` |
 | Compliance | `/compliance` | 冻结 / 解冻 / 升级 | `/compliance/*` |
 | System Admin | `/system` | 审计日志等 | `/admin/audit-logs` |
@@ -154,10 +154,11 @@ Invoke-WebRequest http://127.0.0.1:5173/dashboard -UseBasicParsing         # 应
 | Email | 脱敏 | 如 `w***@126.com` |
 | 姓名 | **不展示** | 话术渲染用 `{name}`，后台列表不展示 |
 
-**真实案 / AI Call 的两个已知缺口**（升级前必须知道，否则会误判成故障）：
+**AI Call 的已知缺口**（升级前必须知道，否则会误判成故障）：
 
-- 新入案写在 **`t_ai_collection`**（ingestion 投影），而 Search 目前查的是旧库 **`t_collection`**。只投了新 `caseEvent`、旧库没有该 `loan_id` 时，**Case Monitor 会是空的，但引擎可能已经建好计划在催**。这是已知缺口不是"没入案"，先用 §6.2 的 SQL 查投影确认。
 - 时间线能看到 `AI_CALL` 的 `result` 与 `providerMsgId`；但接通原因、Facade 原始 `line_outcome` 存在 `t_channel_callback_audit`，**页面还没接**，只能走 §6.2 的 SQL。
+
+> 2026-08-25 起 Search 已读 `t_ai_collection`（ingestion 投影），与入案主路径同源。此前「只投新 `caseEvent` 就搜不到」的缺口已闭合；若仍搜不到，那就是真的没入案，按 §6.2 查 `t_ai_collection_inbox` 定位。
 
 ### 3.5 Ops Queue / Compliance / System Admin
 
@@ -172,7 +173,7 @@ Invoke-WebRequest http://127.0.0.1:5173/dashboard -UseBasicParsing         # 应
 | 现象 | 原因 | 处理 / 现状 |
 |------|------|------------|
 | Dashboard 全 0 | 默认时间窗内没有 timeline（测试数据最后写入可能已超过 7 天） | 选近 30 / 90 天，或跑新一轮 L4b |
-| 投了新 `caseEvent`，Case Monitor 搜不到 | Search 读 `t_collection`，新案在 `t_ai_collection` | 已知缺口，先用 §6.2 SQL 查投影 |
+| 投了新 `caseEvent`，Case Monitor 搜不到 | Search 已与入案同源（`t_ai_collection`），搜不到即投影未落库 | 用 §6.2 SQL 查 `t_ai_collection_inbox` 的 `projection_applied` / `publish_status` |
 | 有 AI_CALL 计划但看不出接通原因 | UI 未接回调审计表 | 查 `t_channel_callback_audit`（§6.2） |
 | 浏览器返回 JSON `UNAUTHORIZED` | 误开 8888，或 Vite 把整段 `/dashboard` 代理到了后端 | 只开 5173；改 vite 配置后重启前端 |
 | `ERR_CONNECTION_REFUSED` | 前后端没同时运行 | `scripts\dev\start-admin.ps1` |

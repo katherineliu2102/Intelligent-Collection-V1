@@ -2,7 +2,7 @@
 
 > **版本**: v0.3（**可开发**）  
 > **日期**: 2026-08-24  
-> **入站口径 SSOT**：[Facade 回调入站交接](../../../AI%20collection/MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md)  
+> **入站口径 SSOT**：[Facade 回调入站交接](./MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md)  
 > **本文角色**：把交接落成现码可执行的约定；只在「交接空白 / 现码做不到交接所写」时补丁，不另开一套映射。  
 > **关联**：手册 §11（验签算法，补交接 §6 索取第 1 条）；[Facade 接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md)
 
