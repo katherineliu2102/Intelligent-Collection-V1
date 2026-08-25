@@ -47,7 +47,9 @@ REQUIRED_KEYS=(
 )
 # 只接入不触达时（调度关闭）没有任何步骤会执行，Facade 配不配都到不了客户，故不做必填。
 if [[ "${COLLECTION_SCHEDULER_ENABLED:-true}" == "true" ]]; then
-  REQUIRED_KEYS+=(CHANNEL_FACADE_BASE_URL CHANNEL_FACADE_API_KEY)
+  # callback-secret 缺失时外呼照打、回调全被判验签失败回 401，结果只能挂到 callbackTimeout。
+  # PilotReadinessValidator 同样拒启，在这里先点名以免只看到一句 IllegalStateException。
+  REQUIRED_KEYS+=(CHANNEL_FACADE_BASE_URL CHANNEL_FACADE_API_KEY CHANNEL_FACADE_CALLBACK_SECRET)
 fi
 missing=()
 for k in "${REQUIRED_KEYS[@]}"; do

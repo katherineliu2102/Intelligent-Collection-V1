@@ -502,7 +502,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 
 | 项 | 内容 |
 |----|------|
-| 门禁 | `/webhook/sendgrid` 已实现 |
+| 门禁 | `/webhook/sendgrid` ⏳ **尚未实现**，本用例阻塞（见 SendGrid 对接说明 §5） |
 | 操作 | 模拟 `delivered` / `open` 事件 |
 | 预期 | 同 `provider_msg_id` **幂等**升级 timeline；step 状态 **不变** |
 

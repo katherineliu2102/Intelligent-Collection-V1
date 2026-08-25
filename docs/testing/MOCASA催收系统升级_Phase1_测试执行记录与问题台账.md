@@ -362,14 +362,34 @@ CreativeBlue / QHSms / bori / HiWaySms **四个真实运营商通道**，且通�
 | 3 | 临时 HTTPS 回调入口，测试白名单 | 回调可达、限流与访问日志有效；错误回调被拒；不含真实 PII | 稳定域名、证书与签名就绪 |
 | 4 | Pilot 环境，HMAC 验签与批准号码 | 验签通过；终态、审计与超时哨兵正确；伪造签名与重复回调被拒或幂等吸收 | 可纳入 T3o 渠道验收 |
 
+### 执行记录（2026-08-25 14:41–14:42 PHT，编排同事在 bdp01 执行）
+
+**级别 4 的主路径已打通**：pilot profile、真实域名 `https://collection-admin.mocasa.com`、
+HMAC-SHA256 验签、白名单案 520049。调度扫到步骤 1414 → dispatch → Facade `create/cases/start`
+（`batch_id=591838ae…`）→ 约 55s 后 `POST /webhook/facade-callback` 收到 `session.completed`
+→ `signature_valid=1` → 写 `t_channel_callback_audit#7` 与 `t_contact_timeline#712`
+→ 步骤结为 `NO_ANSWER`、计划 `PLAN_COMPLETED`。1/1 成功，明细见
+[真拨 Webhook 测试记录](./MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)。
+
+回调路径是 `POST /webhook/facade-callback`（账户级 URL），**不是** L1 文档里的 `/webhook/facade/voice`。
+
+同窗口两次失败样本值得留档，因为它们暴露的是配置而非代码问题：步骤 1392 被 `ExecutionGuard`
+50ms 硬超时判成 `COMPLIANCE_BLOCKED`（已通过 pilot 抬到 500ms 处置）；步骤 1393 因 Valubo 自签名
+证书 PKIX 失败，改为把该证书导入镜像 TrustStore（不关全局 TLS）。
+
 ### 当前差集
 
 | 差集 | 结论 |
 |---|---|
-| AI_CALL Adapter | `FacadeAiCallAdapter` 已实现并有单测；未闭合的是回调路由与 HTTPS 入口，不是 Adapter 本身。仍不得以 Mock 改绿 |
-| 回调入口 | 通用回调端点与验签骨架已有；回调 URL 生成与实际入口需在 T0-6 对齐后才可对供应商配置 |
+| 真人接通映射 | 实测终态只有 `NO_ANSWER`（振铃无人接）。`was_ai_connected=true` + `reason=NORMAL` 的映射未验，级别 4 的"终态正确"只证到一半 |
+| 伪造签名被拒 | 级别 4 要求"伪造签名与重复回调被拒或幂等吸收"，实测窗口两项都未做。仅有 `FacadeWebhookServiceTest` 单测覆盖 |
+| 重复回调幂等 | `existsValidByProviderMsgId` 按 `session_id` 去重，单测已覆盖；未在真实 Facade 重投下验证 |
+| 身份反查分支 | Facade 未回 `client_metadata` 时按唯一 EXECUTING AI_CALL 反查，实测窗口 `client_metadata` 齐全，该分支未走到 |
+| 基线不一致 | 该窗口跑的是 `channel_0824` 的 `aicall-e2e` 镜像。合并进 ca_branch 后 Adapter 换成本分支版本（`test-callee` 改投、缺借款人姓名硬失败）、Resolver 改为缺文案 fail-close、`PilotReadinessValidator` 增加 `callback-secret` 闸门 —— **须在统一基线上复跑一通才能把 L2-CB 记为通过** |
+| 数仓进件 | 该窗口 `COLLECTION_INGESTION_ENABLED=false`，计划由 Redis 注入 `CASE_INGESTED` 创建，未验真实 Pub/Sub 进件 |
 | 回调超时任务 | 本轮 Pilot 只跑同步渠道，该任务扫描结果为空属预期，不作故障信号 |
 | 受理证据 | 同步渠道以受理成功与 `providerMsgId` 为证据，不要求回调审计行 |
+| 证书有效期 | 镜像内导入的是 Valubo 测试环境自签名证书（`CN=valubo-voice-test`）。上线换正规域名证书时须删掉 `deploy/Dockerfile` 的 keytool 段 |
 
 ### 出口
 

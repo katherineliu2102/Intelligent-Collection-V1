@@ -602,8 +602,8 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `collection.redis.processed-ttl-hours` | `24` | Y | `collection:processed:{event_id}` 消费去重标记 TTL |
 | `engine.spi.timeout-enabled` | `true` | N | `false` 时直连调用，仅限本地或单测 |
 | `engine.spi.plan-factory-timeout-ms` | `50` | Y | PlanFactory 硬超时 |
-| `engine.spi.execution-guard-timeout-ms` | `50` | Y-注意 | Guard 硬超时；Redis 客户端命令超时必须更短 |
-| `engine.spi.step-resolver-timeout-ms` | `50` | Y | StepResolver 硬超时 |
+| `engine.spi.execution-guard-timeout-ms` | `50`；**pilot 覆盖为 `500`** | Y-注意 | Guard 硬超时；Redis 客户端命令超时必须更短。2026-08-25 真拨窗口实测 50ms 在真实网络下稳定 fail-close，步骤被记成 `SKIPPED / COMPLIANCE_BLOCKED` 而外呼根本没发出，故 pilot 抬到 500ms；`timeout-enabled` 保持开启，超时仍按 fail-close 处理 |
+| `engine.spi.step-resolver-timeout-ms` | `50`；**pilot 覆盖为 `500`** | Y | StepResolver 硬超时。同上行原因 |
 | `engine.spi.advancement-policy-timeout-ms` | `10` | Y-注意 | 锁内 AdvancementPolicy 硬超时 |
 | `engine.spi.exhaustion-policy-timeout-ms` | `50` | Y | ExhaustionPolicy 硬超时 |
 | `engine.outbox.enabled` | `true` | N | 关闭即退回"提交后发布"语义，派生事件可能因发布失败而丢失；仅供本地调试 |
@@ -620,6 +620,8 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `engine.reaper.batch-size` | `200` | Y | 单次停摆巡检上限 |
 | `channel.compliance.daily-limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限。**2026-08-21 更正键名**：本行曾登记为 `engine.compliance.daily_limit`，但代码只读 `channel.compliance.*`（`ConfigurableExecutionGuard`），按旧键配置不生效 |
 | `channel.compliance.quiet-hours-start` / `-end` | `21:00` / `08:00` | Y | PHT 静默时段。键名更正同上行 |
+| `channel.facade.callback-secret` | 无默认（环境注入 `CHANNEL_FACADE_CALLBACK_SECRET`） | N | Facade 账户级回调验签密钥，**与 `collection.webhook.hmac-secret` 不是同一把**。缺失时 `/webhook/facade-callback` 把每条真实回调判成验签失败回 401，外呼照打但结果全数回不来。调度开启时 `PilotReadinessValidator` 与 `deploy/pilot-run.sh` 均拒启 |
+| `channel.facade.test-callee` | 空 | Y-注意 | **非空即把全部 AI 外呼改投该号码，不再拨打借款人**。演练期用于零真实触达地验证 Facade 契约；转真实触达前必须清空，否则线上表现是"催收全无效果"而非报错。启动日志会由 `PilotReadinessValidator` 列出所有生效的触达测试开关 |
 | `collection.db.clock-drift-threshold-seconds` | `120` | N | 启动时应用 PHT 时钟与 `SELECT NOW()` 的最大容许偏差。超过阈值时 `pilot` 拒启、其余 profile 仅告警；用于拦截会话时区未设为 +08:00（恒差 8 小时）导致的审计列错位 |
 | `engine.decision-log.enabled` / `.version` | `true` / 当前版本号 | N | 决策日志开关与版本标记 |
 | `engine.delivery-audit.hmac-key` / `.content-key-id` | 无默认（环境注入） | N | 触达内容审计的 HMAC 密钥与密钥标识；真值不入仓 |

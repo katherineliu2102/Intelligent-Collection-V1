@@ -84,7 +84,9 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 
 ## 5. Webhook → timeline（非 CHANNEL_CALLBACK）
 
-**路径**：`POST /webhook/sendgrid`（collection-admin）
+**路径**：`POST /webhook/sendgrid`（collection-admin）—— ⏳ **尚未实现**，本节为待建口径。
+`collection-admin` 现有的入站只有 `/webhook/channel-callback` 与 `/webhook/facade-callback`；
+在该端点落地前，Email 的 open / click / bounce 事件不会回写 timeline。
 
 | event | timeline 动作 |
 |-------|----------------|

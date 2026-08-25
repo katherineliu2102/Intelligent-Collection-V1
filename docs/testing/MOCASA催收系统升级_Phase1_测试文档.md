@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 测试 SSOT
 
 > **版本**：Phase 1 · 仅覆盖菲律宾市场
-> **更新日期**：2026-08-22
+> **更新日期**：2026-08-25
 > **范围**：测试层级、用例、准入/出口与当前完成状态的唯一来源。
 > **执行记录**：[测试执行记录与问题台账](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md)保存实测过程、日志位置、问题定位、环境偏差与裁定理由；本文不重复这些内容。
 
@@ -34,11 +34,11 @@
 | 阶段 | 主要层级 | 当前状态 | 结论 |
 |---|---|---|---|
 | T0 | 环境与基线 | 🟡 | T0-6 文档/代码对齐未完全闭合；仅放行至 T3 |
-| T1 | L0 / L1 / L2 | 🟡 | L0、L1 通过；真实供应商 L2 契约与 AI_CALL 回调未闭合 |
+| T1 | L0 / L1 / L2 | 🟡 | L0、L1 通过；AI_CALL 出站+回调已在真实 Facade 上跑通 1/1，但只覆盖未接通一种终态，且须在合并后基线复跑 |
 | T2 | L3 | ✅ | 真实 MySQL 持久化与事务用例通过 |
 | T3 | L4a / L4b | 🟡 | 合成源链路通过；真实数仓来源未验证 |
 | T3o | 生产等价演练 | 🟡 | Redis 已实连但非独立实例且未开 AOF；调度消费、观测 MVP 未完成 |
-| T4 | 50 案 Pilot | ⬜ | 等待 T3o；AI_CALL 已暂摘出 pilot，回调另行收口 |
+| T4 | 50 案 Pilot | ⬜ | 等待 T3o；AI_CALL 回调入口已收口并归位 pilot，剩余项见 §4 L2-CB |
 | T5 | 渐进切量 | ⬜ | 等待 T4 结论 |
 | T6 | 稳态运营 | ⬜ | 等待监控、告警和全量运营准入 |
 
@@ -55,6 +55,27 @@
 | T0-5 | 数据库表、只读旧库访问、脱敏输出可用 | 服务同事 + 运维 | ✅ |
 | T0-6 | 接入契约、事件语义、回调入口、配置键与脚本入参对齐 | 主架构 | 🟡 |
 | T0-7 | T3o 观测基线与缺口已盘点 | 主架构 | ✅ |
+
+**T0-1 复核（2026-08-25，合并 AI Call 后的统一基线）**：`mvn clean test` 415 例全绿
+（engine 153 / channel 85 / ingestion 69 / admin 81 / service 27），`spotless:check` 通过，
+`mvn clean package` 产出 `collection-admin.jar`。JAR 内嵌 `application-pilot.yml` 为
+`case-service: ai`，与 `PilotReadinessValidator` 要求的 `AiCollectionCaseService` 及
+`@ConditionalOnProperty havingValue="ai"` 三处一致 —— F9 那次半合并 JAR 导致的启动崩溃循环
+在统一构建下不再复现。
+
+**T0-6 本轮已关闭**：
+
+| 漂移 | 处置 |
+|---|---|
+| `deploy/pilot-run.sh` 必填项未含 `CHANNEL_FACADE_CALLBACK_SECRET` | 已补入调度开启分支，与 `PilotReadinessValidator` 同口径 |
+| `.env.example` 缺 `SPRING_DATASOURCE_*` 与 `CHANNEL_FACADE_*`（脚本硬要求却未声明） | 已补齐并标注 [必填] |
+| 基础设施规范登记 `engine.spi.*-timeout-ms` 为 `50`，与 pilot 实际 `500` 不符 | 已改为标注 pilot 覆盖值与原因 |
+| `channel.facade.callback-secret` / `test-callee` 未登记 | 已补入配置表；后者标注"非空即全部外呼改投测试号" |
+| SendGrid 对接说明与功能测试指南称 `/webhook/sendgrid` 已实现 | 代码中并无该端点，两处已改标 ⏳ 未实现 |
+
+**T0-6 仍未关闭**：管理后台设计文档记为「案件目录 SSOT = `t_ai_collection`」，但 `CaseQueryController`
+仍查旧库 `t_collection`；投了新 `caseEvent` 后后台搜不到而引擎已在催。该缺口已在设计文档 §5.3、
+操作手册 §3.4 与 §4 显式标注，代码侧未改，故 T0-6 维持 🟡。
 
 **出口**：T1 依赖 T0-1；T2 依赖 T0-5；T3 依赖 T0-2～T0-5。T0-6 未闭合时，不得放行 T3o 及之后阶段。
 
@@ -80,12 +101,24 @@
 | C4/C5 | 渠道异常与重试分类 | ✅ |
 | C6 | 步骤完成与推进语义 | ✅ |
 | C7 | 重复 due 不重复 dispatch | ✅ |
-| L2-CB | AI_CALL 异步回调契约 | ⬜ |
+| L2-CB | AI_CALL 异步回调契约 | 🟡 |
 
 > C1–C7 于 2026-08-24 16:20–16:32 PHT 在本机 MySQL + 真实通知中心跑通，执行明细与两项新发现
 > （`sms-test-mode` 不抑制投递、瞬时失败吃掉合规配额，后者已于当日修复）见[测试执行记录与问题台账](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md)。
 
-**出口**：L0、L1 与 C1–C7 必测项均通过，且真实渠道替换后需复跑。AI_CALL 回调未闭合前，不得进入其真实验收。
+**L2-CB 已覆盖**（2026-08-25 引擎真拨窗口，见[真拨 Webhook 测试记录](./MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)）：调度扫到步骤 → dispatch → Facade `create/cases/start` → `POST /webhook/facade-callback` → 验签通过 → 写审计与 timeline → 步骤终态 → 计划 `PLAN_COMPLETED`，1/1 成功。
+
+**L2-CB 未覆盖，因此仍为 🟡**：
+
+| 缺口 | 说明 |
+|---|---|
+| 只验到未接通 | 实测终态是 `NO_ANSWER`（振铃无人接）；真人接通（`was_ai_connected=true` + `reason=NORMAL`）映射未验 |
+| 重复回调幂等 | `existsValidByProviderMsgId` 仅有单测，未在真实 Facade 重投下验证 |
+| 验签失败留痕 | 401 路径与"验签失败仍写审计"仅有单测 |
+| 身份反查 | Facade 未回 `client_metadata` 时按唯一 EXECUTING AI_CALL 反查的分支未实测 |
+| 基线不一致 | 该窗口跑的是 `channel_0824` 的 `aicall-e2e` 镜像；合并后基线的 Adapter（`test-callee` 改投、缺姓名硬失败）与 Resolver（缺文案 fail-close）均与之不同，**须在统一基线上复跑** |
+
+**出口**：L0、L1 与 C1–C7 必测项均通过，且真实渠道替换后需复跑。L2-CB 上表缺口未闭合前，AI_CALL 不得进入真实验收。
 
 ---
 
@@ -208,7 +241,8 @@ T6 前须完成指标抓取、Dashboard、阈值告警与通知路由，并持�
 | 阻断项 | 影响阶段 | Owner |
 |---|---|---|
 | 数仓尚未向已确认契约 Topic 投递真实案件事件 | L4b 真实源、T3o | 数仓 + 主架构 |
-| AI_CALL Facade 专用回调入口、验签与结果映射未完成 | T4 | 编排同事 + 主架构 |
+| AI_CALL 回调只验到未接通一种终态，且未在合并后基线复跑（缺口见 §4 L2-CB） | T4 | 编排同事 + 主架构 |
+| `/webhook/sendgrid` 未实现，Email 的 open / click / bounce 不回写 timeline | T4 | 主架构 |
 | Pilot Redis、部署机、GCP 应用凭证、MySQL 与网络未完成验收 | T3o | 运维 + 服务同事 |
 | 渠道 sandbox、批准测试地址、额度与 Secret 未交付 | T3o | 编排同事 + 运维 |
 | T3o 简版观测 MVP 未实现/验证 | T3o、T4 | 主架构 |
