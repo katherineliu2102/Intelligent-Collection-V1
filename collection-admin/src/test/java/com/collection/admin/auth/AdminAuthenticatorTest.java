@@ -13,7 +13,8 @@ class AdminAuthenticatorTest {
 
     private static final BCryptPasswordEncoder ENCODER = new BCryptPasswordEncoder();
 
-    private static AdminAuthProperties.Account account(String user, String rawPassword, String role) {
+    private static AdminAuthProperties.Account account(
+            String user, String rawPassword, String role) {
         AdminAuthProperties.Account a = new AdminAuthProperties.Account();
         a.setUsername(user);
         a.setPasswordHash(ENCODER.encode(rawPassword));
@@ -34,7 +35,9 @@ class AdminAuthenticatorTest {
         Optional<Map<String, Object>> user = auth.authenticate("ops", "s3cret");
 
         assertThat(user).isPresent();
-        assertThat(user.get()).containsEntry("username", "ops").containsEntry("role", "SYSTEM_ADMIN");
+        assertThat(user.get())
+                .containsEntry("username", "ops")
+                .containsEntry("role", "SYSTEM_ADMIN");
     }
 
     @Test
@@ -51,9 +54,7 @@ class AdminAuthenticatorTest {
         assertThat(auth.authenticate("intruder", "s3cret")).isEmpty();
     }
 
-    /**
-     * 这是 2026-08-25 之前的实际行为：请求体里写什么角色就发什么会话，口令根本不看。 该用例锁住"角色由配置决定，不由请求决定"。
-     */
+    /** 这是 2026-08-25 之前的实际行为：请求体里写什么角色就发什么会话，口令根本不看。 该用例锁住"角色由配置决定，不由请求决定"。 */
     @Test
     void roleComesFromConfigNotFromRequest() {
         AdminAuthenticator auth = authenticator(account("ops", "s3cret", "VIEWER"));

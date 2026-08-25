@@ -168,6 +168,12 @@ public class PilotReadinessValidator {
         require(
                 channelProperties.isFacadeConfigured(),
                 "Pilot requires channel.facade.base-url and api-key (plan templates schedule AI_CALL slots)");
+        // 回调验签用的是 Facade 账户级 secret，与我方 collection.webhook.hmac-secret 不是同一把。
+        // 缺它时 /webhook/facade-callback 会把每一条真实回调判成验签失败并回 401，
+        // 外呼照打但结果全数回不来，只能挂到 callbackTimeout —— 与"根本没配 Facade"同样致命，故拒启。
+        require(
+                StringUtils.isNotBlank(channelProperties.getFacade().getCallbackSecret()),
+                "Pilot requires channel.facade.callback-secret to verify Facade webhooks");
         // AI_CALL 是异步渠道：没有回调地址，外呼结果回不来，步骤只能挂到 callbackTimeout 才收敛。
         // 公网入口尚未开通，故这里只告警不拒启——外呼照打，结果按超时收敛。
         if (StringUtils.isBlank(channelProperties.callbackUrl())) {

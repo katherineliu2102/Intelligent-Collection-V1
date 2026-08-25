@@ -13,6 +13,14 @@ spring:
     # 合规频控等短命令的延迟上界由 SpiInvoker 的 50ms 硬超时兜底（超时按 fail-close 处理）。
     timeout: 2s
 
+# Guard 走 Redis 频控、Resolver 要读模板，50ms 的默认硬超时在真实网络上会稳定 fail-close：
+# 2026-08-25 真拨窗口里步骤 1392 即因此被记成 SKIPPED / COMPLIANCE_BLOCKED，外呼根本没发出去。
+# 放宽到 500ms，但**不关** timeout-enabled —— 超时仍按 fail-close 处理，只是阈值贴合真实延迟。
+engine:
+  spi:
+    execution-guard-timeout-ms: ${ENGINE_SPI_EXECUTION_GUARD_TIMEOUT_MS:500}
+    step-resolver-timeout-ms: ${ENGINE_SPI_STEP_RESOLVER_TIMEOUT_MS:500}
+
 management:
   endpoints:
     web:
@@ -80,6 +88,10 @@ collection:
 
 channel:
   fallback-to-mock: false
+  # facade.api-key 与 facade.callback-secret 均由 Nacos / 部署 Secret 下发，此处**不写占位符**：
+  # 写成 ${CHANNEL_FACADE_CALLBACK_SECRET:} 会在环境变量为空时把 Nacos 的值冲成空串，
+  # 表现为每条真实回调都验签失败回 401。紧急覆盖直接设同名环境变量（松散绑定优先级更高）。
+  # 调度开启时 PilotReadinessValidator 要求 callback-secret 非空。
   compliance:
     # 里程碑日的槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，
     # 沿用默认的合计 3 次会让当天后两个槽位被 ExecutionGuard 拦掉。

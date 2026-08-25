@@ -18,9 +18,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class AdminAuthenticator {
 
-    /**
-     * 用户名不存在时也要跑一次 BCrypt，否则「立即返回」与「算 100ms」的耗时差可用来枚举有效用户名。 这是一个固定的无效哈希，任何口令都匹配不上，只为把两条路径的耗时拉平。
-     */
+    /** 用户名不存在时也要跑一次 BCrypt，否则「立即返回」与「算 100ms」的耗时差可用来枚举有效用户名。 这是一个固定的无效哈希，任何口令都匹配不上，只为把两条路径的耗时拉平。 */
     private static final String DUMMY_HASH =
             "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 

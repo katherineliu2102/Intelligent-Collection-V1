@@ -1,10 +1,12 @@
 package com.collection.admin.web;
 
+import com.collection.admin.web.facade.FacadeWebhookService;
 import com.collection.common.enums.EventType;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
 import com.collection.common.model.ChannelCallbackAudit;
 import com.collection.common.repository.ChannelCallbackAuditRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HashMap;
@@ -26,6 +28,20 @@ public class WebhookController {
     @Resource private CollectionEventBus eventBus;
     @Resource private WebhookSecurityProperties securityProperties;
     @Resource private ChannelCallbackAuditRepository callbackAuditRepository;
+    @Resource private FacadeWebhookService facadeWebhookService;
+
+    /**
+     * Valubo Facade 终态回调。账户级 URL，JSON body + {@code X-Valubo-Signature}。
+     *
+     * <p>与 {@link #channelCallback} 是两套签名与定位口径：Facade 无法按批携带 planId/stepId，只能靠 {@code
+     * client_metadata} 反查。不要改 {@code channel-callback} 去迁就它。
+     */
+    @PostMapping("/facade-callback")
+    public Map<String, Object> facadeCallback(
+            @RequestBody JsonNode body,
+            @RequestHeader(value = "X-Valubo-Signature", required = false) String signature) {
+        return facadeWebhookService.handle(body, signature);
+    }
 
     /**
      * 渠道供应商回调 → 发布 CHANNEL_CALLBACK。

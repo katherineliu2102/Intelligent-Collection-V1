@@ -94,6 +94,9 @@ public class ChannelProperties {
         private String windowStart = "08:00";
         private String windowEnd = "21:00";
         private String testCallee = "";
+        /** Facade 入站回调验签用的 HMAC（手册 §11.3）。与 collection.webhook.hmac-secret 不是同一把。 */
+        private String callbackSecret = "";
+
         private int connectTimeoutSeconds = 5;
         private int readTimeoutSeconds = 30;
     }
