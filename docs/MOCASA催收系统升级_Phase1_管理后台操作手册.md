@@ -1,7 +1,8 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
-> **适用版本**：Phase 1 / Phase 1.5 切片（配置治理基础）
+> **适用版本**：Phase 1 / Phase 1.5 切片（配置治理基础）；2026-08-25 补入触达看板、文案保存护栏与 AI Call 观测口径
 > **读者**：运营、测试、策略、研发联调同事
+> **数据源**：当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。
 > **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md)
 
 ---
@@ -10,16 +11,21 @@
 
 管理后台由**后端**（`collection-admin`，Spring Boot，端口 `8888`）和**前端**（React + Ant Design + Vite，端口 `5173`）组成。前端通过 Vite 代理把 `/auth`、`/cases`、`/config`、`/catalog`、`/plans`、`/ops`、`/compliance`、`/admin`、`/mock` 转发到后端。
 
-后端连接的是**测试 MySQL 数据库**（JDBC 连接信息由 Nacos 下发），与 L4b 联调、催收引擎写入的是**同一个库**。因此后台看到的案件、计划、时间线数据即真实测试数据。
+| 地址 | 用途 | 能否当页面打开 |
+|------|------|---------------|
+| `http://127.0.0.1:5173` | 管理后台 UI（看板、案件、配置） | ✅ **用这个** |
+| `http://localhost:8888` | REST API（程序调用） | ❌ 会 404 或返回 JSON 报错 |
+
+把 `8888` 存成书签是最常见的"打不开"原因——它是 API 不是页面。
 
 ### 1.1 功能菜单
 
 | 菜单 | 路由 | 说明 | 数据来源 |
 |------|------|------|----------|
-| Data Analysis | `/dashboard` | 看板（**占位页**，Phase 1.5 待接 Grafana / 聚合接口） | — |
+| Data Analysis | `/dashboard` | **触达效果看板**：按渠道 / Stage / 模板看送达率与 result 分布 | `GET /dashboard/outreach/realtime` ← `t_contact_timeline` |
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
-| Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
+| Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（**仍读旧库 `t_collection`，见 §3.4**）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
 | Ops Queue | `/ops` | 异常队列（ACK / Resolve） | `/ops/exceptions` |
 | Compliance | `/compliance` | 冻结 / 解冻 / 升级 | `/compliance/*` |
 | System Admin | `/system` | 审计日志等 | `/admin/audit-logs` |
@@ -28,16 +34,26 @@
 
 ## 2. 启动与登录
 
-### 2.1 启动后端
+### 2.1 一键启动（推荐）
+
+在项目根目录执行，脚本会按需拉起后端(8888)与前端(5173)并打开浏览器：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev\start-admin.ps1
+```
+
+关掉这两个 PowerShell 窗口（或 Ctrl+C）即停服务。
+
+### 2.2 手动启动后端
 
 ```powershell
 # 项目根目录
 powershell -ExecutionPolicy Bypass -File "scripts/dev/start-local.ps1"
 ```
 
-启动成功后访问 `http://localhost:8888`，健康检查 `http://localhost:8888/actuator/health` 返回 `{"status":"UP"}`。
+启动成功后健康检查 `http://localhost:8888/actuator/health` 返回 `{"status":"UP"}`。
 
-### 2.2 启动前端
+### 2.3 手动启动前端
 
 ```powershell
 $env:Path = "C:\Program Files\nodejs;" + $env:Path
@@ -48,16 +64,48 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 > **注意**：不能直接双击 `index.html`（`file://` 打开会白屏），必须走 `npm run dev`。
 > 修改 `vite.config.ts`（如新增代理）后**必须重启** dev server 才生效。
+> `npm run dev` 不会开机自启，重启机器后要重新拉起。
 
-### 2.3 登录
+### 2.4 登录
 
-浏览器打开 `http://127.0.0.1:5173`，用户名 `admin`，角色 `SYSTEM_ADMIN`。会话基于 Cookie，前端所有请求带 `credentials: include`。
+浏览器打开 `http://127.0.0.1:5173`，本地默认账号 `admin` / `local-dev`（角色 `SYSTEM_ADMIN`）。会话基于 Cookie，前端所有请求带 `credentials: include`。
+
+> 该弱口令**仅 local profile 可用**：local 不连生产库、不对外暴露端口。pilot/生产账号只经环境变量注入，且 `PilotReadinessValidator` 会强制至少配一个可用账号，否则拒绝启动。
+
+### 2.5 30 秒自检
+
+```powershell
+Invoke-WebRequest http://localhost:8888/actuator/health -UseBasicParsing   # 应 200
+Invoke-WebRequest http://127.0.0.1:5173 -UseBasicParsing                   # 应 200
+Invoke-WebRequest http://127.0.0.1:5173/dashboard -UseBasicParsing         # 应 200 且为 HTML
+```
+
+第三条若返回 JSON，说明 Vite 把整段 `/dashboard` 代理到了后端——只应代理 `/dashboard/outreach` 等 API 子路径。
 
 ---
 
 ## 3. 各页面操作
 
-### 3.1 Strategy Config（策略配置）
+### 3.1 Data Analysis（触达看板）
+
+**入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。
+
+**指标口径**（分母只算真正发出去的）：
+
+| 指标 | 含义 | 是否计入送达率分母 |
+|------|------|-------------------|
+| **Records** | timeline 全部 OUT 行 | — |
+| **Attempted** | 实际发起发送（DELIVERED + FAILED 等） | ✅ 分母 |
+| **Delivered** | 供应商受理 / 送达 | 分子 |
+| **Skipped** | **未发送**（Guard 拦截、非里程碑 Email 等） | ❌ 归入 Other |
+| **Other** | 其他未归类 result | ❌ |
+| **送达率** | Delivered ÷ Attempted | Skipped **不进**分母 |
+
+**时间窗口**：默认近 30 天。测试数据若超过 7 天没跑批，选 7 天会看起来是空的——这是正常现象，改 30 / 90 天即可。
+
+**维度**：按渠道、Stage、scriptSlot 下钻；右侧为 result 分布与计划状态（全量，不受时间窗限制）。
+
+### 3.2 Strategy Config（策略配置）
 
 打开后由上到下：
 
@@ -69,13 +117,13 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 > Strategy 总览与模板为**只读**（来自 Nacos/YAML 运行时配置）；当前仅 Holdout 支持在后台读写落库。
 
-### 3.2 Templates（文案模板 · 可编辑热更新）
+### 3.3 Templates（文案模板 · 可编辑热更新）
 
 按 SMS / Push / Email / Plans 分页。
 
 **SMS / Push（可编辑）**：
 - 每行显示 Slot、Stage、**Effective**（生效来源：`DB` 覆盖 > `YAML` 兜底 > `NONE`）、正文。
-- **Edit**：修改正文/标题 → Save，写入 `t_script_template` 并 bump 全局配置版本；引擎在 **~10s** 内重载生效（无需重启）。
+- **Edit**：修改正文/标题 → Save，写入 `t_script_template` 并 bump 全局配置版本；引擎在 **~10s** 内重载生效（无需重启）。保存前的校验规则见 §5.1。
 - **Reset**：把 DB 覆盖停用（`status=INACTIVE`），恢复用 YAML/Nacos。
 - 占位符：`{name} {amount} {dpd} {repaymentUrl}`。
 
@@ -86,7 +134,7 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 **Email**：SendGrid 托管，此处只读（显示 Subject、SendGrid 模板 ID）。
 
-### 3.3 Case Monitor（案件监控）
+### 3.4 Case Monitor（案件监控）
 
 1. 输入 Case ID 或 User ID → Search。
 2. **展开某行**加载该案件下钻详情：
@@ -97,7 +145,21 @@ npm run dev -- --host 127.0.0.1 --port 5173
 >
 > **注意**：时间线按 `userId` 查询（案件行已带 userId）；计划历史按 `caseId` 查询，包含终态计划，因此已完成的 L4b 催收也能看到。
 
-### 3.4 Ops Queue / Compliance / System Admin
+**列表隐私口径**（PRD §8.2 / §9）：
+
+| 列 | 是否展示 | 说明 |
+|----|----------|------|
+| Case ID / User ID | 明文 | 内部键 |
+| Phone | 脱敏 | 如 `+63****358`，完整号不进列表 |
+| Email | 脱敏 | 如 `w***@126.com` |
+| 姓名 | **不展示** | 话术渲染用 `{name}`，后台列表不展示 |
+
+**真实案 / AI Call 的两个已知缺口**（升级前必须知道，否则会误判成故障）：
+
+- 新入案写在 **`t_ai_collection`**（ingestion 投影），而 Search 目前查的是旧库 **`t_collection`**。只投了新 `caseEvent`、旧库没有该 `loan_id` 时，**Case Monitor 会是空的，但引擎可能已经建好计划在催**。这是已知缺口不是"没入案"，先用 §6.2 的 SQL 查投影确认。
+- 时间线能看到 `AI_CALL` 的 `result` 与 `providerMsgId`；但接通原因、Facade 原始 `line_outcome` 存在 `t_channel_callback_audit`，**页面还没接**，只能走 §6.2 的 SQL。
+
+### 3.5 Ops Queue / Compliance / System Admin
 
 - **Ops Queue**：按状态（OPEN/ACK/RESOLVED/IGNORED）筛选异常，逐条 ACK 或 Resolve。
 - **Compliance**：对案件执行冻结 / 解冻 / 升级（写审计日志）。
@@ -105,14 +167,19 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 ---
 
-## 4. 关键说明：为什么有些内容"看起来是空的"
+## 4. 常见「看起来没数据」说明
 
-| 现象 | 原因 | 现状 |
-|------|------|------|
-| Data Analysis 无数据 | 看板为占位页，聚合接口 / Grafana 尚未接入 | Phase 1.5 待做 |
-| 策略/模板"以前看不到" | 后端 `/catalog/*` 一直有数据，是前端页面此前未调用 | **本次已接入**（Strategy + Templates 页） |
-| 后台看不到 L4b 催收情况 | Case 页此前只做检索、未做时间线下钻 | **本次已接入**（Case Monitor 展开行） |
-| Email 在 L4b "0 封" | Phase 1 Email 仅在精确 DPD 里程碑日发送，非里程碑 SKIPPED | 属预期，见 L4b 核对清单 §4 |
+| 现象 | 原因 | 处理 / 现状 |
+|------|------|------------|
+| Dashboard 全 0 | 默认时间窗内没有 timeline（测试数据最后写入可能已超过 7 天） | 选近 30 / 90 天，或跑新一轮 L4b |
+| 投了新 `caseEvent`，Case Monitor 搜不到 | Search 读 `t_collection`，新案在 `t_ai_collection` | 已知缺口，先用 §6.2 SQL 查投影 |
+| 有 AI_CALL 计划但看不出接通原因 | UI 未接回调审计表 | 查 `t_channel_callback_audit`（§6.2） |
+| 浏览器返回 JSON `UNAUTHORIZED` | 误开 8888，或 Vite 把整段 `/dashboard` 代理到了后端 | 只开 5173；改 vite 配置后重启前端 |
+| `ERR_CONNECTION_REFUSED` | 前后端没同时运行 | `scripts\dev\start-admin.ps1` |
+| Email 送达率低但 Case 里是 DELIVERED | `SKIPPED` 是**未发**，不应进分母 | 看板已按 Attempted 计算 |
+| Case 有数据、看板没有 | 看板按时间窗聚合，Case 按案件查全量 | 放大看板天数 |
+| Email 在 L4b "0 封" | Phase 1 Email 仅在精确 DPD 里程碑日发送，非里程碑 `SKIPPED` | 属预期 |
+| 策略/模板"以前看不到" | 后端 `/catalog/*` 一直有数据，是前端页面此前未调用 | 已接入（Strategy + Templates 页） |
 
 ---
 
@@ -134,6 +201,20 @@ npm run dev -- --host 127.0.0.1 --port 5173
 - 全量把 Nacos/YAML 迁入 DB：执行 `db/seed-admin-config.sql`（或本地 `POST /mock/admin/seed-config` 做最小 seed）。
 - 未迁移时 DB 为空 → 引擎全走 YAML；在 Templates 页首次 Edit 某槽即创建 DB 覆盖。
 
+### 5.1 SMS / Push 文案保存护栏
+
+保存前前后端双校验，**后端是唯一拦截门禁**（`ScriptTemplateValidator`）：
+
+| 规则 | SMS | Push |
+|------|-----|------|
+| 允许变量 | 仅 `{name}` `{amount}` `{dpd}` `{repaymentUrl}` | 同左 |
+| 必填变量 | body 必须含 `{amount}` 与 `{repaymentUrl}` | title / body 不可同时为空 |
+| 模板字数硬上限 | body ≤ 300 | title ≤ 40，body ≤ 120 |
+| 样例渲染上限 | ≤ 400（超 160 / 320 仅提示分段成本） | title ≤ 60，body ≤ 180 |
+
+- 编辑弹窗提供变量 chip 一键插入、字数计数、样例渲染预览、非法变量红字提示。
+- Dry-run：`POST /config/script-templates/validate`，不落库，返回 errors / warnings / preview。
+
 > 说明：Phase 1.5 已实现 SMS/Push/计划模板；rule/compliance/channel 的后台编辑仍为后续切片。
 
 ---
@@ -149,26 +230,47 @@ curl -s "http://localhost:8888/plans/by-case/99000002/history?limit=10"   # 计�
 curl -s "http://localhost:8888/plans/141/steps"                            # 某计划步骤
 curl -s "http://localhost:8888/plans/timeline/99000002?limit=50"           # 按 userId 时间线
 curl -s "http://localhost:8888/catalog/overview"                           # 策略/模板目录
+curl -s -b cookies.txt \
+  "http://localhost:8888/dashboard/outreach/realtime?days=30"              # 触达看板聚合
 ```
 
 ### 6.2 SQL
 
 ```sql
 SET @caseId = 99000002;
+
+-- 该案触达明细
 SELECT channel, direction, result, provider_msg_id, source, created_at
   FROM t_contact_timeline WHERE case_id = @caseId ORDER BY created_at;
 
+-- 该案最近一个计划的步骤
 SELECT step_order, channel_type, status, result
   FROM t_contact_plan_step
  WHERE plan_id = (SELECT id FROM t_contact_plan WHERE case_id = @caseId ORDER BY id DESC LIMIT 1)
  ORDER BY step_order;
+
+-- 看板对不上时，先确认时间窗内有没有数据
+SELECT channel, result, COUNT(*) FROM t_contact_timeline
+ WHERE direction = 'OUT' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+ GROUP BY channel, result;
+
+-- 新入案投影：Case Monitor 搜不到但引擎在催时查这里
+SELECT case_id, user_id, dpd, stage, collection_status, overdue_amount, upcoming_amount,
+       borrower_phone, borrower_email
+  FROM t_ai_collection WHERE case_id = @caseId;
+
+-- AI Call 回调审计：result 为映射后枚举，Facade 原始 line_outcome 在 canonical_payload
+SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, received_at
+  FROM t_channel_callback_audit
+ WHERE case_id = @caseId
+ ORDER BY received_at;
 ```
 
-| result | 含义 |
-|--------|------|
-| `DELIVERED` | 供应商已受理（SMS/Push 真实下发） |
-| `SKIPPED` | 未发出（如非里程碑 Email） |
-| `FAILED` | 发送失败 |
+| result | 含义 | 看板归类 |
+|--------|------|----------|
+| `DELIVERED` | 供应商已受理（SMS/Push 真实下发） | Attempted + Delivered |
+| `SKIPPED` | **未发出**（如非里程碑 Email、Guard 拦截） | 不进送达率分母 |
+| `FAILED` | 发送失败 | Attempted |
 
 ---
 
@@ -177,17 +279,20 @@ SELECT step_order, channel_type, status, result
 | 问题 | 处理 |
 |------|------|
 | 前端白屏 | 确认用 `npm run dev` 启动、且已登录；直接 `file://` 打开无效 |
-| 页面数据空 / 接口 404 | 确认 `vite.config.ts` 含对应代理；改代理后重启 dev server |
+| 页面数据空 / 接口 404 | 确认 `vite.config.ts` 含对应代理；**勿**代理整段 `/dashboard`，只代理 `/dashboard/outreach` 等 API 子路径；改代理后重启 dev server |
 | 接口 401 | 未登录或会话过期，重新登录 |
 | Holdout 保存报 409 | 他人已修改，点 Refresh 后基于最新 version 重试 |
 | 后端起不来 / 端口占用 | 结束占用 8888 的 Java 进程后重启；jar 被占用无法 rebuild 同理 |
+| 看板接口 500 | 看后端日志，确认 MySQL / Nacos 连通 |
 | Catalog 接口报错 | 确认 `catalog/catalog-metadata.json`、`script-drafts.json` 存在于 classpath |
+
+**为什么经常"打不开"**：前后端是两个进程、必须同时跑，关窗口即停；`8888` 是 API 不是页面，容易被误存书签；`npm run dev` 不开机自启。日常直接用 §2.1 的一键脚本。
 
 ---
 
 ## 8. 附录：默认账号与测试地址
 
-- 登录：`admin` / `SYSTEM_ADMIN`
+- 登录：`admin` / `local-dev`（角色 `SYSTEM_ADMIN`，仅 local profile）
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://localhost:8888`
 - L4b 统一触达地址：手机 `+639451374358` / 邮箱 `wzynju@126.com` / Push token `1a0018970bf0c19de04`
