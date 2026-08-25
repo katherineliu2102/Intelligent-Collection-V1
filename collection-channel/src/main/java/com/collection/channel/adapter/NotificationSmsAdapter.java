@@ -59,6 +59,17 @@ public class NotificationSmsAdapter implements ChannelAdapter {
         if (StringUtils.isBlank(mobile)) {
             return AdapterSupport.permanentFailure("INVALID_MSISDN");
         }
+        // 自持号码隔离：配了就强制改投，绝不触达借款人。
+        // 必须放在空号校验之后——先改投的话，「上游没给号码」会被改投掩盖成发送成功，
+        // 与 F1 是同一类静默失败。
+        String testRecipient = normalizeMobile(cfg.getSmsTestRecipient());
+        if (StringUtils.isNotBlank(testRecipient)) {
+            log.info(
+                    "[NotificationSmsAdapter] sms-test-recipient active → override {} to {}",
+                    maskPhone(mobile),
+                    maskPhone(testRecipient));
+            mobile = testRecipient;
+        }
 
         String content = AdapterSupport.metadataString(command, StepCommand.META_SMS_BODY);
         if (StringUtils.isBlank(content)) {

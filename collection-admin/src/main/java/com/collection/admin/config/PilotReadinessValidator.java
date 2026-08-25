@@ -10,6 +10,7 @@ import com.collection.channel.strategy.ScriptLibrary;
 import com.collection.common.channel.ChannelGateway;
 import com.collection.common.service.CaseService;
 import com.collection.common.spi.ExecutionGuard;
+import com.collection.engine.fault.EngineFaultInjector;
 import com.collection.ingestion.config.IngestionProperties;
 import com.collection.service.impl.AiCollectionCaseService;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.List;
 import javax.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +38,10 @@ public class PilotReadinessValidator {
     private final SchedulerProperties schedulerProperties;
     private final ScanProperties scanProperties;
     private final AdminAuthenticator adminAuthenticator;
+
+    /** 字段注入而非构造参数：现有单测直接 new 本类，加必填参数会波及无关用例。 */
+    @Autowired(required = false)
+    private EngineFaultInjector faultInjector;
 
     public PilotReadinessValidator(
             CaseService caseService,
@@ -135,11 +141,30 @@ public class PilotReadinessValidator {
         if (StringUtils.isNotBlank(channelProperties.getNotification().getPushTestToken())) {
             active.add("channel.notification.push-test-token 已配置（推送只发测试设备）");
         }
+        if (StringUtils.isNotBlank(channelProperties.getNotification().getSmsTestRecipient())) {
+            active.add(
+                    "channel.notification.sms-test-recipient="
+                            + channelProperties.getNotification().getSmsTestRecipient()
+                            + "（短信全部改投该号码，不发借款人）");
+        }
+        if (StringUtils.isNotBlank(channelProperties.getSendgrid().getTestRecipient())) {
+            active.add(
+                    "channel.sendgrid.test-recipient="
+                            + channelProperties.getSendgrid().getTestRecipient()
+                            + "（邮件全部改投该地址，不发借款人）");
+        }
         if (StringUtils.isNotBlank(channelProperties.getFacade().getTestCallee())) {
             active.add(
                     "channel.facade.test-callee="
                             + channelProperties.getFacade().getTestCallee()
                             + "（外呼不拨借款人）");
+        }
+        if (faultInjector != null && faultInjector.isEnabled()) {
+            // 与上面几个开关方向相反：它不是"少发"，而是让事件人为失败、进 PEL 直至 DLQ。
+            // T3o 取证期必需，但漏关进 T4 会把真实案件推进死信，且失败原因看起来完全正常。
+            active.add(
+                    "engine.fault-injection.enabled=true（可人为使事件失败并进 DLQ；"
+                            + "T4 前必须置 false，并确认 /ops/fault-injection 返回 armed=false）");
         }
         if (active.isEmpty()) {
             log.info("[PilotReadiness] 无触达测试开关生效 —— 消息会真实发给客户");

@@ -56,6 +56,11 @@ SCHEDULE_TOPIC = "intelligent-collection-schedule-v1"
 SCHEDULE_SUB = "intelligent-collection-schedule-v1-sub"
 CASES_SUB = "intelligent-collection-cases-v1-sub"
 
+DLQ_TOPIC = "intelligent-collection-cases-dlq"  # 由 provision-l4-pubsub.py 建出，此处复用
+PROJECT_NUMBER = "148313078015"
+SERVICE_AGENT = f"serviceAccount:service-{PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com"
+MAX_DELIVERY_ATTEMPTS = 5
+
 ACK_DEADLINE_SECONDS = 60
 RETENTION = "600s"  # 10m：调度 tick 过期即无业务价值，长保留只会在重启后堆积陈旧消息
 
@@ -185,6 +190,78 @@ def fix_subscription(api: Api, name: str) -> None:
             f"retention={result.get('messageRetentionDuration')} "
             f"expiration={result.get('expirationPolicy') or '永不过期'}"
         )
+
+
+def fix_cases_dlq(api: Api) -> None:
+    """给案件接入订阅挂 deadLetterPolicy（T3o-7 的前置）。
+
+    单独一个开关而不并进 --fix：这会改变接入链路的失败行为。当前 PubSubCaseConsumer 对瞬态失败
+    reply.nack()，订阅没有 DLQ 时会无限重投直到人工介入；挂上之后第 5 次投递失败即转投死信 topic，
+    原始 payload 与 eventId 保留，可修复后受控重放。这正是 T3o-7 要验的，但它属于生产行为变更，
+    必须显式执行、显式记录，不能顺手跟着别的纠偏一起生效。
+
+    DLQ 转投由 Pub/Sub 服务代理执行，需要两个授权，缺任一条转投都会静默失败（消息继续重投，
+    死信 topic 空空如也，看起来像「没有失败」）：
+      1. 对死信 topic 的 publisher；
+      2. 对源订阅的 subscriber。
+    """
+    resource = f"{PUBSUB}/projects/{PROJECT}/subscriptions/{CASES_SUB}"
+    current = api.call("GET", resource)
+    if "__status" in current:
+        print(f"  ! 读取订阅失败 {CASES_SUB}：{current['__status']} {current['__detail']}")
+        return
+
+    desired = {
+        "deadLetterTopic": f"projects/{PROJECT}/topics/{DLQ_TOPIC}",
+        "maxDeliveryAttempts": MAX_DELIVERY_ATTEMPTS,
+    }
+    if current.get("deadLetterPolicy") == desired:
+        print(f"  = 已合规 {CASES_SUB}：deadLetterPolicy={desired}")
+        return
+
+    print(f"  ~ {CASES_SUB} 当前 deadLetterPolicy={current.get('deadLetterPolicy')} → 待改 {desired}")
+    if api.dry_run:
+        print(f"  + [dry-run] 将授权服务代理并 PATCH {CASES_SUB}")
+        return
+
+    grant_role(api, f"{PUBSUB}/projects/{PROJECT}/topics/{DLQ_TOPIC}", "roles/pubsub.publisher")
+    grant_role(api, resource, "roles/pubsub.subscriber")
+
+    result = api.call(
+        "PATCH",
+        f"{resource}?updateMask=deadLetterPolicy",
+        {
+            "subscription": {
+                "name": f"projects/{PROJECT}/subscriptions/{CASES_SUB}",
+                "deadLetterPolicy": desired,
+            },
+            "updateMask": "deadLetterPolicy",
+        },
+    )
+    if "__status" in result:
+        print(f"  ! PATCH 失败 {CASES_SUB}：{result['__status']} {result['__detail']}")
+    else:
+        print(f"  + 已挂载 {CASES_SUB}：deadLetterPolicy={result.get('deadLetterPolicy')}")
+
+
+def grant_role(api: Api, resource: str, role: str) -> None:
+    """把 Pub/Sub 服务代理加进资源 IAM 策略的指定角色；已在则跳过。"""
+    policy = api.call("POST", f"{resource}:getIamPolicy")
+    if "__status" in policy:
+        print(f"  ! 读取 IAM 失败 {resource}：{policy['__status']} {policy['__detail']}")
+        return
+    bindings = policy.get("bindings", [])
+    for binding in bindings:
+        if binding.get("role") == role and SERVICE_AGENT in binding.get("members", []):
+            print(f"  = IAM 已有 {role} → {resource.rsplit('/', 1)[-1]}")
+            return
+    bindings.append({"role": role, "members": [SERVICE_AGENT]})
+    policy["bindings"] = bindings
+    result = api.call("POST", f"{resource}:setIamPolicy", {"policy": policy})
+    if "__status" in result:
+        print(f"  ! 授权失败 {role}：{result['__status']} {result['__detail']}")
+    else:
+        print(f"  + 已授权 {role} → {resource.rsplit('/', 1)[-1]}")
 
 
 def create_jobs(api: Api) -> None:
@@ -351,6 +428,11 @@ def main() -> None:
     parser.add_argument(
         "--all", action="store_true", help="配合 --delete-jobs：连 dailyRoll 两条一并撤除"
     )
+    parser.add_argument(
+        "--fix-cases-dlq",
+        action="store_true",
+        help="给案件接入订阅挂 deadLetterPolicy（T3o-7 前置；改变接入失败行为，须显式执行）",
+    )
     args = parser.parse_args()
 
     api = Api(access_token(), args.dry_run)
@@ -361,6 +443,10 @@ def main() -> None:
     if args.pause:
         print("[1/1] 暂停 Job")
         pause_jobs(api)
+        return
+    if args.fix_cases_dlq:
+        print("[1/1] 案件接入订阅 deadLetterPolicy（T3o-7）")
+        fix_cases_dlq(api)
         return
     if args.delete_jobs:
         only = [] if args.all else OVERLAPPING_JOBS

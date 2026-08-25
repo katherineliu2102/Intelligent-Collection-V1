@@ -196,7 +196,7 @@
 | T3o-1 | T3 全部出口已通过 | 主架构 | ⬜ |
 | T3o-2 | Pilot 案件/调度订阅、Nacos 与 Redis 隔离配置就位（含 §4.1 配置优先级探针实测） | 运维 + 主架构 | 🟡 |
 | T3o-3 | 调度通道生产化（T5-S） | 运维 + 主架构 | ⬜ |
-| T3o-4 | 渠道 sandbox、白名单、脱敏与限频 | 编排同事 + 运维 | ⬜ |
+| T3o-4 | 渠道触达隔离（自持地址）、白名单、脱敏与限频 | 编排同事 + 运维 | ⬜ 出口已按 F1 改口径，见 §7.4 |
 | T3o-5 | Redis 总线/幂等专项（T5-R） | 主架构 | 🟡 |
 | T3o-6 | 简版观测 MVP（T3o-O） | 主架构 | 🟡 代码已交付，待 Pilot 取证 |
 | T3o-7 | Pub/Sub 死信演练 | 运维 + 主架构 | ⬜ |
@@ -207,7 +207,7 @@
 | T5-R1～R15 | Redis Consumer Group、PEL、DLQ、幂等、频控、恢复与观测 | ⬜ |
 | T3o-O1～O4 | 接入、inbox、调度/渠道、Redis PEL/DLQ 的最小可查询证据 | 🟡 能力已具备，待注入取证 |
 
-**出口**：以上用例全部通过，回滚可演练，触达限制在 sandbox/测试地址。简版观测 MVP 缺失即阻断 T4。
+**出口**：以上用例全部通过，回滚可演练，触达限制在自持地址（口径见 §7.4）。简版观测 MVP 缺失即阻断 T4。
 
 ### 7.1 执行顺序（2026-08-25 修订）
 
@@ -220,11 +220,48 @@ T5 手册 §6 原定「先打通生产渠道，再做可靠性演练」（2026-0
 
 其中 S4（陈旧丢弃）需停机积压后重启，排在需要连续运行的用例之后；S7 只能在 03:35–05:55 PHT 窗口执行；R5/R6 所需的 `MAX_DELIVERY_EXCEEDED` 素材由 R3/R4 的持续失败 handler 产生；R8 与 R12 共用一次重启。
 
+逐条的注入手法、命令与断言字段见 [T3o 执行取证手册](./MOCASA催收系统升级_Phase1_T3o执行取证手册.md)。
+
 ### 7.2 观测证据入口
 
 - 指标：`/actuator/prometheus` 手工抓取（Pilot 只绑回环，经 SSH 隧道访问）。
 - 关联证据：`/ops/evidence/event/{eventId}`、`/ops/evidence/case/{caseId}`、`/ops/evidence/plan/{planId}`、`/ops/evidence/redis`，均为只读且需管理后台登录态。外部 payload 原文、计划快照、话术渲染结果与回调原文不出参，需要时按返回的主键到库里单独取。
 - 日志关联字段：调度链路 `job` / `scanId` / `msgId`；事件与步骤链路 `eventId` / `caseId` / `planId` / `stepId` / `stepOrder` / `channel`。
+
+### 7.3 演练期专用开关
+
+T5-R3～R6 与 R13 要求「同一条消息反复失败」。真实故障（吊销库权限、锁行）会波及其他事件，取不到干净证据，故引入受控注入：`engine.fault-injection.enabled`（默认 false，改配置并重启才生效）+ `/ops/fault-injection` 运行时武装。注入必须靶向到 `eventType` 或 `eventId`，接口拒绝无靶向武装。
+
+两个注入位对应两条不能互相替代的语义：`BEFORE_HANDLER` 业务未执行即失败、消息留 PEL（R3/R4/R5/R6）；`AFTER_HANDLER` 业务已执行、去重标记已写、ACK 前失败，重投应命中去重直接跳过（R13）。
+
+**该开关属 T4 前必须停用的测试资产**，与 §7.4 的四个改投开关同列；启动日志 `[PilotReadiness]` 段会把生效中的逐项列出。
+
+### 7.4 T3o-4 触达隔离口径（2026-08-25 修订）
+
+原出口写「触达限制在 sandbox/测试地址」。F1 已证实**短信没有 sandbox**：`sms-test-mode` 只免签名，路由仍是四个真实运营商通道，通知中心也不存在 Virtual 账号。该措辞按字面无法达成，本节为准。
+
+**新出口：触达对象必须全部是团队自持地址，由 Adapter 出口强制改投保证，不依赖上游数据。**
+
+「靠上游名单里放测试号」在 Pilot 上不成立——案件来自数仓真实数据，号码是真实借款人的。故隔离必须做在 Adapter 出口：
+
+| 渠道 | 改投开关 | 交付状态 |
+|---|---|---|
+| PUSH | `channel.notification.push-test-token` | 原有 |
+| AI_CALL | `channel.facade.test-callee` | 原有 |
+| SMS | `channel.notification.sms-test-recipient` | **2026-08-25 新增**（此前只有不改投的 `sms-test-mode`） |
+| EMAIL | `channel.sendgrid.test-recipient` | **2026-08-25 新增**（此前四渠道中唯一既无 sandbox 也无改投出口） |
+
+四个开关一律在**地址校验之后**生效：先改投的话，「上游没给号码/邮箱」会被掩盖成发送成功，与 F1 是同一类静默失败。单测锁住这条边界。
+
+出口判据三条，缺一不可：
+
+1. 四个渠道的改投开关均已配置为自持地址，启动日志 `[PilotReadiness]` 段四条齐全；
+2. 案件白名单（`collection.scan.case-id-whitelist`）非空且 `allow-full-scan=false`——改投是最后一道，白名单是第一道，两道都要在；
+3. 演练期每个渠道至少一次真实送达在自持终端上人工确认，判据见[触达内容验收清单](./MOCASA催收系统升级_Phase1_触达内容验收清单.md)模式 A。
+
+自持终端（手机号 A/B、邮箱、Push token）登记在[管理后台操作手册 §8](../MOCASA催收系统升级_Phase1_管理后台操作手册.md)；号 A 与号 B 属不同运营商号段，SMS 建议两个都验以覆盖路由差异。
+
+**四个开关均属 T4 前必须清空的测试资产。** 清空后触达即真实发往借款人，务必与白名单审批同步。
 
 ---
 

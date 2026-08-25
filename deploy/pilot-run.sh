@@ -44,6 +44,9 @@ REQUIRED_KEYS=(
   COLLECTION_REDIS_HOST COLLECTION_REPAYMENT_URL_TEMPLATE
   COLLECTION_PILOT_LOAN_IDS COLLECTION_SCAN_CASE_IDS
   CHANNEL_CALLBACK_HMAC_SECRET
+  # PilotReadinessValidator 要求管理面至少一个可用账号；缺这两项只会得到一句
+  # 「管理面无可用账号」的 IllegalStateException，看不出是 env 没配。
+  COLLECTION_ADMIN_USER COLLECTION_ADMIN_PASSWORD_HASH
 )
 # 只接入不触达时（调度关闭）没有任何步骤会执行，Facade 配不配都到不了客户，故不做必填。
 if [[ "${COLLECTION_SCHEDULER_ENABLED:-true}" == "true" ]]; then

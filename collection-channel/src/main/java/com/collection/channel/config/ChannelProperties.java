@@ -123,12 +123,22 @@ public class ChannelProperties {
          *
          * <p><b>这不是投递隔离开关。</b>2026-08-24 实测该端点返回的 {@code data.channel} 为 CreativeBlue / QHSms
          * 等真实运营商通道，通知中心也不存在 Virtual 账号（显式指定即报 {@code no valid account}）。 Adapter 不替换手机号，payload
-         * 里始终是真实号码——开着它，短信照样真实送达。 要做到不触达真人，只能靠上游名单里放测试号（对照 PUSH 的 {@code pushTestToken} 与 AI_CALL 的
-         * {@code testCallee}，那两个才是真的改投目标）。
+         * 里始终是真实号码——开着它，短信照样真实送达。 要做到不触达真人，用 {@code smsTestRecipient}（那个才是真的改投目标，对照 PUSH 的 {@code
+         * pushTestToken} 与 AI_CALL 的 {@code testCallee}）。
          */
         private boolean smsTestMode = false;
         /** 测试端点可选指定的通道账号名（accountName），空=默认测试路由。 */
         private String smsTestAccountName = "";
+        /**
+         * 自持号码隔离开关：非空时所有 SMS 强制改投该号码，不再发给借款人。
+         *
+         * <p>补 {@code smsTestMode} 补不了的那一半。通知中心没有 sandbox（无 Virtual 账号，测试端点仍走真实运营商）， 而 T3o
+         * 的触达对象要求全部是团队自持号码；Pilot 案件来自数仓真实数据，号码是真实借款人的， 靠"上游名单里放测试号"在真实案件上做不到。故与 PUSH 的 {@code
+         * pushTestToken}、AI_CALL 的 {@code testCallee} 对齐，在 Adapter 出口处改投。
+         *
+         * <p>生产必须留空。启动日志 {@code [PilotReadiness]} 段会把生效中的列出来。
+         */
+        private String smsTestRecipient = "";
         /**
          * true → App Push 走同步端点 /v1/app_notification/sync/send（联调，返回 requestSuccess/requestId，
          * 可见极光真实受理结果）；false → 异步 /v1/app_notification/send（生产，入队 code=0 即受理）。 注意：Push
@@ -172,6 +182,13 @@ public class ChannelProperties {
         private Map<String, String> templates = new HashMap<>();
         /** 默认 https://api.sendgrid.com/v3/mail/send；单测可指向 WireMock。 */
         private String apiUrl = "https://api.sendgrid.com/v3/mail/send";
+        /**
+         * 自持邮箱隔离开关：非空时所有 Email 强制改投该地址，不再发给借款人。
+         *
+         * <p>理由同 {@code channel.notification.sms-test-recipient}：EMAIL 此前是四个渠道里唯一 既无 sandbox
+         * 也无改投出口的， T3o 的「触达只发自持地址」在它上面无法成立。生产必须留空。
+         */
+        private String testRecipient = "";
     }
 
     @Data

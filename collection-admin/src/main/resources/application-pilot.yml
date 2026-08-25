@@ -20,6 +20,11 @@ engine:
   spi:
     execution-guard-timeout-ms: ${ENGINE_SPI_EXECUTION_GUARD_TIMEOUT_MS:500}
     step-resolver-timeout-ms: ${ENGINE_SPI_STEP_RESOLVER_TIMEOUT_MS:500}
+  fault-injection:
+    # T5-R3…R6 与 R13 要求「同一条消息反复失败」，真实故障（吊销权限、锁行）会波及其他事件、
+    # 取不到干净证据，故用受控注入。开关只在 T3o 取证期置 true，且必须显式 arm 才会生效
+    # （见 /ops/fault-injection）。**T4 前必须置回 false 并确认 armed=false。**
+    enabled: ${ENGINE_FAULT_INJECTION_ENABLED:false}
 
 management:
   endpoints:

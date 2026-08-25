@@ -7,6 +7,7 @@ import com.collection.common.event.EventHandler;
 import com.collection.common.model.EventDlq;
 import com.collection.common.repository.EventDlqRepository;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.fault.EngineFaultInjector;
 import com.collection.engine.metrics.CollectionMetrics;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -58,6 +59,10 @@ public class RedisStreamEventBus implements CollectionEventBus {
     private final StringRedisTemplate redisTemplate;
     private final CollectionMetrics metrics;
     @Resource private EventDlqRepository eventDlqRepository;
+
+    /** 默认值保证手工构造（纯逻辑单测）时不为 null；Spring 环境由容器覆盖。默认实例恒不注入。 */
+    @Resource private EngineFaultInjector faultInjector = EngineFaultInjector.disabled();
+
     private final Map<EventType, List<EventHandler>> handlers = new ConcurrentHashMap<>();
     private volatile long lastBackpressureWarnNanos;
     private volatile long pendingSize;
@@ -338,6 +343,8 @@ public class RedisStreamEventBus implements CollectionEventBus {
         snapshot.put(
                 "lastConsumeFailure", consumeFailure == null ? null : consumeFailure.toString());
         snapshot.put("consecutiveConsumeFailures", consecutiveConsumeFailures);
+        // 演练期间必须能一眼看出「这批失败是注入的还是真的」，否则事后翻证据两者分不开。
+        snapshot.put("faultInjection", faultInjector.status());
         return snapshot;
     }
 
@@ -473,10 +480,14 @@ public class RedisStreamEventBus implements CollectionEventBus {
             return;
         }
         try {
+            faultInjector.failIfArmed(EngineFaultInjector.Position.BEFORE_HANDLER, event);
             for (EventHandler handler : eventHandlers) {
                 handler.handle(event);
             }
             markProcessed(event);
+            // 去重标记已写、ACK 未发——生产上「提交后进程崩」就落在这一瞬间。
+            // 重投应命中 alreadyProcessed 直接跳过（T5-R13）。
+            faultInjector.failIfArmed(EngineFaultInjector.Position.AFTER_HANDLER, event);
             acknowledge(record);
             metrics.eventConsumed(event.getEventType().name());
             metrics.eventDuration(event.getEventType().name(), System.nanoTime() - started);

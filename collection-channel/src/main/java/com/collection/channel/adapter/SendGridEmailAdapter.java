@@ -53,6 +53,16 @@ public class SendGridEmailAdapter implements ChannelAdapter {
         if (StringUtils.isBlank(email) || !email.contains("@")) {
             return AdapterSupport.permanentFailure("NO_EMAIL");
         }
+        // 自持邮箱隔离：配了就强制改投，绝不触达借款人。
+        // 与 SMS 同理放在地址校验之后，避免「上游没给邮箱」被改投掩盖成发送成功。
+        String testRecipient = properties.getSendgrid().getTestRecipient();
+        if (StringUtils.isNotBlank(testRecipient)) {
+            log.info(
+                    "[SendGridEmailAdapter] sendgrid test-recipient active → override {} to {}",
+                    maskEmail(email),
+                    maskEmail(testRecipient.trim()));
+            email = testRecipient.trim();
+        }
 
         String templateId = resolveTemplateId(command);
         if (StringUtils.isBlank(templateId)) {
