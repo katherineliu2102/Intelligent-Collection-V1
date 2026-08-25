@@ -4,10 +4,25 @@ spring:
     port: ${COLLECTION_REDIS_PORT:6379}
     password: ${COLLECTION_REDIS_PASSWORD:}
     ssl: ${COLLECTION_REDIS_SSL:false}
+    # 事件总线 / 频控实际在 DB 0。不要绑 COLLECTION_REDIS_DB（env 里常是 3，绑上会读空库丢事件）。
+    database: 0
     connect-timeout: 200ms
     # 命令超时必须大于 XREADGROUP 的 BLOCK 1s，否则消费轮询每次都抛 RedisCommandTimeoutException。
     # 合规频控等短命令的延迟上界由 SpiInvoker 的 50ms 硬超时兜底（超时按 fail-close 处理）。
     timeout: 2s
+
+# Pilot 必须打开：否则 SELECT plan_id / channel_type 无法映射到 Java 字段，
+# 调度发出的 PLAN_STEP_DUE 会丢掉 planId，步骤永远停在 PENDING。
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+# Redis 频控/解析在 50ms 内完不成会 fail-close 成 SKIPPED，外呼发不出去。
+# 生产与 Pilot 对齐 500ms；仍保留 SPI 硬超时，不要关 timeout-enabled。
+engine:
+  spi:
+    execution-guard-timeout-ms: ${ENGINE_SPI_EXECUTION_GUARD_TIMEOUT_MS:500}
+    step-resolver-timeout-ms: ${ENGINE_SPI_STEP_RESOLVER_TIMEOUT_MS:500}
 
 management:
   endpoints:
