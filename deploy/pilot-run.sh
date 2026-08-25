@@ -50,6 +50,11 @@ if [[ "${COLLECTION_SCHEDULER_ENABLED:-true}" == "true" ]]; then
   # callback-secret 缺失时外呼照打、回调全被判验签失败回 401，结果只能挂到 callbackTimeout。
   # PilotReadinessValidator 同样拒启，在这里先点名以免只看到一句 IllegalStateException。
   REQUIRED_KEYS+=(CHANNEL_FACADE_BASE_URL CHANNEL_FACADE_API_KEY CHANNEL_FACADE_CALLBACK_SECRET)
+  # pilot 下 TriggerScanner 不装配（@Profile local/test），步骤执行的唯一入口是调度订阅：
+  # 这两项为空时应用侧看不到任何 tick，而 Cloud Scheduler 的 Job 仍显示成功——两侧都「正常」、
+  # 链路静默停摆（台账 T3o-3）。application-pilot.yml 给的是空缺省，不点名只会得到一句
+  # 离根因很远的报错。
+  REQUIRED_KEYS+=(GCP_PUBSUB_PROJECT GCP_SCHEDULER_SUBSCRIPTION)
 fi
 missing=()
 for k in "${REQUIRED_KEYS[@]}"; do
@@ -82,6 +87,16 @@ fi
 docker image inspect "$IMAGE" >/dev/null 2>&1 || die "本机没有镜像 $IMAGE"
 
 mkdir -p "$LOG_DIR"
+
+# 联调期曾按别的名字起过容器（如真拨演练的 collection-admin-aicall）。这里只按 $NAME 清理，
+# 管不到那些；两个实例同时挂在同一个 Redis 消费组和同一条调度订阅上，tick 会被随机分走一半、
+# 事件被重复消费，现象很像「调度不稳定」，排查会绕远路（T5-S8 独占性直接失败）。
+STRAY="$(docker ps --format '{{.Names}}' \
+  | grep -E '^collection-admin' | grep -vx "$NAME" || true)"
+if [[ -n "$STRAY" ]]; then
+  die "检测到并存的应用容器：$(echo "$STRAY" | tr '\n' ' ')
+同一消费组/调度订阅上有第二个消费者会静默分流 tick。确认无用后先 docker rm -f 再重跑本脚本。"
+fi
 
 echo "==> 停掉旧容器"
 docker rm -f "$NAME" >/dev/null 2>&1 || true

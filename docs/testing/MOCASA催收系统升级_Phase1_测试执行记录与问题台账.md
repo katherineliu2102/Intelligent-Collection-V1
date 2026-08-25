@@ -701,19 +701,27 @@ L4b-1 报「90s 内未落 t_contact_plan」——这一轮已因漏做烧掉一�
 | T3o-3 | 调度通道生产化（T5-S1…S7） | 运维 + 主架构 | ⬜ |
 | T3o-4 | 渠道 sandbox、白名单、脱敏与限频 | 编排同事 + 运维 | ⬜ 无可用 sandbox（F1），出口措辞待改 |
 | T3o-5 | Redis 总线/幂等专项（T5-R1…R15） | 主架构 | 🟡 环境已摸底，R1 单测覆盖，余待重部后执行 |
-| T3o-6 | 简版观测 MVP（T3o-O1…O4） | 主架构 | ⬜ |
+| T3o-6 | 简版观测 MVP（T3o-O1…O4） | 主架构 | 🟡 2026-08-25 代码已交付，待 Pilot 注入取证 |
 | T3o-7 | Pub/Sub 死信演练：持续瞬态失败超过订阅最大投递次数后进入 DLQ；保留原始 payload 与 `eventId`，修复后受控重放 | 运维 + 主架构 | ⬜ |
 
 ### T3o-O 简版观测 MVP
 
 > 不要求 Prometheus、Dashboard 或 Alertmanager。本组验收的是代码能提供可查询的最小证据；能力缺失时须先作为代码交付补齐，不能以事后人工推断替代。
 
+**2026-08-25 代码交付。** 盘点后确认计数类埋点原本已基本齐全（事件链 published/consumed/deduped/dlq、接入侧 `IngestionMetrics` 的 ack/nack/poison/deduped、调度五个 `collection.schedule.*`、步骤与渠道的 skipped/touch/duration、发件箱三个、Redis 深度三个 gauge），缺的是三块，已一并补齐：
+
+1. **关联证据面**：新增 `/ops/evidence` 四个只读端点（`event/{eventId}`、`case/{caseId}`、`plan/{planId}`、`redis`），挂 `/ops/**` 复用管理后台登录态。计数器回答不了「这一条为什么没触达」，而 O1–O4 每条都要求可关联到 event/case 或 plan/step。出参裁掉 `payload` / `context_snapshot` / `resolved_params` / `content_summary` / `canonical_payload` / `borrower_name` / `push_token`，电话邮箱走 `PiiMask`；单测 `EvidenceControllerTest` 锁住读源与这条 PII 边界。
+2. **调度链路 MDC**：`PubSubScheduleConsumer` 加 `msgId`、`ScheduledJobRunner` 加 `job` 与 `scanId`。指标是聚合值，分不开同一任务的两次投递，而 T5-S5/S6 要判定每条 tick 各自的去向。步骤链路在 `StepExecutionOrchestrator` 按入参补写 `caseId`/`planId`/`stepId`/`stepOrder`/`channel`——原先只由 Redis 总线消费线程写入，内存总线下缺 `stepId`，重试与 SPI 跨线程后也需续上。
+3. **日切进度可查**：`RedisDailyRollDeduplicator` 新增 `evidenceSnapshot()` 与 `cursor-advanced-at` 键。只看完成标记分不出「在推进」与「卡住不动」，而 T5-S7 要判的正是「窗口内逐页推进并按时完成」。
+
+Redis 证据一律实时打 Redis，不用三个 gauge 的采样值——gauge 只在 PEL 扫描周期（默认 30s）刷新，故障注入后读到的往往是注入前的旧值。PEL 明细只取最老若干条，深度取 XPENDING 汇总值；去重键用 SCAN 取有界样本，不用 KEYS。
+
 | ID | 受控场景 | 最小可查询证据 | 状态 |
 |---|---|---|---|
-| T3o-O1 | 正常消息消费 | ACK/NACK/poison、投影与 inbox 状态，可关联 event/case | ⬜ |
-| T3o-O2 | 发布失败与补发 | 失败原因、inbox 状态迁移与补发结果可查，不泄露 PII | ⬜ |
-| T3o-O3 | 调度、渠道与日切异常 | 任务成功/失败、扫描与完成标记、Guard 拦截与渠道失败可关联 plan/step | ⬜ |
-| T3o-O4 | Redis PEL/DLQ 与重复投递 | Stream/PEL/DLQ 深度、消费去重与重复投递证据可查 | ⬜ |
+| T3o-O1 | 正常消息消费 | ACK/NACK/poison、投影与 inbox 状态，可关联 event/case | 🟡 能力已具备（`/ops/evidence/event`、`/case`），待注入取证 |
+| T3o-O2 | 发布失败与补发 | 失败原因、inbox 状态迁移与补发结果可查，不泄露 PII | 🟡 同上（`publishStatus` + `collection.outbox.*`），待取证 |
+| T3o-O3 | 调度、渠道与日切异常 | 任务成功/失败、扫描与完成标记、Guard 拦截与渠道失败可关联 plan/step | 🟡 能力已具备（`/ops/evidence/plan`、日切快照、调度 MDC），待取证 |
+| T3o-O4 | Redis PEL/DLQ 与重复投递 | Stream/PEL/DLQ 深度、消费去重与重复投递证据可查 | 🟡 能力已具备（`/ops/evidence/redis`），待取证 |
 
 ### T5-S 调度通道专项
 
@@ -748,6 +756,14 @@ pilot 应用（`SPRING_PROFILES_ACTIVE=pilot`、`COLLECTION_SCHEDULER_ENABLED=fa
 ①任何 `FLUSHDB` / `FLUSHALL` 一律禁止，T5-R 的状态重置只能按 `collection:*` 前缀定点清理；
 ②**T5-R9（Redis 断连恢复）不能靠重启该实例做**，那会同时打断另外几个服务，只能在客户端侧断连
 （如对应用容器做网络隔离或只 `CLIENT KILL` 我方连接）。
+
+**E1 的 2026-08-25 处置（T3o 判定口径）：** 已改用独立 db3（`application-pilot.yml` 的
+`database: ${COLLECTION_REDIS_DB:0}`，`pilot.env` 设 `COLLECTION_REDIS_DB=3`；我方键全在 db3，
+db0 归 `id_detection_agent` 等）。这解除了上述后果①——db3 内可直接 `FLUSHDB`，T5-R 的状态重置
+不必再按前缀定点清理，也少一类误删邻居键的风险。**后果②不解除**：db 只隔键空间不隔进程，内存、
+单线程命令执行、AOF 与重启仍然共享，F6 那次全库丢数据正是 db 隔离防不住的类型。故 T5-R9 保持
+上述降级口径。**T3o 接受在共用实例上完成，E1 记为明确环境偏差；独立实例推迟到 T4 前，与凭证
+一次性轮换同批处理。** 另记一笔：非 0 的 db 将来若迁 Redis Cluster 需先迁回 db0，Cluster 只支持 db0。
 
 **E2：AOF 未开启**（`appendonly no`，`maxmemory 0`，当前用量 19.64M；`maxmemory-policy noeviction` 符合要求）。
 Redis 一旦重启，幂等锁、合规计数、接入去重键与事件流全部丢失。引擎事件有发件箱兜底，

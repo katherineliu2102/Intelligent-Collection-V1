@@ -17,6 +17,7 @@ import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
@@ -141,10 +142,17 @@ public class PubSubScheduleConsumer implements SmartLifecycle, MessageReceiver {
 
     @Override
     public void receiveMessage(PubsubMessage message, AckReplyConsumer reply) {
-        ScheduledJob job = resolve(message);
-        reply.ack();
-        if (job != null) {
-            runner.run(job);
+        // 迁出 XXL 后没有调度控制台的执行记录页，一条 tick 的去向只能靠日志重建。
+        // msgId 是把「Cloud Scheduler 发了」与「应用侧扫了」对上的唯一凭据（T5-S1/S3/S4/S5）。
+        MDC.put("msgId", String.valueOf(message.getMessageId()));
+        try {
+            ScheduledJob job = resolve(message);
+            reply.ack();
+            if (job != null) {
+                runner.run(job);
+            }
+        } finally {
+            MDC.remove("msgId");
         }
     }
 

@@ -115,8 +115,8 @@ public class CaseQueryController {
                             row.put("product", rs.getString("product"));
                             row.put("planStatus", rs.getString("planStatus"));
                             row.put("frozen", rs.getInt("frozen") == 1);
-                            row.put("phone", maskPhone(rs.getString("phone")));
-                            row.put("email", maskEmail(rs.getString("email")));
+                            row.put("phone", PiiMask.phone(rs.getString("phone")));
+                            row.put("email", PiiMask.email(rs.getString("email")));
                             return row;
                         });
 
@@ -126,23 +126,5 @@ public class CaseQueryController {
         pageData.put("pageSize", size);
         pageData.put("total", total == null ? 0 : total);
         return ApiResponse.success(pageData);
-    }
-
-    private static String maskPhone(String phone) {
-        if (StringUtils.isBlank(phone) || phone.length() < 7) {
-            return phone;
-        }
-        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 3);
-    }
-
-    private static String maskEmail(String email) {
-        if (StringUtils.isBlank(email) || !email.contains("@")) {
-            return email;
-        }
-        int at = email.indexOf('@');
-        if (at <= 1) {
-            return "***" + email.substring(at);
-        }
-        return email.substring(0, 1) + "***" + email.substring(at);
     }
 }

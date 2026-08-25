@@ -11,10 +11,14 @@ import static org.mockito.Mockito.when;
 import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.ingestion.job.DpdStageRollHandler;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 
 /** 调度任务分派、单飞保护与失败隔离。 */
 class ScheduledJobRunnerTest {
@@ -157,6 +161,49 @@ class ScheduledJobRunnerTest {
 
         verify(triggerPublisher).publishDueSteps();
         assertThat(counter("collection.schedule.scan.rows", "planStepDue")).isEqualTo(4.0);
+    }
+
+    /**
+     * 扫描期间日志须带 job 与 scanId。
+     *
+     * <p>指标是聚合值，分不开同一任务的两次投递；T5-S5/S6 要判定每条 tick 各自的去向，靠 scanId 切开日志。
+     */
+    @Test
+    void scanRunsWithJobAndScanIdInMdc() {
+        List<Map<String, String>> observed = new ArrayList<>();
+        when(triggerPublisher.publishDueSteps())
+                .thenAnswer(
+                        invocation -> {
+                            observed.add(MDC.getCopyOfContextMap());
+                            return 1;
+                        });
+
+        runner.run(ScheduledJob.PLAN_STEP_DUE);
+        runner.run(ScheduledJob.PLAN_STEP_DUE);
+
+        assertThat(observed).hasSize(2);
+        assertThat(observed.get(0)).containsEntry("job", "planStepDue").containsKey("scanId");
+        // 两轮扫描的 scanId 必须不同，否则日志切不开
+        assertThat(observed.get(0).get("scanId")).isNotEqualTo(observed.get(1).get("scanId"));
+    }
+
+    /** MDC 是线程级的，扫描结束不清理会污染同线程后续日志，把无关记录标成某个 job。 */
+    @Test
+    void mdcIsClearedAfterScan() {
+        runner.run(ScheduledJob.PLAN_STEP_DUE);
+
+        assertThat(MDC.get("job")).isNull();
+        assertThat(MDC.get("scanId")).isNull();
+    }
+
+    @Test
+    void mdcIsClearedAfterScanFailure() {
+        when(triggerPublisher.publishDueSteps()).thenThrow(new IllegalStateException("boom"));
+
+        runner.run(ScheduledJob.PLAN_STEP_DUE);
+
+        assertThat(MDC.get("job")).isNull();
+        assertThat(MDC.get("scanId")).isNull();
     }
 
     private double counter(String name, String job) {

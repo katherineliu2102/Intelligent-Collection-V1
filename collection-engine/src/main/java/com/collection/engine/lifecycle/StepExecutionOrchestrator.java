@@ -32,6 +32,7 @@ import java.util.Map;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -77,6 +78,50 @@ public class StepExecutionOrchestrator {
     @Resource private com.collection.engine.config.EngineProperties props;
 
     public void executeStep(ContactPlan plan, ContactPlanStep step) {
+        Map<String, String> priorMdc = putStepMdc(plan, step);
+        try {
+            executeStepWithMdc(plan, step);
+        } finally {
+            restoreMdc(priorMdc);
+        }
+    }
+
+    /**
+     * 管线全程带 plan/step/channel 的 MDC。
+     *
+     * <p>事件总线消费线程已按事件载荷写入 {@code planId}/{@code stepId}，但那条路径只在 Redis 实现下完整（{@code
+     * InMemoryEventBus} 不写 stepId），且重试与 SPI 跨线程后要靠它续上。 这里按入参再写一次，使「Guard 拦截 / 渠道失败」的日志无论由谁触发都能关联到
+     * plan/step ——T3o-O3 与 T5-R11 的断言即在此。
+     */
+    private Map<String, String> putStepMdc(ContactPlan plan, ContactPlanStep step) {
+        Map<String, String> prior = new LinkedHashMap<>();
+        putMdc(prior, "caseId", plan == null ? null : plan.getCaseId());
+        putMdc(prior, "planId", plan == null ? null : plan.getId());
+        putMdc(prior, "stepId", step == null ? null : step.getId());
+        putMdc(prior, "stepOrder", step == null ? null : step.getStepOrder());
+        putMdc(prior, "channel", step == null ? null : step.getChannelType());
+        return prior;
+    }
+
+    private static void putMdc(Map<String, String> prior, String key, Object value) {
+        prior.put(key, MDC.get(key));
+        if (value != null) {
+            MDC.put(key, String.valueOf(value));
+        }
+    }
+
+    private static void restoreMdc(Map<String, String> prior) {
+        prior.forEach(
+                (key, value) -> {
+                    if (value == null) {
+                        MDC.remove(key);
+                    } else {
+                        MDC.put(key, value);
+                    }
+                });
+    }
+
+    private void executeStepWithMdc(ContactPlan plan, ContactPlanStep step) {
         String idempotencyKey = buildIdempotencyKey(plan, step);
         String executionLockKey = STEP_LOCK_PREFIX + idempotencyKey;
 

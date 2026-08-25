@@ -281,7 +281,10 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 1. 校验应用到 Redis、MySQL、案件订阅、调度订阅和渠道的网络与鉴权。
 2. 启动应用并确认 health 为 UP、配置加载无缺失、Consumer Group 初始化可重复执行；日志出现 `[Scheduler] 调度订阅消费已启动`。
 3. 在 Redis 中检查 Stream、Consumer Group、Consumer Name 与 `collection:ingestion:*` 去重键；记录脱敏配置快照。
-4. 验证 T3o 简版观测 MVP：关键成功/失败路径可查到 event/case/plan/step 关联证据。若 `/actuator/prometheus` 已实现，手工抓一次；若尚未实现，须完成等价的可查询指标/日志/状态能力后再宣告 T3o 通过。
+4. 验证 T3o 简版观测 MVP：关键成功/失败路径可查到 event/case/plan/step 关联证据。三个入口逐一确认——
+   - 指标：手工抓一次 `/actuator/prometheus`（只绑回环，经 SSH 隧道）；
+   - 关联证据：`/ops/evidence/redis` 应返回 Stream 长度、PEL 深度与最老条目 idle、DLQ 深度、消费去重键样本、工作池水位与日切游标/完成标记；随后用一个真实 `eventId` 与 `caseId` 各调一次 `/ops/evidence/event/{eventId}`、`/ops/evidence/case/{caseId}`，确认 inbox 的 `projectionApplied` / `publishStatus` 与派生计划、步骤能连起来；
+   - 日志：确认调度日志带 `job` / `scanId` / `msgId`，步骤日志带 `eventId` / `caseId` / `planId` / `stepId` / `channel`。
 5. **调度巡检**（迁出 XXL 后无调度控制台执行记录页，这一步不可省）：在观测 MVP 中验证计划任务的触发、失败、陈旧消息和完成状态可查询。自动抓取与告警通道可后置，最迟在移除白名单（T6 准入）前闭合；但基础查询能力缺失时不得进入 T4。
 
 #### 调度排障速查
@@ -309,17 +312,21 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 
 本节定义操作顺序；具体断言、状态与证据格式以测试 SSOT 的 T5/T5-R 为准。
 
-> 顺序按“先打通生产渠道，再做可靠性演练，监控最后补”排列（2026-08-05 决定）。第 7 步不阻塞第 1–6 步与 T5 结论。
+> **2026-08-25 修订**：原顺序为“先打通生产渠道，再做可靠性演练，监控最后补”（2026-08-05 决定），在当前接线下有两处不成立，已按下列顺序调整。完整表述见[测试 SSOT §7.1](./MOCASA催收系统升级_Phase1_测试文档.md#71-执行顺序2026-08-25-修订)。
+>
+> - **渠道不能先于调度**：Pilot 下 `TriggerScanner` 是 `@Profile({"local","test"})` 不装配，步骤执行的唯一入口是调度订阅。调度未通时 [§6.1](#61-渠道生产连通验证清单) 的六项没有步骤可发。
+> - **“监控最后补”只适用于完整监控**：可后置到 T6 的是 Prometheus 抓取、Alertmanager 与 Dashboard；简版观测 MVP（T3o-O）是 T4 阻断项，且 T5-S 多条断言本身就是读指标，观测缺失时无法判定。§5.2 第 4、5 步已将其置于启动预检，以 §5.2 为准。
 
-1. **拓扑与安全**：验证案件与调度两条独立订阅、白名单、渠道生产/沙箱地址、限频、Webhook 签名，以及四条 Cloud Scheduler Job 的 cron、时区与 `job` 属性。
-2. **渠道生产连通**（优先）：按 [§6.1](#61-渠道生产连通验证清单) 逐渠道打通真实投递与回调。
+1. **拓扑与安全**：验证案件与调度两条独立订阅、白名单、渠道生产/沙箱地址、限频、Webhook 签名，以及四条 Cloud Scheduler Job 的 cron、时区与 `job` 属性。此步须先确认 **O4 已交付**（应用 SA 对调度订阅的 subscriber 权限、`GOOGLE_APPLICATION_CREDENTIALS` 落位、`GCP_PUBSUB_PROJECT` 与 `GCP_SCHEDULER_SUBSCRIPTION` 非空），否则后续全部阻塞。
+2. **调度专项**（T5-S1…S8）：先打通调度链路，渠道验证依赖它产生步骤。S7 日切只能在 03:35–05:55 PHT 窗口执行，单独排期。
 3. **正常路径**：执行 Consumer Group 初始化、发布/消费/XACK、日切、到期触发、回调超时和受控渠道投递。
 4. **可靠投递**：注入 handler 异常，验证 PEL 可见、超时认领、重投与最终 XACK。
 5. **DLQ 与重放**：构造持续失败消息，验证 Redis DLQ、MySQL `t_event_dlq`、可恢复消息的受控重放、窗口外延后与不可恢复消息的终止留存。
 6. **跨实例、接入去重与合规**：临时启动第二实例，验证同一幂等键只有一次获取成功；重启任一实例后验证 Redis 合规计数未清零、接入去重与结转标记仍生效、原子上限仍成立。
-7. **断连与背压**：短暂阻断 Redis 后恢复连接；制造慢渠道调用与并发事件，验证其他事件继续被工作线程处理、队列有界、背压日志限速且不丢消息。
-8. **监控与容量**（可后置，最迟 T6 准入前）：采集 PEL、Stream 长度、线程池、渠道耗时、Redis 内存、Guard Lua p99 与 fail-close 比率，回填容量基线；抓取与告警未就绪期间以 [§3.1 的人工巡检代偿](#31-运维交付物与验收证据)顶替。
-9. **回滚**：停止新订阅、路由与调度；保全 Stream/PEL/DLQ/MySQL 证据；恢复旧链路；确认没有删除数据或未知重放。
+7. **断连与背压**：短暂阻断 Redis 后恢复连接；制造慢渠道调用与并发事件，验证其他事件继续被工作线程处理、队列有界、背压日志限速且不丢消息。Redis 与其他服务共用实例（[§4](#4-redis-资源申请与运行基线) E1），断连**不得**用重启实例的方式制造，只能 `CLIENT KILL` 我方连接或对应用容器做网络隔离。
+8. **渠道生产连通**：按 [§6.1](#61-渠道生产连通验证清单) 逐渠道打通真实投递与回调。此时调度已通，步骤才发得出来。
+9. **监控与容量**（可后置，最迟 T6 准入前；指**完整监控**，不含已在第 1 步前置的简版观测 MVP）：采集 PEL、Stream 长度、线程池、渠道耗时、Redis 内存、Guard Lua p99 与 fail-close 比率，回填容量基线；抓取与告警未就绪期间以 [§3.1 的人工巡检代偿](#31-运维交付物与验收证据)顶替。
+10. **回滚**：停止新订阅、路由与调度；保全 Stream/PEL/DLQ/MySQL 证据；恢复旧链路；确认没有删除数据或未知重放。
 
 ### 6.1 渠道生产连通验证清单
 
@@ -355,7 +362,7 @@ DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 ke
 | 渠道生产连通 | [§6.1](#61-渠道生产连通验证清单) 六项全部通过并留存投递与回调证据 | 编排同事 + 主架构 |
 | 事件消费去重 | 真实 Redis 上验证 PEL 重投与同一 `eventId` 重放只执行一次业务，`collection:processed:*` 按 24h 过期 | collection-engine + 运维 |
 | 调度通道生产化 | [§3.2](#32-调度交付清单o1o8) 剩余项交付：**O4**（应用 SA 对调度订阅的 subscriber 权限与凭证落位）、**O7/O8**（Scheduler 失败与 06:00 未完成告警）；并处置第二个发布者，使同一 `job` 只剩一个发布者。O1/O2/O3/O5/O6 已闭合。此外在 Pilot 上确认 Redis keyset 游标、当日完成标记与幂等行为 | ingestion / admin / 运维 |
-| 简版观测 MVP（T4 阻断） | 按 T3o-O1…O4 提供可查询的接入、投影、调度、渠道和 Redis 证据；隔离故障注入验证通过 | 主架构 |
+| 简版观测 MVP（T4 阻断） | 按 T3o-O1…O4 提供可查询的接入、投影、调度、渠道和 Redis 证据；隔离故障注入验证通过。**代码已于 2026-08-25 交付**（`/ops/evidence` 四个只读端点、调度链路 `job`/`scanId`/`msgId` 与步骤链路 `planId`/`stepId`/`channel` 的 MDC、日切游标与完成标记查询）；剩余为 Pilot 上的注入取证 | 主架构 |
 | 完整可观测性（T6 阻断，移除白名单前） | Prometheus 抓取、Alertmanager 路由与 Dashboard 接通，告警到达演练通过；闭合前每日人工巡检记录连续无缺口 | 运维 + 主架构 |
 | 凭证一次性轮换（T4 阻断） | 联调期间 Redis 口令、渠道与第三方 API Key 曾以明文出现在协作记录与 `deploy/nacos/backup-*.yml` 中。进入 T4 前统一轮换一次（2026-08-21 决定：不逐项处理），确认历史明文全部失效，并核对仓库与备份文件不再含真值 | 运维 + 主架构 |
 

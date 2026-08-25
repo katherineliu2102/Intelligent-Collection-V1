@@ -9,8 +9,10 @@ import com.collection.common.repository.EventDlqRepository;
 import com.collection.common.util.JsonUtil;
 import com.collection.engine.metrics.CollectionMetrics;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,6 +40,8 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -295,6 +299,104 @@ public class RedisStreamEventBus implements CollectionEventBus {
         } catch (Exception e) {
             log.warn("[RedisStreamEventBus] stream gauge sampling failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * T3o-O4 的可查询证据：Stream / PEL / DLQ 深度、消费去重键与工作池水位。
+     *
+     * <p>与三个 gauge 的区别是这里<b>实时打 Redis</b>。gauge 只在 PEL 扫描周期（默认 30s）采样一次，做故障注入时 读到的往往是注入前的旧值；判定
+     * T5-R3 「消息滞留 PEL」这类用例必须是当下读数。
+     *
+     * <p>PEL 明细只取最老的若干条：判「有没有卡住、卡了多久」看最老一条即可，全量拉取在积压时会打爆响应。 深度一律取 XPENDING 汇总值，不用明细条数（见 {@link
+     * #sampleStreamGauges()} 的说明）。
+     */
+    public Map<String, Object> evidenceSnapshot(int pelSampleSize, int dedupSampleSize) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("streamKey", streamKey);
+        snapshot.put("consumerGroup", consumerGroup);
+        snapshot.put("consumerName", consumerName);
+        try {
+            Long length = redisTemplate.opsForStream().size(streamKey);
+            snapshot.put("streamLength", length == null ? 0L : length);
+            Long dlq = redisTemplate.opsForStream().size(streamKey + ":dlq");
+            snapshot.put("dlqSize", dlq == null ? 0L : dlq);
+            PendingMessagesSummary summary =
+                    redisTemplate.opsForStream().pending(streamKey, consumerGroup);
+            snapshot.put("pendingTotal", summary == null ? 0L : summary.getTotalPendingMessages());
+            snapshot.put(
+                    "pendingPerConsumer",
+                    summary == null
+                            ? Collections.emptyMap()
+                            : summary.getPendingMessagesPerConsumer());
+            snapshot.put("oldestPending", oldestPending(pelSampleSize));
+            snapshot.put("dedupKeys", dedupKeySample(dedupSampleSize));
+        } catch (Exception e) {
+            // 证据端点不能因 Redis 抖动整体 500，否则排障时连"读不到"都区分不出是没数据还是没连上。
+            snapshot.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        snapshot.put("consumerPool", consumerPoolSnapshot());
+        snapshot.put(
+                "lastConsumeFailure", consumeFailure == null ? null : consumeFailure.toString());
+        snapshot.put("consecutiveConsumeFailures", consecutiveConsumeFailures);
+        return snapshot;
+    }
+
+    private List<Map<String, Object>> oldestPending(int sampleSize) {
+        PendingMessages messages =
+                redisTemplate
+                        .opsForStream()
+                        .pending(
+                                streamKey,
+                                consumerGroup,
+                                Range.unbounded(),
+                                Math.max(1, sampleSize));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (PendingMessage message : messages) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", message.getIdAsString());
+            row.put("consumer", message.getConsumerName());
+            row.put("idleMs", message.getElapsedTimeSinceLastDelivery().toMillis());
+            row.put("deliveryCount", message.getTotalDeliveryCount());
+            row.put("willDeadLetter", message.getTotalDeliveryCount() >= maxDeliveryCount);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /** 用 SCAN 取有界样本。这套 Redis 与其他服务同实例，KEYS 会阻塞单线程命令执行影响邻居服务。 */
+    private Map<String, Object> dedupKeySample(int sampleSize) {
+        int limit = Math.max(1, sampleSize);
+        List<String> keys = new ArrayList<>();
+        boolean truncated = false;
+        ScanOptions options =
+                ScanOptions.scanOptions().match(PROCESSED_PREFIX + "*").count(64).build();
+        try (Cursor<String> cursor = redisTemplate.scan(options)) {
+            while (cursor.hasNext()) {
+                if (keys.size() >= limit) {
+                    truncated = true;
+                    break;
+                }
+                keys.add(cursor.next());
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("prefix", PROCESSED_PREFIX);
+        result.put("sample", keys);
+        result.put("truncated", truncated);
+        return result;
+    }
+
+    private Map<String, Object> consumerPoolSnapshot() {
+        Map<String, Object> pool = new LinkedHashMap<>();
+        if (consumerPool == null) {
+            return pool;
+        }
+        pool.put("poolSize", consumerPool.getPoolSize());
+        pool.put("activeCount", consumerPool.getActiveCount());
+        pool.put("queueSize", consumerPool.getQueue().size());
+        pool.put("queueRemainingCapacity", consumerPool.getQueue().remainingCapacity());
+        pool.put("completedTaskCount", consumerPool.getCompletedTaskCount());
+        return pool;
     }
 
     private void deadLetter(PendingMessage message) {

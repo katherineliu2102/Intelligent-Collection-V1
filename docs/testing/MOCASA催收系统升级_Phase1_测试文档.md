@@ -198,16 +198,33 @@
 | T3o-3 | 调度通道生产化（T5-S） | 运维 + 主架构 | ⬜ |
 | T3o-4 | 渠道 sandbox、白名单、脱敏与限频 | 编排同事 + 运维 | ⬜ |
 | T3o-5 | Redis 总线/幂等专项（T5-R） | 主架构 | 🟡 |
-| T3o-6 | 简版观测 MVP（T3o-O） | 主架构 | ⬜ |
+| T3o-6 | 简版观测 MVP（T3o-O） | 主架构 | 🟡 代码已交付，待 Pilot 取证 |
 | T3o-7 | Pub/Sub 死信演练 | 运维 + 主架构 | ⬜ |
 
 | 组别 | 完成条件 | 状态 |
 |---|---|---|
 | T5-S1～S8 | 调度链路、属性路由、陈旧/重复消息、单飞、日切与独占消费 | ⬜ |
 | T5-R1～R15 | Redis Consumer Group、PEL、DLQ、幂等、频控、恢复与观测 | ⬜ |
-| T3o-O1～O4 | 接入、inbox、调度/渠道、Redis PEL/DLQ 的最小可查询证据 | ⬜ |
+| T3o-O1～O4 | 接入、inbox、调度/渠道、Redis PEL/DLQ 的最小可查询证据 | 🟡 能力已具备，待注入取证 |
 
 **出口**：以上用例全部通过，回滚可演练，触达限制在 sandbox/测试地址。简版观测 MVP 缺失即阻断 T4。
+
+### 7.1 执行顺序（2026-08-25 修订）
+
+T5 手册 §6 原定「先打通生产渠道，再做可靠性演练」（2026-08-05 决定）。该顺序在当前接线下不成立，本节为准：
+
+1. **调度必须先于渠道。** Pilot 下 `TriggerScanner` 是 `@Profile({"local","test"})` 不装配，步骤执行的唯一入口是调度订阅。调度未通时 T5 手册 §6.1 的六项渠道验证没有步骤可发。
+2. **简版观测须先于 T5-S/T5-R 取证，不属「监控最后补」。** 可后置到 T6 的是 Prometheus 抓取、Alertmanager 与 Dashboard；T3o-O 是 T4 阻断项，且 T5-S 多条断言本身就是读指标（S1「失败计数为 0」、S3「`skipped{reason=UNKNOWN_JOB}` 增长而 `triggered` 不增长」、S6「第二条被跳过」）。观测缺失时这些结论无法判定。T5 手册 §5.2 第 4、5 步已将观测置于启动预检，与 §6 第 8 步的表述冲突，以 §5.2 为准。
+
+推荐顺序：环境就位（O4 凭证与权限、Redis）→ 部署与启动预检（含 T5-R1）→ T5-S1/S8/S2/S3/S5/S6/S4，S7 单独排窗口日 → T5-R2/R3/R4/R13/R5/R6/R14/R7/R8+R12/R10/R9/R11/R15 → 渠道生产连通六项 → T3o-7 → 回滚演练与证据归档。
+
+其中 S4（陈旧丢弃）需停机积压后重启，排在需要连续运行的用例之后；S7 只能在 03:35–05:55 PHT 窗口执行；R5/R6 所需的 `MAX_DELIVERY_EXCEEDED` 素材由 R3/R4 的持续失败 handler 产生；R8 与 R12 共用一次重启。
+
+### 7.2 观测证据入口
+
+- 指标：`/actuator/prometheus` 手工抓取（Pilot 只绑回环，经 SSH 隧道访问）。
+- 关联证据：`/ops/evidence/event/{eventId}`、`/ops/evidence/case/{caseId}`、`/ops/evidence/plan/{planId}`、`/ops/evidence/redis`，均为只读且需管理后台登录态。外部 payload 原文、计划快照、话术渲染结果与回调原文不出参，需要时按返回的主键到库里单独取。
+- 日志关联字段：调度链路 `job` / `scanId` / `msgId`；事件与步骤链路 `eventId` / `caseId` / `planId` / `stepId` / `stepOrder` / `channel`。
 
 ---
 
