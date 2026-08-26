@@ -96,6 +96,7 @@ class ProductionChannelContractL2Test {
                 guard,
                 "complianceCounterService",
                 new com.collection.channel.compliance.InMemoryComplianceCounterService());
+        ReflectionTestUtils.setField(guard, "emailSuppressionRepository", noSuppression());
 
         NotificationClient notificationClient = new NotificationClient();
         ReflectionTestUtils.setField(notificationClient, "properties", properties);
@@ -129,6 +130,19 @@ class ProductionChannelContractL2Test {
         ReflectionTestUtils.setField(gateway, "idempotencyService", new TestIdempotencyService());
         ReflectionTestUtils.setField(gateway, "channelProperties", properties);
         gateway.initAdapterMap();
+    }
+
+    /** 本用例只验证生产路径的编排，抑制名单语义由 ConfigurableExecutionGuardTest 覆盖。 */
+    private static com.collection.common.repository.EmailSuppressionRepository noSuppression() {
+        return new com.collection.common.repository.EmailSuppressionRepository() {
+            @Override
+            public void suppress(com.collection.common.model.EmailSuppression suppression) {}
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return false;
+            }
+        };
     }
 
     @Test

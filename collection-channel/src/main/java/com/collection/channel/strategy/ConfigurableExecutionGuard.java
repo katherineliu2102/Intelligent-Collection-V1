@@ -6,6 +6,7 @@ import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
+import com.collection.common.repository.EmailSuppressionRepository;
 import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.spi.ExecutionGuard;
 import java.time.LocalTime;
@@ -33,6 +34,8 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
     @Resource private ChannelProperties channelProperties;
 
     @Resource private ComplianceCounterService complianceCounterService;
+
+    @Resource private EmailSuppressionRepository emailSuppressionRepository;
 
     @Override
     public GuardVerdict evaluate(ExecutionContext context) {
@@ -122,6 +125,11 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
             case EMAIL:
                 if (basic == null || StringUtils.isBlank(basic.getEmail())) {
                     return GuardVerdict.block("NO_EMAIL", "NO_EMAIL");
+                }
+                // 抑制名单判定放在 Guard 而非 Adapter：退信地址再发一次不是渠道故障而是不该发，
+                // 落到 Adapter 会记成 step FAILED 并触发重试，把「地址已废」读成供应商抖动。
+                if (emailSuppressionRepository.isSuppressed(basic.getEmail())) {
+                    return GuardVerdict.block("EMAIL_SUPPRESSED", "EMAIL_SUPPRESSED");
                 }
                 break;
             default:

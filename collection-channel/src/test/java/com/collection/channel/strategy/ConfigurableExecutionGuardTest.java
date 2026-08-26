@@ -11,9 +11,13 @@ import com.collection.common.enums.ChannelType;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
+import com.collection.common.model.EmailSuppression;
 import com.collection.common.model.UserProfile;
+import com.collection.common.repository.EmailSuppressionRepository;
 import com.collection.common.service.ComplianceCounterService;
 import java.time.LocalDate;
+import java.util.HashSet;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -21,6 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class ConfigurableExecutionGuardTest {
 
     private ConfigurableExecutionGuard guard;
+    private Set<String> suppressedEmails;
 
     @BeforeEach
     void setUp() {
@@ -29,10 +34,49 @@ class ConfigurableExecutionGuardTest {
         properties.getCompliance().setQuietHoursStart("00:00");
         properties.getCompliance().setQuietHoursEnd("00:00");
 
+        suppressedEmails = new HashSet<>();
         guard = new ConfigurableExecutionGuard();
         ReflectionTestUtils.setField(guard, "channelProperties", properties);
         ReflectionTestUtils.setField(
                 guard, "complianceCounterService", new InMemoryComplianceCounterService());
+        ReflectionTestUtils.setField(
+                guard, "emailSuppressionRepository", suppressionRepository(suppressedEmails));
+    }
+
+    private static EmailSuppressionRepository suppressionRepository(Set<String> suppressed) {
+        return new EmailSuppressionRepository() {
+            @Override
+            public void suppress(EmailSuppression suppression) {
+                suppressed.add(suppression.getEmail());
+            }
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return suppressed.contains(email);
+            }
+        };
+    }
+
+    @Test
+    void blocksEmailOnSuppressionList() {
+        suppressedEmails.add("user@example.com");
+
+        GuardVerdict verdict = guard.evaluate(context(ChannelType.EMAIL));
+
+        assertThat(verdict.isAllowed()).isFalse();
+        assertThat(verdict.getBlockedReason()).isEqualTo("EMAIL_SUPPRESSED");
+    }
+
+    @Test
+    void suppressionDoesNotAffectOtherChannels() {
+        suppressedEmails.add("user@example.com");
+
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
+    }
+
+    @Test
+    void allowsEmailWhenNotSuppressed() {
+        assertThat(guard.evaluate(context(ChannelType.EMAIL)).isAllowed()).isTrue();
     }
 
     @Test

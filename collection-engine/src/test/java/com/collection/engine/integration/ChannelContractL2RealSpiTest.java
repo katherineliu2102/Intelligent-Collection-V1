@@ -110,6 +110,7 @@ class ChannelContractL2RealSpiTest {
 
         ConfigurableExecutionGuard guard = new ConfigurableExecutionGuard();
         inject(guard, "channelProperties", channelProperties);
+        inject(guard, "emailSuppressionRepository", noSuppression());
 
         DefaultStepResolver resolver = new DefaultStepResolver();
         inject(resolver, "channelProperties", channelProperties);
@@ -504,6 +505,19 @@ class ChannelContractL2RealSpiTest {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** 本用例验证引擎与真实渠道 SPI 的契约，抑制名单语义由 channel 模块的 Guard 单测覆盖。 */
+    private static com.collection.common.repository.EmailSuppressionRepository noSuppression() {
+        return new com.collection.common.repository.EmailSuppressionRepository() {
+            @Override
+            public void suppress(com.collection.common.model.EmailSuppression suppression) {}
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return false;
+            }
+        };
     }
 
     private static void inject(Object target, String field, Object value) {

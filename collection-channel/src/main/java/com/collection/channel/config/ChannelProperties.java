@@ -189,6 +189,21 @@ public class ChannelProperties {
          * 也无改投出口的， T3o 的「触达只发自持地址」在它上面无法成立。生产必须留空。
          */
         private String testRecipient = "";
+
+        /**
+         * Signed Event Webhook 的验签公钥：SendGrid 控制台给出的 base64 X.509 SubjectPublicKeyInfo（EC P-256）。
+         *
+         * <p>留空则 {@code /webhook/sendgrid} 在要求验签时一律拒收——端点公网可达，无公钥时无法区分 供应商事件与伪造事件，放行等于让任何人改写
+         * timeline 与抑制名单。
+         */
+        private String eventWebhookPublicKey = "";
+
+        /**
+         * 事件时间戳容差（秒），0 表示不校验。
+         *
+         * <p>验签只能证明报文出自 SendGrid，不能证明它是新的：截获过的合法报文可无限重放。 默认 600s 兼顾供应商重试与两端时钟漂移。
+         */
+        private long eventWebhookToleranceSeconds = 600;
     }
 
     @Data

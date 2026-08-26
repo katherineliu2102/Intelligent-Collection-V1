@@ -1,5 +1,6 @@
 package com.collection.service.repository;
 
+import com.collection.common.enums.ContactResult;
 import com.collection.common.model.ContactRecord;
 import com.collection.common.repository.TimelineRepository;
 import com.collection.service.mapper.ContactTimelineMapper;
@@ -21,6 +22,26 @@ public class TimelineRepositoryImpl implements TimelineRepository {
             record.setCreatedAt(ServiceClock.now());
         }
         timelineMapper.insert(record);
+    }
+
+    @Override
+    public int upgradeResult(
+            String attemptKey,
+            ContactResult result,
+            String providerMsgId,
+            String providerCallback) {
+        return timelineMapper.upgradeResultByAttemptKey(
+                attemptKey, result.name(), providerMsgId, providerCallback);
+    }
+
+    @Override
+    public int overrideResult(
+            String attemptKey,
+            ContactResult result,
+            String providerMsgId,
+            String providerCallback) {
+        return timelineMapper.overrideResultByAttemptKey(
+                attemptKey, result.name(), providerMsgId, providerCallback);
     }
 
     @Override

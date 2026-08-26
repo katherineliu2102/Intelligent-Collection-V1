@@ -1,6 +1,8 @@
 package com.collection.admin.web;
 
 import com.collection.admin.web.facade.FacadeWebhookService;
+import com.collection.admin.web.sendgrid.SendGridEventVerifier;
+import com.collection.admin.web.sendgrid.SendGridWebhookService;
 import com.collection.common.enums.EventType;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
@@ -29,6 +31,7 @@ public class WebhookController {
     @Resource private WebhookSecurityProperties securityProperties;
     @Resource private ChannelCallbackAuditRepository callbackAuditRepository;
     @Resource private FacadeWebhookService facadeWebhookService;
+    @Resource private SendGridWebhookService sendGridWebhookService;
 
     /**
      * Valubo Facade 终态回调。账户级 URL，JSON body + {@code X-Valubo-Signature}。
@@ -41,6 +44,22 @@ public class WebhookController {
             @RequestBody JsonNode body,
             @RequestHeader(value = "X-Valubo-Signature", required = false) String signature) {
         return facadeWebhookService.handle(body, signature);
+    }
+
+    /**
+     * SendGrid Event Webhook。批量事件数组，只回写 timeline 与抑制名单，不发 CHANNEL_CALLBACK。
+     *
+     * <p>必须以 {@code byte[]} 接收：签名覆盖 {@code timestamp || rawBody}，交给 Jackson 反序列化再重新
+     * 序列化会改动空白与键序，验签必然失败。
+     */
+    @PostMapping("/sendgrid")
+    public Map<String, Object> sendgridEvents(
+            @RequestBody(required = false) byte[] rawBody,
+            @RequestHeader(value = SendGridEventVerifier.SIGNATURE_HEADER, required = false)
+                    String signature,
+            @RequestHeader(value = SendGridEventVerifier.TIMESTAMP_HEADER, required = false)
+                    String timestamp) {
+        return sendGridWebhookService.handle(rawBody, signature, timestamp);
     }
 
     /**
