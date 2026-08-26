@@ -544,12 +544,20 @@ class FullChainIntegrationTest {
 
         @Override
         public ContactPlanStep getNextStep(Long planId, int currentStepOrder) {
+            // 与持久化实现同语义：序号更大且未终结的第一条，跳过乱序先完成的后继（台账 F12）。
+            ContactPlanStep best = null;
             for (ContactPlanStep s : steps.values()) {
-                if (planId.equals(s.getPlanId()) && s.getStepOrder() == currentStepOrder + 1) {
-                    return s;
+                if (!planId.equals(s.getPlanId()) || s.getStepOrder() <= currentStepOrder) {
+                    continue;
+                }
+                if (s.getStatus() != null && s.getStatus().isTerminal()) {
+                    continue;
+                }
+                if (best == null || s.getStepOrder() < best.getStepOrder()) {
+                    best = s;
                 }
             }
-            return null;
+            return best;
         }
 
         @Override
@@ -585,11 +593,13 @@ class FullChainIntegrationTest {
         public void updateStepTriggerTime(
                 Long stepId, LocalDateTime triggerTime, StepStatus status) {
             ContactPlanStep s = steps.get(stepId);
-            if (s != null) {
-                s.setTriggerTime(triggerTime);
-                if (status != null) {
-                    s.setStatus(status);
-                }
+            // 终态守卫与持久化实现的 SQL 谓词一致，不得复活已终结步骤（台账 F12）。
+            if (s == null || (s.getStatus() != null && s.getStatus().isTerminal())) {
+                return;
+            }
+            s.setTriggerTime(triggerTime);
+            if (status != null) {
+                s.setStatus(status);
             }
         }
 

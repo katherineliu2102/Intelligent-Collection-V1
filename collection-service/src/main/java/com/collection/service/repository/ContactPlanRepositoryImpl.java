@@ -133,6 +133,7 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
 
     @Override
     public ContactPlanStep getNextStep(Long planId, int currentStepOrder) {
+        // 下界是 currentStepOrder + 1；mapper 侧用 >= 并跳过终态，故传下界而非精确序号。
         return stepMapper.selectByPlanAndOrder(planId, currentStepOrder + 1);
     }
 

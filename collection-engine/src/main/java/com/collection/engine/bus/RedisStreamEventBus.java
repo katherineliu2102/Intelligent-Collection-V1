@@ -435,6 +435,15 @@ public class RedisStreamEventBus implements CollectionEventBus {
                     }
                     try {
                         process(record);
+                    } catch (Exception e) {
+                        // 兜底网，不是主防线（主防线是 process 内部逐段的 try）。任务抛错会让
+                        // ThreadPoolExecutor 弃掉并重建工作线程，期间该记录既未 ACK 也未进 DLQ，
+                        // 只能等 reclaim；而线程死亡只在 stderr 留一行没有时间戳、没有 MDC 的
+                        // "Exception in thread"，与业务日志对不上时间线。捕获后至少留下可检索的证据。
+                        log.error(
+                                "[RedisStreamEventBus] task escaped process(), id={} — 该记录留待 reclaim",
+                                record.getId(),
+                                e);
                     } finally {
                         MDC.clear();
                     }
@@ -561,16 +570,28 @@ public class RedisStreamEventBus implements CollectionEventBus {
         }
     }
 
+    /**
+     * MDC 取值一律走 {@link CollectionEvent#getString}，不走 {@code getLong}。
+     *
+     * <p>MDC 的值本来就是字符串，解析成 Long 再 {@code toString} 回去没有收益，却引入了一条失败路径： {@code getLong} 用 {@code
+     * Long.valueOf(v.toString())}，payload 里一个非数字的 planId 就会抛 {@code NumberFormatException}。本方法在
+     * {@link #process} 里位于「反序列化失败」与「handler 失败」 两段 try 之间，抛出后异常一路逃到线程池的 uncaught
+     * handler，打死一个工作线程，而该记录既未 ACK 也未进 DLQ——毒丸每被投递一次就吃掉一个线程（2026-08-25 Pilot 实测：t5r-poison-001 连杀 3
+     * 个， 最终靠投递次数上限而非异常处理才收敛）。
+     *
+     * <p>改用 {@code getString} 后畸形值原样进 MDC，日志里能直接看到「planId=not-a-number」， 而事件继续走到
+     * handler，由后者抛出有业务含义的错误并进入正常的重试 / DLQ 路径。
+     */
     private void putMdc(CollectionEvent event) {
         MDC.put("eventId", String.valueOf(event.getEventId()));
-        putMdcIfPresent("caseId", event.getLong(CollectionEvent.CASE_ID));
-        putMdcIfPresent("planId", event.getLong(CollectionEvent.PLAN_ID));
-        putMdcIfPresent("stepId", event.getLong(CollectionEvent.STEP_ID));
+        putMdcIfPresent("caseId", event.getString(CollectionEvent.CASE_ID));
+        putMdcIfPresent("planId", event.getString(CollectionEvent.PLAN_ID));
+        putMdcIfPresent("stepId", event.getString(CollectionEvent.STEP_ID));
     }
 
-    private void putMdcIfPresent(String key, Long value) {
+    private void putMdcIfPresent(String key, String value) {
         if (value != null) {
-            MDC.put(key, String.valueOf(value));
+            MDC.put(key, value);
         }
     }
 

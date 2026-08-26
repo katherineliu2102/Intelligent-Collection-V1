@@ -37,9 +37,21 @@ public interface ContactPlanStepMapper {
     @Select("SELECT * FROM t_contact_plan_step WHERE plan_id = #{planId} ORDER BY step_order ASC")
     List<ContactPlanStep> selectByPlan(@Param("planId") Long planId);
 
+    /**
+     * 取「下一个还能执行的步骤」：序号更大且尚未终结的第一条。
+     *
+     * <p>不能只取 {@code step_order = 当前+1}。步骤会乱序完成——退避重试的步骤晚于其后继落地，
+     * 于是后继完成时推进一次，重试步骤完成时又推进一次，第二次取到的正是那个已终结的后继。 调用方随后按「无 trigger_time 就排期」把它改回
+     * PENDING，已完成的步骤被复活成待执行， 只剩幂等锁挡在真实触达前（台账 F12）。
+     *
+     * <p>{@code status NOT IN (终态)} 同时兼顾停摆一侧：跳过已终结步骤后继续往后找， 否则计划会停在一个永远不会再到期的步骤上。全部后继都已终结时返回
+     * null，由调用方判 PLAN_EXHAUSTED。
+     */
     @Select(
             "SELECT * FROM t_contact_plan_step "
-                    + "WHERE plan_id = #{planId} AND step_order = #{stepOrder} LIMIT 1")
+                    + "WHERE plan_id = #{planId} AND step_order >= #{stepOrder} "
+                    + "AND status NOT IN ('COMPLETED','SKIPPED','FAILED') "
+                    + "ORDER BY step_order ASC LIMIT 1")
     ContactPlanStep selectByPlanAndOrder(
             @Param("planId") Long planId, @Param("stepOrder") int stepOrder);
 
@@ -91,19 +103,29 @@ public interface ContactPlanStepMapper {
                     + "updated_at = #{now} WHERE id = #{stepId}")
     int markDispatched(@Param("stepId") Long stepId, @Param("now") LocalDateTime now);
 
+    /**
+     * 排期/退避改写。{@code status NOT IN (终态)} 与 {@link #markExecuting} 同源，是写时刻的最后防线： 本语句会把 {@code
+     * status} 改成入参值（PENDING / EXECUTING），一旦允许它命中已终结的行， 该步骤就被复活成待执行，而 {@code result} 与 {@code
+     * completed_at} 仍留着上一次的终态值。
+     *
+     * <p>调用方的「先读后写」不具原子性——读到的状态与写入之间隔着 SPI 调用与渠道 I/O， 期间回调或超时随时可能把步骤终结，所以判定必须落在这一条 UPDATE 上（台账
+     * F12）。
+     */
     @Update(
             "UPDATE t_contact_plan_step SET trigger_time = #{triggerTime}, status = #{status}, "
-                    + "updated_at = #{now} WHERE id = #{stepId}")
+                    + "updated_at = #{now} WHERE id = #{stepId} "
+                    + "AND status NOT IN ('COMPLETED','SKIPPED','FAILED')")
     int updateTriggerTime(
             @Param("stepId") Long stepId,
             @Param("triggerTime") LocalDateTime triggerTime,
             @Param("status") StepStatus status,
             @Param("now") LocalDateTime now);
 
+    /** 异步步骤挂回调超时窗。同样带终态谓词：回调若已抢先落地，不得把收敛完的步骤拖回 EXECUTING。 */
     @Update(
             "UPDATE t_contact_plan_step SET timeout_time = #{timeoutTime}, trigger_time = NULL, "
                     + "executed_at = COALESCE(executed_at, #{now}), status = 'EXECUTING', updated_at = #{now} "
-                    + "WHERE id = #{stepId}")
+                    + "WHERE id = #{stepId} AND status NOT IN ('COMPLETED','SKIPPED','FAILED')")
     int updateTimeoutTime(
             @Param("stepId") Long stepId,
             @Param("timeoutTime") LocalDateTime timeoutTime,

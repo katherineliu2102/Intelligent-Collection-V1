@@ -3,6 +3,7 @@ package com.collection.service.repository;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -207,6 +208,75 @@ class ContactPlanMapperIT {
                 assertEquals(CancelReason.REPAID, loaded.getCancelReason());
                 assertTrue(loaded.getStatus().isTerminal());
                 assertNotNull(loaded.getCompletedAt(), "终态计划应写 completed_at");
+            } finally {
+                session.rollback();
+            }
+        }
+    }
+
+    /**
+     * F12：步骤乱序完成时，推进不得取到已终结的后继，排期也不得把它复活。
+     *
+     * <p>复刻生产序列（plan 829）：第 2 步先收到回调而终结，第 1 步退避重试后才落地； 第 1 步的推进按 {@code step_order + 1} 取到已
+     * COMPLETED 的第 2 步，再用无谓词的 {@code updateTriggerTime} 把它改回 PENDING，随后 {@code PLAN_STEP_DUE} 抢占成
+     * EXECUTING —— 只剩幂等锁挡在真实触达前。
+     */
+    @Test
+    void advanceAfterOutOfOrderCompletion_skipsTerminalStepAndCannotReviveIt() {
+        try (SqlSession session = factory.openSession(false)) {
+            try {
+                ContactPlanMapper planMapper = session.getMapper(ContactPlanMapper.class);
+                ContactPlanStepMapper stepMapper = session.getMapper(ContactPlanStepMapper.class);
+                ContactPlan plan = newPlan();
+                planMapper.insert(plan);
+                ContactPlanStep first = newStep(plan.getId(), 1, ChannelType.SMS, 101L);
+                ContactPlanStep second = newStep(plan.getId(), 2, ChannelType.AI_CALL, 301L);
+                ContactPlanStep third = newStep(plan.getId(), 3, ChannelType.PUSH, 102L);
+                stepMapper.insert(first);
+                stepMapper.insert(second);
+                stepMapper.insert(third);
+
+                // 第 2 步先被回调终结（乱序的成因）。
+                assertEquals(
+                        1,
+                        stepMapper.transitionStatus(
+                                second.getId(),
+                                java.util.Collections.singletonList(StepStatus.PENDING),
+                                StepStatus.COMPLETED,
+                                ContactResult.FAILED,
+                                ServiceClock.now()));
+
+                // 第 1 步完成后推进：必须跳过已终结的第 2 步，落到第 3 步。
+                ContactPlanStep next = stepMapper.selectByPlanAndOrder(plan.getId(), 2);
+                assertNotNull(next, "后面仍有未终结步骤，不应判 PLAN_EXHAUSTED");
+                assertEquals(3, next.getStepOrder(), "应跳过已 COMPLETED 的第 2 步");
+
+                // 即便调用方漏判，写时刻的终态谓词也必须拦住复活。
+                assertEquals(
+                        0,
+                        stepMapper.updateTriggerTime(
+                                second.getId(),
+                                ServiceClock.now(),
+                                StepStatus.PENDING,
+                                ServiceClock.now()),
+                        "updateTriggerTime 不得命中终态步骤");
+                assertEquals(
+                        0,
+                        stepMapper.updateTimeoutTime(
+                                second.getId(), ServiceClock.now(), ServiceClock.now()),
+                        "updateTimeoutTime 不得把终态步骤拖回 EXECUTING");
+                ContactPlanStep unchanged = stepMapper.selectById(second.getId());
+                assertEquals(StepStatus.COMPLETED, unchanged.getStatus());
+                assertNotNull(unchanged.getCompletedAt());
+
+                // 所有后继都终结时才返回 null，交由调用方判 PLAN_EXHAUSTED。
+                stepMapper.transitionStatus(
+                        third.getId(),
+                        java.util.Collections.singletonList(StepStatus.PENDING),
+                        StepStatus.SKIPPED,
+                        ContactResult.SKIPPED,
+                        ServiceClock.now());
+                assertNull(stepMapper.selectByPlanAndOrder(plan.getId(), 2), "后继全部终结时应返回 null");
             } finally {
                 session.rollback();
             }

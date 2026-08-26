@@ -6,7 +6,11 @@
     <springProperty scope="context" name="MAX_HISTORY" source="collection.logging.max-history" defaultValue="30"/>
     <springProperty scope="context" name="TOTAL_SIZE_CAP" source="collection.logging.total-size-cap" defaultValue="10GB"/>
 
-    <property name="MDC_PATTERN" value="[event=%X{eventId:-} case=%X{caseId:-} plan=%X{planId:-} step=%X{stepId:-}]"/>
+    <!-- job / scanId 是调度侧的键：ScheduledJobRunner 一直往 MDC 里放，但此前没写进本模式，
+         于是 scanId 在任何一行日志里都看不到。T5-S6（多条 tick 里只有一个 scanId 走到「扫描完成」）
+         与 T5-R11（调度日志带 job/scanId）都要靠它切分同一任务的多轮扫描，缺了就无从判读。
+         两者只在调度线程上有值，其余日志按 `:-` 渲染成空，与既有四个键一致。 -->
+    <property name="MDC_PATTERN" value="[event=%X{eventId:-} case=%X{caseId:-} plan=%X{planId:-} step=%X{stepId:-} job=%X{job:-} scan=%X{scanId:-}]"/>
 
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>

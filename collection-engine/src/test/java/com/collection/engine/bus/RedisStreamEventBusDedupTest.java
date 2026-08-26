@@ -15,8 +15,10 @@ import com.collection.engine.metrics.CollectionMetrics;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamRecords;
@@ -104,6 +106,32 @@ class RedisStreamEventBusDedupTest {
         process(event);
 
         assertThat(handled.get()).isEqualTo(1);
+    }
+
+    /**
+     * MDC 写入不得成为一条失败路径。
+     *
+     * <p>putMdc 位于「反序列化失败」与「handler 失败」两段 try 之间，此前用 {@code getLong} 解析 planId， 一个非数字值就会让异常逃出
+     * process 打死线程池的工作线程，而该记录既未 ACK 也未进 DLQ。 2026-08-25 Pilot 实测毒丸 t5r-poison-001 连杀 3 个线程。
+     */
+    @Test
+    void nonNumericIdInPayloadReachesHandlerInsteadOfEscaping() {
+        CollectionEvent event =
+                CollectionEvent.of(EventType.PLAN_STEP_DUE)
+                        .with(CollectionEvent.PLAN_ID, "not-a-number");
+        when(redis.hasKey(any(String.class))).thenReturn(false);
+        AtomicInteger handled = new AtomicInteger();
+        bus.subscribe(EventType.PLAN_STEP_DUE, e -> handled.incrementAndGet());
+
+        process(event);
+
+        assertThat(handled.get()).as("畸形 id 应照常交给 handler，由其抛出有业务含义的错误").isEqualTo(1);
+        assertThat(MDC.get("planId")).as("畸形值原样进 MDC，日志里要能直接看到").isEqualTo("not-a-number");
+    }
+
+    @AfterEach
+    void clearMdc() {
+        MDC.clear();
     }
 
     private void process(CollectionEvent event) {
