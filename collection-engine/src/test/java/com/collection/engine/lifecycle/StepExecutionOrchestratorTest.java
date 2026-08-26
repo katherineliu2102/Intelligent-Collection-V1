@@ -550,9 +550,13 @@ class StepExecutionOrchestratorTest {
         stubDispatch(ok(ContactResult.ANSWERED));
         step.setChannelType(ChannelType.AI_CALL);
 
+        LocalDateTime before = LocalDateTime.now();
         orchestrator.executeStep(plan, step);
 
-        verify(planRepository).updateStepTimeoutTime(eq(STEP_ID), any());
+        ArgumentCaptor<LocalDateTime> at = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(planRepository).updateStepTimeoutTime(eq(STEP_ID), at.capture());
+        long minutes = Duration.between(before, at.getValue()).toMinutes();
+        assertThat(minutes).isBetween(29L, 31L); // 默认 engine.step.callbackTimeoutMinutes=30
         verify(timelineRepository).writeTimeline(any());
         verify(eventBus, never()).publish(any());
         verify(planRepository, never())
@@ -595,7 +599,7 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#30 异步渠道回调超时：metadata.timeoutMinutes 覆盖默认值(60)")
+    @DisplayName("#30 异步渠道回调超时：metadata.timeoutMinutes 覆盖默认值(30)")
     void asyncTimeout_metadataOverridesDefault() {
         Map<String, Object> meta = new HashMap<>();
         meta.put(StepCommand.META_TIMEOUT_MINUTES, 15);

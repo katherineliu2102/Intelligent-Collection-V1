@@ -31,7 +31,7 @@
 | M3 | PUSH 到期执行 | 同上；无 token 时允许 SMS fallback，记实际走了哪条 | 🟡 | 当日 12:00 已 `DELIVERED`（timeline `742`）；16:10 step=`2480` 被 `DAILY_LIMIT_EXCEEDED PUSH 2/1` | 今日 PUSH 主路径已在 12:00 成功；二次被频控挡住是预期 |
 | M4 | EMAIL 到期执行 | dispatch 成功；步骤同步完成（SendGrid 打开/送达不改步骤） | ⏭ | step=`2639` → `SKIPPED` / `StepResolver returned null` | Phase 1 条件 Email 不生成有效发送；未打 SendGrid |
 | M5 | AI_CALL 到期 → 出站 | Facade create→cases→start；步骤 `STEP_EXECUTING` | ✅ | step=`2477` batch=`a55f6ee9-79f4-48d1-ac5c-bb7968c1c581` | 真号，未改投 |
-| M6 | AI_CALL 入站回调 | 验签通过；步骤终态；timeline 有结果 | 🟡 | audit=`76` `signature_valid=1` result=`FAILED` reason=`MEDIA_NEGOTIATION_FAILED` session=`bf55465e-…` | 回调已入审计并 `publish CHANNEL_CALLBACK`，步骤仍 `EXECUTING`（重启前未收敛）；timeout 17:08 |
+| M6 | AI_CALL 入站回调 | 验签通过；步骤终态；timeline 有结果 | 🟡 | audit=`76` `signature_valid=1` result=`FAILED` reason=`MEDIA_NEGOTIATION_FAILED` session=`bf55465e-…` | 回调当时被引擎吞掉；**16:40 SQL 订正** step=`2477` → `COMPLETED`/`FAILED`（`completed_at=16:15:13`），plan `862` 仍 `STEP_SCHEDULED`/`current_step=27` |
 | M7 | 后台可查 | Case Monitor 能看到该 plan 步骤与 timeline | ⏭ |  | 本轮未打开 UI |
 
 结果取值：`✅` / `❌` / `🟡` 部分 / `⏭ 本轮不做`。

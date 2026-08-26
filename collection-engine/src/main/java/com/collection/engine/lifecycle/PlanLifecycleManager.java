@@ -291,6 +291,15 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
+        // 异步步可能在计划已被后续 due 推走后才收口：步骤要关，但不得按旧步再 ADVANCE_NEXT。
+        if (!planAwaitsAsyncOutcome(plan)) {
+            log.info(
+                    "[advance] plan {} already {}, skip STEP_COMPLETED for step {}",
+                    planId,
+                    plan.getStatus(),
+                    stepId);
+            return noEvents();
+        }
         ContactPlanStep completed = planRepository.findStepById(stepId);
         StepResult stepResult = toStepResult(completed);
 
@@ -348,15 +357,10 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        // AI_CALL 等 disposition（EXECUTING）；Phase 2 消息观察期（WAITING）可短路结转
-        // Phase 1 SMS/PUSH/EMAIL 同步完成，不进 WAITING（引擎 §4.3.3 / §5⑦）
-        if (plan == null
-                || (plan.getStatus() != PlanStatus.STEP_EXECUTING
-                        && plan.getStatus() != PlanStatus.STEP_WAITING)) {
-            return noEvents(); // 非执行/等待态（已处理/已取消），静默吸收
-        }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        if (step == null) {
+        // 收口看步骤是否仍 EXECUTING，不看计划态：后续 due 可能已把计划推到 STEP_SCHEDULED。
+        // 计划终态（取消/完成）仍关掉悬挂步，避免超时扫描永远摸到它。
+        if (plan == null || step == null) {
             return noEvents();
         }
         String callbackOutcome = event.getString(CollectionEvent.DISPOSITION);
@@ -375,8 +379,16 @@ public class PlanLifecycleManager {
                 null)) {
             return noEvents();
         }
-        log.info("[callback] plan {} step {} result {}", planId, stepId, result);
-        // 入箱已由 recordTerminal 在同一事务内完成，此处只负责提交后的即时发布。
+        log.info(
+                "[callback] plan {} step {} result {} (planStatus={})",
+                planId,
+                stepId,
+                result,
+                plan.getStatus());
+        // 入箱已由 recordTerminal 在同一事务内完成；计划已离开本步时不再即时推进。
+        if (!planAwaitsAsyncOutcome(plan)) {
+            return noEvents();
+        }
         return single(EngineEvents.stepCompleted(plan, step));
     }
 
@@ -388,25 +400,30 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        if (plan == null || plan.getStatus() != PlanStatus.STEP_EXECUTING) {
-            return noEvents(); // 回调已正常处理
-        }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        if (step == null
-                || !stepOutcomeRecorder.recordTerminal(
-                        plan,
-                        step,
-                        StepStatus.EXECUTING,
-                        StepStatus.FAILED,
-                        ContactResult.FAILED,
-                        step.getChannelType(),
-                        null,
-                        JsonUtil.toJson(
-                                java.util.Collections.singletonMap(
-                                        "errorCode", "CALLBACK_TIMEOUT")))) {
+        if (plan == null || step == null) {
             return noEvents();
         }
-        log.info("[callbackTimeout] plan {} step {} → FAILED", planId, stepId);
+        if (!stepOutcomeRecorder.recordTerminal(
+                plan,
+                step,
+                StepStatus.EXECUTING,
+                StepStatus.FAILED,
+                ContactResult.FAILED,
+                step.getChannelType(),
+                null,
+                JsonUtil.toJson(
+                        java.util.Collections.singletonMap("errorCode", "CALLBACK_TIMEOUT")))) {
+            return noEvents();
+        }
+        log.info(
+                "[callbackTimeout] plan {} step {} → FAILED (planStatus={})",
+                planId,
+                stepId,
+                plan.getStatus());
+        if (!planAwaitsAsyncOutcome(plan)) {
+            return noEvents();
+        }
         return single(EngineEvents.stepCompleted(plan, step));
     }
 
@@ -856,6 +873,15 @@ public class PlanLifecycleManager {
 
     private ContactPlan firstActive(List<ContactPlan> plans) {
         return plans == null || plans.isEmpty() ? null : plans.get(0);
+    }
+
+    /**
+     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED
+     * 表示后续 due 已经把日程推走，再推进会把 current_step 拽回旧步。
+     */
+    private boolean planAwaitsAsyncOutcome(ContactPlan plan) {
+        return plan.getStatus() == PlanStatus.STEP_EXECUTING
+                || plan.getStatus() == PlanStatus.STEP_WAITING;
     }
 
     private List<CollectionEvent> noEvents() {
