@@ -662,6 +662,65 @@ class PlanLifecycleManagerTest {
         assertThat(out).isEmpty();
     }
 
+    @Test
+    @DisplayName("CONNECT_AND_STOP：AI_CALL 接通后跳过同日 PENDING 补呼，保留短信与次日外呼")
+    void onStepCompleted_answeredAiCall_skipsSameDayPendingRetry() {
+        ContactPlanStep answered = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        answered.setResult(ContactResult.ANSWERED);
+        answered.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+
+        ContactPlanStep sameDayRetry = newStep(202L, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        sameDayRetry.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        ContactPlanStep sameDaySms = newStep(203L, 3, ChannelType.SMS, StepStatus.PENDING);
+        sameDaySms.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        ContactPlanStep nextDayCall = newStep(204L, 4, ChannelType.AI_CALL, StepStatus.PENDING);
+        nextDayCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 27, 9, 15));
+        ContactPlanStep executingCall = newStep(205L, 5, ChannelType.AI_CALL, StepStatus.EXECUTING);
+        executingCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 16, 0));
+
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(answered);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        when(planRepository.findStepsByPlan(PLAN_ID))
+                .thenReturn(
+                        Arrays.asList(
+                                answered, sameDayRetry, sameDaySms, nextDayCall, executingCall));
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 3, ChannelType.SMS, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository)
+                .updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository, never())
+                .updateStepStatus(eq(203L), any(), any());
+        verify(planRepository, never())
+                .updateStepStatus(eq(204L), any(), any());
+        verify(planRepository, never())
+                .updateStepStatus(eq(205L), any(), any());
+    }
+
+    @Test
+    @DisplayName("CONNECT_AND_STOP：未接通不跳过同日补呼")
+    void onStepCompleted_noAnswer_doesNotSkipRetry() {
+        ContactPlanStep completed = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        completed.setResult(ContactResult.NO_ANSWER);
+        completed.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(completed);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository, never()).findStepsByPlan(anyLong());
+        verify(planRepository, never())
+                .updateStepStatus(eq(NEXT_STEP_ID), eq(StepStatus.SKIPPED), any());
+    }
+
     // ───────────────────────── 差集补全：链路③ 观察期缺省结转（D26） ─────────────────────────
 
     @Test

@@ -4,6 +4,8 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
+import com.collection.common.enums.ContactResult;
+import com.collection.common.model.ContactRecord;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
 import com.collection.common.repository.EmailSuppressionRepository;
@@ -12,6 +14,7 @@ import com.collection.common.spi.ExecutionGuard;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
@@ -47,6 +50,11 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         GuardVerdict addressCheck = checkAddress(context);
         if (addressCheck != null) {
             return addressCheck;
+        }
+
+        GuardVerdict connectAndStop = checkConnectAndStop(context);
+        if (connectAndStop != null) {
+            return connectAndStop;
         }
 
         FrequencyOutcome frequency = checkFrequency(context);
@@ -85,6 +93,34 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
                             + tz,
                     "TIME_WINDOW",
                     nextAllowedAt(ZonedDateTime.now(zone), start, end));
+        }
+        return null;
+    }
+
+    /** 当日已有 AI_CALL 真人接通则不再外呼（CONNECT_AND_STOP）。步骤推进侧会 SKIP 同日补呼；此处防漏网。 */
+    private GuardVerdict checkConnectAndStop(ExecutionContext context) {
+        if (context.getCurrentStep() == null
+                || context.getCurrentStep().getChannelType() != ChannelType.AI_CALL) {
+            return null;
+        }
+        List<ContactRecord> timeline = context.getRecentTimeline();
+        if (timeline == null || timeline.isEmpty()) {
+            return null;
+        }
+        ZoneId zone = ZoneId.of(channelProperties.getCompliance().getTimezone() != null
+                ? channelProperties.getCompliance().getTimezone()
+                : "Asia/Manila");
+        java.time.LocalDate today = ZonedDateTime.now(zone).toLocalDate();
+        for (ContactRecord record : timeline) {
+            if (record == null
+                    || record.getChannel() != ChannelType.AI_CALL
+                    || record.getResult() != ContactResult.ANSWERED
+                    || record.getCreatedAt() == null) {
+                continue;
+            }
+            if (record.getCreatedAt().atZone(zone).toLocalDate().equals(today)) {
+                return GuardVerdict.block("CONNECT_AND_STOP", "CONNECT_AND_STOP");
+            }
         }
         return null;
     }

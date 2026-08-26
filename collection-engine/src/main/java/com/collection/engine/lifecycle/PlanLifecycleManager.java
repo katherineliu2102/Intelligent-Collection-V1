@@ -19,6 +19,7 @@ import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Resource;
@@ -302,6 +303,10 @@ public class PlanLifecycleManager {
 
         switch (decision) {
             case ADVANCE_NEXT:
+                if (completed.getChannelType() == ChannelType.AI_CALL
+                        && completed.getResult() == ContactResult.ANSWERED) {
+                    skipSameDayPendingAiCalls(planId, completed);
+                }
                 ContactPlanStep next = planRepository.getNextStep(planId, completed.getStepOrder());
                 if (next == null) {
                     log.info("[advance] plan {} no next step → PLAN_EXHAUSTED", planId);
@@ -586,6 +591,56 @@ public class PlanLifecycleManager {
                 plan.getTotalSteps());
         metrics.planCreation(stage.name(), "CREATED");
         return true;
+    }
+
+    /**
+     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。
+     * 只处理 PENDING；已在拨打中的 EXECUTING 不打断。SMS/PUSH/EMAIL 同日步骤保留。
+     */
+    private void skipSameDayPendingAiCalls(Long planId, ContactPlanStep answered) {
+        List<ContactPlanStep> steps = planRepository.findStepsByPlan(planId);
+        if (steps == null || steps.isEmpty()) {
+            return;
+        }
+        LocalDate answeredDay = stepDayPht(answered);
+        if (answeredDay == null) {
+            return;
+        }
+        for (ContactPlanStep candidate : steps) {
+            if (candidate.getStepOrder() <= answered.getStepOrder()) {
+                continue;
+            }
+            if (candidate.getChannelType() != ChannelType.AI_CALL) {
+                continue;
+            }
+            if (candidate.getStatus() != StepStatus.PENDING) {
+                continue;
+            }
+            LocalDate candidateDay = stepDayPht(candidate);
+            if (candidateDay == null || !answeredDay.equals(candidateDay)) {
+                continue;
+            }
+            planRepository.updateStepStatus(
+                    candidate.getId(), StepStatus.SKIPPED, ContactResult.SKIPPED);
+            log.info(
+                    "[advance] CONNECT_AND_STOP skip plan {} step {} (same-day AI_CALL after ANSWERED)",
+                    planId,
+                    candidate.getId());
+        }
+    }
+
+    private static LocalDate stepDayPht(ContactPlanStep step) {
+        LocalDateTime when = step.getOriginalTriggerTime();
+        if (when == null) {
+            when = step.getTriggerTime();
+        }
+        if (when == null) {
+            when = step.getCompletedAt();
+        }
+        if (when == null) {
+            when = step.getExecutedAt();
+        }
+        return when == null ? null : when.atZone(ZoneId.of("Asia/Manila")).toLocalDate();
     }
 
     // ───────────────────────── 辅助 ─────────────────────────

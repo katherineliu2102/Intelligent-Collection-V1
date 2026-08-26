@@ -1,6 +1,24 @@
-import { Button, Card, Form, Input, Modal, Space, Table, Tabs, Tag, Typography, message } from "antd";
-import { useCallback, useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  Modal,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message
+} from "antd";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import {
+  ALLOWED_VARS,
+  LIMITS,
+  validateScriptTemplateLocal
+} from "../scriptTemplateValidation";
 import { PlanTemplatesTab } from "./PlanTemplatesTab";
 
 type CatalogRow = {
@@ -30,13 +48,21 @@ type DbScript = {
   updatedBy?: string;
 };
 
+type EffectiveSource = "EDITED" | "DEFAULT" | "UNCONFIGURED";
+
+const EFFECTIVE_LABEL: Record<EffectiveSource, string> = {
+  EDITED: "已编辑",
+  DEFAULT: "系统默认",
+  UNCONFIGURED: "未配置"
+};
+
 type MergedRow = CatalogRow & {
   channel: string;
   inDb: boolean;
   dbBody?: string;
   dbTitle?: string;
   dbVersion: number;
-  effectiveSource: "DB" | "YAML" | "NONE";
+  effectiveSource: EffectiveSource;
 };
 
 type EditState = {
@@ -63,15 +89,23 @@ const emptyEdit: EditState = {
   saving: false
 };
 
-function sourceColor(src: string): string {
+function sourceColor(src: EffectiveSource): string {
   switch (src) {
-    case "DB":
+    case "EDITED":
       return "green";
-    case "YAML":
+    case "DEFAULT":
       return "blue";
     default:
       return "default";
   }
+}
+
+function effectiveLabel(src: EffectiveSource): string {
+  return EFFECTIVE_LABEL[src];
+}
+
+function lengthHint(current: number, max: number): string {
+  return `${current}/${max}`;
 }
 
 export function TemplatesPage() {
@@ -97,11 +131,11 @@ export function TemplatesPage() {
         (rows || []).map((r) => {
           const db = dbMap.get(`${channel}/${r.slot}`);
           const inDb = !!db;
-          const effectiveSource: MergedRow["effectiveSource"] = inDb
-            ? "DB"
+          const effectiveSource: EffectiveSource = inDb
+            ? "EDITED"
             : r.body || r.title
-              ? "YAML"
-              : "NONE";
+              ? "DEFAULT"
+              : "UNCONFIGURED";
           return {
             ...r,
             channel,
@@ -127,6 +161,11 @@ export function TemplatesPage() {
     load();
   }, [load]);
 
+  const localValidation = useMemo(
+    () => validateScriptTemplateLocal(edit.channel, edit.title, edit.body),
+    [edit.channel, edit.title, edit.body]
+  );
+
   const openEdit = (row: MergedRow) => {
     setEdit({
       open: true,
@@ -141,7 +180,21 @@ export function TemplatesPage() {
     });
   };
 
+  const insertVar = (target: "title" | "body", varName: string) => {
+    const token = `{${varName}}`;
+    setEdit((s) => {
+      if (target === "title") {
+        return { ...s, title: `${s.title}${token}` };
+      }
+      return { ...s, body: `${s.body}${token}` };
+    });
+  };
+
   const submitEdit = async () => {
+    if (!localValidation.valid) {
+      message.error(localValidation.errors[0]?.message || "Validation failed");
+      return;
+    }
     setEdit((s) => ({ ...s, saving: true }));
     try {
       await api.updateScriptTemplate({
@@ -156,7 +209,11 @@ export function TemplatesPage() {
       setEdit(emptyEdit);
       await load();
     } catch (e: any) {
-      message.error(e.message);
+      const details =
+        Array.isArray(e.errors) && e.errors.length
+          ? e.errors.map((x: any) => x.message).join("; ")
+          : e.message;
+      message.error(details);
       setEdit((s) => ({ ...s, saving: false }));
     }
   };
@@ -164,7 +221,7 @@ export function TemplatesPage() {
   const resetToYaml = async (row: MergedRow) => {
     try {
       await api.deactivateScriptTemplate(row.slot, row.channel);
-      message.success(`Reset ${row.channel}/${row.slot} to YAML. Engine reloads within ~10s.`);
+      message.success(`已恢复 ${row.channel}/${row.slot} 为系统默认，约 10 秒内生效。`);
       await load();
     } catch (e: any) {
       message.error(e.message);
@@ -176,21 +233,21 @@ export function TemplatesPage() {
       {row.inDb ? (
         <>
           <Typography.Text>
-            <b>DB body:</b> {row.dbBody || "—"}
+            <b>已编辑正文：</b> {row.dbBody || "—"}
           </Typography.Text>
           {row.channel === "PUSH" && (
             <Typography.Text>
-              <b>DB title:</b> {row.dbTitle || "—"}
+              <b>已编辑标题：</b> {row.dbTitle || "—"}
             </Typography.Text>
           )}
         </>
       ) : (
         <Typography.Text type="secondary">
-          Not overridden in DB yet — engine uses YAML. Click Edit to create a DB override.
+          尚未在后台编辑 — 引擎使用系统默认配置。点击 Edit 保存后将变为「已编辑」。
         </Typography.Text>
       )}
       <Typography.Text type="secondary">
-        <b>YAML body:</b> {row.body || "—"}
+        <b>系统默认正文：</b> {row.body || "—"}
       </Typography.Text>
       {row.bodyRendered && (
         <Typography.Text type="secondary">
@@ -204,10 +261,10 @@ export function TemplatesPage() {
     { title: "Slot", dataIndex: "slot", width: 210 },
     { title: "Stage", dataIndex: "stage", width: 70 },
     {
-      title: "Effective",
+      title: "生效状态",
       dataIndex: "effectiveSource",
       width: 110,
-      render: (v: string) => <Tag color={sourceColor(v)}>{v}</Tag>
+      render: (v: EffectiveSource) => <Tag color={sourceColor(v)}>{effectiveLabel(v)}</Tag>
     },
     ...(channel === "PUSH"
       ? [{ title: "Title", dataIndex: "title", ellipsis: true }]
@@ -228,13 +285,16 @@ export function TemplatesPage() {
           </Button>
           {r.inDb && (
             <Button size="small" danger onClick={() => resetToYaml(r)}>
-              Reset
+              恢复默认
             </Button>
           )}
         </Space>
       )
     }
   ];
+
+  const bodyMax = edit.channel === "SMS" ? LIMITS.smsBodyMax : LIMITS.pushBodyMax;
+  const titleMax = LIMITS.pushTitleMax;
 
   return (
     <Card
@@ -243,10 +303,9 @@ export function TemplatesPage() {
       extra={<Button onClick={load}>Refresh</Button>}
     >
       <Typography.Paragraph type="secondary">
-        SMS / Push content is editable and persisted to DB (<code>t_script_template</code>). Effective
-        source: <Tag color="green">DB</Tag> override &gt; <Tag color="blue">YAML</Tag> fallback. After
-        saving, the engine reloads within ~10s (no restart). Email is managed in SendGrid (read-only
-        here).
+        SMS / Push 支持按需编辑并保存到后台（<code>t_script_template</code>）。生效优先级：
+        <Tag color="green">已编辑</Tag> &gt; <Tag color="blue">系统默认</Tag>；未配置 slot 显示
+        <Tag>未配置</Tag>。保存后约 10 秒引擎热更新，无需重启。Email 由 SendGrid 托管（本页只读）。
       </Typography.Paragraph>
       <Tabs
         items={[
@@ -309,26 +368,108 @@ export function TemplatesPage() {
         open={edit.open}
         onOk={submitEdit}
         confirmLoading={edit.saving}
+        okButtonProps={{ disabled: !localValidation.valid }}
         onCancel={() => setEdit(emptyEdit)}
         okText="Save"
-        width={640}
+        width={720}
       >
         <Form layout="vertical">
+          <Form.Item label="允许变量（点击插入到正文）">
+            <Space wrap>
+              {ALLOWED_VARS.map((v) => (
+                <Tag
+                  key={v}
+                  color="blue"
+                  style={{ cursor: "pointer" }}
+                  onClick={() => insertVar("body", v)}
+                >
+                  {`{${v}}`}
+                </Tag>
+              ))}
+              {edit.hasTitle && (
+                <Typography.Text type="secondary">
+                  标题插入：
+                  {ALLOWED_VARS.map((v) => (
+                    <Tag
+                      key={`t-${v}`}
+                      style={{ cursor: "pointer", marginInlineStart: 4 }}
+                      onClick={() => insertVar("title", v)}
+                    >
+                      {`{${v}}`}
+                    </Tag>
+                  ))}
+                </Typography.Text>
+              )}
+            </Space>
+          </Form.Item>
           {edit.hasTitle && (
-            <Form.Item label="Title">
+            <Form.Item
+              label={`Title（${lengthHint(edit.title.length, titleMax)}）`}
+              validateStatus={
+                localValidation.errors.some((e) => e.field === "title") ? "error" : undefined
+              }
+              help={localValidation.errors.find((e) => e.field === "title")?.message}
+            >
               <Input
                 value={edit.title}
+                maxLength={titleMax}
+                showCount
                 onChange={(e) => setEdit((s) => ({ ...s, title: e.target.value }))}
               />
             </Form.Item>
           )}
-          <Form.Item label="Body" help="Placeholders: {name} {amount} {dpd} {repaymentUrl}">
+          <Form.Item
+            label={`Body（${lengthHint(edit.body.length, bodyMax)}）`}
+            validateStatus={
+              localValidation.errors.some((e) => e.field === "body") ? "error" : undefined
+            }
+            help={
+              localValidation.errors.find((e) => e.field === "body")?.message ||
+              (edit.channel === "SMS"
+                ? "SMS 必须包含 {amount} 与 {repaymentUrl}；仅允许白名单变量。"
+                : undefined)
+            }
+          >
             <Input.TextArea
-              rows={4}
+              rows={5}
               value={edit.body}
+              maxLength={bodyMax}
+              showCount
               onChange={(e) => setEdit((s) => ({ ...s, body: e.target.value }))}
             />
           </Form.Item>
+          {localValidation.warnings.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={localValidation.warnings.map((w) => w.message).join("；")}
+            />
+          )}
+          {(localValidation.preview.bodyRendered || localValidation.preview.titleRendered) && (
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="样例渲染预览"
+              description={
+                <Space direction="vertical" size={2}>
+                  {localValidation.preview.titleRendered && (
+                    <Typography.Text>
+                      <b>Title:</b> {localValidation.preview.titleRendered}（
+                      {localValidation.preview.titleRenderedLength} 字）
+                    </Typography.Text>
+                  )}
+                  {localValidation.preview.bodyRendered && (
+                    <Typography.Text>
+                      <b>Body:</b> {localValidation.preview.bodyRendered}（
+                      {localValidation.preview.bodyRenderedLength} 字）
+                    </Typography.Text>
+                  )}
+                </Space>
+              }
+            />
+          )}
           <Form.Item label="Change Reason">
             <Input
               value={edit.reason}
@@ -336,7 +477,7 @@ export function TemplatesPage() {
             />
           </Form.Item>
           <Typography.Text type="secondary">
-            Optimistic lock version: {edit.version} {edit.version === 0 ? "(new DB row)" : ""}
+            版本号（乐观锁）：{edit.version} {edit.version === 0 ? "（首次编辑，将新建记录）" : ""}
           </Typography.Text>
         </Form>
       </Modal>
