@@ -379,13 +379,15 @@ HMAC-SHA256 验签、白名单案 520049。调度扫到步骤 1414 → dispatch 
 
 ### 当前差集
 
+**2026-08-26 在统一基线（ca_branch 镜像）上复跑，四项差集全部闭合。** 逐项证据：
+
 | 差集 | 结论 |
 |---|---|
-| 真人接通映射 | 实测终态只有 `NO_ANSWER`（振铃无人接）。`was_ai_connected=true` + `reason=NORMAL` 的映射未验，级别 4 的"终态正确"只证到一半 |
-| 伪造签名被拒 | 级别 4 要求"伪造签名与重复回调被拒或幂等吸收"，实测窗口两项都未做。仅有 `FacadeWebhookServiceTest` 单测覆盖 |
-| 重复回调幂等 | `existsValidByProviderMsgId` 按 `session_id` 去重，单测已覆盖；未在真实 Facade 重投下验证 |
-| 身份反查分支 | Facade 未回 `client_metadata` 时按唯一 EXECUTING AI_CALL 反查，实测窗口 `client_metadata` 齐全，该分支未走到 |
-| 基线不一致 | 该窗口跑的是 `channel_0824` 的 `aicall-e2e` 镜像。合并进 ca_branch 后 Adapter 换成本分支版本（`test-callee` 改投、缺借款人姓名硬失败）、Resolver 改为缺文案 fail-close、`PilotReadinessValidator` 增加 `callback-secret` 闸门 —— **须在统一基线上复跑一通才能把 L2-CB 记为通过** |
+| 真人接通映射 | ✅ 闭合（构造侧）。真拨拿不到样本：批准测试号 `+639451374358` 实测三次都是 `MEDIA_NEGOTIATION_FAILED`（SIP 406），压根接不通。故对新起的 EXECUTING 步骤 1684 注入 `was_ai_connected=true` + `reason=NORMAL`（`FacadeCallbackMapper` 唯一映射到 `ANSWERED` 的组合），步骤落 COMPLETED/ANSWERED。**我方映射这一侧已证，Facade 真回接通报文的形态仍未见过** |
+| 伪造签名被拒 | ✅ 闭合。伪造签名与完全不带签名头两种都返 HTTP 401，审计留 `signature_valid=0`，步骤状态不变 |
+| 重复回调幂等 | ✅ 闭合。取审计 id=18 的真实 `session.completed` 原文重放：HTTP 200、审计 `signature_valid=1`、日志记 duplicate `session_id` 跳过，timeline 与步骤状态均不变 |
+| 身份反查分支 | ✅ 闭合。不带 `client_metadata` 注入，服务端按 `external_case_id` 反查到唯一 EXECUTING AI_CALL 步骤 1684，`planId`/`stepId` 解析正确 |
+| 基线不一致 | ✅ 闭合。步骤 1667（plan 843 / case 517301）在 ca_branch 镜像上真拨：受理成功、改投 `test-callee`、步骤入 EXECUTING，约 6 分钟后真实回调落地（`result=FAILED`，因测试号 `MEDIA_NEGOTIATION_FAILED`），步骤转 COMPLETED/FAILED、timeline 更新、计划推进——出站到回调的全程走通 |
 | 数仓进件 | 该窗口 `COLLECTION_INGESTION_ENABLED=false`，计划由 Redis 注入 `CASE_INGESTED` 创建，未验真实 Pub/Sub 进件 |
 | 回调超时任务 | 本轮 Pilot 只跑同步渠道，该任务扫描结果为空属预期，不作故障信号 |
 | 受理证据 | 同步渠道以受理成功与 `providerMsgId` 为证据，不要求回调审计行 |
@@ -394,6 +396,10 @@ HMAC-SHA256 验签、白名单案 520049。调度扫到步骤 1414 → dispatch 
 ### 出口
 
 C1–C7 全绿且断言遵循[引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)。渠道生产实现替换后必须复跑。L2-CB 未闭合前不进入 AI_CALL 的真实验收。
+
+**2026-08-26：L2-CB 记为通过**（基线一致 + 四项差集闭合）。据此把 S1–S4 的 150 个 AI_CALL 槽位保留在位。
+两项残留不阻塞 T4，但须在 T5 放量前拿到真实样本：Facade 真回「接通」报文的形态未见过（测试号接不通），
+以及批准测试号的 SIP 406 是号码侧限制还是 Facade 侧配置未定论。
 
 ---
 
@@ -718,10 +724,10 @@ Redis 证据一律实时打 Redis，不用三个 gauge 的采样值——gauge �
 
 | ID | 受控场景 | 最小可查询证据 | 状态 |
 |---|---|---|---|
-| T3o-O1 | 正常消息消费 | ACK/NACK/poison、投影与 inbox 状态，可关联 event/case | 🟡 能力已具备（`/ops/evidence/event`、`/case`），待注入取证 |
-| T3o-O2 | 发布失败与补发 | 失败原因、inbox 状态迁移与补发结果可查，不泄露 PII | 🟡 同上（`publishStatus` + `collection.outbox.*`），待取证 |
-| T3o-O3 | 调度、渠道与日切异常 | 任务成功/失败、扫描与完成标记、Guard 拦截与渠道失败可关联 plan/step | 🟡 能力已具备（`/ops/evidence/plan`、日切快照、调度 MDC），待取证 |
-| T3o-O4 | Redis PEL/DLQ 与重复投递 | Stream/PEL/DLQ 深度、消费去重与重复投递证据可查 | 🟡 能力已具备（`/ops/evidence/redis`），待取证 |
+| T3o-O1 | 正常消息消费 | ACK/NACK/poison、投影与 inbox 状态，可关联 event/case | ✅ 2026-08-26：真实案件 489935 全链取证（inbox `projectionApplied=true`/`publishStatus=PUBLISHED` → 案件投影 → 计划 → 步骤），借款人手机与邮箱按 `PiiMask` 脱敏 |
+| T3o-O2 | 发布失败与补发 | 失败原因、inbox 状态迁移与补发结果可查，不泄露 PII | 🟡 端点与指标可查，但无注入点构造发布失败（同 T5-R14：`EngineFaultInjector` 无发布侧位置）。顺延至 T4 |
+| T3o-O3 | 调度、渠道与日切异常 | 任务成功/失败、扫描与完成标记、Guard 拦截与渠道失败可关联 plan/step | ✅ 2026-08-26：本组恰好靠这条证据面查出 F12——`scan_rows{callbackTimeout}` 每 tick +1 却无收敛，顺着 `/ops/evidence/plan` 定位到 plan 829 步骤 1416 的撕裂行 |
+| T3o-O4 | Redis PEL/DLQ 与重复投递 | Stream/PEL/DLQ 深度、消费去重与重复投递证据可查 | ✅ 2026-08-26：`/ops/evidence/redis` 实测 `streamLength=341`、`dlqSize=6`、`pendingTotal=0` 与去重键样本；重复投递证据由 T5-R13 一并覆盖 |
 
 ### T5-S 调度通道专项
 
@@ -729,14 +735,14 @@ Redis 证据一律实时打 Redis，不用三个 gauge 的采样值——gauge �
 
 | ID | 场景 | 断言 | Owner | 状态 |
 |---|---|---|---|---|
-| T5-S1 | 调度链路连通 | 各周期任务按频率触发；失败计数为 0 | 运维 + 主架构 | ⬜ |
-| T5-S2 | 按属性路由 | 三类任务各自触发且互不串扰 | 主架构 | ⬜ |
-| T5-S3 | 未知 / 缺失 job 取值 | 记录并 ACK 不重投；无扫描发生。须含「`job` 只写在 body、未配 attribute」场景：计入 `skipped{reason=UNKNOWN_JOB}` 且 `triggered` 不增长 | 主架构 | ⬜ |
-| T5-S4 | 陈旧消息丢弃 | 停机积压重启后仅放行当前 tick，无扫描风暴 | 主架构 | ⬜ |
-| T5-S5 | 重复投递 | 均 ACK；因步骤幂等不产生重复触达 | 主架构 | ⬜ |
-| T5-S6 | 并发单飞 | 第二条被跳过；游标不重复推进 | 主架构 | ⬜ |
-| T5-S7 | 日切窗口续跑与完成标记 | 窗口内逐页推进并按时完成，写当日完成标记 | ingestion + 运维 | ⬜ |
-| T5-S8 | 调度订阅独占 | 调度 subscription 无第二个订阅者；四条 Job 的 `describe` 输出含正确 `job` attribute 与 `Asia/Manila`；tick 不被其他消费者分流 | 运维 + 主架构 | ⬜ |
+| T5-S1 | 调度链路连通 | 各周期任务按频率触发；失败计数为 0 | 运维 + 主架构 | ✅ 2026-08-26：`planStepDue`（每分钟）与 `callbackTimeout` 按频率自然触发，`collection_schedule_failed_total` 无样本 |
+| T5-S2 | 按属性路由 | 三类任务各自触发且互不串扰 | 主架构 | ✅ 2026-08-26：逐个 job 属性注入，各自 `triggered{job=...}` +1，其余 job 计数不动 |
+| T5-S3 | 未知 / 缺失 job 取值 | 记录并 ACK 不重投；无扫描发生。须含「`job` 只写在 body、未配 attribute」场景：计入 `skipped{reason=UNKNOWN_JOB}` 且 `triggered` 不增长 | 主架构 | ✅ 2026-08-26：未知取值与「job 只写 body、不带 attribute」两种都计入 `skipped{reason=UNKNOWN_JOB}`，`triggered` 不增长，消息 ACK 不重投 |
+| T5-S4 | 陈旧消息丢弃 | 停机积压重启后仅放行当前 tick，无扫描风暴 | 主架构 | ✅ 2026-08-26：重启时积压的 19 条陈旧 tick 一次性丢弃，`skipped{reason=STALE}` 尖峰后归零，无扫描风暴 |
+| T5-S5 | 重复投递 | 均 ACK；因步骤幂等不产生重复触达 | 主架构 | ✅ 2026-08-26：连发三条同 job tick，全部 ACK、`triggered` 按条增长，而 `scan_rows_total{planStepDue}` 保持 0，无重复业务 |
+| T5-S6 | 并发单飞 | 第二条被跳过；游标不重复推进 | 主架构 | ✅ 2026-08-26：`max-concurrency=1` 下顺序投递摸不到单飞分支，临时抬到 16 并在单次 publish 里突发 200 条，175 条命中 `IN_FLIGHT` 跳过、`scan_rows_total` 仍为 0；验毕还原为 1 |
+| T5-S7 | 日切窗口续跑与完成标记 | 窗口内逐页推进并按时完成，写当日完成标记 | ingestion + 运维 | 🟡 白名单模式下不适用：`DpdStageRollHandler` 仅在全量扫描模式走游标与完成标记，白名单模式直接遍历指定案件。已实测 `dailyRoll` 扫 51 案、零 `STAGE_CHANGED`/`CASE_CEASED`（与 dry run 一致）。「逐页推进 + 完成标记」需 `allow-full-scan=true`，顺延至 T4 |
+| T5-S8 | 调度订阅独占 | 调度 subscription 无第二个订阅者；四条 Job 的 `describe` 输出含正确 `job` attribute 与 `Asia/Manila`；tick 不被其他消费者分流 | 运维 + 主架构 | ✅ 2026-08-26：摘除抢占该订阅的 `collection-admin-aicall` 容器后独占；四条 Job 的 `describe` 含正确 `job` 与 `Asia/Manila`，tick 不再分流 |
 
 ### T5-R Redis 专项
 
@@ -916,6 +922,23 @@ pilot 账号只经 `pilot.env` 注入，哈希不入仓。
 ⑥该会话调 `/ops` 200；⑦登出后会话失效 401。失败与成功均有 `[AdminAuth]` 日志留痕。
 单测 9 条（`AdminAuthenticatorTest`）锁住上述语义，含 htpasswd 产出的 `$2y$` 前缀可被校验。
 
+**处置第三步（2026-08-25 20:0x PHT，已完成）：反向代理收口。** 上文「待回调 URL 上线时用反向代理
+只放通回调路径」这一步此前未做，而 nginx 站点 `collection-admin.mocasa.com` 的 `location /` 是
+`proxy_pass http://127.0.0.1:8080` —— 也就是说容器绑回环挡住了直连 8080，却被反向代理原样绕过，
+管理面与 `/actuator` 仍在公网可达。`/webhook/sendgrid` 上线需要公网入口，正好一并收口。
+
+配置改为只保留 `location ^~ /webhook/`（另加 `client_max_body_size 1m`，回调都是小 JSON，
+全局 500M 只会放大打空请求的成本）与 ACME 挑战路径，其余 `location / { return 403; }`。
+返回 403 而非 404，是为了让「端口开着但这条路径不对外」与「应用没起来」在排查时可区分。
+三个入站回调（Valubo AI_CALL、通知平台、SendGrid）都在应用侧验签，nginx 只做路径收口不做鉴权。
+配置纳入仓库 `deploy/nginx/collection-admin.mocasa.com.conf`，避免它只存在于机器上。
+
+**公网侧复验**（从公司外开发机 curl，非机器内部）：`POST /webhook/sendgrid` → 401
+（到达应用并被 ECDSA 验签拦下，日志 `rejected reason=MISSING_HEADER`）；
+`POST /webhook/channel-callback` → 500（到达应用）；
+`/ops/evidence/*`、`/actuator/prometheus`、`/actuator/health`、`/cases`、`/admin`、`/config`、
+`/login`、`/` 一律 403。运维访问仍走 SSH 隧道。
+
 **遗留**：口令为单账号共享，无按人区分与轮换机制；如需审计到人，Phase 2 应接 SSO 或建用户表。
 
 #### F9（进行中，需协调）：同事覆盖部署导致 pilot 崩溃循环，并暴露 F8 判断有缺口
@@ -1044,25 +1067,135 @@ Stream 仍为 91、健康 UP。至此 T5-R1 在生产取到干净证据。
 修复：`dlqPayload` 保证返回合法 JSON。原文能解析则原样保留；不能解析则包成 `{"raw":"<原文>"}`，
 线索不丢且一定能落库。两条单测分别锁住"非法 JSON 被包装且 `raw` 可还原"与"合法 JSON 不被额外包装"。
 
+#### F10（已修）：MDC 写入是一条失败路径，毒丸每被投递一次吃掉一个消费线程
+
+2026-08-25 19:55 Pilot 重部到 ca_branch 基线后，启动即出现三行没有时间戳、没有 MDC 的
+`Exception in thread "engine-consumer-N" java.lang.NumberFormatException: For input string: "not-a-number"`
+（N = 1/2/7）。来源是此前埋下的 T5-R 毒丸样本 `t5r-poison-001`，payload 里 `planId` 是非数字。
+
+根因在 `RedisStreamEventBus.putMdc` 的调用位置：它夹在 `process` 的「缺 event 字段」「反序列化失败」
+两段 try 与「handler 失败」那段 try **之间**，自身无任何保护；而 `CollectionEvent.getLong` 用
+`Long.valueOf(v.toString())`，畸形值直接抛。异常于是一路逃过 `submit` 的 lambda（当时只有
+`finally { MDC.clear(); }`，无 catch）到达线程池的 uncaught handler，**打死一个工作线程**，
+而该记录既未 ACK 也未进 DLQ，只能等 reclaim——下一次投递再杀一个。
+
+**毒丸最终仍被隔离**：第 5 次投递触发 `MAX_DELIVERY_EXCEEDED`，Redis DLQ 流与 MySQL
+`t_event_dlq`（id 26，`delivery_count=5`）双写成功并 ACK，PEL 归零。也就是说兜住它的是投递次数
+上限，不是异常处理。这个区别是要紧的：上限是**每条消息**的计数，线程死亡是**全局**的容量损耗，
+并发毒丸多几条时池会比上限先被抽干，而 `ThreadPoolExecutor` 重建工作线程期间吞吐静默下降，
+外部只看到「消费变慢」。加之线程死亡只在 stderr 留一行无时间戳无 MDC 的文本，与业务日志对不上
+时间线，排查会绕远路。
+
+修复两处：①`putMdc` 改用 `CollectionEvent.getString`——MDC 的值本来就是字符串，解析成 Long 再
+`toString` 回去没有收益，却凭空造了一条失败路径；改后畸形值原样进 MDC，日志里直接看得到
+`plan=not-a-number`，事件则继续走到 handler，由后者抛出有业务含义的错误并进入正常的重试 / DLQ 路径。
+②`submit` 补 catch 作兜底网（不是主防线），任何意外逃逸至少留下可检索的 ERROR 而不是静默杀线程。
+单测 `RedisStreamEventBusDedupTest#nonNumericIdInPayloadReachesHandlerInsteadOfEscaping`。
+
+**生产验证（2026-08-26 09:33–09:43 PHT）**：重部后注入同型毒丸 `t5r-poison-002`，**死线程数 0**
+（对照修复前 3）。每次投递只产出一行带完整 MDC 的
+`[event=t5r-poison-002 case= plan=not-a-number step=999999] handler failed ..., leaving pending`，
+共 5 次；随后 `MAX_DELIVERY_EXCEEDED` 收敛，`t_event_dlq` id 27（`delivery_count=5`），PEL 归零。
+
+这一轮同时把 T5-R5 的 `MAX_DELIVERY_EXCEEDED` 路径跑成了**目标路径**而非**兜底路径**：
+同样是 5 次投递、同样落 DLQ，区别在于隔离由异常处理完成，消费池容量全程无损耗。
+
+#### F11（已修）：并发重复 `CASE_INGESTED` 撞单活跃计划唯一键，报 ERROR 后靠重试自愈
+
+同一次启动中，`520049:S3` 的两条 `CASE_INGESTED`（`adecc921` 与 `36c28edf`）几乎同时到达：
+`createPlanForStage` 的预检查 `findActivePlanByCaseAndStage` 是**非加锁读**，两条都通过，
+先提交的建成 plan 829，后提交的在 INSERT 处撞 `uk_active_stage_key`，
+`DuplicateKeyException` 上抛成 `handler failed ..., leaving pending`。
+
+数据是对的——唯一键正是为此存在，没有出现第二个活跃计划；重投时预检查读到已提交的 829 便幂等
+跳过（`collection:processed:36c28edf` 已写）。**所以它本就自愈**，代价是一条 ERROR 噪声加一轮
+无谓重试。但 Pub/Sub 至少一次投递叠加数仓日常重推，T4 之后这会是常态，ERROR 级噪声会淹没真故障。
+
+修复：在 `EventConsumerDispatcher` 的**事务边界之外**归一——`onCaseIngested` 带 `@Transactional`，
+约束冲突已把事务标记为 rollback-only，在 `createPlanForStage` 内部吞掉只会换来
+`UnexpectedRollbackException`；而 dispatcher 位于代理之外，事务已完成回滚，该事务除这条失败的
+INSERT 外无其它写入，回滚即无副作用。按**约束名**判定而非见 `DuplicateKeyException` 就吞，
+否则将来新增的任何唯一键都会被静默跳过。覆盖三个会建计划的事件类型
+（`CASE_INGESTED` / `STAGE_CHANGED` / `PLAN_EXHAUSTED` 的 REBUILD 路径）。
+单测 `EventConsumerDispatcherTest` 五条。
+
+#### F12（已修）：步骤乱序完成时，推进取到已终结的后继并把它复活成待执行
+
+生产序列（plan 829，取自 `/opt/app/logs/collection/collection.log`）：
+
+```
+09:55:53  step 1416 → STEP_EXECUTING，挂 60min 回调超时
+10:02:12  [callback]  plan 829 step 1416 result FAILED   ← 按回调正常终结
+10:02:13  [advance]   plan 829 → 下一步 1417 at 12:00     ← 推进正确
+10:04:56  [advance]   plan 829 → 下一步 1416 at 10:04:56  ← step 1415 退避重试后才落地
+10:05:04  [execStep]  duplicate event, key=829:2:0 skipped ← 幂等锁挡住了真实重复外呼
+```
+
+根因是推进取「下一步」的口径：`selectByPlanAndOrder` 按 `step_order = 当前 + 1` 取，**不判该步骤是否已终结**。
+步骤会乱序完成——退避重试的步骤晚于其后继落地，于是后继完成时推进一次，重试步骤完成时又推进一次，
+第二次取到的正是那个已 COMPLETED 的后继。调用方随后按「无 `trigger_time` 就排期」调
+`updateTriggerTime` 把它改回 PENDING，`PLAN_STEP_DUE` 再抢占成 EXECUTING。
+
+**只剩幂等锁挡在真实触达前**：该行呈撕裂态（`status=EXECUTING`，而 `result=FAILED` /
+`completed_at=10:02:12` 是上一次终态的残留）。且 `onCallbackTimeout` 要求
+`plan.status=STEP_EXECUTING`，计划已推进到 STEP_SCHEDULED，于是 `callbackTimeout`
+每分钟扫到它却永远处理不掉——这就是 T3o-O3 看到的 `scan_rows` 只增不收敛。
+
+修在两处，缺一不可：
+
+1. `selectByPlanAndOrder` 改取「序号更大且尚未终结的第一条」（`step_order >= #{stepOrder}`
+   + `status NOT IN (终态)`）。同时兼顾停摆一侧：跳过终态后继续往后找，否则计划会停在一个
+   永远不会再到期的步骤上；全部后继皆终结时返回 null，由调用方判 `PLAN_EXHAUSTED`。
+2. `updateTriggerTime` / `updateTimeoutTime` 加终态谓词。调用方的「先读后写」不具原子性——
+   读到的状态与写入之间隔着 SPI 调用与渠道 I/O，期间回调或超时随时可能把步骤终结，
+   所以判定必须落在 UPDATE 语句自身。这是写时刻的最后防线，与 `markExecuting` 同源。
+
+L3 集成测试 `advanceAfterOutOfOrderCompletion_skipsTerminalStepAndCannotReviveIt` 打真库复刻该序列。
+修复前已产生的那一行由 `scripts/pilot/2026-08-26-fix-f12-revived-step-1416.sql` 按 10:02:12
+那次回调（`callbackAudit` id=11，`signature_valid=1`）订正回 COMPLETED/FAILED 并清空 `timeout_time`，
+不新增触达、不改 timeline。
+
+#### F13（缺口，未修）：`MAX_DELIVERY_EXCEEDED` 分类下缺显式终止入口
+
+`/ops/dlq/redrive` 只对 `failure_reason != 'MAX_DELIVERY_EXCEEDED'` 的行判 NON_RECOVERABLE 并直接终止。
+但该原因只描述**重投次数用尽**，不描述失败性质：真正不可恢复的毒丸若每次都落进通用 catch
+（而非被判 `DESERIALIZATION_FAILURE` / `MISSING_EVENT_FIELD`），就会带着「可恢复」标签进 DLQ。
+
+T3o 收尾遇到的正是这种：`t5r-poison-001/002` 的 payload 是 `planId="not-a-number"`，重放必然再失败，
+要连打三轮把 `MAX_REDRIVE_COUNT` 耗尽才会自动 `REDRIVE_LIMIT_EXCEEDED` 终止——代价是往 stream 里
+再注六条注定失败的事件。本次按 API 的三段式审计格式（分类\|操作人\|理由）直接落终态
+（`scripts/pilot/2026-08-26-terminate-t5r-poison-dlq.sql`）。
+
+修法待定，倾向给端点加显式 `terminate` 动作并强制带理由，而不是让运维靠耗尽重放配额绕过。
+不阻塞 T4：DLQ 项本身不会自行触达，且现有绕法留全审计。
+
 | ID | 场景 | 断言 | Owner | 状态 |
 |---|---|---|---|---|
-| T5-R1 | Consumer Group 初始化 | 重复初始化幂等，不阻塞启动；**且不得因建组行为自身产生 DLQ 记录**（见 F4） | 主架构 | ✅ 2026-08-25 生产证据 |
-| T5-R2 | 正常消费与 ACK | 事件被及时消费，待处理列表清空 | 主架构 | 🟡 ACK 机制已证（三条注入事件处理后 pending 归 0）；业务 handler 成功路径待随真实入案验证 |
-| T5-R3 | handler 异常滞留 PEL | 不 ACK，消息在待处理列表可见 | 主架构 | ⬜ |
-| T5-R4 | PEL 认领与重投 | 未超空闲阈值不认领；超时后认领并最终 ACK | 主架构 | ⬜ |
-| T5-R5 | 毒消息进 DLQ | 超投递上限后移出 PEL 并入 DLQ，附原因 | 主架构 | 🟡 解析失败/缺字段/无 handler 三条即时入 DLQ 路径已证；`MAX_DELIVERY_EXCEEDED` 路径待造持续失败的 handler |
-| T5-R6 | DLQ 落库与受控重放 | 落表含原始信封与原因；可恢复项重放成功；不可恢复项终止并告警；窗口外触达延后 | 主架构 | 🟡 落表与「不可恢复项终止」已证（含幂等）；可恢复项重放与窗口外延后待 `MAX_DELIVERY_EXCEEDED` 素材 |
-| T5-R7 | 幂等锁跨实例互斥 | 同一键仅一次获取成功，TTL 到期后可再获取 | 主架构 | ⬜ |
-| T5-R8 | 合规频控连续性 | 计数不因重启清零；边界并发只放行一个；断连 fail-close | 主架构 | ⬜ |
-| T5-R9 | Redis 断连恢复 | 恢复后消费与认领自愈，无需重启，事件不丢 | 主架构 + 运维 | 🟡 消费组丢失一路已证自愈（删组后 8s 内重建，见 F6）；实例级断连仍受共用限制，见 E1 |
-| T5-R10 | 并发与背压 | 慢渠道不阻塞其他事件；队列有界；背压不丢消息 | 主架构 | ⬜ |
-| T5-R11 | 指标与 MDC | 关键指标可抓取，日志携带 event/case/plan/step | 主架构 + 运维 | ⬜ |
-| T5-R12 | 接入去重跨重启 | 重启后重复消息仍被拦截；相同快照跳过；陈旧还款不覆盖新投影 | 主架构 | ⬜ |
-| T5-R13 | 事件消费去重 | PEL 重投与 DLQ 重放都不重复执行业务 | 主架构 | ⬜ |
-| T5-R14 | 发件箱兜底重发 | 即时发布失败后由发件箱补发，全程只发出一次触达 | 主架构 | ⬜ |
-| T5-R15 | 停摆巡检 | 仅计数告警；不改库、不新增触达；正常计划不误报 | 主架构 + 运维 | ⬜ |
+| T5-R1 | Consumer Group 初始化 | 重复初始化幂等，不阻塞启动；**且不得因建组行为自身产生 DLQ 记录**（见 F4） | 主架构 | ✅ 2026-08-25 生产证据；2026-08-26 重启复验：消费组未被重建，无新增 DLQ |
+| T5-R2 | 正常消费与 ACK | 事件被及时消费，待处理列表清空 | 主架构 | ✅ 2026-08-26：真实入案（数仓推送案件 489935 等）走通 `CASE_INGESTED` → 建计划 → 步骤到期 → 触达全链，PEL 归零 |
+| T5-R3 | handler 异常滞留 PEL | 不 ACK，消息在待处理列表可见 | 主架构 | ✅ 2026-08-26：对 `PLAN_STEP_DUE` 注入 `BEFORE_HANDLER` 故障，消息不 ACK 且在 `XPENDING` 可见 |
+| T5-R4 | PEL 认领与重投 | 未超空闲阈值不认领；超时后认领并最终 ACK | 主架构 | ✅ 2026-08-26：`pel-min-idle-seconds` 临时降至 20s（手册允许），阈值内不认领、超时后认领并重放成功、PEL 归零 |
+| T5-R5 | 毒消息进 DLQ | 超投递上限后移出 PEL 并入 DLQ，附原因 | 主架构 | ✅ 2026-08-25 生产证据：四条原因全覆盖。`MAX_DELIVERY_EXCEEDED` 由 `t5r-poison-001` 实证（5 次投递 → Redis DLQ 流 + `t_event_dlq` id 26 双写 + ACK，PEL 归零）。**代价见 F10**：该路径当时靠投递上限而非异常处理收敛，沿途打死 3 个消费线程 |
+| T5-R6 | DLQ 落库与受控重放 | 落表含原始信封与原因；可恢复项重放成功；不可恢复项终止并告警；窗口外触达延后 | 主架构 | ✅ 2026-08-26：R5 的 DLQ 项经管理台带理由重放，审计留操作人与理由；因底层步骤已终结，重放事件被幂等跳过（这正是「重放不重复执行业务」的期望）。终止一路见 F13 |
+| T5-R7 | 幂等锁跨实例互斥 | 同一键仅一次获取成功，TTL 到期后可再获取 | 主架构 | ✅ 2026-08-26：Pilot 上另起一个隔离探针实例，两个不同 eventId 指向同一 PUSH 步骤并发注入，主实例执行、探针实例撞重复闸门跳过，timeline 仅一条 |
+| T5-R8 | 合规频控连续性 | 计数不因重启清零；边界并发只放行一个；断连 fail-close | 主架构 | 🟡 跨重启连续性已证（计数与 TTL 原值保留）；边界并发与断连 fail-close 需构造真实触达临界，随 T4 放量验 |
+| T5-R9 | Redis 断连恢复 | 恢复后消费与认领自愈，无需重启，事件不丢 | 主架构 + 运维 | ✅ 2026-08-26：按 db3 定向 kill 本应用连接（不波及共用方，解 E1），Lettuce ConnectionWatchdog 毫秒级重连，消费失败计数 0，无事件丢失 |
+| T5-R10 | 并发与背压 | 慢渠道不阻塞其他事件；队列有界；背压不丢消息 | 主架构 | ✅ 2026-08-26：向流注入 200 条指向已完成步骤的 `PLAN_STEP_DUE`，10s 内消费完毕、PEL 归零、无丢弃，全部走幂等跳过 |
+| T5-R11 | 指标与 MDC | 关键指标可抓取，日志携带 event/case/plan/step | 主架构 + 运维 | ✅ 2026-08-26：四键在日志实证；**并修掉 `job`/`scanId` 缺失**——`ScheduledJobRunner` 一直往 MDC 放，但 `logback-spring.xml` 的模式没写这两键，S6/R11 判读所需的扫描切分此前不可见 |
+| T5-R12 | 接入去重跨重启 | 重启后重复消息仍被拦截；相同快照跳过；陈旧还款不覆盖新投影 | 主架构 | ✅ 2026-08-26：`collection:processed:*` 与入案记录跨重启完整存续，重复消息仍被拦截 |
+| T5-R13 | 事件消费去重 | PEL 重投与 DLQ 重放都不重复执行业务 | 主架构 | ✅ 2026-08-26：注入 `AFTER_HANDLER` 故障（业务已执行、ACK 失败），重投命中去重路径，`collection_event_deduped_total` +1 且 timeline 无重复行 |
+| T5-R14 | 发件箱兜底重发 | 即时发布失败后由发件箱补发，全程只发出一次触达 | 主架构 | ⬜ 无注入点：`EngineFaultInjector` 只有 `BEFORE_HANDLER`/`AFTER_HANDLER` 两个位置，发布侧失败无法在不改代码的前提下构造。补发逻辑本身有 L1/L3 覆盖，生产等价演练顺延至 T4 |
+| T5-R15 | 停摆巡检 | 仅计数告警；不改库、不新增触达；正常计划不误报 | 主架构 + 运维 | ✅ 2026-08-26：构造非终态且 `trigger_time`/`timeout_time` 皆空的合成计划，`StuckPlanReaper` 检出并累加 `collection_plan_stuck_total`，未改库、未新增触达 |
 
 ### 出口
+
+**2026-08-26 全序列执行完毕，T3o 出口达成。** 统一基线固定在当日 11:26 重启的 ca_branch 镜像
+（`max-concurrency` 验毕已还原 1）。汇总：T5-S 除 S7 外全过（S7 的「逐页推进 + 完成标记」白名单模式下不适用，
+顺延 T4）；T5-R 除 R14 外全过（无发布侧注入点）、R8 部分（跨重启已证，边界并发随 T4 放量验）；
+T3o-O 除 O2 外全过（同 R14）；T3o-7 全过。查出并修掉 F10 / F11 / F12 三个引擎缺陷，
+登记 F13 一个运维可用性缺口。收尾：故障注入置 false 并重启生效、合成 loan id 摘出白名单、
+DLQ 无未决项（1 REDRIVEN + 12 TERMINATED，含 08-21 陈旧 GCP 死信）。四项改投开关按 T3o 要求保留在位——
+清空它们等于让触达真实发往借款人，属 T4 准入动作。
 
 T5-S、T5-R、T3o-O 与 T3o-7 全部通过，回滚机制可操作，演练触达均在 sandbox 或测试地址范围内。完整监控平台（Prometheus 抓取、Alertmanager 路由、Dashboard）未接通不阻塞本出口，也不阻塞 T4 与 T5 按 cap 放量；代偿期以每日人工巡检 + 手工抓取 `/actuator/prometheus` 顶替，最迟在申请移除白名单（T6 准入）前闭合。简版观测 MVP 不在可后置范围内，缺失即阻断 T4。
 
@@ -1184,9 +1317,9 @@ T4 使用业务批准的**固定 50 个真实案件**，由数仓按正式契约
 Pilot 一旦有第二个实例指向同一个库，双方就会互抢步骤并对彼此的案件发起真实触达。
 可选处置：Pilot 库独占、或把 `case-id-whitelist` 之外再加一层租户/实例维度。
 
-**隔离是单向的，且已实测不足以跑 L4a（2026-08-21 16:41）**：过滤生效（SQL 已带 `AND p.case_id IN (12 个)`、闸门日志确认），但 L4a-1 直接卡死——plan 825 于 16:41:46 建好三步，step 1374 在 **7 秒后（16:41:53）被外来实例抢走**（`executed_at=08:41:53` 为 UTC，同行 `created_at=16:41:46` 为 PHT），`trigger_time` 被清空、`timeout_time` 未写、无 timeline、无派发。我方日志全程 `selectDueSteps <== Total: 0`、零次 `markExecuting`、零次 `STEP_DUE`：**我们一次都没抢到过自己的步骤**，100 秒后 timeline 仍为 0，该轮作废。<br>对方每次都赢是因为它的扫描间隔比我们短或抢占更早，而它拿到步骤后不派发（很可能没有对应案件配置），于是步骤变成两个扫描都摸不到的永久悬挂行。**结论：在本库上 L4a 不可能跑通**，与我们自己的实现无关。<br>彻底解决仍需查清实例归属（其代码早于 `ServiceClock`，仍用 `NOW()`；出口 IP 与我们同为 213.155.143.66）并停掉，或换独立库 | T3 全组前置 | 主架构 + 服务同事 |
+**隔离是单向的，且已实测不足以跑 L4a（2026-08-21 16:41）**：过滤生效（SQL 已带 `AND p.case_id IN (12 个)`、闸门日志确认），但 L4a-1 直接卡死——plan 825 于 16:41:46 建好三步，step 1374 在 **7 秒后（16:41:53）被外来实例抢走**（`executed_at=08:41:53` 为 UTC，同行 `created_at=16:41:46` 为 PHT），`trigger_time` 被清空、`timeout_time` 未写、无 timeline、无派发。我方日志全程 `selectDueSteps <== Total: 0`、零次 `markExecuting`、零次 `STEP_DUE`：**我们一次都没抢到过自己的步骤**，100 秒后 timeline 仍为 0，该轮作废。<br>对方每次都赢是因为它的扫描间隔比我们短或抢占更早，而它拿到步骤后不派发（很可能没有对应案件配置），于是步骤变成两个扫描都摸不到的永久悬挂行。**结论：在本库上 L4a 不可能跑通**，与我们自己的实现无关。<br>**残留清理（2026-08-26 09:30 PHT）**：plan 825 此后一直挂着，`StuckPlanReaper` 每 30 分钟报一次「非终态且到期/超时扫描均不可达，需人工介入」，会污染 T3o-O 的可观测取证。已按 `MANUAL_CLEANUP`（该枚举正是为「人工清理测试计划」预留、引擎不主动写入）取消：plan 825 转 `PLAN_CANCELLED`、`active_stage_key` 归 NULL，三个步骤（1374 SMS / 1375 PUSH / 1376 EMAIL）转 `SKIPPED` 而非 `FAILED`——`FAILED` 在引擎里可重试，对一个从未派发过的步骤会变成一次真实触达。时间列按 PHT 显式写入，不用 `NOW()`。该用例是合成的（userId 94999，姓名 `l4a three channel`，手机/邮箱/Push token 全为团队自持地址），清理无客户影响。<br>彻底解决仍需查清实例归属（其代码早于 `ServiceClock`，仍用 `NOW()`；出口 IP 与我们同为 213.155.143.66）并停掉，或换独立库 | T3 全组前置 | 主架构 + 服务同事 |
 | **L4a 收口断言误报**：`assert_step_convergence` 在单点采样上判定，而步骤在 `markExecuting`（清空 `trigger_time`）与终态写入之间**合法地**处于 `EXECUTING` 且 `trigger_time`/`timeout_time` 皆空。2026-08-21 实测 step 1330 被判 `UNREACHABLE`，断言后 0.3 秒即收敛为 `FAILED` | 缺测试（**已修**） | 改为静默后判定：连续两次采样（间隔 20s，上限 120s）完全一致才评估，未达静默直接判 FAIL 而非放过。静默判据用「两次快照相等」而非「距上次写入 N 秒」，因为 `/plans/{id}/steps` 不暴露 `updated_at` | T3 · L4a | 主架构 |
-| **步骤悬挂（`markExecuting` 无状态前置）**：SQL 只有 `WHERE id = ?`，会把已终结的步骤无条件改回 `EXECUTING`，同时 `trigger_time` 被清空、`timeout_time` 从未写过 → 到期扫描与超时扫描都摸不到该行。生产 Pub/Sub 为 at-least-once，重复或并发的 `STEP_DUE` 必然触发；`PlanLifecycleManager` 已有的终态检查是「先读后写」不具原子性，只挡串行重复。计划已终态时留下孤儿行 + Reaper 噪音，计划未终态时该计划真正停摆。2026-08-21 干净一轮官方 25 项全绿、库里仍残留 3 行（step 1143/1164/1165：`result`/`completed_at` 已写、`status` 仍为 `EXECUTING`）| 缺实现（**已实施，待 L4a 复跑确认**） | 已改：`markExecuting` 加 `AND status NOT IN ('COMPLETED','SKIPPED','FAILED')`；`ContactPlanRepository.markStepExecuting` 签名 `void`→`boolean`（**契约变更，需知会服务同事**：该谓词是承重的，旧库映射改写时丢掉它会让仓储无条件返回「抢到了」，保护静默消失且无编译错误）；`prepareStepDue` 改为**先抢步骤再动计划**（抢占失败时计划状态一律不动，否则会把已推进的计划按回 `STEP_EXECUTING`）；`StepExecutionOrchestrator` 调用渠道前的抢占失败直接放弃执行，避免重复触达。<br>未采纳「claim 时一并写 `timeout_time`」：超时收敛走 `recordTerminal(EXECUTING→FAILED)`，而 `FAILED` 在引擎里可重试，会让「已投递成功但状态回写丢失」的步骤真的再发一次——方向与目标相反。检测手段保留 `StuckPlanReaper`。<br>测试：L1 三条（终态并发抢占全失败且不清 `trigger_time`、串行重投不复活不二次触达、并发重投只一次触达）、L3-7b 真库谓词守护（三种终态拒绝 + 两种非终态必须放行）、L4a 收口断言 + `L4A_SKIP_RESET=1` 取证开关 | T3 · 修复前基线已复现（2026-08-21 15:32，5 行不收敛，其中 2 行 `result=COMPLIANCE_BLOCKED` 且 `completed_at` 已写而 `status=EXECUTING`） | 主架构 + 服务同事 |
+| **步骤悬挂（`markExecuting` 无状态前置）**：SQL 只有 `WHERE id = ?`，会把已终结的步骤无条件改回 `EXECUTING`，同时 `trigger_time` 被清空、`timeout_time` 从未写过 → 到期扫描与超时扫描都摸不到该行。生产 Pub/Sub 为 at-least-once，重复或并发的 `STEP_DUE` 必然触发；`PlanLifecycleManager` 已有的终态检查是「先读后写」不具原子性，只挡串行重复。计划已终态时留下孤儿行 + Reaper 噪音，计划未终态时该计划真正停摆。2026-08-21 干净一轮官方 25 项全绿、库里仍残留 3 行（step 1143/1164/1165：`result`/`completed_at` 已写、`status` 仍为 `EXECUTING`）| 缺实现（**已实施，待 L4a 复跑确认**） | 已改：`markExecuting` 加 `AND status NOT IN ('COMPLETED','SKIPPED','FAILED')`；`ContactPlanRepository.markStepExecuting` 签名 `void`→`boolean`（**契约变更，需知会服务同事**：该谓词是承重的，旧库映射改写时丢掉它会让仓储无条件返回「抢到了」，保护静默消失且无编译错误）；`prepareStepDue` 改为**先抢步骤再动计划**（抢占失败时计划状态一律不动，否则会把已推进的计划按回 `STEP_EXECUTING`）；`StepExecutionOrchestrator` 调用渠道前的抢占失败直接放弃执行，避免重复触达。<br>未采纳「claim 时一并写 `timeout_time`」：超时收敛走 `recordTerminal(EXECUTING→FAILED)`，而 `FAILED` 在引擎里可重试，会让「已投递成功但状态回写丢失」的步骤真的再发一次——方向与目标相反。检测手段保留 `StuckPlanReaper`。<br>**2026-08-26 复议，维持不采纳。** 该修法因 plan 825 悬挂被重新提出，重新评估后结论未变：补 `timeout_time` 只能让超时扫描「捞得到」，捞到之后的收敛动作仍是 `FAILED`，等于用一次重复触达换一次悬挂消除，在催收场景交换方向是反的。若要走这条路，前置条件是先能可靠区分「已派发」与「从未派发」并让后者收敛到不可重试的终态，该前置本身不成立（派发成功而状态回写丢失时，库里看到的就是「从未派发」）。<br>另外 plan 825 的成因已查明**不在状态机**：是共享库上的外来实例在 7 秒内抢走 step 1374 后不派发（见本表上一条）。故真根因归口到「Pilot 库独占」，与 T4 前的凭证轮换同批处理；在此之前悬挂靠 `StuckPlanReaper` 检测 + 人工按 `MANUAL_CLEANUP` 处置。<br>测试：L1 三条（终态并发抢占全失败且不清 `trigger_time`、串行重投不复活不二次触达、并发重投只一次触达）、L3-7b 真库谓词守护（三种终态拒绝 + 两种非终态必须放行）、L4a 收口断言 + `L4A_SKIP_RESET=1` 取证开关 | T3 · 修复前基线已复现（2026-08-21 15:32，5 行不收敛，其中 2 行 `result=COMPLIANCE_BLOCKED` 且 `completed_at` 已写而 `status=EXECUTING`） | 主架构 + 服务同事 |
 | **时区口径不一致**：MySQL 服务器 `system_time_zone=UTC`（`NOW()` 返回 UTC），而 `ContextAssembler` 用 `Asia/Manila` 计算当日频控边界、`StuckPlanReaper` 用 JVM 默认时区计算停摆宽限。`t_contact_timeline.created_at` 与 `t_contact_plan.updated_at` 均由 `NOW()` 写入，与应用侧传入的比较值相差 8 小时：①当日触达计数漏掉 PHT 00:00–08:00 的记录 → 频控可能超发（与 JVM 时区无关，恒定存在）；②停摆宽限窗口恒被满足 → Reaper 无宽限期。`selectDueSteps` / `selectTimeoutSteps` / 发件箱租约不受影响（比较双方均为应用写入） | 缺实现 | **基础设施层两条修法均已试过、均不足**：①Hikari `connection-init-sql` 只覆盖到部分连接；②JDBC URL `connectionTimeZone=%2B08:00&forceConnectionTimeZoneToSession=true`（`start-local.sh` 注入，**必须用数值偏移**——该实例未加载时区表，下发命名时区会以 `Unknown or incorrect time zone: 'Asia/Shanghai'` 让每条连接都建不起来）加上后绝大多数列已落 Manila，但 `t_contact_plan_step.executed_at` 仍会落 UTC，同一行 `dispatched_at`/`updated_at` 却是 Manila。**故采用第三条并已落地（2026-08-21）**：plan / step / timeline 三个 mapper 的时间列改由 `ServiceClock.now()`（PHT，截到秒）传参，`updated_at` 在每条 UPDATE 显式赋值以压制 `ON UPDATE CURRENT_TIMESTAMP`；JDBC `+08:00` 与 `connection-init-sql` 保留，只服务于仍用 `NOW()` 的审计表（DLQ / 收件箱 / 发件箱 / 回调审计）。启动自检 `DatabaseClockValidator` 已加：偏差超 `collection.db.clock-drift-threshold-seconds`（默认 120s）时 pilot 拒启、其余 profile 告警（4 例单测）。L3 IT 参照系已由数据库时钟改为应用时钟。**剩余**：带 `L3_IT_DB_URL` 复跑 `ContactPlanMapperIT` / `StepScheduleAuditMapperIT`，确认 `executed_at` 与同行其余列同为 PHT | T2 · L3-7 首跑暴露；影响 T3o 频控与 T5-R 停摆巡检取证 | 主架构 + 服务同事 |
 | 共用 Nacos `intelligent-collection-local.yml` 需临时置空三个渠道密钥以保证零真实触达；该 Data ID 与编排同事共用 | 缺环境 | 用 `scripts/dev/merge-nacos-config.py` 深合并发布，测试窗口结束后恢复密钥；发布前须与编排同事同步 | T3/L4a、L4b | 主架构 + 编排同事 |
 | **AI_CALL 回调回流未打通（出站已闭合，入站不可用）**：出站侧原 `DefaultStepResolver:107` 经 `voiceCallbackUrl` 下发 `{base}/lth/voice`，而全仓唯一入口是 `POST /webhook/channel-callback`（`/lth/voice`、`/sendgrid` 从无 Controller）→ 已按「只对接 Facade」裁定改名 `callbackUrl()` 并指向 `/channel-callback`，另按 [Facade 客户接入手册](../channel/FACADE客户接入手册.md) 确认回调是**账户级**配置（对方控制台登记、所有批次共用），随单下发的 `callback_url` 已回退，`metadata.callbackUrl` 对 Facade 仅作信息用。**入站侧仍不可用**：现有入口靠 query 参数 `planId`/`stepId`/`result` 定位步骤、验我方 `X-Callback-Signature`；Facade 打来的是单一账户级 URL + `session.completed` / `batch.completed` JSON + 对方自定义签名头，两者结构对不上，账户级 URL 也无法按批带步骤参数 | 缺实现 | 需新增 Facade 专用入站端点：按对方签名方案验签、按 `client_metadata`(case/plan/step) 或 `external_case_id` 反查步骤、按 `session_id` 幂等、把 `was_answered`/`was_ai_connected`/`line_outcome.reason` 映射为触达结果（信箱与筛选**不计**真人接通）。闭合前 AI_CALL 只能靠超时收敛，不得进入 T4；**归属需与编排同事确定**，我方须同步提供账户级回调 URL 与验签口径给 Facade 登记 | L2-CB 第 3/4 级 · T0-6 A1–A3 · **T4 阻断** | 编排同事 + 主架构 |
