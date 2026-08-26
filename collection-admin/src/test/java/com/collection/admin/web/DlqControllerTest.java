@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.collection.admin.auth.AdminAuthInterceptor;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.enums.EventDlqStatus;
 import com.collection.common.enums.EventType;
@@ -20,15 +21,18 @@ import com.collection.common.model.EventDlq;
 import com.collection.common.repository.EventDlqRepository;
 import com.collection.common.util.JsonUtil;
 import java.util.Collections;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** 受控重放的状态机与触达窗口门控。 */
+/** 受控重放的状态机、触达窗口门控与终止审计口径。 */
 class DlqControllerTest {
 
     private EventDlqRepository repository;
     private CollectionEventBus eventBus;
     private ChannelProperties channelProperties;
+    private HttpServletRequest httpRequest;
     private DlqController controller;
 
     @BeforeEach
@@ -37,7 +41,17 @@ class DlqControllerTest {
         eventBus = mock(CollectionEventBus.class);
         channelProperties = new ChannelProperties();
         openTouchWindow();
+        httpRequest = loggedInAs("ops-alice");
         controller = new DlqController(repository, eventBus, channelProperties);
+    }
+
+    private static HttpServletRequest loggedInAs(String username) {
+        HttpSession session = mock(HttpSession.class);
+        when(session.getAttribute(AdminAuthInterceptor.SESSION_USER))
+                .thenReturn(Collections.singletonMap("username", username));
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        when(request.getSession(false)).thenReturn(session);
+        return request;
     }
 
     private void openTouchWindow() {
@@ -55,7 +69,7 @@ class DlqControllerTest {
         stub("e1", EventType.PLAN_STEP_DUE, "MAX_DELIVERY_EXCEEDED", EventDlqStatus.PENDING);
         when(repository.claimForRedrive(eq("e1"), anyString(), anyInt())).thenReturn(true);
 
-        DlqController.RedriveResult result = controller.redrive(request("e1"));
+        DlqController.RedriveResult result = redrive("e1");
 
         assertThat(result.getRedriven()).isEqualTo(1);
         verify(eventBus).publish(any(CollectionEvent.class));
@@ -67,7 +81,7 @@ class DlqControllerTest {
         closeTouchWindow();
         stub("e1", EventType.PLAN_STEP_DUE, "MAX_DELIVERY_EXCEEDED", EventDlqStatus.PENDING);
 
-        DlqController.RedriveResult result = controller.redrive(request("e1"));
+        DlqController.RedriveResult result = redrive("e1");
 
         assertThat(result.getDeferred()).isEqualTo(1);
         verify(repository, never()).claimForRedrive(anyString(), anyString(), anyInt());
@@ -80,17 +94,18 @@ class DlqControllerTest {
         stub("e1", EventType.STEP_COMPLETED, "MAX_DELIVERY_EXCEEDED", EventDlqStatus.PENDING);
         when(repository.claimForRedrive(eq("e1"), anyString(), anyInt())).thenReturn(true);
 
-        assertThat(controller.redrive(request("e1")).getRedriven()).isEqualTo(1);
+        assertThat(redrive("e1").getRedriven()).isEqualTo(1);
     }
 
     @Test
     void terminatesNonRecoverableEvent() {
         stub("e1", EventType.PLAN_STEP_DUE, "NO_HANDLER", EventDlqStatus.PENDING);
 
-        DlqController.RedriveResult result = controller.redrive(request("e1"));
+        DlqController.RedriveResult result = redrive("e1");
 
         assertThat(result.getTerminated()).isEqualTo(1);
-        verify(repository).markTerminated("e1", "NON_RECOVERABLE:NO_HANDLER");
+        verify(repository)
+                .markTerminated("e1", "NON_RECOVERABLE:NO_HANDLER|by=ops-alice|reason=T5 drill");
         verify(eventBus, never()).publish(any());
     }
 
@@ -99,17 +114,18 @@ class DlqControllerTest {
         stub("e1", EventType.PLAN_STEP_DUE, "MAX_DELIVERY_EXCEEDED", EventDlqStatus.PENDING);
         when(repository.claimForRedrive(eq("e1"), anyString(), anyInt())).thenReturn(false);
 
-        DlqController.RedriveResult result = controller.redrive(request("e1"));
+        DlqController.RedriveResult result = redrive("e1");
 
         assertThat(result.getTerminated()).isEqualTo(1);
-        verify(repository).markTerminated("e1", "REDRIVE_LIMIT_EXCEEDED");
+        verify(repository)
+                .markTerminated("e1", "REDRIVE_LIMIT_EXCEEDED|by=ops-alice|reason=T5 drill");
     }
 
     @Test
     void skipsAlreadyRedrivenEvent() {
         stub("e1", EventType.PLAN_STEP_DUE, "MAX_DELIVERY_EXCEEDED", EventDlqStatus.REDRIVEN);
 
-        assertThat(controller.redrive(request("e1")).getSkipped()).isEqualTo(1);
+        assertThat(redrive("e1").getSkipped()).isEqualTo(1);
         verify(eventBus, never()).publish(any());
     }
 
@@ -119,10 +135,46 @@ class DlqControllerTest {
         when(repository.claimForRedrive(eq("e1"), anyString(), anyInt())).thenReturn(true);
         doThrow(new IllegalStateException("stream down")).when(eventBus).publish(any());
 
-        DlqController.RedriveResult result = controller.redrive(request("e1"));
+        DlqController.RedriveResult result = redrive("e1");
 
         assertThat(result.getTerminated()).isEqualTo(1);
-        verify(repository).markTerminated("e1", "REDRIVE_PUBLISH_FAILED");
+        verify(repository)
+                .markTerminated("e1", "REDRIVE_PUBLISH_FAILED|by=ops-alice|reason=T5 drill");
+    }
+
+    @Test
+    void fallsBackToSystemWhenNoSession() {
+        HttpServletRequest anonymous = mock(HttpServletRequest.class);
+        when(anonymous.getSession(false)).thenReturn(null);
+        stub("e1", EventType.PLAN_STEP_DUE, "NO_HANDLER", EventDlqStatus.PENDING);
+
+        controller.redrive(request("e1"), anonymous);
+
+        verify(repository)
+                .markTerminated("e1", "NON_RECOVERABLE:NO_HANDLER|by=system|reason=T5 drill");
+    }
+
+    @Test
+    void truncatesOperatorReasonToColumnWidth() {
+        String longReason = repeat('x', 400);
+
+        String note =
+                DlqController.terminationNote("REDRIVE_LIMIT_EXCEEDED", "ops-alice", longReason);
+
+        assertThat(note).hasSize(256);
+        assertThat(note).startsWith("REDRIVE_LIMIT_EXCEEDED|by=ops-alice|reason=");
+    }
+
+    private static String repeat(char c, int times) {
+        StringBuilder sb = new StringBuilder(times);
+        for (int i = 0; i < times; i++) {
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private DlqController.RedriveResult redrive(String eventId) {
+        return controller.redrive(request(eventId), httpRequest);
     }
 
     private void stub(String eventId, EventType type, String failureReason, EventDlqStatus status) {
