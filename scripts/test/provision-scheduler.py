@@ -215,17 +215,24 @@ def fix_cases_dlq(api: Api) -> None:
         "deadLetterTopic": f"projects/{PROJECT}/topics/{DLQ_TOPIC}",
         "maxDeliveryAttempts": MAX_DELIVERY_ATTEMPTS,
     }
-    if current.get("deadLetterPolicy") == desired:
-        print(f"  = 已合规 {CASES_SUB}：deadLetterPolicy={desired}")
-        return
-
-    print(f"  ~ {CASES_SUB} 当前 deadLetterPolicy={current.get('deadLetterPolicy')} → 待改 {desired}")
+    compliant = current.get("deadLetterPolicy") == desired
+    if compliant:
+        print(f"  = deadLetterPolicy 已合规 {CASES_SUB}：{desired}")
+    else:
+        print(
+            f"  ~ {CASES_SUB} 当前 deadLetterPolicy={current.get('deadLetterPolicy')} → 待改 {desired}"
+        )
     if api.dry_run:
-        print(f"  + [dry-run] 将授权服务代理并 PATCH {CASES_SUB}")
+        print(f"  + [dry-run] 将授权服务代理{'' if compliant else '并 PATCH ' + CASES_SUB}")
         return
 
+    # 授权无条件重跑，不受 deadLetterPolicy 是否已合规影响：grant_role 自身幂等，而
+    # 「策略挂上了、授权没成」恰恰是最危险的中间态（转投静默失败）。若只在需要改策略时
+    # 才授权，这个中间态就永远修不回来——重跑只会报「已合规」然后直接返回。
     grant_role(api, f"{PUBSUB}/projects/{PROJECT}/topics/{DLQ_TOPIC}", "roles/pubsub.publisher")
     grant_role(api, resource, "roles/pubsub.subscriber")
+    if compliant:
+        return
 
     result = api.call(
         "PATCH",
@@ -245,8 +252,14 @@ def fix_cases_dlq(api: Api) -> None:
 
 
 def grant_role(api: Api, resource: str, role: str) -> None:
-    """把 Pub/Sub 服务代理加进资源 IAM 策略的指定角色；已在则跳过。"""
-    policy = api.call("POST", f"{resource}:getIamPolicy")
+    """把 Pub/Sub 服务代理加进资源 IAM 策略的指定角色；已在则跳过。
+
+    getIamPolicy 在 Pub/Sub v1 里是 GET（setIamPolicy 才是 POST）。用 POST 不会返回
+    405，而是落到 API 网关的 HTML 404 —— 于是本函数只打一行「读取 IAM 失败」就 return，
+    授权被静默跳过，而 deadLetterPolicy 那一步照常成功。两者叠加正是手册警告的场景：
+    转投缺权限而静默失败，消息一直重投、死信 topic 空着，看起来像「没有失败」。
+    """
+    policy = api.call("GET", f"{resource}:getIamPolicy")
     if "__status" in policy:
         print(f"  ! 读取 IAM 失败 {resource}：{policy['__status']} {policy['__detail']}")
         return
