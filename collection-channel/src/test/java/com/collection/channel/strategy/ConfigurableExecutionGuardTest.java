@@ -8,15 +8,21 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
+import com.collection.common.enums.ContactResult;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
+import com.collection.common.model.ContactRecord;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.EmailSuppression;
 import com.collection.common.model.UserProfile;
 import com.collection.common.repository.EmailSuppressionRepository;
 import com.collection.common.service.ComplianceCounterService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -156,6 +162,45 @@ class ConfigurableExecutionGuardTest {
         assertThat(verdict.getBlockedReason()).contains("DAILY_TOTAL_LIMIT_EXCEEDED 4/3");
     }
 
+    @Test
+    void blocksAiCallWhenSameDayAnswered() {
+        ContactRecord answered = answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")));
+
+        GuardVerdict verdict =
+                guard.evaluate(
+                        contextWithTimeline(ChannelType.AI_CALL, Collections.singletonList(answered)));
+
+        assertThat(verdict.isAllowed()).isFalse();
+        assertThat(verdict.getBlockedReason()).isEqualTo("CONNECT_AND_STOP");
+        assertThat(verdict.getBlockedRuleType()).isEqualTo("CONNECT_AND_STOP");
+    }
+
+    @Test
+    void allowsAiCallWhenAnsweredWasYesterday() {
+        ContactRecord answered =
+                answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")).minusDays(1));
+
+        assertThat(
+                        guard.evaluate(
+                                        contextWithTimeline(
+                                                ChannelType.AI_CALL,
+                                                Collections.singletonList(answered)))
+                                .isAllowed())
+                .isTrue();
+    }
+
+    @Test
+    void connectAndStopDoesNotBlockSms() {
+        ContactRecord answered = answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")));
+
+        assertThat(
+                        guard.evaluate(
+                                        contextWithTimeline(
+                                                ChannelType.SMS, Collections.singletonList(answered)))
+                                .isAllowed())
+                .isTrue();
+    }
+
     private static ExecutionContext context(ChannelType channel) {
         return retryContext(channel, 0);
     }
@@ -184,5 +229,24 @@ class ConfigurableExecutionGuardTest {
                 .currentStep(step)
                 .contextSnapshot(snapshot)
                 .build();
+    }
+
+    private static ExecutionContext contextWithTimeline(
+            ChannelType channel, List<ContactRecord> timeline) {
+        ExecutionContext base = context(channel);
+        return ExecutionContext.builder()
+                .plan(base.getPlan())
+                .currentStep(base.getCurrentStep())
+                .contextSnapshot(base.getContextSnapshot())
+                .recentTimeline(timeline == null ? Collections.emptyList() : timeline)
+                .build();
+    }
+
+    private static ContactRecord answeredRecord(LocalDateTime createdAt) {
+        ContactRecord record = new ContactRecord();
+        record.setChannel(ChannelType.AI_CALL);
+        record.setResult(ContactResult.ANSWERED);
+        record.setCreatedAt(createdAt);
+        return record;
     }
 }

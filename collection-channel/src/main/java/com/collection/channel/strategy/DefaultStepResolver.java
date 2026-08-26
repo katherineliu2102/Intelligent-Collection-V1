@@ -125,7 +125,7 @@ public class DefaultStepResolver implements StepResolver {
                 callbackUrl = channelProperties.getCallback().getBaseUrl();
             }
             metadata.put(StepCommand.META_CALLBACK_URL, callbackUrl);
-            metadata.put(StepCommand.META_TIMEOUT_MINUTES, 60);
+            metadata.put(StepCommand.META_TIMEOUT_MINUTES, 30);
         }
 
         return StepCommand.builder()

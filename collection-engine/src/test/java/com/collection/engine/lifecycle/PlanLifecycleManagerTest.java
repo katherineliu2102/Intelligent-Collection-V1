@@ -3,6 +3,7 @@ package com.collection.engine.lifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -662,6 +663,63 @@ class PlanLifecycleManagerTest {
         assertThat(out).isEmpty();
     }
 
+    @Test
+    @DisplayName("CONNECT_AND_STOP：AI_CALL 接通后跳过同日 PENDING 补呼，保留短信与次日外呼")
+    void onStepCompleted_answeredAiCall_skipsSameDayPendingRetry() {
+        ContactPlanStep answered = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        answered.setResult(ContactResult.ANSWERED);
+        answered.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+
+        ContactPlanStep sameDayRetry = newStep(202L, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        sameDayRetry.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        ContactPlanStep sameDaySms = newStep(203L, 3, ChannelType.SMS, StepStatus.PENDING);
+        sameDaySms.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        ContactPlanStep nextDayCall = newStep(204L, 4, ChannelType.AI_CALL, StepStatus.PENDING);
+        nextDayCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 27, 9, 15));
+        ContactPlanStep executingCall =
+                newStep(205L, 5, ChannelType.AI_CALL, StepStatus.EXECUTING);
+        executingCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 16, 0));
+
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(answered);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        when(planRepository.findStepsByPlan(PLAN_ID))
+                .thenReturn(
+                        Arrays.asList(
+                                answered, sameDayRetry, sameDaySms, nextDayCall, executingCall));
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 3, ChannelType.SMS, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository)
+                .updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository, never()).updateStepStatus(eq(203L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(204L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(205L), any(), any());
+    }
+
+    @Test
+    @DisplayName("CONNECT_AND_STOP：未接通不跳过同日补呼")
+    void onStepCompleted_noAnswer_doesNotSkipRetry() {
+        ContactPlanStep completed = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        completed.setResult(ContactResult.NO_ANSWER);
+        completed.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(completed);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository, never()).findStepsByPlan(anyLong());
+        verify(planRepository, never())
+                .updateStepStatus(eq(NEXT_STEP_ID), eq(StepStatus.SKIPPED), any());
+    }
+
     // ───────────────────────── 差集补全：链路③ 观察期缺省结转（D26） ─────────────────────────
 
     @Test
@@ -683,15 +741,35 @@ class PlanLifecycleManagerTest {
     // ───────────────────────── 差集补全：链路④ 异步回调态拦截/映射（D16/D17/D18） ─────────────────────────
 
     @Test
-    @DisplayName("④-D16 回调时计划已终态（非 EXECUTING/WAITING）→ 静默吸收，不改步骤")
-    void onChannelCallback_nonExecuting_silentlyAbsorbs() {
+    @DisplayName("④-D16 回调时计划已终态但步骤仍 EXECUTING → 关步骤、不推进")
+    void onChannelCallback_cancelledPlan_closesExecutingStepWithoutAdvance() {
         ContactPlan cancelled = newPlan(PLAN_ID, PlanStatus.PLAN_CANCELLED, Stage.S2);
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(cancelled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
-        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(cancelled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.ANSWERED),
+                        eq(step.getChannelType()),
+                        any(),
+                        any());
         assertThat(out).isEmpty();
     }
 
@@ -730,15 +808,115 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("④-D17 超时兜底时计划非 STEP_EXECUTING（回调已正常处理）→ 忽略")
-    void onCallbackTimeout_nonExecuting_noop() {
+    @DisplayName("④-D17 超时兜底时计划已终态但步骤仍 EXECUTING → 关步骤、不推进")
+    void onCallbackTimeout_cancelledPlan_closesExecutingStepWithoutAdvance() {
         ContactPlan completed = newPlan(PLAN_ID, PlanStatus.PLAN_COMPLETED, Stage.S2);
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(completed);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         List<CollectionEvent> out =
                 manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
 
-        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(completed),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        org.mockito.ArgumentMatchers.contains("CALLBACK_TIMEOUT"));
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("计划已 STEP_SCHEDULED 时回调仍收口步骤，不发布 STEP_COMPLETED")
+    void onChannelCallback_scheduledPlan_closesStepWithoutAdvance() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
+
+        List<CollectionEvent> out =
+                manager.onChannelCallback(
+                        stepEvent(EventType.CHANNEL_CALLBACK).with("result", "FAILED"));
+
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(scheduled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        any());
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("计划已 STEP_SCHEDULED 时超时仍收口步骤，不发布 STEP_COMPLETED")
+    void onCallbackTimeout_scheduledPlan_closesStepWithoutAdvance() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
+
+        List<CollectionEvent> out =
+                manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
+
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(scheduled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        org.mockito.ArgumentMatchers.contains("CALLBACK_TIMEOUT"));
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("计划已 STEP_SCHEDULED 时迟到的 STEP_COMPLETED 不再 ADVANCE_NEXT")
+    void onStepCompleted_scheduledPlan_doesNotRewind() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+
+        List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(advancementPolicy, never()).decide(any(), any());
+        verify(planRepository, never()).getNextStep(anyLong(), anyInt());
         assertThat(out).isEmpty();
     }
 

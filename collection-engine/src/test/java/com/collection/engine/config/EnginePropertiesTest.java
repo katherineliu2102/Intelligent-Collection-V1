@@ -26,8 +26,8 @@ class EnginePropertiesTest {
     }
 
     @Test
-    @DisplayName("回调窗口默认 10 分钟：显著大于单通外呼时长，又不至于把失败步骤压一小时")
-    void callbackWindowDefaultsToTenMinutes() {
-        assertThat(new EngineProperties.Step().getCallbackTimeoutMinutes()).isEqualTo(10);
+    @DisplayName("回调窗口默认 30 分钟：覆盖排队+通话，又不至于把失败步骤压一小时")
+    void callbackWindowDefaultsToThirtyMinutes() {
+        assertThat(new EngineProperties.Step().getCallbackTimeoutMinutes()).isEqualTo(30);
     }
 }

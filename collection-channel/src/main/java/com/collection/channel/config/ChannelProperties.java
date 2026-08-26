@@ -223,7 +223,7 @@ public class ChannelProperties {
             limits.put("SMS", 1);
             limits.put("PUSH", 1);
             limits.put("EMAIL", 1);
-            limits.put("AI_CALL", 1);
+            limits.put("AI_CALL", 2);
             return limits;
         }
     }
