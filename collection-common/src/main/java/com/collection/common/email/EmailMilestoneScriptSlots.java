@@ -30,9 +30,7 @@ public final class EmailMilestoneScriptSlots {
                                     "S4_EMAIL_ENTRY",
                                     "S4_EMAIL_PRE_CLOSE")));
 
-    /**
-     * Phase 1 里程碑 Email 的 SendGrid Dynamic Template ID。发信 Adapter 只读这里，不读 Nacos / yml。
-     */
+    /** Phase 1 里程碑 Email 的 SendGrid Dynamic Template ID。发信 Adapter 只读这里，不读 Nacos / yml。 */
     public static final Map<String, String> PHASE1_SENDGRID_TEMPLATE_IDS;
 
     static {
