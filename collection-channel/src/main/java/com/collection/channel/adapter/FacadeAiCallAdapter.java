@@ -1,7 +1,5 @@
 package com.collection.channel.adapter;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
@@ -11,27 +9,22 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * Valubo Facade AI 外呼 Adapter。
  *
- * <p>当前只覆盖一案一批的 L1 冒烟与单 step dispatch：create batch → upload case → start。Facade callback、撤单、 Wave-2
- * 编排及批次聚合仍未接入。
+ * <p>两条出站路径共用同一套请求体与错误码：默认<b>一案一批</b>（create batch → upload case → start）；开启
+ * {@code channel.facade.batch-aggregation.enabled} 后走<b>波次聚合</b>，案件先缓冲在 {@link
+ * FacadeBatchCoordinator}，由它按触达槽合并成一个批次再起批。撤单、录音与日终对账仍未接入。
  */
 @Component
 public class FacadeAiCallAdapter implements ChannelAdapter {
@@ -47,7 +40,11 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
     private static final ZoneId PHT = ZoneId.of("Asia/Manila");
 
     @Resource private ChannelProperties properties;
-    @Resource private RestTemplate facadeRestTemplate;
+    @Resource private FacadeBatchClient batchClient;
+
+    /** 纯逻辑单测手工构造 Adapter 时为空，此时始终走一案一批。 */
+    @Autowired(required = false)
+    private FacadeBatchCoordinator batchCoordinator;
 
     @Override
     public ChannelType channelType() {
@@ -73,26 +70,41 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
             return AdapterSupport.permanentFailure("ZERO_OVERDUE_AMOUNT");
         }
 
-        ChannelProperties.Facade cfg = properties.getFacade();
+        Map<String, Object> caseBody = buildCaseBody(command, callee, borrowerName, overdueAmount);
+        String caseId = AdapterSupport.metadataString(command, StepCommand.META_CASE_ID);
+
+        if (batchCoordinator != null && batchCoordinator.isEnabled()) {
+            String waveBatchId =
+                    batchCoordinator.enroll(
+                            longMetadata(command, META_PLAN_ID),
+                            longMetadata(command, META_STEP_ID),
+                            longMetadata(command, StepCommand.META_CASE_ID),
+                            caseBody);
+            if (waveBatchId != null) {
+                log.info(
+                        "[FacadeAiCallAdapter] enrolled into wave {} caseId={}",
+                        waveBatchId,
+                        caseId);
+                return AdapterSupport.delivered(waveBatchId);
+            }
+        }
+
         String externalBatchId = externalBatchId(command);
         try {
-            String batchId = createBatch(cfg, externalBatchId);
+            String batchId = batchClient.createBatch(externalBatchId);
             if (StringUtils.isBlank(batchId)) {
                 return AdapterSupport.permanentFailure("FACADE_NO_BATCH_ID");
             }
-            StepResult upload =
-                    uploadCase(cfg, batchId, command, callee, borrowerName, overdueAmount);
+            FacadeBatchClient.UploadOutcome upload =
+                    batchClient.uploadCases(batchId, Collections.singletonList(caseBody));
             if (!upload.isSuccess()) {
-                return upload;
+                return AdapterSupport.permanentFailure(upload.getErrorCode());
             }
-            StepResult started = startBatch(cfg, batchId);
-            if (!started.isSuccess()) {
-                return started;
+            if (!batchClient.startBatch(batchId)) {
+                return AdapterSupport.permanentFailure("FACADE_START_BATCH");
             }
             log.info(
-                    "[FacadeAiCallAdapter] batch started batchId={} caseId={}",
-                    batchId,
-                    AdapterSupport.metadataString(command, StepCommand.META_CASE_ID));
+                    "[FacadeAiCallAdapter] batch started batchId={} caseId={}", batchId, caseId);
             return AdapterSupport.delivered(batchId);
         } catch (IllegalStateException e) {
             log.warn("[FacadeAiCallAdapter] Facade business failure: {}", e.getMessage());
@@ -127,7 +139,7 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
         BigDecimal overdue = overdueAmount(command);
         String name = AdapterSupport.metadataString(command, META_BORROWER_NAME);
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
-        payload.put("batch", buildBatchBody(externalBatchId(command)));
+        payload.put("batch", batchClient.buildBatchBody(externalBatchId(command)));
         payload.put(
                 "case",
                 buildCaseBody(
@@ -139,14 +151,7 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
     }
 
     public JSONObject getBatch(String batchId) {
-        ChannelProperties.Facade cfg = properties.getFacade();
-        ResponseEntity<String> response =
-                facadeRestTemplate.exchange(
-                        join(cfg.getBaseUrl(), "/batches/" + batchId),
-                        HttpMethod.GET,
-                        entity(cfg, null),
-                        String.class);
-        return parseBody(response.getBody());
+        return batchClient.getBatch(batchId);
     }
 
     public static String normalizeE164(String raw) {
@@ -167,88 +172,6 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
             return "+63" + digits;
         }
         return null;
-    }
-
-    private String createBatch(ChannelProperties.Facade cfg, String externalBatchId) {
-        ResponseEntity<String> response =
-                facadeRestTemplate.postForEntity(
-                        join(cfg.getBaseUrl(), "/batches"),
-                        entity(cfg, buildBatchBody(externalBatchId)),
-                        String.class);
-        JSONObject body = parseBody(response.getBody());
-        if (!isSuccess(body)) {
-            throw new IllegalStateException("FACADE_CREATE_BATCH " + errorMessage(body));
-        }
-        JSONObject data = body.getJSONObject("data");
-        return data == null ? null : data.getString("batch_id");
-    }
-
-    private StepResult uploadCase(
-            ChannelProperties.Facade cfg,
-            String batchId,
-            StepCommand command,
-            String callee,
-            String borrowerName,
-            BigDecimal overdueAmount) {
-        Map<String, Object> body = new LinkedHashMap<String, Object>();
-        List<Map<String, Object>> cases = new ArrayList<Map<String, Object>>();
-        cases.add(buildCaseBody(command, callee, borrowerName, overdueAmount));
-        body.put("cases", cases);
-        ResponseEntity<String> response =
-                facadeRestTemplate.postForEntity(
-                        join(cfg.getBaseUrl(), "/batches/" + batchId + "/cases"),
-                        entity(cfg, body),
-                        String.class);
-        JSONObject result = parseBody(response.getBody());
-        if (!isSuccess(result)) {
-            return AdapterSupport.permanentFailure("FACADE_UPLOAD_CASE");
-        }
-        JSONObject data = result.getJSONObject("data");
-        if (data != null && data.getIntValue("rejected") > 0) {
-            JSONArray errors = data.getJSONArray("errors");
-            String errorCode =
-                    errors != null && !errors.isEmpty()
-                            ? errors.getJSONObject(0).getString("error_code")
-                            : "FACADE_CASE_REJECTED";
-            return AdapterSupport.permanentFailure(
-                    StringUtils.defaultIfBlank(errorCode, "FACADE_CASE_REJECTED"));
-        }
-        return AdapterSupport.delivered(batchId);
-    }
-
-    private StepResult startBatch(ChannelProperties.Facade cfg, String batchId) {
-        ResponseEntity<String> response =
-                facadeRestTemplate.postForEntity(
-                        join(cfg.getBaseUrl(), "/batches/" + batchId + "/start"),
-                        entity(cfg, new LinkedHashMap<String, Object>()),
-                        String.class);
-        return isSuccess(parseBody(response.getBody()))
-                ? AdapterSupport.delivered(batchId)
-                : AdapterSupport.permanentFailure("FACADE_START_BATCH");
-    }
-
-    /**
-     * 建批请求体。
-     *
-     * <p>**不下发回调地址**：Facade 的 callback 是账户级配置，所有批次共用，由对方控制台预先登记，不随请求传（2026-08-20
-     * 修订说明确认）。同一份修订说明还收紧了 {@code dial_policy}：只允许 {@code timezone} / {@code windows} / {@code
-     * weekdays}，带上已取消的 {@code ring_timeout_sec}、{@code retry}、{@code predictive}、 {@code
-     * terminal_sip_codes} 或顶层 {@code prepare_mode} 会直接 HTTP 422 建批失败，不再静默忽略。
-     */
-    private Map<String, Object> buildBatchBody(String externalBatchId) {
-        ChannelProperties.Facade cfg = properties.getFacade();
-        Map<String, Object> window = new LinkedHashMap<String, Object>();
-        window.put("start_time", cfg.getWindowStart());
-        window.put("end_time", cfg.getWindowEnd());
-        Map<String, Object> dialPolicy = new LinkedHashMap<String, Object>();
-        dialPolicy.put("timezone", cfg.getTimezone());
-        dialPolicy.put("windows", Arrays.asList(window));
-        dialPolicy.put("weekdays", Arrays.asList(1, 2, 3, 4, 5, 6, 7));
-        Map<String, Object> body = new LinkedHashMap<String, Object>();
-        body.put("external_batch_id", externalBatchId);
-        body.put("script", singletonMap("domain", "collection"));
-        body.put("dial_policy", dialPolicy);
-        return body;
     }
 
     private Map<String, Object> buildCaseBody(
@@ -291,37 +214,19 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
         }
     }
 
-    private HttpEntity<String> entity(ChannelProperties.Facade cfg, Map<String, Object> payload) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(cfg.getApiKey());
-        return payload == null
-                ? new HttpEntity<String>(headers)
-                : new HttpEntity<String>(JSON.toJSONString(payload), headers);
+    private static Long longMetadata(StepCommand command, String key) {
+        String raw = AdapterSupport.metadataString(command, key);
+        try {
+            return StringUtils.isBlank(raw) ? null : Long.valueOf(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static Map<String, Object> singletonMap(String key, Object value) {
         Map<String, Object> map = new LinkedHashMap<String, Object>();
         map.put(key, value);
         return map;
-    }
-
-    private static String join(String baseUrl, String path) {
-        return (baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl)
-                + path;
-    }
-
-    private static JSONObject parseBody(String raw) {
-        return StringUtils.isBlank(raw) ? new JSONObject() : JSON.parseObject(raw);
-    }
-
-    private static boolean isSuccess(JSONObject body) {
-        return body != null && Boolean.TRUE.equals(body.getBoolean("success"));
-    }
-
-    private static String errorMessage(JSONObject body) {
-        JSONObject error = body == null ? null : body.getJSONObject("error");
-        return error == null ? String.valueOf(body) : error.getString("message");
     }
 
     private static String externalBatchId(StepCommand command) {

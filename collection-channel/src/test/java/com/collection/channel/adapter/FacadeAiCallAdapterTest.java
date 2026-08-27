@@ -24,6 +24,8 @@ import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
@@ -39,12 +41,15 @@ class FacadeAiCallAdapterTest {
         properties = new ChannelProperties();
         properties.getFacade().setBaseUrl(wireMock.getHttpBaseUrl() + "/api/v1/facade");
         properties.getFacade().setApiKey("sk_test_xxx");
-        adapter = new FacadeAiCallAdapter();
-        ReflectionTestUtils.setField(adapter, "properties", properties);
+        FacadeBatchClient batchClient = new FacadeBatchClient();
+        ReflectionTestUtils.setField(batchClient, "properties", properties);
         ReflectionTestUtils.setField(
-                adapter,
+                batchClient,
                 "facadeRestTemplate",
                 new RestTemplate(new SimpleClientHttpRequestFactory()));
+        adapter = new FacadeAiCallAdapter();
+        ReflectionTestUtils.setField(adapter, "properties", properties);
+        ReflectionTestUtils.setField(adapter, "batchClient", batchClient);
     }
 
     @Test
@@ -147,6 +152,52 @@ class FacadeAiCallAdapterTest {
                         .withRequestBody(matchingJsonPath("$.dial_policy.timezone"))
                         .withRequestBody(matchingJsonPath("$.dial_policy.windows[0].start_time"))
                         .withRequestBody(matchingJsonPath("$.dial_policy.weekdays")));
+    }
+
+    /**
+     * 聚合开启后，单个步骤只入波次缓冲，绝不能自己再建一个批次——否则「一批多案」会退化成「一批多案 + 一堆单案批」，
+     * 每个批次各占一套 Facade 并发，正好是聚合要消除的问题。
+     */
+    @Test
+    void waveAggregationEnrollsWithoutCallingFacade() {
+        stubFacadeHappyPath();
+        FacadeBatchCoordinator coordinator = Mockito.mock(FacadeBatchCoordinator.class);
+        Mockito.when(coordinator.isEnabled()).thenReturn(true);
+        Mockito.when(
+                        coordinator.enroll(
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.<Map<String, Object>>any()))
+                .thenReturn("mocasa-20260827-0915-1");
+        ReflectionTestUtils.setField(adapter, "batchCoordinator", coordinator);
+
+        StepResult result = adapter.send(command("639451373897"));
+
+        assertTrue(result.isSuccess());
+        assertEquals("mocasa-20260827-0915-1", result.getProviderMsgId());
+        verify(0, postRequestedFor(urlEqualTo("/api/v1/facade/batches")));
+    }
+
+    @Test
+    void fallsBackToOneCaseBatchWhenEnrollFails() {
+        stubFacadeHappyPath();
+        FacadeBatchCoordinator coordinator = Mockito.mock(FacadeBatchCoordinator.class);
+        Mockito.when(coordinator.isEnabled()).thenReturn(true);
+        Mockito.when(
+                        coordinator.enroll(
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.any(),
+                                ArgumentMatchers.<Map<String, Object>>any()))
+                .thenReturn(null);
+        ReflectionTestUtils.setField(adapter, "batchCoordinator", coordinator);
+
+        StepResult result = adapter.send(command("639451373897"));
+
+        assertTrue(result.isSuccess());
+        assertEquals("batch-1", result.getProviderMsgId());
+        verify(postRequestedFor(urlEqualTo("/api/v1/facade/batches/batch-1/start")));
     }
 
     @Test
