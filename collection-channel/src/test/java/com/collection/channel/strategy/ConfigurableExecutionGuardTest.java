@@ -168,7 +168,8 @@ class ConfigurableExecutionGuardTest {
 
         GuardVerdict verdict =
                 guard.evaluate(
-                        contextWithTimeline(ChannelType.AI_CALL, Collections.singletonList(answered)));
+                        contextWithTimeline(
+                                ChannelType.AI_CALL, Collections.singletonList(answered)));
 
         assertThat(verdict.isAllowed()).isFalse();
         assertThat(verdict.getBlockedReason()).isEqualTo("CONNECT_AND_STOP");
@@ -196,7 +197,8 @@ class ConfigurableExecutionGuardTest {
         assertThat(
                         guard.evaluate(
                                         contextWithTimeline(
-                                                ChannelType.SMS, Collections.singletonList(answered)))
+                                                ChannelType.SMS,
+                                                Collections.singletonList(answered)))
                                 .isAllowed())
                 .isTrue();
     }

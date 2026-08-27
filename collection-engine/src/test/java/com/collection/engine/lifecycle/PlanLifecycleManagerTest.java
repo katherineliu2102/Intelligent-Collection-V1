@@ -731,14 +731,10 @@ class PlanLifecycleManagerTest {
 
         manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
 
-        verify(planRepository)
-                .updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
-        verify(planRepository, never())
-                .updateStepStatus(eq(203L), any(), any());
-        verify(planRepository, never())
-                .updateStepStatus(eq(204L), any(), any());
-        verify(planRepository, never())
-                .updateStepStatus(eq(205L), any(), any());
+        verify(planRepository).updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository, never()).updateStepStatus(eq(203L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(204L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(205L), any(), any());
     }
 
     @Test

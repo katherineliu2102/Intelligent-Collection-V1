@@ -154,10 +154,7 @@ class FacadeAiCallAdapterTest {
                         .withRequestBody(matchingJsonPath("$.dial_policy.weekdays")));
     }
 
-    /**
-     * 聚合开启后，单个步骤只入波次缓冲，绝不能自己再建一个批次——否则「一批多案」会退化成「一批多案 + 一堆单案批」，
-     * 每个批次各占一套 Facade 并发，正好是聚合要消除的问题。
-     */
+    /** 聚合开启后，单个步骤只入波次缓冲，绝不能自己再建一个批次——否则「一批多案」会退化成「一批多案 + 一堆单案批」， 每个批次各占一套 Facade 并发，正好是聚合要消除的问题。 */
     @Test
     void waveAggregationEnrollsWithoutCallingFacade() {
         stubFacadeHappyPath();

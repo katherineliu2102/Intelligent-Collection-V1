@@ -12,8 +12,8 @@ import org.springframework.stereotype.Component;
 /**
  * Phase 1 AdvancementPolicy —— 按步序推进。
  *
- * <p>真人接通后取消当日 AI 补呼不在本 SPI 内改步骤（SPI 只读、不得写 plan）。由引擎在 {@code
- * ADVANCE_NEXT} 之后把同日未执行的 {@code AI_CALL} 标为 SKIPPED（CONNECT_AND_STOP）。
+ * <p>真人接通后取消当日 AI 补呼不在本 SPI 内改步骤（SPI 只读、不得写 plan）。由引擎在 {@code ADVANCE_NEXT} 之后把同日未执行的 {@code
+ * AI_CALL} 标为 SKIPPED（CONNECT_AND_STOP）。
  *
  * <p>决策逻辑：
  *

@@ -106,8 +106,8 @@ public class ChannelProperties {
     /**
      * AI_CALL 波次聚合：把同一触达槽的多个到期步骤合成一个 Facade 批次，使并发资源按批分配。
      *
-     * <p>案件先缓冲在我方 Redis，直到起批那一刻才 upload，故起批前的取消（还款）无需 Facade 介入。
-     * 起批后无法撤单，与一案一批时相同；**禁止**用批级 cancel 代偿，那会停掉同批其他借款人的电话。
+     * <p>案件先缓冲在我方 Redis，直到起批那一刻才 upload，故起批前的取消（还款）无需 Facade 介入。 起批后无法撤单，与一案一批时相同；**禁止**用批级 cancel
+     * 代偿，那会停掉同批其他借款人的电话。
      */
     @Data
     public static class BatchAggregation {
@@ -123,8 +123,8 @@ public class ChannelProperties {
         private long pollIntervalMs = 5000;
 
         /**
-         * 回调超时按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，避免队尾还没拨就被超时哨兵判成 FAILED。
-         * Facade 未给出每批并发的确切值前，这三个参数是保守估计，实测后再调。
+         * 回调超时按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，避免队尾还没拨就被超时哨兵判成 FAILED。 Facade
+         * 未给出每批并发的确切值前，这三个参数是保守估计，实测后再调。
          */
         private int assumedConcurrency = 5;
 

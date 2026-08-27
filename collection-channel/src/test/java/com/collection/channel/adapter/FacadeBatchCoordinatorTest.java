@@ -181,7 +181,9 @@ class FacadeBatchCoordinatorTest {
         ArgumentCaptor<List<Map<String, Object>>> cases = captureCases();
         verify(batchClient).uploadCases(anyString(), cases.capture());
         assertEquals(1, cases.getValue().size());
-        verify(planRepository).updateStepTimeoutTime(eq(101L), deadlineBefore(LocalDateTime.now(PHT).plusMinutes(2)));
+        verify(planRepository)
+                .updateStepTimeoutTime(
+                        eq(101L), deadlineBefore(LocalDateTime.now(PHT).plusMinutes(2)));
     }
 
     @Test
@@ -260,7 +262,8 @@ class FacadeBatchCoordinatorTest {
     }
 
     private static LocalDateTime deadlineAfter(LocalDateTime floor) {
-        return org.mockito.ArgumentMatchers.argThat(actual -> actual != null && actual.isAfter(floor));
+        return org.mockito.ArgumentMatchers.argThat(
+                actual -> actual != null && actual.isAfter(floor));
     }
 
     private static LocalDateTime deadlineBefore(LocalDateTime ceiling) {

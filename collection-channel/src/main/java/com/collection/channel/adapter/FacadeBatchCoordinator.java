@@ -29,13 +29,11 @@ import org.springframework.stereotype.Component;
 /**
  * AI_CALL 波次聚合协调器：把同一触达槽到期的多个步骤合成一个 Facade 批次。
  *
- * <p><b>为什么缓冲到起批才上传</b>：案件在 {@code start} 之前只存在于我方 Redis，还款或计划取消时直接从缓冲里剔除即可，
- * 不需要 Facade 提供 case 级撤单接口。起批之后无法撤单（与一案一批时相同）——**禁止**改用批级 {@code cancel} 代偿，
- * 那会停掉同批其他借款人的电话。
+ * <p><b>为什么缓冲到起批才上传</b>：案件在 {@code start} 之前只存在于我方 Redis，还款或计划取消时直接从缓冲里剔除即可， 不需要 Facade 提供 case
+ * 级撤单接口。起批之后无法撤单（与一案一批时相同）——**禁止**改用批级 {@code cancel} 代偿， 那会停掉同批其他借款人的电话。
  *
- * <p><b>起批失败与被剔除的步骤</b>：不在本类里直接改步骤状态，而是把 {@code timeout_time} 置为当前时刻，交给既有的
- * {@code callbackTimeout} 哨兵按标准路径收口并推进计划。渠道层因此不必碰事件总线，也不会出现「步骤终态了但计划停在
- * STEP_EXECUTING」。
+ * <p><b>起批失败与被剔除的步骤</b>：不在本类里直接改步骤状态，而是把 {@code timeout_time} 置为当前时刻，交给既有的 {@code callbackTimeout}
+ * 哨兵按标准路径收口并推进计划。渠道层因此不必碰事件总线，也不会出现「步骤终态了但计划停在 STEP_EXECUTING」。
  */
 @Component
 public class FacadeBatchCoordinator {
@@ -82,8 +80,7 @@ public class FacadeBatchCoordinator {
             return null;
         }
         try {
-            ChannelProperties.BatchAggregation cfg =
-                    properties.getFacade().getBatchAggregation();
+            ChannelProperties.BatchAggregation cfg = properties.getFacade().getBatchAggregation();
             String waveKey = waveKeyOf(stepId);
             long generation = currentGeneration(waveKey);
             String waveId = waveId(waveKey, generation);
@@ -219,11 +216,7 @@ public class FacadeBatchCoordinator {
             log.error("[FacadeBatch] 波次 {} 调用 Facade 失败", waveId, e);
             failure = "FACADE_WAVE_DISPATCH_FAILED";
         }
-        log.error(
-                "[FacadeBatch] 波次 {} 起批失败（{}），{} 个步骤交回超时哨兵收口",
-                waveId,
-                failure,
-                kept.size());
+        log.error("[FacadeBatch] 波次 {} 起批失败（{}），{} 个步骤交回超时哨兵收口", waveId, failure, kept.size());
         for (JSONObject entry : kept) {
             expireStepNow(entry.getLong("stepId"), failure);
         }
@@ -250,8 +243,8 @@ public class FacadeBatchCoordinator {
     }
 
     /**
-     * 回调超时时刻：按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，下界沿用一案一批时的默认，
-     * 上界既受 maxTimeoutMinutes 约束，也不得越过当日拨打窗结束——窗外的案件今天不会再被拨，挂到明天没有意义。
+     * 回调超时时刻：按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，下界沿用一案一批时的默认， 上界既受 maxTimeoutMinutes
+     * 约束，也不得越过当日拨打窗结束——窗外的案件今天不会再被拨，挂到明天没有意义。
      */
     LocalDateTime callbackDeadline(int caseCount) {
         ChannelProperties.Facade facade = properties.getFacade();

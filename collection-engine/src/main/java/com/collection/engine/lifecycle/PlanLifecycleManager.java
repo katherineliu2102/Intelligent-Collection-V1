@@ -632,8 +632,8 @@ public class PlanLifecycleManager {
     }
 
     /**
-     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。
-     * 只处理 PENDING；已在拨打中的 EXECUTING 不打断。SMS/PUSH/EMAIL 同日步骤保留。
+     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。 只处理 PENDING；已在拨打中的 EXECUTING
+     * 不打断。SMS/PUSH/EMAIL 同日步骤保留。
      */
     private void skipSameDayPendingAiCalls(Long planId, ContactPlanStep answered) {
         List<ContactPlanStep> steps = planRepository.findStepsByPlan(planId);
@@ -897,8 +897,8 @@ public class PlanLifecycleManager {
     }
 
     /**
-     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED
-     * 表示后续 due 已经把日程推走，再推进会把 current_step 拽回旧步。
+     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED 表示后续 due 已经把日程推走，再推进会把 current_step
+     * 拽回旧步。
      */
     private boolean planAwaitsAsyncOutcome(ContactPlan plan) {
         return plan.getStatus() == PlanStatus.STEP_EXECUTING
