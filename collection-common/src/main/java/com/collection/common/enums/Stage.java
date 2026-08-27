@@ -43,4 +43,21 @@ public enum Stage {
         // dpd < -3 时尚未进入催收窗口，按 S0 兜底（实际是否建计划由 PlanFactory 决定）
         return S0;
     }
+
+    /** 下一催收阶段；S4 已是最后一档，返回 {@code null}。 */
+    public Stage next() {
+        switch (this) {
+            case S0:
+                return S1;
+            case S1:
+                return S2;
+            case S2:
+                return S3;
+            case S3:
+                return S4;
+            case S4:
+            default:
+                return null;
+        }
+    }
 }

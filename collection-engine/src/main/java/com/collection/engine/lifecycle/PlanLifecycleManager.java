@@ -453,14 +453,35 @@ public class PlanLifecycleManager {
             case REBUILD:
                 // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
                 planRepository.markRenewalPending(planId);
-                if (!createPlanForStage(
+                if (createPlanForStage(
                         plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
-                    throw new IllegalStateException(
-                            "REBUILD did not create successor plan: " + planId);
+                    planRepository.updatePlanStatus(
+                            planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
+                    log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                    return noEvents();
                 }
-                planRepository.updatePlanStatus(
-                        planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
-                log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                // Factory 0 步（本阶段已无未来槽）不是故障：收口旧计划，有下一档则升档。
+                planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
+                if ((caseInfo != null && isCeased(caseInfo))
+                        || (snapshot != null
+                                && snapshot.getCaseContext() != null
+                                && "CEASED"
+                                        .equalsIgnoreCase(
+                                                snapshot.getCaseContext().getCollectionStatus()))) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor (ceased), COMPLETE",
+                            planId);
+                    return noEvents();
+                }
+                Stage next = plan.getStage() == null ? null : plan.getStage().next();
+                if (next != null) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor, ESCALATE → {}",
+                            planId,
+                            next);
+                    return single(enqueued(EngineEvents.stageEscalated(plan, next.name())));
+                }
+                log.info("[exhausted] plan {} REBUILD produced no successor, COMPLETE", planId);
                 return noEvents();
             case ESCALATE:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);

@@ -297,7 +297,7 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-push?caseId=94200" -Meth
 | 项 | 内容 |
 |----|------|
 | 门禁 | 阶段 2 `SendGridEmailAdapter` 已上线 |
-| 前置 | `channel.sendgrid.templates.S0_DUE_TODAY_EMAIL` 已填；`single-step=EMAIL` |
+| 前置 | `EmailMilestoneScriptSlots` 已含 `S0_DUE_TODAY_EMAIL` 的 `d-xxx`；`single-step=EMAIL` |
 | 测试数据 | **92002** → `wzynju@126.com`，S0，`dpd=0`，`amount_due=5000` |
 | 操作 | `POST /mock/ingest?caseId=92002&userId=92002&stage=S0` → 等 10~15s |
 | 预期 | ① timeline 1 条 EMAIL `DELIVERED` ② 126 邮箱收到 ③ 日志含 `S0_DUE_TODAY_EMAIL` |
@@ -306,7 +306,7 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-push?caseId=94200" -Meth
 
 | 项 | 内容 |
 |----|------|
-| 前置 | `application-local.yml` 填齐 **5 个** `templates`；`from-email=collections@mocasa.com`；`single-step=EMAIL` |
+| 前置 | 代码常量已含 5 个 `d-xxx`；`from-email=collections@mocasa.com`；`single-step=EMAIL` |
 | 案例表 | [`email-templates/email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md) |
 | 操作 | 按表 `caseId` ingest，例如 `93101`（test_s1_user1 · S1 · dpd1 · ₱2500） |
 | 预期 | 每案对应 scriptSlot 模板 + 变量与表一致 |

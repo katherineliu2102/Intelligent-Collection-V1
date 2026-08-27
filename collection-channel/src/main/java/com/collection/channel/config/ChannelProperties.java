@@ -213,7 +213,10 @@ public class ChannelProperties {
         private String fromEmail = "";
         private String fromName = "MOCASA Collections";
         private int unsubscribeGroupId = 0;
-        /** scriptSlot → SendGrid Dynamic Template ID（d-xxx）；见 Email 模板清单文档。未命中则发信失败，无兜底。 */
+        /**
+         * @deprecated 不再使用。scriptSlot → d-xxx 见 {@code
+         *     EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS}。
+         */
         private Map<String, String> templates = new HashMap<>();
         /** 默认 https://api.sendgrid.com/v3/mail/send；单测可指向 WireMock。 */
         private String apiUrl = "https://api.sendgrid.com/v3/mail/send";

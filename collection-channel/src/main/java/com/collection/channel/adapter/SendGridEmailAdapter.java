@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.StepCommand;
 import com.collection.common.dto.StepResult;
+import com.collection.common.email.EmailMilestoneScriptSlots;
 import com.collection.common.enums.ChannelType;
 import java.util.Collections;
 import java.util.HashMap;
@@ -112,12 +113,9 @@ public class SendGridEmailAdapter implements ChannelAdapter {
             scriptSlot = tid;
         }
         if (StringUtils.isNotBlank(scriptSlot)) {
-            Map<String, String> templates = properties.getSendgrid().getTemplates();
-            if (templates != null) {
-                String mapped = templates.get(scriptSlot);
-                if (StringUtils.isNotBlank(mapped)) {
-                    return mapped;
-                }
+            String mapped = EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot);
+            if (StringUtils.isNotBlank(mapped)) {
+                return mapped;
             }
         }
         log.error(

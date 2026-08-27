@@ -73,13 +73,13 @@ FROM t_contact_timeline WHERE user_id = ? ORDER BY id DESC LIMIT 10;
 | Nacos 路径 | 用途 | 测试 TC |
 |------------|------|---------|
 | `channel.notification.app-key` 等 | 通知中心 SMS + Push | TC-SMS-01、TC-PUSH-01/02 |
-| `channel.sendgrid.api-key` + `templates` 映射 | SendGrid Email | TC-EMAIL-01、TC-EMAIL-D0-01 |
+| `channel.sendgrid.api-key` | SendGrid Email 密钥 | TC-EMAIL-01、TC-EMAIL-D0-01 |
 | `channel.lth.voice.url` | LTH 外呼 | TC-VOICE-01 |
 | `channel.callback.base-url` | Voice 回调 | TC-VOICE-03 |
 | `channel.compliance.*` | 合规 Guard | TC-GUARD-* |
 | `channel.debug.single-step` | 单渠道冒烟 | 各单渠道 TC |
 
-> 密钥不进 `.env`；发布见 `scripts/dev/publish-channel-secrets-to-nacos.ps1`。Email **不要**每个模板一条配置项；`d-xxx` 写在 `channel.sendgrid.templates`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射)）。
+> 密钥不进 `.env`；发布见 `scripts/dev/publish-channel-secrets-to-nacos.ps1`。Email **`d-xxx` 写在代码** `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`（见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-scriptslot--d-xxx)），不要每个模板一条 Nacos 配置。
 
 ### 3.2 scriptSlot 与素材位置
 
@@ -164,7 +164,7 @@ Email 联调递增 caseId（92002、92003…），避免 plan 冲突。
 | 1 | 改 HTML 源码 | `collection-admin/src/main/resources/catalog/email-templates/` |
 | 2 | 同步 Subject / Preheader | `email-templates/subjects.md` |
 | 3 | SendGrid 控制台粘贴 HTML + Settings | [建站 SOP](../email-templates/README.md#6-sendgrid-建站-sop) |
-| 4 | 填 Nacos `channel.sendgrid.templates.{scriptSlot}` | [§3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
+| 4 | 改代码 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` 并发版 | [§3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-scriptslot--d-xxx) |
 | 5 | 联调 | TC-EMAIL-D0-01；92002 → 126 邮箱 |
 
 **叙事合规**：改文案前阅读 [email-templates §2](../email-templates/README.md#2-催收心理学矩阵)——**无委外**；D+75 用 final delinquency review；禁 `collection will cease` / third-party。

@@ -2,7 +2,7 @@
 
 > **收件箱**：`wzynju@126.com`  
 > **发件人**：`collections@mocasa.com`  
-> **配置**：`application-local.yml` → `channel.sendgrid.templates`（Phase 1 仅 5 个 scriptSlot）  
+> **映射**：`EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`（Phase 1 仅 5 个 scriptSlot；换模板发版）  
 > **DB 注册表**：`db/seed/email-e2e-test-cases.sql` → `t_email_e2e_registry`（14 case，5 个 `phase1_active=1`）  
 > **前置**：`channel.debug.single-step: EMAIL`；`ai_collection_db` 可连
 

@@ -26,19 +26,11 @@
 | `S4_EMAIL_MID` | D+60 | 同上 |
 | `S*_EMAIL_CONDITIONAL` ×4 | Phase 2 | 无仓库草稿 |
 
-## Nacos / 本地配置
+## 代码映射（发版生效）
 
-```yaml
-channel:
-  sendgrid:
-    from-email: collections@mocasa.com
-    templates:
-      S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
-      S1_EMAIL_OVERDUE_NOTICE: d-bc7f5aee7e304caf93ca4d435a73a1d7
-      S2_EMAIL_ENTRY: d-86ed8faae3b24489ad7db8a11067b8c4
-      S4_EMAIL_ENTRY: d-658d5be184ab4710a19c8419ed66bca9
-      S4_EMAIL_PRE_CLOSE: d-881ce23667cc4df2abf82097b890cae1
-```
+`scriptSlot → d-xxx` 写在 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`，不写 Nacos。换模板改这一处并发版。
+
+密钥仍在 Nacos：`channel.sendgrid.api-key` / `from-email`。
 
 > **无 `default-template-id`**：未命中映射时 Adapter 返回 `SENDGRID_NO_TEMPLATE`。
 

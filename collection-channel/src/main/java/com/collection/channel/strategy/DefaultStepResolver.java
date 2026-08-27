@@ -154,13 +154,13 @@ public class DefaultStepResolver implements StepResolver {
      *
      * <ul>
      *   <li>SMS / PUSH 命中 DB → {@code db:<该行 config_version>}，未命中 → {@code nacos:<releaseVersion>}
-     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与 {@code
-     *       SendGridEmailAdapter.resolveTemplateId} 同一份映射）
+     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与 {@link
+     *       EmailMilestoneScriptSlots#sendGridTemplateId} 同一份映射）
      * </ul>
      */
     private String resolveTemplateVersion(ChannelType channel, String scriptSlot) {
         if (channel == ChannelType.EMAIL) {
-            String templateId = channelProperties.getSendgrid().getTemplates().get(scriptSlot);
+            String templateId = EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot);
             if (StringUtils.isNotBlank(templateId)) {
                 return "sendgrid:" + templateId;
             }

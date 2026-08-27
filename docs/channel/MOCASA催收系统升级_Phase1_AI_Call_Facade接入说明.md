@@ -42,7 +42,7 @@ AI_CALL StepCommand  ─┘      │  每案立即返回 StepResult(DELIVERED, p
 
 **案件在 `start` 之前只存在于我方 Redis**，还款或计划取消时直接从缓冲里剔除，不需要 Facade 提供 case 级撤单接口。起批之后无法撤单（与一案一批时相同）——**禁止**改用批级 `cancel` 代偿，那会停掉同批其他借款人的电话。
 
-`providerMsgId` 写的是我方生成的 `external_batch_id`（形如 `mocasa-20260827-1430-1`，日期 + 槽位 + 代次），不是 Facade 的 `batch_id`。回调身份反查走 `client_metadata.plan_id/step_id`（每案独立），不受影响；用 `batch_id` 反查的兜底路径在聚合下不再唯一，本期本就未实现。
+`providerMsgId` 写的是我方生成的 `external_batch_id`（形如 `mocasa-20260827-1430-1`，日期 + 槽位 + 代次），不是 Facade 的 `batch_id`。代次 Redis 键不存在时用 **SETNX 写成 1**，避免并发 `INCR` 把同一槽拆成多个批次。回调身份反查走 `client_metadata.plan_id/step_id`（每案独立），不受影响；用 `batch_id` 反查的兜底路径在聚合下不再唯一，本期本就未实现。
 
 失败与剔除都不在渠道层改步骤状态，而是把 `timeout_time` 置为当前时刻，交给既有的 `callbackTimeout` 哨兵按标准路径收口并推进计划。
 

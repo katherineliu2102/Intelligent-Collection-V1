@@ -335,16 +335,33 @@ public class FacadeBatchCoordinator {
     }
 
     private long currentGeneration(String waveKey) {
-        String raw = redis.opsForValue().get(generationKey(waveKey));
-        if (StringUtils.isNotBlank(raw)) {
-            try {
-                return Long.parseLong(raw);
-            } catch (NumberFormatException ignored) {
-                // 值被写坏时重新起代，不阻断触达
-            }
+        String key = generationKey(waveKey);
+        Long existing = parseGeneration(redis.opsForValue().get(key));
+        if (existing != null) {
+            return existing;
         }
-        Long generation = redis.opsForValue().increment(generationKey(waveKey));
+        // 键不存在时用 SETNX 写成 1。并发 INCR 会把同一槽拆成 #1 #2 #3…（14:30 首跑事故）。
+        Boolean created = redis.opsForValue().setIfAbsent(key, "1", WAVE_TTL);
+        if (Boolean.TRUE.equals(created)) {
+            return 1L;
+        }
+        Long raced = parseGeneration(redis.opsForValue().get(key));
+        if (raced != null) {
+            return raced;
+        }
+        Long generation = redis.opsForValue().increment(key);
         return generation == null ? 1L : generation;
+    }
+
+    private static Long parseGeneration(String raw) {
+        if (StringUtils.isBlank(raw)) {
+            return null;
+        }
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private long readLong(String key, String field, long fallback) {

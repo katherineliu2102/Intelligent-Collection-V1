@@ -1,7 +1,7 @@
 # MOCASA Email 模板设计系统（Phase 1）
 
-> **版本**: v1.5  
-> **日期**: 2026-06-10  
+> **版本**: v1.6  
+> **日期**: 2026-08-27  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
 > **关联文档**: [渠道模板清单 §3](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[渠道编排规格 §7.9](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md#79-email-发送原则s0s4)、[SendGrid 对接说明](../channel/MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md)
@@ -96,7 +96,7 @@ email-templates/
 | **发件人** | `collections@mocasa.com` | ✅ |
 | **语言** | 仅英文；Tagalog 走 Phase 2 独立 `*_TL` scriptSlot | ✅ |
 | **Offer（S2+）** | Phase 1 **无**减免/分期政策；S2 底部仅陈述「直接还款窗口收窄」，不虚构 Hardship Program；`offer_amount` Phase 2 | ✅ |
-| **scriptSlot** | 13 独立 slot = SendGrid Template Name；**Nacos 仅映射 5 个活跃** | ✅ |
+| **scriptSlot** | 13 独立 slot = SendGrid Template Name；**代码仅映射 5 个活跃** | ✅ |
 | **Subject** | SendGrid Settings；SSOT 见 `subjects.md` | ✅ |
 | **S4_PRE_CLOSE 变量** | `assignment_date` = 对外 **final review 截止日**（= 内部 D+91）；**非委外** | ✅ |
 
@@ -135,7 +135,7 @@ email-templates/
 1. Template Name = `scriptSlot`
 2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/` 对应 HTML
 3. **Settings** 填 Subject / Preheader（`subjects.md`）
-4. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
+4. Activate → 改 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` 后发版
 
 | 场景 | 要求 |
 |------|------|
@@ -161,6 +161,6 @@ email-templates/
 |----|------|
 | HTML 源码（里程碑） | `collection-admin/src/main/resources/catalog/email-templates/`（SSOT） |
 | 线上模板 | SendGrid `d-xxx` |
-| 映射 | Nacos `channel.sendgrid.templates` |
+| **映射** | **代码** `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`（换模板发版） |
 
-`.env` 仅放 `NACOS_*`；SendGrid 密钥在 Nacos `channel.sendgrid.api-key` / `from-email`。
+`.env` 仅放 `NACOS_*`；SendGrid **密钥**在 Nacos `channel.sendgrid.api-key` / `from-email`。`d-xxx` 不进 Nacos。

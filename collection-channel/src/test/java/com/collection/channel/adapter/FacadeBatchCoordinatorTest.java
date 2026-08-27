@@ -108,6 +108,42 @@ class FacadeBatchCoordinatorTest {
         assertEquals("mocasa-20260827-0915-1", externalBatchId);
         verify(hashOps).put(eq(CASE_KEY), eq("101"), anyString());
         verify(setOps).add("channel:facade:waves", WAVE_ID);
+        verify(valueOps, never()).increment(GEN_KEY);
+    }
+
+    @Test
+    @DisplayName("代次键不存在时 SETNX 写成 1，并发 enroll 不会 INCR 出 #2")
+    void enrollInitializesGenerationWithSetNx() {
+        ContactPlanStep step = new ContactPlanStep();
+        step.setId(101L);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 27, 9, 15));
+        when(planRepository.findStepById(101L)).thenReturn(step);
+        when(valueOps.get(GEN_KEY)).thenReturn(null);
+        when(valueOps.setIfAbsent(eq(GEN_KEY), eq("1"), any(Duration.class))).thenReturn(true);
+        when(hashOps.size(CASE_KEY)).thenReturn(0L);
+
+        String externalBatchId = coordinator.enroll(11L, 101L, 701L, caseBody("+639171234567"));
+
+        assertEquals("mocasa-20260827-0915-1", externalBatchId);
+        verify(valueOps).setIfAbsent(eq(GEN_KEY), eq("1"), any(Duration.class));
+        verify(valueOps, never()).increment(GEN_KEY);
+    }
+
+    @Test
+    @DisplayName("SETNX 输给并发赢家后读回对方的 1，不另起代次")
+    void enrollReadsWinnerGenerationWhenSetNxLoses() {
+        ContactPlanStep step = new ContactPlanStep();
+        step.setId(101L);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 27, 9, 15));
+        when(planRepository.findStepById(101L)).thenReturn(step);
+        when(valueOps.get(GEN_KEY)).thenReturn(null, "1");
+        when(valueOps.setIfAbsent(eq(GEN_KEY), eq("1"), any(Duration.class))).thenReturn(false);
+        when(hashOps.size(CASE_KEY)).thenReturn(1L);
+
+        String externalBatchId = coordinator.enroll(11L, 101L, 701L, caseBody("+639171234567"));
+
+        assertEquals("mocasa-20260827-0915-1", externalBatchId);
+        verify(valueOps, never()).increment(GEN_KEY);
     }
 
     @Test

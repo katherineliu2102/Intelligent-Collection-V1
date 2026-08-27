@@ -28,7 +28,6 @@ class SendGridEmailAdapterTest {
         properties = new ChannelProperties();
         properties.getSendgrid().setApiKey("SG.test-key");
         properties.getSendgrid().setFromEmail("collections@mocasa.test");
-        properties.getSendgrid().getTemplates().put("S0_DUE_TODAY_EMAIL", "d-test-template");
         properties.getSendgrid().setApiUrl(wm.getHttpBaseUrl() + "/v3/mail/send");
 
         adapter = new SendGridEmailAdapter();
@@ -140,13 +139,13 @@ class SendGridEmailAdapterTest {
     }
 
     @Test
-    void resolvesTemplateIdFromScriptSlotMap() {
-        properties.getSendgrid().getTemplates().put("S0_DUE_TODAY_EMAIL", "d-mapped-from-slot");
-
+    void resolvesTemplateIdFromCodeConstants() {
         stubFor(
                 post(urlEqualTo("/v3/mail/send"))
                         .withRequestBody(
-                                matchingJsonPath("$.template_id", equalTo("d-mapped-from-slot")))
+                                matchingJsonPath(
+                                        "$.template_id",
+                                        equalTo("d-9b485bfd24e14950a7811faf33c2b22f")))
                         .willReturn(
                                 aResponse()
                                         .withStatus(202)
