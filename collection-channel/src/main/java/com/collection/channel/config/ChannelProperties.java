@@ -99,6 +99,41 @@ public class ChannelProperties {
 
         private int connectTimeoutSeconds = 5;
         private int readTimeoutSeconds = 30;
+
+        private BatchAggregation batchAggregation = new BatchAggregation();
+    }
+
+    /**
+     * AI_CALL 波次聚合：把同一触达槽的多个到期步骤合成一个 Facade 批次，使并发资源按批分配。
+     *
+     * <p>案件先缓冲在我方 Redis，直到起批那一刻才 upload，故起批前的取消（还款）无需 Facade 介入。
+     * 起批后无法撤单，与一案一批时相同；**禁止**用批级 cancel 代偿，那会停掉同批其他借款人的电话。
+     */
+    @Data
+    public static class BatchAggregation {
+        /** 关闭时回到一案一批（create → upload 1 → start），行为与聚合上线前完全一致。 */
+        private boolean enabled = false;
+        /** 最后一案入批后静默这么久即起批。 */
+        private int silenceSeconds = 15;
+        /** 从首案入批起的最长等待，防止零星到期的步骤被无限期攒着。 */
+        private int maxWaitSeconds = 120;
+        /** 单批案件上限；Facade 单次上传上限为 500。满则立即另开一批。 */
+        private int maxCasesPerBatch = 500;
+        /** flusher 轮询间隔。 */
+        private long pollIntervalMs = 5000;
+
+        /**
+         * 回调超时按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，避免队尾还没拨就被超时哨兵判成 FAILED。
+         * Facade 未给出每批并发的确切值前，这三个参数是保守估计，实测后再调。
+         */
+        private int assumedConcurrency = 5;
+
+        private int assumedCallSeconds = 90;
+        private int timeoutBufferMinutes = 15;
+        /** 下界与一案一批时的引擎默认一致，避免小批次反而比以前更早超时。 */
+        private int minTimeoutMinutes = 30;
+
+        private int maxTimeoutMinutes = 120;
     }
 
     /**

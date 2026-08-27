@@ -114,8 +114,8 @@ export function PlanTemplatesTab() {
     <Space direction="vertical" style={{ width: "100%" }}>
       <Space>
         <Typography.Text type="secondary">
-          Plan templates drive the step sequence per stage (<code>t_contact_plan_template</code>). DB
-          overrides YAML; engine reloads within ~10s.
+          计划模板按 Stage 定义触达步骤序列（<code>t_contact_plan_template</code>）。按需覆盖：已编辑
+          &gt; 系统默认；保存后约 10 秒引擎热更新。
         </Typography.Text>
         <Button onClick={load} loading={loading}>
           Refresh

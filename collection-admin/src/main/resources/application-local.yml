@@ -144,7 +144,7 @@ channel:
       SMS: ${CHANNEL_DAILY_LIMIT_SMS:1}
       PUSH: ${CHANNEL_DAILY_LIMIT_PUSH:1}
       EMAIL: ${CHANNEL_DAILY_LIMIT_EMAIL:1}
-      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:1}
+      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:2}
   scripts:
     release-version: "2026.07.27.1"
     push-default-deep-link: https://app.mocasa.com/repay

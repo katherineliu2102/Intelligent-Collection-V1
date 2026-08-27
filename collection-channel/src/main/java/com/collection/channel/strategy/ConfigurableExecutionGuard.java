@@ -97,6 +97,34 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         return null;
     }
 
+    /** 当日已有 AI_CALL 真人接通则不再外呼（CONNECT_AND_STOP）。步骤推进侧会 SKIP 同日补呼；此处防漏网。 */
+    private GuardVerdict checkConnectAndStop(ExecutionContext context) {
+        if (context.getCurrentStep() == null
+                || context.getCurrentStep().getChannelType() != ChannelType.AI_CALL) {
+            return null;
+        }
+        List<ContactRecord> timeline = context.getRecentTimeline();
+        if (timeline == null || timeline.isEmpty()) {
+            return null;
+        }
+        ZoneId zone = ZoneId.of(channelProperties.getCompliance().getTimezone() != null
+                ? channelProperties.getCompliance().getTimezone()
+                : "Asia/Manila");
+        java.time.LocalDate today = ZonedDateTime.now(zone).toLocalDate();
+        for (ContactRecord record : timeline) {
+            if (record == null
+                    || record.getChannel() != ChannelType.AI_CALL
+                    || record.getResult() != ContactResult.ANSWERED
+                    || record.getCreatedAt() == null) {
+                continue;
+            }
+            if (record.getCreatedAt().atZone(zone).toLocalDate().equals(today)) {
+                return GuardVerdict.block("CONNECT_AND_STOP", "CONNECT_AND_STOP");
+            }
+        }
+        return null;
+    }
+
     private static java.time.LocalDateTime nextAllowedAt(
             ZonedDateTime now, LocalTime start, LocalTime end) {
         ZonedDateTime next =
