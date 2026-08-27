@@ -9,7 +9,8 @@ case "$FIRST_LINE" in
   "Merge "*|"Revert "*) exit 0 ;;
 esac
 
-PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([a-z0-9._-]+\))?!?: .+'
+# scope 允许 /（历史提交有 config/service、channel/test 等）
+PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([a-z0-9._/-]+\))?!?: .+'
 
 if ! printf '%s' "$FIRST_LINE" | grep -Eq "$PATTERN"; then
   echo "----------------------------------------------------------------"
