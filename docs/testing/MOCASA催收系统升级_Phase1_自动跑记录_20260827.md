@@ -4,7 +4,7 @@
 > **对比 8/26**：昨晚是挤压冒烟 + 三案加测；今天**不手调时间**，看预写槽是否按钟点发出。  
 > **环境**：Pilot `bdp01`，容器 `collection-admin`，镜像 `intelligent-collection-admin:pilot`。上午跑的是 **`a24356c`**（回调按步骤收口 + AI 超时 30 分钟）；**11:22 PHT 换成带波次聚合的构建**（§8），14:30 那波是聚合首跑。  
 > **时区**：业务时间为 **PHT（UTC+8）**。  
-> **取数截止**：2026-08-27 **16:20 PHT**（全日五槽已结束；傍晚发版见 §11）。GitHub `test_branch` 上午产品代码 `6f0ff38`；傍晚产品代码 **`4ca65f5`**（邮件映射进代码、SETNX 代次、穷尽 0 步升档），与白名单 40 案一并发 Pilot。  
+> **取数截止**：2026-08-27 **16:20 PHT**（全日五槽已结束；傍晚发版见 §11）。GitHub `test_branch` 上午产品代码 `6f0ff38`；傍晚产品代码 **`4ca65f5`**（邮件映射进代码、SETNX 代次、穷尽 0 步升档），**16:32 PHT** 已与白名单 40 案一并发 Pilot。  
 > **关联**：[主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) · [Facade 接入说明 §1.1](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) · [发版手册](../channel/MOCASA催收系统升级_Phase1_发版手册.md)
 
 ---
@@ -186,7 +186,7 @@ BQ 对账见 §9.2：不靠 `label` 也能对上。异步写入大约在 `12:00:
 
 **原因（待确认哪一种）**：日切把 `collection.ingestion.loan-id-whitelist` 里的值当 `case_id` 去查 `t_ai_collection`。这 10 个 ID（`468703`、`474696`、`504174`、`529225`、`529877`、`504887`、`530187`、`528834`、`528813`、`489984`）**既不是投影 `case_id`，也不是 `user_id`**——可能从未进件，或白名单其实是 loanId。已有活跃计划的案仍按预写槽在催；这 10 个今早也没有 due 步骤。
 
-**处理（8/27 傍晚发版）**：确认这 10 个在 `COLLECTION_PILOT_LOAN_IDS` / `COLLECTION_SCAN_CASE_IDS` 两份固定 50 案名单里，**不是当天 Pub/Sub 新进件**。发版时从 Pilot 两份名单拿掉，日切应变 `scanned=40`。未改「缺投影每天刷 WARN」的代码。
+**处理（8/27 16:32 PHT 发版）**：确认这 10 个在 `COLLECTION_PILOT_LOAN_IDS` / `COLLECTION_SCAN_CASE_IDS` 两份固定 50 案名单里，**不是当天 Pub/Sub 新进件**。已从 Pilot 两份名单拿掉（50→40），日切应变 `scanned=40`。未改「缺投影每天刷 WARN」的代码。
 
 ### 6.3 CONNECT_AND_STOP 今天没有样本
 
@@ -317,7 +317,7 @@ PEL 重试会反复进内存 `rebuildCounter`。计满 `max-rebuild-count=2` 后
 | 项 | 挡今天触达？ | 8/27 傍晚 |
 |---|---|---|
 | 取消计划残留 PENDING（§6.1） | 否 | **遗留**，未改代码 |
-| 日切投影缺失 WARN（§6.2） | 否 | **发版时从 Pilot 白名单拿掉 10 个 ID** |
+| 日切投影缺失 WARN（§6.2） | 否 | **已从 Pilot 白名单拿掉 10 个 ID**（50→40） |
 | CONNECT_AND_STOP 无样本（§6.3） | 否 | 遗留，等接通 |
 | Email 缺映射（§6.5） | 这 1 封没发出 | **已改代码**；8/28 14:00 复验 |
 | 入批竞态拆成 4 批（§6.6） | 否 | **已改 SETNX**；8/28 09:15/14:30 复验 |
@@ -341,7 +341,7 @@ PEL 重试会反复进内存 `rebuildCounter`。计满 `max-rebuild-count=2` 后
 | Email `d-xxx` 只在 Nacos/yml（§6.5） | 常量 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`；Adapter 只读代码 | **14:00** 案 `519965` / plan `883` / step `3177`，邮箱 `joshsarion@gmail.com`，应走 `S4_EMAIL_ENTRY` 打到 SendGrid，步骤不要再是 `SENDGRID_NO_TEMPLATE` |
 | 入批竞态拆 4 批（§6.6） | 代次键 `SETNX` 初始化为 1 | **09:15 / 14:30** timeline 上同一槽应基本是 **一个** `mocasa-YYYYMMDD-0915-1` / `…-1430-1`（满员才会出现 `-2`） |
 | S3 穷尽 0 步抛 PEL（§6.7） | Factory 空计划 → ESCALATE 或 COMPLETE，不抛 | 日志不应再出现 `REBUILD did not create successor plan`。案 `519965` 已有 S4 计划，不必等它再炸一次 |
-| 白名单 10 个幽灵 ID（§6.2） | 发版时从 Pilot `COLLECTION_PILOT_LOAN_IDS` 与 `COLLECTION_SCAN_CASE_IDS` 拿掉 | **03:35 起日切** `scanned=40`，不应再刷这 10 个 `t_ai_collection 无 case_id` |
+| 白名单 10 个幽灵 ID（§6.2） | 已从 Pilot `COLLECTION_PILOT_LOAN_IDS` 与 `COLLECTION_SCAN_CASE_IDS` 拿掉（50→40） | **03:35 起日切** `scanned=40`，不应再刷这 10 个 `t_ai_collection 无 case_id` |
 
 ### 11.3 还没改 / 验不了的
 
@@ -367,3 +367,17 @@ PEL 重试会反复进内存 `rebuildCounter`。计满 `max-rebuild-count=2` 后
 日切 03:35–05:55：白名单改为 40 后，`scanned` 应为 40。案 `519965` 投影仍可能是 S3、计划已是 S4，日切按单调前进可能 `rollbackSkipped`（与今天 `529878` 同类，不是回归）。
 
 若 09:15 仍出现多个 `mocasa-20260828-0915-*`，先看 Redis 代次键是否被旧 INCR 残留；必要时清 `channel:facade:gen:20260828-0915` 后再观察 14:30。
+
+### 11.5 发版落地（16:32 PHT）
+
+| 项 | 值 |
+|---|---|
+| GitHub `test_branch` | 产品修复 `4ca65f5`（已上 Pilot）；本段为发版后补记 |
+| Pilot 镜像 | `intelligent-collection-admin:pilot`，容器 `Up`，loopback health **200** |
+| 白名单 | `COLLECTION_PILOT_LOAN_IDS` / `COLLECTION_SCAN_CASE_IDS` 均为 **40** |
+| 编包抽检 | jar 含 `S4_EMAIL_ENTRY` + `d-658d5be1…`、`REBUILD produced no successor`、SETNX 入批 |
+| 单测 | `SendGridEmailAdapterTest` 7、`FacadeBatchCoordinatorTest` 9、`PlanLifecycleManagerTest` 49，均通过 |
+| 回滚 | jar `/opt/app/build/collection-admin.jar.bak.202608270831`；env `/opt/app/pilot.env.bak.202608270831` |
+
+公网 `https://collection-admin.mocasa.com/actuator/health` 返回 403（与本机 loopback 200 并存，按网关/WAF 限制理解，不以 403 判发版失败）。
+
