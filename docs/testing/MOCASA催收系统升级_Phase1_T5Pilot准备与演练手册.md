@@ -4,7 +4,7 @@
 > **日期**: 2026-08-19
 > **用途**: 合并 Redis 资源申请、T3o 生产等价演练、T4 固定 50 案真实白名单 Pilot、渐进切量、证据归档与回滚操作。
 > **边界**: 生产基础设施契约与实现差集以[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)为准；T5 用例、状态与出口以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)为准。
-> **写作约定**: 本手册只写**怎么做、怎么验、失败怎么办**。逐次实测记录、缺口登记与裁定理由一律写进[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，此处只留结论与指针——手册被当作值班操作台使用，掺入过程叙述会让人在故障时读不到该做的动作。
+> **写作约定**: 本手册只写**怎么做、怎么验、失败怎么办**。逐次实测记录、缺口与裁定理由一律写进[台账 §1 / §2 / §4](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md)，此处只留结论与指针——手册被当作值班操作台使用，掺入过程叙述会让人在故障时读不到该做的动作。
 
 ---
 
@@ -105,7 +105,7 @@
 | O7 | Scheduler Job 失败告警 | ⬜ 待运维 | 告警规则配置 + 一次测试告警到达记录 |
 | O8 | 日切 06:00 PHT 未完成告警 | ⬜ 待运维 | 告警规则配置 + 触发条件说明 |
 
-操作要点（实测记录、证据与裁定理由见[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，本节不复述）：
+操作要点（实测记录、证据与裁定理由见[台账 §4](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#4-已闭合裁定与证据)，本节不复述）：
 
 - **创建与复验一律用 `scripts/test/provision-scheduler.py`**（幂等，`--dry-run` / `--verify` / `--pause`），不要手敲 gcloud：漏 `--attributes="job=..."` 会让四条 Job 全部空转、触达链路静默停摆，而 Job 执行记录仍显示成功。
 - **location 必须与当前环境已验证的 Job 一致**。Cloud Scheduler 的 Job 可分布在多个 location；不得仅凭项目名假定唯一 location。
@@ -295,7 +295,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 启动即失败并提示 `collection.scheduler.subscription` | 环境变量 `GCP_SCHEDULER_SUBSCRIPTION` 未注入 | Nacos `intelligent-collection-pilot.yml` 是否覆盖了占位缺省 |
 | 启动即失败并提示 `TriggerScanner` | profile 里混入了 `local`/`test` | 确认 `SPRING_PROFILES_ACTIVE` 只含 `pilot` |
 | 重启后 `stale.discarded` 一次尖峰 | 正常：停机期间累积的 tick 被丢弃，属预期防抖 | 若持续增长则为消费跟不上，查 ack deadline 与扫描耗时 |
-| `skipped{reason=UNKNOWN_JOB}` 增长 | **已知项**：调度主题上的第二个发布者发的是畸形 tick（见 §3.2 与 SSOT 附录 C），首次消费时稳定增长属预期 | 排除已知项后，再查自家 Job `--attributes` 里的 `job` 拼写 |
+| `skipped{reason=UNKNOWN_JOB}` 增长 | **已知项**：调度主题上的第二个发布者发的是畸形 tick（见 §3.2 与[台账 §4.5](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#45-t3o)），首次消费时稳定增长属预期 | 排除已知项后，再查自家 Job `--attributes` 里的 `job` 拼写 |
 | `skipped{reason=IN_FLIGHT}` 持续增长 | 单次扫描耗时超过触发周期 | 降 `engine.consumer.scan_limit` / `daily-roll-batch-size`，查扫描 SQL |
 | 日切 06:00 未完成 | 窗口内 `triggered{job=dailyRoll}` 次数是否达到预期（约 29 次） | 游标推进速率与 `daily-roll-batch-size` |
 
@@ -347,7 +347,9 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 
 ## 7. 待完成项与闭合口径
 
-以下项来自[交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)；除标注“可后置”的项外，未关闭不得将 T3o 标记为完成。简版观测 MVP 是 T4 阻断项；完整抓取/告警/Dashboard 是 T6 阻断项（移除白名单前闭合），T3o–T5 期间以人工巡检代偿。
+**T3o 出口已于 2026-08-26 达成**，未闭合项以[台账 §1](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md) 为准。下表是历史闭合口径，不再用「未关闭不得标 T3o 完成」来挡 T4。
+
+简版观测 MVP 的代码与 Pilot 取证已交付（O2 顺延）。完整抓取/告警/Dashboard 仍是 T6 阻断项，T4–T5 以人工巡检代偿。
 
 DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 keyset 游标已有代码/测试基础；简版观测指标、结构化证据和查询能力仍须按测试 SSOT T3o-O1…O4 实施并验证，不能假定已完成。
 
