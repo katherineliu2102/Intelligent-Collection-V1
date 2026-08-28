@@ -107,9 +107,11 @@ public class ConfigurableExecutionGuard implements ExecutionGuard {
         if (timeline == null || timeline.isEmpty()) {
             return null;
         }
-        ZoneId zone = ZoneId.of(channelProperties.getCompliance().getTimezone() != null
-                ? channelProperties.getCompliance().getTimezone()
-                : "Asia/Manila");
+        ZoneId zone =
+                ZoneId.of(
+                        channelProperties.getCompliance().getTimezone() != null
+                                ? channelProperties.getCompliance().getTimezone()
+                                : "Asia/Manila");
         java.time.LocalDate today = ZonedDateTime.now(zone).toLocalDate();
         for (ContactRecord record : timeline) {
             if (record == null

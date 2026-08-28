@@ -4,6 +4,8 @@ import com.collection.common.enums.Stage;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -14,7 +16,10 @@ import java.util.Set;
  */
 public final class EmailMilestoneScriptSlots {
 
-    /** Phase 1 实际发信 + Nacos {@code channel.sendgrid.templates} 映射的 scriptSlot。 */
+    /**
+     * Phase 1 实际发信的 scriptSlot。{@code scriptSlot → SendGrid d-xxx} 写在 {@link
+     * #PHASE1_SENDGRID_TEMPLATE_IDS}（代码常量，换模板要发版）。
+     */
     public static final Set<String> PHASE1_ACTIVE =
             Collections.unmodifiableSet(
                     new HashSet<>(
@@ -24,6 +29,19 @@ public final class EmailMilestoneScriptSlots {
                                     "S2_EMAIL_ENTRY",
                                     "S4_EMAIL_ENTRY",
                                     "S4_EMAIL_PRE_CLOSE")));
+
+    /** Phase 1 里程碑 Email 的 SendGrid Dynamic Template ID。发信 Adapter 只读这里，不读 Nacos / yml。 */
+    public static final Map<String, String> PHASE1_SENDGRID_TEMPLATE_IDS;
+
+    static {
+        Map<String, String> ids = new LinkedHashMap<>();
+        ids.put("S0_DUE_TODAY_EMAIL", "d-9b485bfd24e14950a7811faf33c2b22f");
+        ids.put("S1_EMAIL_OVERDUE_NOTICE", "d-bc7f5aee7e304caf93ca4d435a73a1d7");
+        ids.put("S2_EMAIL_ENTRY", "d-86ed8faae3b24489ad7db8a11067b8c4");
+        ids.put("S4_EMAIL_ENTRY", "d-658d5be184ab4710a19c8419ed66bca9");
+        ids.put("S4_EMAIL_PRE_CLOSE", "d-881ce23667cc4df2abf82097b890cae1");
+        PHASE1_SENDGRID_TEMPLATE_IDS = Collections.unmodifiableMap(ids);
+    }
 
     /** Phase 1 各 Email 触发的精确 DPD（14:00 PHT 里程碑日）。 */
     public static final int DPD_S0_DUE_TODAY = 0;
@@ -37,6 +55,11 @@ public final class EmailMilestoneScriptSlots {
 
     public static boolean isPhase1Active(String scriptSlot) {
         return scriptSlot != null && PHASE1_ACTIVE.contains(scriptSlot);
+    }
+
+    /** {@code scriptSlot} 对应的 SendGrid {@code d-xxx}；未启用的槽返回 {@code null}。 */
+    public static String sendGridTemplateId(String scriptSlot) {
+        return scriptSlot == null ? null : PHASE1_SENDGRID_TEMPLATE_IDS.get(scriptSlot);
     }
 
     /** Phase 1：仅在里程碑触发日返回 scriptSlot；其余 DPD 返回 null（不应发 Email）。 */

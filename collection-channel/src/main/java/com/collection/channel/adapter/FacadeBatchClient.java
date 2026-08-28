@@ -29,9 +29,7 @@ public class FacadeBatchClient {
     @Resource private ChannelProperties properties;
     @Resource private RestTemplate facadeRestTemplate;
 
-    /**
-     * @return Facade 侧 batchId；建批被业务拒绝时抛 {@link IllegalStateException}
-     */
+    /** @return Facade 侧 batchId；建批被业务拒绝时抛 {@link IllegalStateException} */
     public String createBatch(String externalBatchId) {
         ChannelProperties.Facade cfg = properties.getFacade();
         ResponseEntity<String> response =

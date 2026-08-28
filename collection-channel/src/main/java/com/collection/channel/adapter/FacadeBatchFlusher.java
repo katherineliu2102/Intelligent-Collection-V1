@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 /**
  * 波次起批的节拍来源。
  *
- * <p>用应用内定时器而不是新增 Cloud Scheduler job：起批只关心「攒够了没」，不需要跨实例的调度契约，多实例单飞由
- * {@link FacadeBatchCoordinator} 内的 Redis 锁保证。聚合开关关闭时每轮直接返回。
+ * <p>用应用内定时器而不是新增 Cloud Scheduler job：起批只关心「攒够了没」，不需要跨实例的调度契约，多实例单飞由 {@link FacadeBatchCoordinator}
+ * 内的 Redis 锁保证。聚合开关关闭时每轮直接返回。
  */
 @Component
 public class FacadeBatchFlusher {

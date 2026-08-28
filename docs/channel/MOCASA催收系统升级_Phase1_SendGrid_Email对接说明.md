@@ -1,7 +1,7 @@
 # MOCASA Phase 1 — SendGrid Email 对接说明
 
-> **版本**: v1.1  
-> **日期**: 2026-06-05  
+> **版本**: v1.2  
+> **日期**: 2026-08-27  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
 > **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[渠道模板清单 §3](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#3-emailsendgrid)、[email-templates/](../email-templates/README.md)
@@ -15,7 +15,7 @@
 | Phase 1 Email | **仅里程碑**（§7.9）；不生成条件 Email step |
 | snapshot | `userProfile.basic.email`；空则 **不调用** SendGrid |
 | 无邮箱 | `ComplianceExecutionGuard` **BLOCK**，`blockedRuleType=NO_EMAIL`；引擎记 `COMPLIANCE_BLOCKED` timeline 后推进 |
-| 模板 | SendGrid Dynamic Template `d-xxx`；映射见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) |
+| 模板 | SendGrid Dynamic Template `d-xxx`；**映射写在代码** [`EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS`](../../collection-common/src/main/java/com/collection/common/email/EmailMilestoneScriptSlots.java)，换模板要发版。清单见 [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-scriptslot--d-xxx) |
 
 ---
 
@@ -38,7 +38,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 | StepCommand | SendGrid |
 |-------------|----------|
 | targetAddress | `personalizations[].to[].email` |
-| templateId | SendGrid `d-xxxxxxxx`（[渠道模板清单 §2](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#2-全渠道-scriptslot-总表) / Nacos `channel.sendgrid.templates.{scriptSlot}`） |
+| templateId | SendGrid `d-xxxxxxxx`：先认步骤上已是 `d-` 前缀的值，否则用 [`EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot)`](../../collection-common/src/main/java/com/collection/common/email/EmailMilestoneScriptSlots.java) |
 | metadata.dynamicTemplateData | Handlebars 变量，建议键： |
 
 **dynamicTemplateData 建议键**
@@ -147,7 +147,7 @@ Guard(有邮箱) → StepResolver → StepCommand(EMAIL)
 - [ ] 无邮箱：Guard `NO_EMAIL`→引擎 `COMPLIANCE_BLOCKED`，无 SendGrid 调用
 - [ ] custom_args 含 case_id，Webhook 可回写 timeline
 - [ ] hard bounce 后同案后续 Email 步骤 SKIPPED
-- [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-配置映射) 中 S0 模板 ID 已填
+- [ ] [渠道模板清单 §3.1](./MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#31-scriptslot--d-xxx) 中 S0 模板 ID 已在代码常量中
 
 ---
 

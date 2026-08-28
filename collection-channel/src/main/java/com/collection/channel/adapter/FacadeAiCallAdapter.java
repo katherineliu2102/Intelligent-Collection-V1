@@ -22,8 +22,8 @@ import org.springframework.stereotype.Component;
 /**
  * Valubo Facade AI 外呼 Adapter。
  *
- * <p>两条出站路径共用同一套请求体与错误码：默认<b>一案一批</b>（create batch → upload case → start）；开启
- * {@code channel.facade.batch-aggregation.enabled} 后走<b>波次聚合</b>，案件先缓冲在 {@link
+ * <p>两条出站路径共用同一套请求体与错误码：默认<b>一案一批</b>（create batch → upload case → start）；开启 {@code
+ * channel.facade.batch-aggregation.enabled} 后走<b>波次聚合</b>，案件先缓冲在 {@link
  * FacadeBatchCoordinator}，由它按触达槽合并成一个批次再起批。撤单、录音与日终对账仍未接入。
  */
 @Component
@@ -103,8 +103,7 @@ public class FacadeAiCallAdapter implements ChannelAdapter {
             if (!batchClient.startBatch(batchId)) {
                 return AdapterSupport.permanentFailure("FACADE_START_BATCH");
             }
-            log.info(
-                    "[FacadeAiCallAdapter] batch started batchId={} caseId={}", batchId, caseId);
+            log.info("[FacadeAiCallAdapter] batch started batchId={} caseId={}", batchId, caseId);
             return AdapterSupport.delivered(batchId);
         } catch (IllegalStateException e) {
             log.warn("[FacadeAiCallAdapter] Facade business failure: {}", e.getMessage());

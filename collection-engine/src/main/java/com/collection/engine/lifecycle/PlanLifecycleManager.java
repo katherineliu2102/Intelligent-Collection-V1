@@ -453,14 +453,35 @@ public class PlanLifecycleManager {
             case REBUILD:
                 // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
                 planRepository.markRenewalPending(planId);
-                if (!createPlanForStage(
+                if (createPlanForStage(
                         plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
-                    throw new IllegalStateException(
-                            "REBUILD did not create successor plan: " + planId);
+                    planRepository.updatePlanStatus(
+                            planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
+                    log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                    return noEvents();
                 }
-                planRepository.updatePlanStatus(
-                        planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
-                log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                // Factory 0 步（本阶段已无未来槽）不是故障：收口旧计划，有下一档则升档。
+                planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
+                if ((caseInfo != null && isCeased(caseInfo))
+                        || (snapshot != null
+                                && snapshot.getCaseContext() != null
+                                && "CEASED"
+                                        .equalsIgnoreCase(
+                                                snapshot.getCaseContext().getCollectionStatus()))) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor (ceased), COMPLETE",
+                            planId);
+                    return noEvents();
+                }
+                Stage next = plan.getStage() == null ? null : plan.getStage().next();
+                if (next != null) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor, ESCALATE → {}",
+                            planId,
+                            next);
+                    return single(enqueued(EngineEvents.stageEscalated(plan, next.name())));
+                }
+                log.info("[exhausted] plan {} REBUILD produced no successor, COMPLETE", planId);
                 return noEvents();
             case ESCALATE:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
@@ -611,8 +632,8 @@ public class PlanLifecycleManager {
     }
 
     /**
-     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。
-     * 只处理 PENDING；已在拨打中的 EXECUTING 不打断。SMS/PUSH/EMAIL 同日步骤保留。
+     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。 只处理 PENDING；已在拨打中的 EXECUTING
+     * 不打断。SMS/PUSH/EMAIL 同日步骤保留。
      */
     private void skipSameDayPendingAiCalls(Long planId, ContactPlanStep answered) {
         List<ContactPlanStep> steps = planRepository.findStepsByPlan(planId);
@@ -876,8 +897,8 @@ public class PlanLifecycleManager {
     }
 
     /**
-     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED
-     * 表示后续 due 已经把日程推走，再推进会把 current_step 拽回旧步。
+     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED 表示后续 due 已经把日程推走，再推进会把 current_step
+     * 拽回旧步。
      */
     private boolean planAwaitsAsyncOutcome(ContactPlan plan) {
         return plan.getStatus() == PlanStatus.STEP_EXECUTING

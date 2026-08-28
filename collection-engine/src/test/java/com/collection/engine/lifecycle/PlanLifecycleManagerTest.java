@@ -462,6 +462,45 @@ class PlanLifecycleManagerTest {
         assertThat(out).isEmpty();
     }
 
+    @Test
+    @DisplayName("REBUILD 未建出后继计划且仍有下一档 → 旧计划完成 + ESCALATE")
+    void onPlanExhausted_rebuildNoSuccessor_escalates() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(null);
+
+        List<CollectionEvent> out = manager.onPlanExhausted(planExhaustedEvent());
+
+        verify(planRepository).markRenewalPending(PLAN_ID);
+        verify(planRepository, never()).savePlan(any());
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getEventType()).isEqualTo(EventType.STAGE_CHANGED);
+        assertThat(out.get(0).getString(CollectionEvent.STAGE)).isEqualTo("S3");
+    }
+
+    @Test
+    @DisplayName("REBUILD 未建出后继计划且已是 S4 → 旧计划完成，无后续事件")
+    void onPlanExhausted_rebuildNoSuccessor_completesAtS4() {
+        plan.setStage(Stage.S4);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S4)).thenReturn(null);
+        when(planFactory.create(any(), eq(Stage.S4), any())).thenReturn(null);
+
+        List<CollectionEvent> out = manager.onPlanExhausted(planExhaustedEvent());
+
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+        assertThat(out).isEmpty();
+    }
+
     // ───────────────────────── onStageChanged（#26） ─────────────────────────
 
     @Test
@@ -693,8 +732,7 @@ class PlanLifecycleManagerTest {
 
         manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
 
-        verify(planRepository)
-                .updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository).updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
         verify(planRepository, never()).updateStepStatus(eq(203L), any(), any());
         verify(planRepository, never()).updateStepStatus(eq(204L), any(), any());
         verify(planRepository, never()).updateStepStatus(eq(205L), any(), any());

@@ -66,10 +66,6 @@ class ProductionChannelContractL2Test {
         properties.getSendgrid().setFromEmail("collections@example.test");
         properties.getSendgrid().setApiUrl(wm.getHttpBaseUrl() + "/v3/mail/send");
         properties
-                .getSendgrid()
-                .getTemplates()
-                .put("S1_EMAIL_OVERDUE_NOTICE", "d-contract-template");
-        properties
                 .getScripts()
                 .getSms()
                 .put(
@@ -191,7 +187,9 @@ class ProductionChannelContractL2Test {
         verify(
                 postRequestedFor(urlEqualTo("/v3/mail/send"))
                         .withRequestBody(
-                                matchingJsonPath("$.template_id", equalTo("d-contract-template"))));
+                                matchingJsonPath(
+                                        "$.template_id",
+                                        equalTo("d-bc7f5aee7e304caf93ca4d435a73a1d7"))));
     }
 
     @Test

@@ -456,7 +456,6 @@ class ChannelContractL2RealSpiTest {
         props.getSendgrid().setApiKey("test-sendgrid-key");
         props.getSendgrid().setFromEmail("collections@example.test");
         props.getSendgrid().setApiUrl(wm.getHttpBaseUrl() + SENDGRID_PATH);
-        props.getSendgrid().getTemplates().put(EMAIL_SLOT, "d-contract-template");
         return props;
     }
 

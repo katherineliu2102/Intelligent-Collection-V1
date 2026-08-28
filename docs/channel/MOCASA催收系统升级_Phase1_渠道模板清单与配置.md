@@ -1,7 +1,7 @@
 # MOCASA Phase 1 — 渠道模板清单与配置（SSOT）
 
-> **版本**: v2.3  
-> **日期**: 2026-06-12  
+> **版本**: v2.4  
+> **日期**: 2026-08-27  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
 > **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[策略迭代手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
@@ -18,7 +18,7 @@
   - [2.4 S3](#24-s3d16--d30)
   - [2.5 S4](#25-s4d31--d90)
 - [3. Email（SendGrid）](#3-emailsendgrid)
-  - [3.1 配置映射](#31-配置映射)
+  - [3.1 scriptSlot → d-xxx](#31-scriptslot--d-xxx)
   - [3.2 变量与叙事](#32-变量与叙事)
   - [3.3 里程碑速查](#33-里程碑速查)
   - [3.4 建站 SOP](#34-建站-sop)
@@ -121,37 +121,36 @@ docs/
 
 ## 3. Email（SendGrid）
 
-### 3.1 配置映射
+### 3.1 scriptSlot → d-xxx
 
-**密钥**（Nacos `intelligent-collection-local.yml`，勿提交 Git）：
+**密钥仍走 Nacos**（`api-key` / `from-email`，勿提交 Git）：
 
 ```yaml
 channel:
   sendgrid:
     api-key: SG.xxxx
     from-email: collections@mocasa.com
-  notification:
-    app-key: <运维下发>
 ```
 
-发布：`scripts/dev/publish-channel-secrets-to-nacos.ps1`（需 Nacos 写权限）或控制台手动合并。
+**scriptSlot → SendGrid `d-xxx` 只写在代码**，不写 Nacos、不写 `application-*.yml`。换模板必须发版。
 
-**scriptSlot → d-xxx**（Nacos / `application-local.yml`，**Phase 1 仅 5 项**）：
+| 位置 | 内容 |
+|------|------|
+| **SSOT** | `collection-common/.../email/EmailMilestoneScriptSlots.java` 的 `PHASE1_SENDGRID_TEMPLATE_IDS` |
+| 读取 | `SendGridEmailAdapter`、`DefaultStepResolver`（timeline `template_version`）、管理面 Catalog |
+| Phase 1 仅 5 项 | `S0_DUE_TODAY_EMAIL` / `S1_EMAIL_OVERDUE_NOTICE` / `S2_EMAIL_ENTRY` / `S4_EMAIL_ENTRY` / `S4_EMAIL_PRE_CLOSE` |
 
-```yaml
-channel:
-  sendgrid:
-    from-name: MOCASA Collections
-    templates:
-      S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
-      S1_EMAIL_OVERDUE_NOTICE: d-bc7f5aee7e304caf93ca4d435a73a1d7
-      S2_EMAIL_ENTRY: d-86ed8faae3b24489ad7db8a11067b8c4
-      S4_EMAIL_ENTRY: d-658d5be184ab4710a19c8419ed66bca9
-      S4_EMAIL_PRE_CLOSE: d-881ce23667cc4df2abf82097b890cae1
-    unsubscribe-group-id: 0
-```
+当前常量：
 
-**解析顺序**（`SendGridEmailAdapter`）：`metadata.scriptSlot` → `templates` 映射 → `step.templateId`（`d-` 前缀）。**未命中则失败**（`SENDGRID_NO_TEMPLATE`），无兜底 `default-template-id`。
+| scriptSlot | SendGrid ID |
+|------------|-------------|
+| `S0_DUE_TODAY_EMAIL` | `d-9b485bfd24e14950a7811faf33c2b22f` |
+| `S1_EMAIL_OVERDUE_NOTICE` | `d-bc7f5aee7e304caf93ca4d435a73a1d7` |
+| `S2_EMAIL_ENTRY` | `d-86ed8faae3b24489ad7db8a11067b8c4` |
+| `S4_EMAIL_ENTRY` | `d-658d5be184ab4710a19c8419ed66bca9` |
+| `S4_EMAIL_PRE_CLOSE` | `d-881ce23667cc4df2abf82097b890cae1` |
+
+**解析顺序**（`SendGridEmailAdapter`）：步骤 `templateId` 已是 `d-` 前缀则直接用 → 否则 `EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot)`。**未命中则失败**（`SENDGRID_NO_TEMPLATE`）。
 
 **E2E 联调案例**：[`email-templates/email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md)
 
@@ -188,7 +187,7 @@ channel:
 1. Template Name = `scriptSlot`（与上表一致）
 2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/` 对应 HTML
 3. **Settings** 填 Subject / Preheader（`subjects.md`）
-4. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
+4. Activate → 改代码 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` 后发版（不要写 Nacos）
 
 详细步骤见 [email-templates/README §6](../email-templates/README.md#6-sendgrid-建站-sop)。
 
@@ -283,7 +282,8 @@ channel:
 ```yaml
 channel:
   sendgrid:
-    templates: { ... }          # §3.1
+    api-key: SG.xxxx            # 密钥；映射不在 Nacos
+    from-email: collections@mocasa.com
   notification:
     base-url: https://service-test.mocasa.com/notification
     app-code: mocasa
@@ -331,7 +331,7 @@ channel:
 |------|------|
 | `DefaultPlanFactory` | Stage/DPD/时刻 → step + `scriptSlot` |
 | `DefaultStepResolver` | `scriptSlot` → 渠道 payload + `dynamicTemplateData` |
-| `SendGridEmailAdapter` | Email：`scriptSlot` → `channel.sendgrid.templates` |
+| `SendGridEmailAdapter` | Email：`scriptSlot` → `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` |
 | `NotificationSmsAdapter` / `NotificationPushAdapter` / `FacadeAiCallAdapter` | 各渠道发送 |
 
 ---
