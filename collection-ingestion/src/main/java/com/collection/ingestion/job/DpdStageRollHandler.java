@@ -1,5 +1,7 @@
 package com.collection.ingestion.job;
 
+import com.collection.common.enums.CancelReason;
+import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.Stage;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
@@ -7,6 +9,8 @@ import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
+import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
@@ -21,8 +25,13 @@ import org.springframework.stereotype.Component;
  * collection_status}，本 Job <b>不重算</b> DPD：
  *
  * <ul>
- *   <li>dpd 1~90 且投影阶段<b>严重度高于</b>计划当前阶段 → 发 {@code STAGE_CHANGED}
- *   <li>dpd 1~90 且投影阶段低于计划阶段 → <b>不发</b>（阶段单调前进，见 {@link #rollOne}）
+ *   <li>有活跃计划且投影 stage 严重度更高 → 发 {@code STAGE_CHANGED}
+ *   <li>有活跃计划且投影 stage 更低 → 不发（单调前进，避免与引擎 ESCALATE 降档 ping-pong）
+ *   <li>无活跃计划，最近一份 {@code PLAN_COMPLETED} 且投影档更高 → 发 {@code STAGE_CHANGED}（档末日走完后次日建
+ *       S0→S1 … S3→S4）
+ *   <li>无活跃计划，最近一份 {@code PLAN_CANCELLED}+{@code NO_DUE_BALANCE} 且投影已有应还余额 → 按当天档发 {@code
+ *       STAGE_CHANGED}
+ *   <li>其余 {@code PLAN_CANCELLED}（还款 / 停催 / {@code MANUAL_CLEANUP}）或同档 {@code PLAN_COMPLETED} → 不建档
  *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}
  *   <li>已结清（{@code SETTLED}）→ 跳过
  * </ul>
@@ -119,6 +128,9 @@ public class DpdStageRollHandler {
         int dpd = info.getDpd();
         Stage newStage = info.getStage(); // 投影 stage 列（数仓口径），仅在该列为空时才退回 Stage.fromDpd
         List<ContactPlan> active = planRepository.findActivePlansByCase(loanId);
+        if (active == null) {
+            active = Collections.emptyList();
+        }
 
         if (dpd >= 91) {
             if (!active.isEmpty() && acquireDailyRollEvent("ceased", loanId, dpd)) {
@@ -129,19 +141,74 @@ public class DpdStageRollHandler {
             return;
         }
 
-        Stage current = active.isEmpty() ? null : active.get(0).getStage();
+        if (!active.isEmpty()) {
+            publishIfUpgrade(
+                    loanId, info, active.get(0).getStage(), newStage, dpd, counters, "");
+            return;
+        }
+
+        ContactPlan last = latestPlan(loanId);
+        if (last == null) {
+            return;
+        }
+        if (last.getStatus() == PlanStatus.PLAN_COMPLETED) {
+            publishIfUpgrade(
+                    loanId,
+                    info,
+                    last.getStage(),
+                    newStage,
+                    dpd,
+                    counters,
+                    " (resume after PLAN_COMPLETED)");
+            return;
+        }
+        if (last.getStatus() == PlanStatus.PLAN_CANCELLED
+                && last.getCancelReason() == CancelReason.NO_DUE_BALANCE
+                && hasPositiveOutstanding(info)
+                && newStage != null
+                && acquireDailyRollEvent("stage", loanId, dpd)) {
+            publishStageChanged(
+                    loanId,
+                    info,
+                    last.getStage(),
+                    newStage,
+                    dpd,
+                    counters,
+                    " (resume after NO_DUE_BALANCE)");
+        }
+    }
+
+    private ContactPlan latestPlan(Long loanId) {
+        List<ContactPlan> recent = planRepository.findRecentPlansByCase(loanId, 1);
+        if (recent == null || recent.isEmpty()) {
+            return null;
+        }
+        return recent.get(0);
+    }
+
+    private static boolean hasPositiveOutstanding(CaseInfo info) {
+        return info.getTotalOutstanding() != null
+                && info.getTotalOutstanding().compareTo(BigDecimal.ZERO) > 0;
+    }
+
+    /**
+     * 仅当目标档严格高于比对档时发 {@code STAGE_CHANGED}。回退只计数，避免 ESCALATE 后被日切打回低档。
+     */
+    private void publishIfUpgrade(
+            Long loanId,
+            CaseInfo info,
+            Stage current,
+            Stage newStage,
+            int dpd,
+            int[] counters,
+            String resumeNote) {
         if (current == null || current == newStage) {
             return;
         }
         if (newStage == null) {
-            // 数仓口径下 stage 为 null = 下一个未还 dueDate 超过 3 天，不属任何催收阶段。
-            // 既没有可升到的目标档，也不该按「回退」处理，直接跳过等还款事件取消计划。
             log.info("[DpdStageRollHandler] loanId={} dpd={} 投影无 stage（未进入催收窗口），跳过升档", loanId, dpd);
             return;
         }
-        // 阶段单调前进：引擎 ESCALATE 会把计划 stage 抬到高于 DPD 推导值，且引擎从不回写投影，
-        // 所以「计划 stage > 投影 stage」是升档后的正常稳态，不是漂移。此处若按「不同即发」
-        // 发回退事件，升档计划会被 STAGE_UPGRADE 取消并重建回低阶段，穷尽后再次升档 → 降档 ping-pong。
         if (newStage.compareTo(current) < 0) {
             counters[2]++;
             log.info(
@@ -152,20 +219,33 @@ public class DpdStageRollHandler {
                     current);
             return;
         }
-        if (acquireDailyRollEvent("stage", loanId, dpd)) {
-            ingestionService.changeStage(
-                    loanId,
-                    info.getUserId(),
-                    newStage,
-                    ingestionService.currentSnapshotFields(caseService.getContextSnapshot(loanId)));
-            counters[0]++;
-            log.info(
-                    "[DpdStageRollHandler] loanId={} dpd={} stage {}→{} → STAGE_CHANGED",
-                    loanId,
-                    dpd,
-                    current,
-                    newStage);
+        if (!acquireDailyRollEvent("stage", loanId, dpd)) {
+            return;
         }
+        publishStageChanged(loanId, info, current, newStage, dpd, counters, resumeNote);
+    }
+
+    private void publishStageChanged(
+            Long loanId,
+            CaseInfo info,
+            Stage current,
+            Stage newStage,
+            int dpd,
+            int[] counters,
+            String resumeNote) {
+        ingestionService.changeStage(
+                loanId,
+                info.getUserId(),
+                newStage,
+                ingestionService.currentSnapshotFields(caseService.getContextSnapshot(loanId)));
+        counters[0]++;
+        log.info(
+                "[DpdStageRollHandler] loanId={} dpd={} stage {}→{} → STAGE_CHANGED{}",
+                loanId,
+                dpd,
+                current == null ? "-" : current,
+                newStage,
+                resumeNote == null ? "" : resumeNote);
     }
 
     private boolean acquireDailyRollEvent(String type, Long loanId, int dpd) {

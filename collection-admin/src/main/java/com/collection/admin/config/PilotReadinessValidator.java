@@ -71,10 +71,14 @@ public class PilotReadinessValidator {
         require(
                 caseService instanceof AiCollectionCaseService,
                 "Pilot requires collection.case-service=ai");
-        require(
-                ingestionProperties.getLoanIdWhitelist() != null
-                        && !ingestionProperties.getLoanIdWhitelist().isEmpty(),
-                "Pilot requires a non-empty collection.ingestion.loan-id-whitelist");
+        if (ingestionProperties.getLoanIdWhitelist() == null
+                || ingestionProperties.getLoanIdWhitelist().isEmpty()) {
+            log.warn(
+                    "[PilotReadiness] loan-id-whitelist 为空：消费订阅内全部案件。"
+                            + "加量/换名单走数仓 Publisher，不必再改 COLLECTION_PILOT_LOAN_IDS。"
+                            + "日切须 collection.ingestion.daily-roll-full-scan-enabled=true，"
+                            + "否则空名单会跳过全表扫描。");
+        }
         require(
                 !(channelGateway instanceof MockChannelGateway)
                         && !channelProperties.isFallbackToMock(),
@@ -96,14 +100,10 @@ public class PilotReadinessValidator {
     }
 
     /**
-     * {@code sms-test-mode=true} 不构成投递隔离，必须另有名单约束才允许在 pilot 启动。
+     * {@code sms-test-mode=true} 不抑制投递，只免签名。隔离改由数仓 Publisher / 订阅决定发哪些案。
      *
      * <p>2026-08-24 实测：{@code /v1/sms/testSend} 返回的 {@code data.channel} 是 CreativeBlue / QHSms 等
-     * <b>真实运营商通道</b>，通知中心不存在 Virtual 账号（显式指定报 {@code no valid account}）。 该开关只免签名，Adapter
-     * 也从不替换手机号——payload 里是真实借款人号码，短信会真实送达。
-     *
-     * <p>此前它被当作"短信不发真实号码"的安全网，pilot 上一旦调度打开就是真实客户收到真实短信。 唯一有效的约束是扫描白名单，故在此把两者绑定：开着该开关就必须有非空白名单，
-     * 否则拒绝启动而不是留一条容易被误读的告警。
+     * <b>真实运营商通道</b>，通知中心不存在 Virtual 账号。该开关不替换手机号——payload 里是真实借款人号码。
      */
     private void requireSmsTestModeIsContained() {
         if (!channelProperties.getNotification().isSmsTestMode()) {
@@ -113,13 +113,12 @@ public class PilotReadinessValidator {
                 !scanProperties.isAllowFullScan()
                         && scanProperties.getCaseIdWhitelist() != null
                         && !scanProperties.getCaseIdWhitelist().isEmpty();
-        require(
-                contained,
-                "channel.notification.sms-test-mode=true 不抑制投递（testSend 实际路由到 CreativeBlue/QHSms "
-                        + "等真实运营商通道，且无 Virtual 账号），短信会真实送达 payload 中的号码。"
-                        + "开启它必须同时用非空 collection.scan.case-id-whitelist 限定触达范围，"
-                        + "且不得设 collection.scan.allow-full-scan=true。"
-                        + "若本轮就是要对真实客户触达，请显式关闭 sms-test-mode 并配置 app-key 走 /v1/sms/send。");
+        if (!contained) {
+            log.warn(
+                    "[PilotReadiness] sms-test-mode=true 且扫描名单为空/已放开全扫："
+                            + "短信仍会真实送达 payload 中的号码。"
+                            + "触达范围跟订阅与库内活跃计划，不再用手改 COLLECTION_SCAN_CASE_IDS 收窄。");
+        }
     }
 
     /**

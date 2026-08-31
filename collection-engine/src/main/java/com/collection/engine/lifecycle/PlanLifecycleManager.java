@@ -116,8 +116,7 @@ public class PlanLifecycleManager {
                 continue;
             }
             if (locked.getStage() != newStage) {
-                planRepository.updatePlanStatus(
-                        locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
+                cancelPlan(locked, CancelReason.STAGE_UPGRADE);
                 log.info(
                         "[stageChanged] cancelled old plan {} ({}→{})",
                         locked.getId(),
@@ -125,6 +124,7 @@ public class PlanLifecycleManager {
                         newStage);
             }
         }
+        // 无活跃计划时仍建新档（日切：上一档 PLAN_COMPLETED 且投影档已更高）。
         createPlanForStage(caseId, newStage, carriedInfo, carried, null);
         return noEvents();
     }
@@ -141,8 +141,7 @@ public class PlanLifecycleManager {
             if (locked == null || locked.isTerminal()) {
                 continue;
             }
-            planRepository.updatePlanStatus(
-                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+            cancelPlan(locked, CancelReason.CEASED);
             log.info("[caseCeased] cancelled plan {} (CEASED)", locked.getId());
         }
         return noEvents();
@@ -163,8 +162,7 @@ public class PlanLifecycleManager {
             if (locked == null || locked.isTerminal()) {
                 continue;
             }
-            planRepository.updatePlanStatus(
-                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+            cancelPlan(locked, CancelReason.REPAID);
             log.info("[repayment] cancelled plan {} (REPAID)", locked.getId());
         }
         try {
@@ -510,9 +508,11 @@ public class PlanLifecycleManager {
         if (caseService.isRepaid(caseId)) {
             List<ContactPlan> active = planRepository.findActivePlansByCase(caseId);
             for (ContactPlan p : active) {
-                planRepository.findPlanWithLock(p.getId());
-                planRepository.updatePlanStatus(
-                        p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+                if (locked == null || locked.isTerminal()) {
+                    continue;
+                }
+                cancelPlan(locked, CancelReason.REPAID);
             }
             log.info("[ptpExpired] case {} repaid → compensating cancel", caseId);
             return noEvents();
@@ -604,6 +604,9 @@ public class PlanLifecycleManager {
         }
         plan.setStage(stage);
         plan.setStatus(PlanStatus.PENDING);
+        if (snapshot != null && snapshot.getCaseContext() != null && stage != null) {
+            snapshot.getCaseContext().setStage(stage);
+        }
         plan.setContextSnapshot(JsonUtil.toJson(snapshot));
         plan.setTotalSteps(plan.getSteps().size());
         plan.setCurrentStep(0);
@@ -629,6 +632,18 @@ public class PlanLifecycleManager {
                 plan.getTotalSteps());
         metrics.planCreation(stage.name(), "CREATED");
         return true;
+    }
+
+    private void cancelPlan(ContactPlan locked, CancelReason reason) {
+        planRepository.updatePlanStatus(locked.getId(), PlanStatus.PLAN_CANCELLED, reason);
+        int closed = planRepository.skipOpenSteps(locked.getId(), ContactResult.SKIPPED);
+        if (closed > 0) {
+            log.info(
+                    "[cancel] plan {} skipped {} open step(s) after {}",
+                    locked.getId(),
+                    closed,
+                    reason);
+        }
     }
 
     /**

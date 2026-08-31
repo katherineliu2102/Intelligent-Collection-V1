@@ -152,10 +152,12 @@ public class StepExecutionOrchestrator {
             // 否则消息渠道没有 callback timeout 会永久滞留。案件不存在不写 timeline。
             planRepository.updatePlanStatus(
                     plan.getId(), PlanStatus.PLAN_CANCELLED, preFlight.getBlockingReason());
+            int closed = planRepository.skipOpenSteps(plan.getId(), ContactResult.SKIPPED);
             log.info(
-                    "[execStep] preflight blocked plan {} → PLAN_CANCELLED ({})",
+                    "[execStep] preflight blocked plan {} → PLAN_CANCELLED ({}) skippedOpen={}",
                     plan.getId(),
-                    preFlight.getBlockingReason());
+                    preFlight.getBlockingReason(),
+                    closed);
             return;
         }
 
@@ -493,8 +495,7 @@ public class StepExecutionOrchestrator {
      * <p>文案里的逾期天数与金额必须是发送时刻的值：快照的 dpd 冻结于建计划时刻，而单个阶段最长跨 60 天 （S4 = DPD
      * 31–90），不刷新会连续数十天对用户播报错误的逾期天数；余额同理，仅靠 CASE_BALANCE_UPDATED 只能覆盖还款场景。
      *
-     * <p><b>不覆盖 stage</b>：阶段决定模板与话术，必须与所属计划一致，否则同一计划内会串话术。 实际渲染用的数值随 {@code
-     * t_decision_log.input_snapshot} 落库，保留审计能力。
+     * <p>stage 跟当天投影：同一计划跨 DPD 边界时句子跟今天档，不跟建计划时冻住的 snapshot.stage。
      */
     private void refreshVolatileFields(ExecutionContext context, CaseInfo info) {
         if (context == null || info == null || context.getContextSnapshot() == null) {
@@ -504,6 +505,7 @@ public class StepExecutionOrchestrator {
         if (ctx == null) {
             return;
         }
+        ctx.setStage(info.getStage());
         ctx.setDpd(info.getDpd());
         if (info.getTotalOutstanding() != null) {
             ctx.setTotalOutstanding(info.getTotalOutstanding());

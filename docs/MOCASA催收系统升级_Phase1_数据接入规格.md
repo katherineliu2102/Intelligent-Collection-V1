@@ -131,8 +131,8 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 时间 | 03:35–05:55 PHT，每 5 分钟处理一个 keyset 分页；06:00 PHT 前完成，否则告警 |
 | 前置 | 当日 `caseEvent` 批次已消费完毕；批次门控目标与延迟处置见[数仓交付契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) |
 | 扫描 | 联调使用 `loan-id-whitelist`；生产按 `case_id` keyset 分页，Redis 保存游标与完成标记。单轮上限为 `collection.ingestion.daily-roll-batch-size`（Pilot `1000`）；按日案件量与单页耗时调优 |
-| 阶段变化 | 投影 stage 的**严重度高于**活跃计划 stage 时发布 `STAGE_CHANGED`；低于时**不发**，只记指标（见下方「阶段单调前进」） |
-| 停催 | `dpd >= 91` 且仍有活跃计划时发布 `CASE_CEASED` |
+| 阶段变化 | 投影 stage 的**严重度高于**活跃计划 stage 时发布 `STAGE_CHANGED`；低于时**不发**，只记指标（见下方「阶段单调前进」）。**无活跃计划**时：最近一份 `PLAN_COMPLETED` 且投影档更高 → 同样发布（档末日走完后次日建 S0→S1 … S3→S4）；`PLAN_CANCELLED` + `NO_DUE_BALANCE` 且投影已有应还余额 → 按当天档发布。`MANUAL_CLEANUP` / `REPAID` / `CEASED` 不续建 |
+| 停催 | `dpd >= 91` 且仍有活跃计划时发布 `CASE_CEASED`。无活跃计划不发（投影已由当日 `caseEvent` 派生 `CEASED`） |
 | 重跑 | 同一案件在同一 `dpd` 下，同类事件（`stage` / `ceased`）只发一次；去重键 `collection:ingestion:dedup:{type}:{loanId}:{dpd}`，TTL 2 天 |
 
 **阶段单调前进（与引擎 ESCALATE 的优先级）**：日切**不得**因投影 stage 低于计划 stage 而发布回退事件。引擎的穷尽升档（[核心引擎 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)）会把活跃计划的 stage 抬到高于 DPD 推导值，而引擎从不回写 `t_ai_collection`，因此"计划 stage > 投影 stage"是**升档后的正常稳态**，不是漂移。若日切按"不同即发"处理，就会把升档计划按 `STAGE_UPGRADE` 取消并重建回低阶段，下一轮穷尽再次升档，形成降档 ping-pong。DPD 真实下降（部分还款）已由 `CASE_BALANCE_UPDATED` 更新快照金额，Phase 1 不因此降低已在运行的催收强度。

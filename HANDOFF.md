@@ -63,7 +63,7 @@ SPI 签名与约束 → [核心引擎规格 §6](./docs/MOCASA催收系统升级
 |---|---|
 | 两类事件联调 | `caseEvent` / `repaymentEvent` 真 Topic 连通 + 样例全链路。测试入口已开通（2026-08-20，`scripts/test/provision-l4-pubsub.py`）：合成源 `intelligent-collection-cases-test1(+sub)`、真实源 `intelligent-collection-cases-v1-l4b-sub`（挂正式 topic 扇出，不影响 `-v1-sub`）、死信 `-dlq(+sub)`。**上游当前未向契约 topic 发布**：独立订阅跨过 03:00 PHT 日切窗口后仍为 0 条（扇出保证创建后的消息必有副本），两个历史 topic 同期也为 0；需数仓确认实际发布 topic 与节奏，探针见 `scripts/test/observe-upstream-topics.py` |
 | 日切 Pilot | 全量 keyset + Redis 游标；批次完成门控（固定时间窗 → 水位信号） |
-| 日切阶段单调前进 | ✅ 已闭合：`DpdStageRollHandler.rollOne` 仅在投影 stage 严重度更高时发 `STAGE_CHANGED`，回退只计数不发事件，避免与引擎 ESCALATE 形成降档 ping-pong（[数据接入 §4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)）；`DpdStageRollHandlerTest` 14 例覆盖（含同日重跑只发一次） |
+| 日切阶段单调前进 | ✅ 已闭合：有活跃计划时仅投影 stage 更高才发 `STAGE_CHANGED`，回退只计数。无活跃计划时：最近一份 `PLAN_COMPLETED` 且投影档更高 → 续档建当天档（S0→S1 … S3→S4）；`MANUAL_CLEANUP` / `REPAID` / `CEASED` 不续建（[数据接入 §4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)）；`DpdStageRollHandlerTest` 17 例 |
 | 白名单过滤 | ✅ 已闭合：`PubSubCaseConsumer` 在路由前按 `collection.ingestion.loan-id-whitelist` 过滤，名单外 ack 跳过、空名单放行；取不到 `caseId` 时放行交映射层按 poison 处置 |
 | 联调隔离闸门 | ✅ 已闭合：`IngestionIsolationGuard` 在 local/test profile 下拒绝「消费保留生产订阅」与「白名单为空」两种配置，在建立订阅前失败；pilot 由 `PilotReadinessValidator` 接管 |
 | 无基线还款处置 | ✅ 已闭合：仓储改抛 `MissingCaseBaselineException`，接入层转 `PoisonMessageException` → ack + 告警。此前抛 `IllegalStateException` 会被当瞬态失败 nack，形成永不收敛的重投 |

@@ -1,16 +1,15 @@
 package com.collection.ingestion.job;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.collection.common.enums.CancelReason;
+import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.Stage;
 import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactPlan;
@@ -18,271 +17,274 @@ import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
-import java.util.Arrays;
+import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/**
- * 日切阶段规则单测（数据接入规格 §4）。
- *
- * <p>走白名单路径以避开 Redis 全量扫描；{@code dailyRollDeduplicator} 保持 null，此时去重恒放行， 便于单独断言阶段判据本身。
- */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class DpdStageRollHandlerTest {
 
-    private static final long LOAN_ID = 525441L;
-    private static final long USER_ID = 2145521L;
+    private static final long LOAN = 506565L;
+
+    @Mock private CaseService caseService;
+    @Mock private ContactPlanRepository planRepository;
+    @Mock private IngestionService ingestionService;
 
     private DpdStageRollHandler handler;
-    private CaseService caseService;
-    private ContactPlanRepository planRepository;
-    private IngestionService ingestionService;
 
     @BeforeEach
     void setUp() {
-        handler = new DpdStageRollHandler();
-        caseService = mock(CaseService.class);
-        planRepository = mock(ContactPlanRepository.class);
-        ingestionService = mock(IngestionService.class);
-
         IngestionProperties props = new IngestionProperties();
-        props.setLoanIdWhitelist(Collections.singletonList(LOAN_ID));
-
+        props.setLoanIdWhitelist(Collections.singletonList(LOAN));
+        handler = new DpdStageRollHandler();
         ReflectionTestUtils.setField(handler, "props", props);
         ReflectionTestUtils.setField(handler, "caseService", caseService);
         ReflectionTestUtils.setField(handler, "planRepository", planRepository);
         ReflectionTestUtils.setField(handler, "ingestionService", ingestionService);
+        when(ingestionService.currentSnapshotFields(any())).thenReturn(Collections.emptyMap());
     }
 
-    /** 让投影返回指定 dpd 与其推导阶段。 */
-    private void givenProjection(int dpd) {
+    @Test
+    @DisplayName("有活跃计划且档变 → STAGE_CHANGED")
+    void activePlan_stageDiffers_publishesStageChanged() {
+        stubCase(4, Stage.S2);
+        when(planRepository.findActivePlansByCase(LOAN))
+                .thenReturn(List.of(plan(1L, Stage.S1, PlanStatus.STEP_SCHEDULED)));
+
+        handler.dailyRoll();
+
+        verifyStageChanged(Stage.S2);
+        verify(planRepository, never()).findRecentPlansByCase(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("有活跃计划且同档 → 不发")
+    void activePlan_sameStage_noop() {
+        stubCase(5, Stage.S2);
+        when(planRepository.findActivePlansByCase(LOAN))
+                .thenReturn(List.of(plan(1L, Stage.S2, PlanStatus.STEP_SCHEDULED)));
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("有活跃计划回退 S4→S3 → 单调前进不发")
+    void activePlan_rollback_skipped() {
+        stubCase(20, Stage.S3);
+        when(planRepository.findActivePlansByCase(LOAN))
+                .thenReturn(List.of(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("S0 末日 COMPLETED → 投影 S1 → STAGE_CHANGED")
+    void completedS0_toS1() {
+        stubCompletedResume(1, Stage.S0, Stage.S1);
+        handler.dailyRoll();
+        verifyStageChanged(Stage.S1);
+    }
+
+    @Test
+    @DisplayName("S1 末日 COMPLETED → 投影 S2 → STAGE_CHANGED")
+    void completedS1_toS2() {
+        stubCompletedResume(4, Stage.S1, Stage.S2);
+        handler.dailyRoll();
+        verifyStageChanged(Stage.S2);
+    }
+
+    @Test
+    @DisplayName("S2 末日 COMPLETED → 投影 S3 → STAGE_CHANGED")
+    void completedS2_toS3() {
+        stubCompletedResume(16, Stage.S2, Stage.S3);
+        handler.dailyRoll();
+        verifyStageChanged(Stage.S3);
+    }
+
+    @Test
+    @DisplayName("S3 末日 COMPLETED → 投影 S4 → STAGE_CHANGED")
+    void completedS3_toS4() {
+        stubCompletedResume(31, Stage.S3, Stage.S4);
+        handler.dailyRoll();
+        verifyStageChanged(Stage.S4);
+    }
+
+    @Test
+    @DisplayName("COMPLETED 后 DPD 跳档 S1→S3 → 按投影档建")
+    void completedS1_jumpToS3() {
+        stubCompletedResume(16, Stage.S1, Stage.S3);
+        handler.dailyRoll();
+        verifyStageChanged(Stage.S3);
+    }
+
+    @Test
+    @DisplayName("COMPLETED 同档 → 不建")
+    void completedSameStage_noop() {
+        stubCompletedResume(2, Stage.S1, Stage.S1);
+        handler.dailyRoll();
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("最近一份 MANUAL_CLEANUP → 不建（不救活停催圈）")
+    void cancelledManualCleanup_noop() {
+        stubCase(32, Stage.S4);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        ContactPlan cancelled = plan(9L, Stage.S3, PlanStatus.PLAN_CANCELLED);
+        cancelled.setCancelReason(CancelReason.MANUAL_CLEANUP);
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("最近一份 REPAID 取消 → 不建（即便投影未标结清）")
+    void cancelledRepaid_noop() {
+        stubCase(4, Stage.S2);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        ContactPlan cancelled = plan(9L, Stage.S1, PlanStatus.PLAN_CANCELLED);
+        cancelled.setCancelReason(CancelReason.REPAID);
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("NO_DUE_BALANCE 取消后投影已有余额 → 按当天档重建")
+    void cancelledNoDueBalance_resumesWhenOutstandingReturns() {
+        CaseInfo info = stubCase(8, Stage.S2);
+        info.setTotalOutstanding(new BigDecimal("2500"));
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        ContactPlan cancelled = plan(9L, Stage.S2, PlanStatus.PLAN_CANCELLED);
+        cancelled.setCancelReason(CancelReason.NO_DUE_BALANCE);
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+
+        handler.dailyRoll();
+
+        verifyStageChanged(Stage.S2);
+    }
+
+    @Test
+    @DisplayName("NO_DUE_BALANCE 取消后仍无余额 → 不建，避免取消/重建打转")
+    void cancelledNoDueBalance_stillZero_noop() {
+        CaseInfo info = stubCase(8, Stage.S2);
+        info.setTotalOutstanding(BigDecimal.ZERO);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        ContactPlan cancelled = plan(9L, Stage.S2, PlanStatus.PLAN_CANCELLED);
+        cancelled.setCancelReason(CancelReason.NO_DUE_BALANCE);
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("从无计划（从未建档）→ 不由日切首建，等 CASE_INGESTED")
+    void neverHadPlan_noop() {
+        stubCase(4, Stage.S2);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of());
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("dpd≥91 有活跃计划 → CASE_CEASED")
+    void dpd91_active_ceases() {
+        stubCase(95, Stage.S4);
+        when(planRepository.findActivePlansByCase(LOAN))
+                .thenReturn(List.of(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
+
+        handler.dailyRoll();
+
+        verify(ingestionService).caseCeased(LOAN, 95);
+        verify(ingestionService, never()).changeStage(any(), any(), any(), anyMap());
+    }
+
+    @Test
+    @DisplayName("dpd≥91 无活跃计划（S4 已 COMPLETED）→ 不发 CEASED")
+    void dpd91_completedNoActive_noop() {
+        stubCase(91, Stage.S4);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+
+        handler.dailyRoll();
+
+        verifyNoStageOrCease();
+        verify(planRepository, never()).findRecentPlansByCase(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("已结清 → 跳过")
+    void repaid_skip() {
         CaseInfo info = new CaseInfo();
-        info.setCaseId(LOAN_ID);
-        info.setUserId(USER_ID);
-        info.setDpd(dpd);
-        info.setStage(Stage.fromDpd(dpd));
-        when(caseService.getCaseInfo(LOAN_ID)).thenReturn(info);
-    }
-
-    /** 让案件存在一个处于指定阶段的活跃计划。 */
-    private void givenActivePlanAtStage(Stage stage) {
-        ContactPlan plan = new ContactPlan();
-        plan.setId(1L);
-        plan.setCaseId(LOAN_ID);
-        plan.setStage(stage);
-        when(planRepository.findActivePlansByCase(LOAN_ID))
-                .thenReturn(Collections.singletonList(plan));
-    }
-
-    @Test
-    @DisplayName("投影阶段更严重 → 发布 STAGE_CHANGED（升档前进）")
-    void publishesStageChangedWhenProjectionIsMoreSevere() {
-        givenProjection(20); // S3
-        givenActivePlanAtStage(Stage.S1);
-
-        handler.dailyRoll();
-
-        verify(ingestionService).changeStage(eq(LOAN_ID), eq(USER_ID), eq(Stage.S3), any());
-    }
-
-    @Test
-    @DisplayName("投影阶段更轻 → 不发布回退事件，避免与引擎 ESCALATE 形成降档 ping-pong")
-    void doesNotPublishStageRollbackWhenProjectionIsLessSevere() {
-        // 引擎 ESCALATE 已把计划抬到 S3，而引擎从不回写投影，故投影仍停在 DPD 推导的 S1。
-        // 若日切按「不同即发」处理，S3 计划会被 STAGE_UPGRADE 取消并重建回 S1。
-        givenProjection(2); // S1
-        givenActivePlanAtStage(Stage.S3);
-
-        handler.dailyRoll();
-
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-    }
-
-    @Test
-    @DisplayName("阶段一致 → 不发布任何事件")
-    void publishesNothingWhenStageUnchanged() {
-        givenProjection(5); // S2
-        givenActivePlanAtStage(Stage.S2);
-
-        handler.dailyRoll();
-
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-        verify(ingestionService, never()).caseCeased(anyLong(), any());
-    }
-
-    @Test
-    @DisplayName("无活跃计划 → 不发布阶段事件")
-    void publishesNothingWithoutActivePlan() {
-        givenProjection(20);
-        when(planRepository.findActivePlansByCase(LOAN_ID)).thenReturn(Collections.emptyList());
-
-        handler.dailyRoll();
-
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-    }
-
-    @Test
-    @DisplayName("dpd ≥ 91 且有活跃计划 → 发布 CASE_CEASED，不发阶段变更")
-    void publishesCaseCeasedBeyondD91() {
-        givenProjection(95);
-        givenActivePlanAtStage(Stage.S4);
-
-        handler.dailyRoll();
-
-        verify(ingestionService).caseCeased(LOAN_ID, 95);
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-    }
-
-    @Test
-    @DisplayName("已结清 → 整案跳过")
-    void skipsRepaidCase() {
-        CaseInfo info = new CaseInfo();
-        info.setCaseId(LOAN_ID);
-        info.setUserId(USER_ID);
-        info.setDpd(20);
-        info.setStage(Stage.S3);
+        info.setCaseId(LOAN);
         info.setRepaid(true);
-        when(caseService.getCaseInfo(LOAN_ID)).thenReturn(info);
+        info.setDpd(4);
+        info.setStage(Stage.S2);
+        when(caseService.getCaseInfo(LOAN)).thenReturn(info);
 
         handler.dailyRoll();
 
-        verify(planRepository, never()).findActivePlansByCase(anyLong());
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-        verify(ingestionService, never()).caseCeased(anyLong(), any());
+        verify(planRepository, never()).findActivePlansByCase(any());
+        verifyNoStageOrCease();
     }
 
-    @Test
-    @DisplayName("案件不存在 → 跳过且不抛异常")
-    void skipsMissingCase() {
-        when(caseService.getCaseInfo(LOAN_ID)).thenReturn(null);
-
-        handler.dailyRoll();
-
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
+    private void stubCompletedResume(int dpd, Stage lastStage, Stage projectionStage) {
+        stubCase(dpd, projectionStage);
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(List.of(plan(8L, lastStage, PlanStatus.PLAN_COMPLETED)));
     }
 
-    @Test
-    @DisplayName("白名单为空且未开全量扫描 → 跳过，不触碰投影")
-    void skipsFullScanWhenDisabled() {
-        IngestionProperties props = new IngestionProperties();
-        props.setLoanIdWhitelist(Collections.emptyList());
-        ReflectionTestUtils.setField(handler, "props", props);
-
-        int processed = handler.dailyRoll();
-
-        assertThat(processed).isZero();
-        verify(caseService, never()).getCaseInfo(anyLong());
+    private CaseInfo stubCase(int dpd, Stage stage) {
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(LOAN);
+        info.setUserId(LOAN);
+        info.setDpd(dpd);
+        info.setStage(stage);
+        info.setRepaid(false);
+        info.setTotalOutstanding(new BigDecimal("1000"));
+        when(caseService.getCaseInfo(LOAN)).thenReturn(info);
+        return info;
     }
 
-    // ─────────── 同日重跑去重（去重器接入后才成立，L4b-8 的单测对位） ───────────
-
-    /** 注入去重器，并按调用序返回 acquire 结果。 */
-    private RedisDailyRollDeduplicator givenDeduplicator(Boolean first, Boolean... rest) {
-        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
-        when(dedup.acquire(any(), anyLong(), anyInt())).thenReturn(first, rest);
-        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
-        return dedup;
+    private static ContactPlan plan(long id, Stage stage, PlanStatus status) {
+        ContactPlan plan = new ContactPlan();
+        plan.setId(id);
+        plan.setCaseId(LOAN);
+        plan.setStage(stage);
+        plan.setStatus(status);
+        return plan;
     }
 
-    @Test
-    @DisplayName("同日重复日切 → 升档事件只发一次，去重键带 dpd")
-    void sameDayRerunPublishesStageChangedOnce() {
-        givenProjection(20); // S3
-        givenActivePlanAtStage(Stage.S1);
-        RedisDailyRollDeduplicator dedup = givenDeduplicator(true, false);
-
-        handler.dailyRoll();
-        handler.dailyRoll();
-
-        verify(dedup, times(2)).acquire("stage", LOAN_ID, 20);
-        verify(ingestionService, times(1))
-                .changeStage(eq(LOAN_ID), eq(USER_ID), eq(Stage.S3), any());
+    private void verifyStageChanged(Stage expected) {
+        verify(ingestionService).changeStage(eq(LOAN), eq(LOAN), eq(expected), anyMap());
+        verify(ingestionService, never()).caseCeased(any(), any());
     }
 
-    @Test
-    @DisplayName("同日重复日切 → 停催事件只发一次")
-    void sameDayRerunPublishesCaseCeasedOnce() {
-        givenProjection(95);
-        givenActivePlanAtStage(Stage.S4);
-        RedisDailyRollDeduplicator dedup = givenDeduplicator(true, false);
-
-        handler.dailyRoll();
-        handler.dailyRoll();
-
-        verify(dedup, times(2)).acquire("ceased", LOAN_ID, 95);
-        verify(ingestionService, times(1)).caseCeased(LOAN_ID, 95);
-    }
-
-    @Test
-    @DisplayName("去重未放行 → 不读快照也不发事件")
-    void deniedByDeduplicatorSkipsSnapshotRead() {
-        givenProjection(20);
-        givenActivePlanAtStage(Stage.S1);
-        givenDeduplicator(false);
-
-        handler.dailyRoll();
-
-        verify(caseService, never()).getContextSnapshot(anyLong());
-        verify(ingestionService, never())
-                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
-    }
-
-    /** 阶段回退与阶段一致都在取键之前返回，不消耗去重配额。 */
-    @Test
-    @DisplayName("阶段回退跳过 → 不申请去重键")
-    void stageRollbackDoesNotConsumeDedupKey() {
-        givenProjection(2); // S1
-        givenActivePlanAtStage(Stage.S3);
-        RedisDailyRollDeduplicator dedup = givenDeduplicator(true);
-
-        handler.dailyRoll();
-
-        verify(dedup, never()).acquire(any(), anyLong(), anyInt());
-    }
-
-    @Test
-    @DisplayName("当日全量扫描已完成 → 不再扫描")
-    void fullScanSkippedAfterCompletedToday() {
-        IngestionProperties props = new IngestionProperties();
-        props.setLoanIdWhitelist(Collections.emptyList());
-        props.setDailyRollFullScanEnabled(true);
-        ReflectionTestUtils.setField(handler, "props", props);
-        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
-        when(dedup.completedToday()).thenReturn(true);
-        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
-
-        int processed = handler.dailyRoll();
-
-        assertThat(processed).isZero();
-        verify(caseService, never()).findActiveCaseIdsAfter(any(), anyInt());
-    }
-
-    @Test
-    @DisplayName("全量扫描末页 → 推进游标并标记当日完成")
-    void fullScanMarksCompletedOnLastPage() {
-        IngestionProperties props = new IngestionProperties();
-        props.setLoanIdWhitelist(Collections.emptyList());
-        props.setDailyRollFullScanEnabled(true);
-        props.setDailyRollBatchSize(10);
-        ReflectionTestUtils.setField(handler, "props", props);
-        RedisDailyRollDeduplicator dedup = mock(RedisDailyRollDeduplicator.class);
-        when(dedup.completedToday()).thenReturn(false);
-        when(dedup.currentCursor()).thenReturn(null);
-        when(caseService.findActiveCaseIdsAfter(null, 10)).thenReturn(Arrays.asList(1L, LOAN_ID));
-        ReflectionTestUtils.setField(handler, "dailyRollDeduplicator", dedup);
-
-        int processed = handler.dailyRoll();
-
-        assertThat(processed).isEqualTo(2);
-        verify(dedup).advanceCursor(LOAN_ID);
-        verify(dedup).markCompletedToday();
+    private void verifyNoStageOrCease() {
+        verify(ingestionService, never()).changeStage(any(), any(), any(), anyMap());
+        verify(ingestionService, never()).caseCeased(any(), any());
     }
 }

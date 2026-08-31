@@ -41,9 +41,8 @@ collection:
   # 渲染进 SMS 正文 / Push deep_link / Email payment_link 的还款地址，必须显式给值：
   # 缺省会落到代码默认模板，客户点开是打不开的链接。占位符仅支持 {caseId}。
   repayment-url-template: ${COLLECTION_REPAYMENT_URL_TEMPLATE}
-  # 到期扫描是独立于接入的第二个入口：接入白名单只管「从 Pub/Sub 收哪些案件」，扫描直接读库。
-  # 名单留空 = 对整个 ai_collection_db 的到期步骤发起触达，「固定 50 案」在这一侧就不成立，
-  # 故 ScanIsolationGuard 在 pilot 下同样强制非空；T6 全量时才置 allow-full-scan=true。
+  # 到期扫描是独立于接入的第二个入口。空名单 = 扫库内全部到期步骤（Pilot 单实例已放行）。
+  # 加量/换名单走数仓 Publisher，不必再手改 COLLECTION_SCAN_CASE_IDS。
   scan:
     case-id-whitelist: ${COLLECTION_SCAN_CASE_IDS:}
     allow-full-scan: ${COLLECTION_SCAN_ALLOW_FULL:false}
@@ -86,9 +85,10 @@ collection:
     project-id: ${GCP_PUBSUB_PROJECT:}
     subscription: ${GCP_PUBSUB_SUBSCRIPTION:}
     redis-dedup-enabled: true
-    daily-roll-full-scan-enabled: false
+    # 空接入名单时按 t_ai_collection keyset 滚；名单非空仍只滚名单。
+    daily-roll-full-scan-enabled: ${COLLECTION_DAILY_ROLL_FULL_SCAN_ENABLED:true}
     daily-roll-batch-size: 1000
-    # 白名单由 Nacos/环境下发；空名单会扩大处理范围，Pilot 启动校验必须拒绝。
+    # 空 = 消费订阅里有什么就进什么。加量/换名单走数仓 Publisher。
     loan-id-whitelist: ${COLLECTION_PILOT_LOAN_IDS:}
 
 channel:

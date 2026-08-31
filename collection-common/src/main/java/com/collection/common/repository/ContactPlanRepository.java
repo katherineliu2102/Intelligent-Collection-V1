@@ -80,6 +80,36 @@ public interface ContactPlanRepository {
     }
 
     /**
+     * 计划取消后把仍打开的步骤收口。超时扫描不捞终态计划上的 EXECUTING，不在这里收口会永久悬挂。
+     *
+     * @return 本次标成 SKIPPED 的条数
+     */
+    default int skipOpenSteps(Long planId, ContactResult result) {
+        List<ContactPlanStep> steps = findStepsByPlan(planId);
+        if (steps == null || steps.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        ContactResult closed = result != null ? result : ContactResult.SKIPPED;
+        for (ContactPlanStep step : steps) {
+            if (step == null || step.getId() == null) {
+                continue;
+            }
+            if (step.getStatus() != StepStatus.PENDING && step.getStatus() != StepStatus.EXECUTING) {
+                continue;
+            }
+            if (transitionStepStatus(
+                    step.getId(),
+                    Arrays.asList(StepStatus.PENDING, StepStatus.EXECUTING),
+                    StepStatus.SKIPPED,
+                    closed)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
      * 抢占步骤执行权：首次开始执行只写 executed_at，绝不写 completed_at。
      *
      * <p>实现方**必须**把「步骤已处于终态」表达为条件更新（而非先查后写）：本方法会清空 {@code trigger_time}， 若把已终结的步骤改回

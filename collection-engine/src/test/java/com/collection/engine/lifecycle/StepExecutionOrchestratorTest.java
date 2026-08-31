@@ -136,7 +136,7 @@ class StepExecutionOrchestratorTest {
         when(stepOutcomeRecorder.recordStrategySkipped(any(), any())).thenReturn(true);
     }
 
-    /** 步骤② 实时读到的案件数据：dpd/余额比快照新，stage 故意与计划不同以验证不被覆盖。 */
+    /** 步骤② 实时读到的案件数据：dpd/余额/stage 比快照新。 */
     private CaseInfo liveCaseInfo() {
         CaseInfo info = new CaseInfo();
         info.setCaseId(CASE_ID);
@@ -216,7 +216,7 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#5g 渲染前刷新日变字段 → Resolver 拿到实时 dpd / 余额，stage 仍随计划")
+    @DisplayName("#5g 渲染前刷新日变字段 → Resolver 拿到当天投影 dpd / 余额 / stage")
     void refreshesVolatileFieldsBeforeResolve() {
         CaseContext stale = new CaseContext();
         stale.setCaseId(CASE_ID);
@@ -242,7 +242,7 @@ class StepExecutionOrchestratorTest {
         CaseContext used = captor.getValue().getContextSnapshot().getCaseContext();
         assertThat(used.getDpd()).isEqualTo(58);
         assertThat(used.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("1500.00"));
-        assertThat(used.getStage()).isEqualTo(Stage.S4);
+        assertThat(used.getStage()).isEqualTo(Stage.S3);
     }
 
     @Test

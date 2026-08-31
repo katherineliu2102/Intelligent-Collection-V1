@@ -388,6 +388,24 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
+    @DisplayName("#24 还款取消计划时收口 PENDING/EXECUTING，避免超时扫描捞不到")
+    void onRepaymentReceived_skipsOpenSteps() {
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.skipOpenSteps(eq(PLAN_ID), eq(ContactResult.SKIPPED))).thenReturn(2);
+
+        manager.onRepaymentReceived(
+                CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID));
+
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+        verify(planRepository).skipOpenSteps(PLAN_ID, ContactResult.SKIPPED);
+    }
+
+    @Test
     @DisplayName("#24 并发终态先写：还款取锁后发现已完成 → 不覆写计划状态")
     void onRepaymentReceived_lockedPlanAlreadyTerminal_doesNotOverwrite() {
         ContactPlan stale = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);

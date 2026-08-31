@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>非末步 → ADVANCE_NEXT
- *   <li>末步 + success → PLAN_COMPLETED
+ *   <li>末步 + success → PLAN_COMPLETED（本档计划结束，不等于停催；下一档由次日日切 {@code STAGE_CHANGED} 建）
  *   <li>末步 + !success → PLAN_EXHAUSTED
  * </ul>
  */

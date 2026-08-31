@@ -34,22 +34,20 @@ class ScanIsolationGuardTest {
     }
 
     @Test
-    @DisplayName("pilot 空名单同样拒绝：接入白名单管不到扫描入口")
-    void emptyWhitelistUnderPilotProfileIsRejected() {
+    @DisplayName("pilot 空名单告警放行：范围跟订阅与库内计划")
+    void emptyWhitelistUnderPilotProfileIsAllowed() {
         ScanIsolationGuard guard = new ScanIsolationGuard(props(), profile("pilot"));
 
-        assertThrows(IllegalStateException.class, guard::validate);
+        assertDoesNotThrow(guard::validate);
     }
 
     @Test
-    @DisplayName("null 名单与空列表等价，同样拒绝")
-    void nullWhitelistIsTreatedAsEmpty() {
+    @DisplayName("pilot 上 null 名单与空列表等价，同样放行")
+    void nullWhitelistOnPilotIsAllowed() {
         ScanProperties props = props();
         props.setCaseIdWhitelist(null);
 
-        assertThrows(
-                IllegalStateException.class,
-                new ScanIsolationGuard(props, profile("pilot"))::validate);
+        assertDoesNotThrow(new ScanIsolationGuard(props, profile("pilot"))::validate);
     }
 
     @Test
