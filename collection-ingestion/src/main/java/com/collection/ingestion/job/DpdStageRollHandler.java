@@ -27,8 +27,7 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>有活跃计划且投影 stage 严重度更高 → 发 {@code STAGE_CHANGED}
  *   <li>有活跃计划且投影 stage 更低 → 不发（单调前进，避免与引擎 ESCALATE 降档 ping-pong）
- *   <li>无活跃计划，最近一份 {@code PLAN_COMPLETED} 且投影档更高 → 发 {@code STAGE_CHANGED}（档末日走完后次日建
- *       S0→S1 … S3→S4）
+ *   <li>无活跃计划，最近一份 {@code PLAN_COMPLETED} 且投影档更高 → 发 {@code STAGE_CHANGED}（档末日走完后次日建 S0→S1 … S3→S4）
  *   <li>无活跃计划，最近一份 {@code PLAN_CANCELLED}+{@code NO_DUE_BALANCE} 且投影已有应还余额 → 按当天档发 {@code
  *       STAGE_CHANGED}
  *   <li>其余 {@code PLAN_CANCELLED}（还款 / 停催 / {@code MANUAL_CLEANUP}）或同档 {@code PLAN_COMPLETED} → 不建档
@@ -142,8 +141,7 @@ public class DpdStageRollHandler {
         }
 
         if (!active.isEmpty()) {
-            publishIfUpgrade(
-                    loanId, info, active.get(0).getStage(), newStage, dpd, counters, "");
+            publishIfUpgrade(loanId, info, active.get(0).getStage(), newStage, dpd, counters, "");
             return;
         }
 
@@ -191,9 +189,7 @@ public class DpdStageRollHandler {
                 && info.getTotalOutstanding().compareTo(BigDecimal.ZERO) > 0;
     }
 
-    /**
-     * 仅当目标档严格高于比对档时发 {@code STAGE_CHANGED}。回退只计数，避免 ESCALATE 后被日切打回低档。
-     */
+    /** 仅当目标档严格高于比对档时发 {@code STAGE_CHANGED}。回退只计数，避免 ESCALATE 后被日切打回低档。 */
     private void publishIfUpgrade(
             Long loanId,
             CaseInfo info,

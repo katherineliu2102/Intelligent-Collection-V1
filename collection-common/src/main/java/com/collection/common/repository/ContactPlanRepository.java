@@ -95,7 +95,8 @@ public interface ContactPlanRepository {
             if (step == null || step.getId() == null) {
                 continue;
             }
-            if (step.getStatus() != StepStatus.PENDING && step.getStatus() != StepStatus.EXECUTING) {
+            if (step.getStatus() != StepStatus.PENDING
+                    && step.getStatus() != StepStatus.EXECUTING) {
                 continue;
             }
             if (transitionStepStatus(
