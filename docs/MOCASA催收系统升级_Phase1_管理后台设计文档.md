@@ -1,8 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.2  
-> **日期**: 2026-08-24  
-> **状态**: ✅ 现行基线（SPA 已落地）+ 真实案 / AI Call 观测待补齐  
+> **版本**: v1.4  
+> **日期**: 2026-08-31  
+> **状态**: ✅ 现行基线（SPA 已落地）+ AI Call 观测迭代已并入（v1.3）+ 小团队角色模式与差距地图（v1.4）  
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
 > **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
 > **关联文档**:  
@@ -38,6 +38,7 @@
 - [10. 分阶段交付路线](#10-分阶段交付路线)
 - [11. 关键决策记录](#11-关键决策记录)
 - [12. 开放问题](#12-开放问题)
+- [13. 差距地图：离「成熟稳定完整的催收作业系统」还差什么](#13-差距地图离成熟稳定完整的催收作业系统还差什么)
 - [附录 A：与 PRD 功能映射](#附录-a与-prd-功能映射)
 - [附录 B：现有代码与页面资产](#附录-b现有代码与页面资产)
 
@@ -52,6 +53,10 @@ Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的�
 当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台已有 React SPA（`collection-admin/ui`，菜单：看板 / 策略 / 模板 / 案件监控 / 异常队列 / 合规 / 系统）与对应 REST。`catalog.html`、`orchestration.html` 仅作开发观测页，不再是唯一入口。
 
 **产品化缺口（v1.2）**：案件检索读源已于 2026-08-25 切到 `t_ai_collection`，与入案主路径一致，「引擎在催、后台搜不到」已消除。仍未闭合的是单案视图：不展示投影摘要与 AI Call 回调细节（`GET /cases/{caseId}` 待建）。本版把该缺口列为 Phase 1 必补，而不是另起一套后台。
+
+**v1.3 并入 AI Call 观测迭代（2026-08-31）**：看板新增 AI Call 分区（§5.1.1a）、单案 360 外呼增强与录音/转写代理（§5.3.2）、钉钉 CRITICAL 告警（§5.5.4，关闭 Q3）、数据底座 `t_ai_call_session`（§6.2）。该批原以独立《AI 通话运营台开发文档》承载，已合并至本文并删除——**本文为该批唯一 SSOT**；实现落地后同步回写操作手册 §3.1 / §3.4 / 告警节。
+
+**v1.4 小团队角色模式与差距地图（2026-08-31）**：§3 新增**超级管理员**并确立小团队运营模式（审计留痕优先于权限管制）；新增 **§13 差距地图**——梳理 Pilot 主链路距「可运营」与「成熟催收作业系统」的三层缺口及各自的后台承接方式；核对 PRD §7.2 原文后修正 v1.2 触达窗误引（引擎与 PRD 一致，Q9 关闭）。
 
 PRD 场景 B 定义了策略配置员的核心闭环：
 
@@ -152,6 +157,7 @@ PRD 场景 B 定义了策略配置员的核心闭环：
 
 | 角色 | 核心职责 | 主要模块 |
 |------|----------|----------|
+| **超级管理员** | 全模块读写：账号与角色管理、全局切流、配置回滚、告警阈值、渠道密钥引用 | 全部（含系统管理） |
 | **催收主管** | 监控进度与效果、处理投诉冻结、查看异常 | 看板、案件监控、异常队列、基础合规操作 |
 | **策略配置员** | 配置计划模板、话术、策略规则 | 看板、策略配置、策略评估 |
 | **系统管理员** | 渠道开关、密钥引用、账号管理、全局切流 | 渠道运维、系统管理、异常队列 |
@@ -169,7 +175,9 @@ PRD 场景 B 定义了策略配置员的核心闭环：
 | 策略评估 | 读 | 读写 | 读 |
 | 系统管理 | — | — | 读写 |
 
-> **说明**：Phase 1 不引入多级主管审批或细粒度字段级权限（PRD §9 RBAC 决策）。
+> **说明**：Phase 1 不引入多级主管审批或细粒度字段级权限（PRD §9 RBAC 决策）。超级管理员对上表全部模块读写，矩阵从略。
+
+> **小团队运营模式（v1.4）**：当前团队规模小，**日常运营以超级管理员为主**（1–2 人持有即可），三角色矩阵保留为**能力清单**而非日常管制——小团队阶段，权限的价值不在「防人」而在**审计留痕**：操作日志（`t_config_change_log`）、录音/转写访问审计（`t_media_access_log`）、告警抑制状态变更全部记操作人。超级管理员是 `t_system_role` 的**配置项，零开发**；商业化多租户阶段（§8）再按租户收紧。若后续需要，可对高危操作（全局切流、回滚）单独要求二次确认，仍不引入审批流。
 
 ---
 
@@ -180,7 +188,7 @@ PRD 场景 B 定义了策略配置员的核心闭环：
 ```
 管理后台
 ├── 📊 数据分析
-│   ├── 触达效果看板          ← 场景 B 起点
+│   ├── 触达效果看板          ← 场景 B 起点；含 AI Call 分区（v1.3，§5.1.1a）
 │   ├── 回收效果看板          ← Stage 回收率、漏斗
 │   └── 渠道 ROI 概览         ← 触达成本 vs 回收（P1）
 ├── ⚙️ 策略配置
@@ -272,6 +280,37 @@ flowchart LR
 - 每个指标标注数据新鲜度（实时 / T+1）✅
 - 与 PRD F11 对齐：SMS、AI Call 为 KPI 口径渠道；Push / Email 仅看板呈现（PRD §6.2）
 
+#### 5.1.1a AI Call 分区（v1.3 新增，热层）
+
+**背景**：真实分流后（8/24–8/28 盘点 `t_channel_callback_audit`，149 去重会话）SIP 406 占 47%、486/BUSY 占 42%、真实接通约 0.67%，主叫号单一（`6310001`）。现有触达效果按短信 `DELIVERED/FAILED` 口径，AI 的 `ANSWERED/BUSY/NO_ANSWER` 掉进 Other——故**同页新增独立分区，不动短信口径**，避免混用（不要用 deliveryRate 看 AI）。
+
+**指标口径**（分母 = 窗口内真实会话：`is_synthetic=0` 且 `event=session.completed`；入库 UTC，展示 PHT）：
+
+| 层 | 条件 | 含义 |
+|---|---|---|
+| 拨出 | 有 `session_id` 的 completed | 供应商受理并回终态 |
+| 拨通 | `was_ringing` | 线路/号码质量 |
+| 接通 | `was_answered` | 客户接起 |
+| AI 接续成功 | `was_ai_connected` 且 `line_reason=NORMAL` | 线路层「AI 接上了」，**不是催收有效对话**（供应商回传发言轮次前为代理口径） |
+| 接通但无效 | `was_answered` 且 reason ∈ {VOICEMAIL, CALL_SCREENING} | 单独一档，防止计入有效对话 |
+
+- `needs_review`：`was_answered=1` 且（尚无转写，或转写中无借款人发言）。自动清除依赖 `script_url` 转写是否带说话人角色——先以 `513749`/`513849` 实测格式定判定规则（任意非空借款人 utterance 即清除）；无角色标注则退化为人工标记。
+- FAILED 率 = 映射后 `ContactResult.FAILED` / 波次真实 completed；BUSY / NO_ANSWER **不算** FAILED（由 A6 单独盯，见 §5.5.4）。
+
+**分区内容**：
+
+1. 第一屏：SIP 码 + `line_reason` 分布。切换条件：406+486 合计占比**连续 7 个日历日**低于 30% 后，默认改以漏斗为主（同步操作手册）。
+2. 四层漏斗 + 每层流失 Top 原因；BUSY 趋势画 ~42% 基线参考线（目视锚点，不告警）。
+3. 波次表：拨出 / BUSY / FAILED / NO_ANSWER / ANSWERED、FAILED 率与 BUSY 率、主叫号、`stage`/`dpd` 快照可筛。
+4. 主叫号 × SIP 交叉（当前仅 `6310001` 一行；扩号后直接看哪个号 486 多）。
+5. 时长：有接通显示「未回传」占位，禁止显示 0（供应商未回 `answered_at`/`ended_at`/`duration`，列已预留，补传零改动可展示）。
+6. 悬挂条：AI_CALL 步骤 EXECUTING 且 `dispatched_at` 早于 15 分钟，跳转 Case Monitor。
+7. Guard 拦截量：窗口内合规/频次 Guard 跳过的 AI 步数（读步骤表，查询成本可接受则显示）。
+
+**API**：`GET /dashboard/aicall/realtime`（登录态，与现 Dashboard 同鉴权）；`from`/`to`（PHT 日历日，默认今天）、`includeSynthetic`（默认 false）、`stage`/`dpd` 可选筛选；预留 `format=md` 供下一批日报复用。
+
+**供应商并行推动（不改本仓库，带证据去谈）**：SIP 406 媒体协商、486 + 单主叫号轮换（含 local presence 拨号评估）、回调补 `answered_at`/`ended_at`/`duration` 与发言轮次字段。修复验收出口（判据可配）：建议 406 <5%、BUSY <25%、真实接通 ≥15%——无量化出口则「修好」不可证伪，告警抑制永不解除。
+
 #### 5.1.2 回收效果看板（P1）
 
 | 指标 | 说明 | 基线来源 |
@@ -362,13 +401,13 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 **定位**：非独立合规子系统，而是策略配置下的**可配参数组**。
 
-| 参数 | 默认值 | 说明 |
+| 参数 | 引擎现行值 | 说明 |
 |------|--------|------|
-| 触达时段 | 6:00–22:00 | PRD §7.2 |
-| 单用户日触达上限 | 策略配置员设定 | 按用户维度 Redis 计数 |
+| 触达时段 | 08:00–21:00（PHT）+ 静音窗 21:00–08:00 | 引擎 Guard 实现；与 PRD §7.2 默认（08:00 AM ~ 09:00 PM PHT）**一致**——v1.2 表格「6:00–22:00」系误引，v1.4 核对 PRD 原文后修正（Q9 关闭） |
+| 单用户日触达上限 | AI_CALL 日上限 2、全渠道日合计 3 | 引擎 Guard 现行配置（PRD §7.2 默认每渠道 1/日、跨渠道合计 3/日；AI_CALL 现配 2，可调不硬编码）。注意回调 `attempt_count` 是单通 SIP 重试次数，非日频次 |
 | AI Call 呼损率上限 | 策略配置员设定 | 超阈值降级渐进式拨号 |
 
-保存即生效；违规拦截记录可在案件 360° 或看板中查看，不单独建设合规管理模块 ✅。
+保存即生效；违规拦截记录可在案件 360° 或看板中查看（v1.3：看板 AI Call 分区露出窗口内 Guard 跳过步数，见 §5.1.1a），不单独建设合规管理模块 ✅。投诉冻结、`CONNECT_AND_STOP`（当日接通停呼）均已在引擎侧生效——后台只做可见性，不重做合规引擎。
 
 #### 5.2.5 配置校验与 Dry-run 预演
 
@@ -422,13 +461,17 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 | 区块 | 内容 | API |
 |------|------|-----|
-| 案件摘要 | Stage、DPD、产品、`collectionStatus`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（待建，读 `t_ai_collection`） |
+| 案件摘要 | Stage、DPD、产品、`collectionStatus`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（v1.3 本批补建，读 `t_ai_collection`） |
 | 计划（含终态） | plan 状态、步骤序列、各 step 状态 | `/plans/by-case/{caseId}/history`、`/plans/{planId}/steps` |
 | 触达时间线 | 全渠道：channel、result、`providerMsgId`、scriptSlot、时间 | `/plans/timeline/{userId}` |
-| AI Call 回调解读 | 映射后的 `ContactResult`；审计表 `disposition` / 原始 `line_outcome`（只读） | timeline.result + `t_channel_callback_audit`（待接到 UI） |
-| 决策日志 | 规则命中 | Phase 2 `t_decision_log` |
+| AI Call 会话明细 | 三层布尔、SIP、`line_reason`、`result`、`wave_key`、`caller_cli`、stage/dpd 快照、`needs_review`、synthetic、时长占位 | `t_ai_call_session`（v1.3，按 `case_id` 读） |
+| 决策快照 | `decision_type` / `output_decision` / `reasoning` | `t_decision_log`（表已存在；v1.3 只读展示，核对话术档是否跟当天档） |
+| 还款事件 | 该案 inbox `repaymentEvent` 或投影结清时间，列在通话卡片旁 | query-time join；只读、不告警、不落派生列 |
+| 录音 / 转写 | 接通会话复听与转写阅读 | `GET /ops/ai-calls/{sessionId}/transcript`、`/recording`（服务端代理，见下） |
 
-**AI Call 展示边界**：后台展示是否受理、是否接通、映射结果（如 `SENT_NO_RESPONSE`）、失败码、`batchId`/`session_id`。不内嵌录音播放、不提供坐席重拨。
+**AI Call 展示边界**：后台展示是否受理、是否接通、映射结果（如 `SENT_NO_RESPONSE`）、失败码、`batchId`/`session_id`，以及录音/转写复听。**不提供坐席重拨**。
+
+**录音/转写代理（v1.3，修订 v1.2「不内嵌录音播放」）**：接通样本必须能在后台复听/看转写，否则质检无从做起。采用**服务端代理**——服务端持 `channel.facade.api-key` 拉 `recording_url`/`script_url`（TLS 行为跟随现 Adapter），转写脱敏后落 `transcript_text`；API key 不出服务端，签名 URL 不交给浏览器长期持有。本批不分 RBAC 角色，**每次访问写 `t_media_access_log`**；无 media 返回 404（文案注明未接通或未回传）。`EvidenceController` 仍不外发 `canonical_payload`——新媒体接口是显式授权的只读代理，与证据面 PII 边界分开。
 
 **交互**：步骤状态色标；异常队列 / 看板一键跳转本案。
 
@@ -518,12 +561,30 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 > 批量操作是防雪崩的关键——网关恢复后，主管对整簇「SMS / TIMEOUT」一键批量重试，而非逐条点击。
 
-#### 5.5.4 告警联动
+#### 5.5.4 告警联动（v1.3 落地钉钉，Q3 关闭）
 
 | 渠道 | 场景 |
 |------|------|
 | 后台站内通知 | 新异常簇出现或某簇升级（增速翻倍） |
-| 外部告警 ⏳ | 钉钉 / 邮件；按簇而非逐条推送，对接方式待确认 |
+| 钉钉 CRITICAL ✅ v1.3 | AI Call 告警条目见下表；webhook 来自 Nacos/环境变量 `collection.alert.dingtalk.webhook`（不入库、不进前端），未配置只打日志不抛 |
+
+**AI Call CRITICAL 条目**（阈值入 `t_evaluation_setting`，`config_type=alert`，System 页可编辑、走 `/config/rollback` 回滚）：
+
+| ID | 条件 | 意图 |
+|---|---|---|
+| A1 | 波次 FAILED 率 >15% 且真实 completed ≥20 | SIP 406 类媒体故障 |
+| A2 | AI_CALL 步骤 `trigger_time` 已过 ≥10 分钟仍 PENDING/活跃，且该槽无对应 `wave_key` 会话 | 漏催（按库内到期步骤推导，不硬编码档位/槽位） |
+| A3 | 步骤 EXECUTING 且 `dispatched_at` 已过 15 分钟、明细表无对应 `session_id` | 悬挂（补 `callbackTimeout` 因 `timeout_time` 空扫不到的洞）；**同步入异常队列**供人工收敛，不只是通知 |
+| A4 | 窗口内新增 `signature_valid=0` | 安全 |
+| A6 | 波次 BUSY 率 >60% 且真实 completed ≥20 | 拦号/占线**显著恶化**（当前基线 ~42% 不告；42→55% 慢爬由看板趋势人眼盯） |
+
+**告警纪律**：
+
+- 小样本不告（n<20 只展示不告警），防误伤。
+- 抑制对象键 = `alert_id + 槽位 HHMM`（`wave_key` 含日期、不可跨日累计）；同键连续 3 个日历日告警后降级为日志，指标回到阈值下发一次恢复通知并清零计数。
+- A2–A4 按 `(alert_id, 对象, 日历日)` 写 `t_alert_dedup` 去重；多实例 `@Scheduled` 重复扫描靠同表保证同日同对象只发一次。
+- 扫描：Spring `@Scheduled` 每分钟，仅 `collection.scheduler.enabled=true` 时运行；不新增 GCP Scheduler job。
+- 文案含波次、分子分母、SIP Top、主叫号、悬挂 id；**不含明文手机号**。
 
 ---
 
@@ -617,6 +678,9 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | `t_compliance_rule` | 合规阈值 | NEW ⚠️ 待 DDL |
 | `t_channel_config` | 渠道路由与开关 | NEW ⚠️ 待 DDL |
 | `t_config_change_log` | 配置变更日志 | 本设计新增建议 |
+| `t_ai_call_session` | AI Call 会话结构化明细（看板 AI 分区与案件 360 的查询层） | v1.3 新增，DDL 以领域模型文档为准 |
+| `t_media_access_log` | 录音/转写访问审计（username, session_id, kind, created_at） | v1.3 新增 |
+| `t_alert_dedup` | 告警去重与抑制状态（alert_id, object_key, calendar_day, status, last_sent_at） | v1.3 新增 |
 
 **所有配置表的公共列约定**：
 
@@ -625,6 +689,15 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 - `tenant_id`（多租户预留，Phase 1 默认单租户，见 §8.1）
 
 运行态表（已存在）：`t_contact_plan`、`t_contact_plan_step`、`t_contact_timeline`——需 ALTER 增加快照字段（见 §6.5）。
+
+**`t_ai_call_session` 关键约定（v1.3）**：
+
+- 写入：`FacadeWebhookService.handle` 双写（验签、身份与 `ContactResult` 映射逻辑不变；审计 `disposition` 改写原生词，不再硬写 NULL）；历史由 `scripts/pilot/backfill-ai-call-session.py` 按 `session_id` 幂等回填（只读审计原文；连 Pilot 写入需批准，本地/CI 用夹具）。
+- upsert：`ON DUPLICATE KEY` + 可空列 `COALESCE(新, 旧)`（MySQL 8.0.20+ 用别名 `AS new`，不用已弃用的 `VALUES()`）；失败只打日志，不阻断 `CHANNEL_CALLBACK` 发布。
+- 三层布尔 `was_ringing` / `was_answered` / `was_ai_connected` 落原子列，禁止合成单一枚举；`wave_key` 自 `external_batch_id` 解析（`mocasa-YYYYMMDD-HHMM-n` → `YYYYMMDD-HHMM`）。
+- `stage` / `dpd` 入库快照**两列都落**（口径冻结，不做单一分箱二选一）；**回填行留空**——`t_ai_collection` 是当前态，历史行无法还原拨打时点值。
+- `promises_json` 结构冻结为 `[{promise_amount, promise_date, promise_type, kept_status, updated_at}]`；PTP 功能缓做，现恒 `[]`。
+- `is_synthetic`（session_id 非 36 位 UUID / 测试白名单）、`is_holdout`（按现有 holdout hash，本批无对比 UI）、`needs_review`、时长三列预留（供应商未回传，当前恒 NULL）。
 
 ### 6.3 热更新流程
 
@@ -701,13 +774,15 @@ Phase 1 为**单实例部署**（部署拓扑见 [架构文档 §2](./MOCASA催�
 |------------|------|------|
 | `CatalogController` | 策略/模板只读目录 | ✅ 已有 |
 | `PlanQueryController` | 计划/时间线查询 | ✅ 已有 |
-| `CaseQueryController` | 案件检索 | ⚠️ 已有，仍读 `t_collection`，须改 `t_ai_collection` |
+| `CaseQueryController` | 案件检索 | ✅ 已切读 `t_ai_collection`（2026-08-25，§5.3.1） |
 | `MockTriggerController` | 测试触发 | ✅ 已有（dev） |
 | `ConfigController` | 配置 CRUD + 热加载 | ✅ 已有 |
 | `OpsQueueController` | 异常队列查询与处理 | ✅ 已有 |
-| `DashboardController` | 看板聚合 API | ✅ 已有（热层 timeline） |
+| `DashboardController` | 看板聚合 API | ✅ 已有（热层 timeline）；v1.3 增 `/dashboard/aicall/realtime` |
 | `ComplianceOpsController` | 冻结/解冻/升级 | ✅ 已有 |
-| `FacadeWebhookService` | Facade 回调入站 | ✅ 已有；**未**接到 Case Monitor UI |
+| `CaseDetailController` | 单案摘要 `GET /cases/{caseId}` | ⚠️ v1.3 本批补建（读 `t_ai_collection`） |
+| `AiCallMediaController` | 录音/转写代理 | ⚠️ v1.3 本批补建（`/ops/ai-calls/{sessionId}/transcript|recording`） |
+| `FacadeWebhookService` | Facade 回调入站 | ✅ 已有；v1.3 起**双写** `t_ai_call_session` 并经其接入案件 360 |
 
 ### 7.3 现有页面资产
 
@@ -760,7 +835,7 @@ Phase 1 服务 MOCASA 菲律宾自用；后续作为催收服务商对外商业�
 
 | 能力 | 说明 |
 |------|------|
-| AI Call 100% 监控 | 对接 ASR 转写（`TranscriptService` 预留） |
+| AI Call 100% 监控 | 对接 ASR 转写（`TranscriptService` 预留；转写代理拉取与脱敏落库 v1.3 已具备，见 §5.3.2） |
 | 合规 scorecard | 禁用词、必填披露检测 |
 | 质检看板 | 违规趋势、clip 回放 |
 
@@ -830,6 +905,7 @@ gantt
 | 渠道运维 | 开关、熔断、全局切流 |
 | 回收效果看板 | 分 Stage 回收率、漏斗（冷层） |
 | SQL 规则治理 | F12 |
+| **AI Call 观测（v1.3 增量，本批）** | 看板 AI Call 分区 + `t_ai_call_session` 底座与回填 + 钉钉 CRITICAL（A1–A4+A6）+ 案件 360 录音/转写代理（§5.1.1a / §5.3.2 / §5.5.4 / §6.2）；验收口径 = 供应商修复验证闭环 |
 
 ### 10.3 Phase 2 扩展
 
@@ -865,6 +941,13 @@ gantt
 | 绩效报表 | **不在本系统** | PRD §9 决策 |
 | 案件目录 | **`t_ai_collection`** | 新 Pub/Sub 投影是运行时唯一案件来源；后台不得以旧 `t_collection` 为目录 |
 | PII 展示 | **电话/邮箱脱敏；列表不展示姓名** | PRD §8.2；姓名仅话术渲染 |
+| AI Call 观测入口 | **看板 AI 分区 + 案件 360 下钻，不新增一级菜单** | v1.3；与短信送达率分区隔离，避免口径混用 |
+| 录音/转写 | **服务端代理 + 访问审计，不分 RBAC 角色** | v1.3 修订 v1.2「不内嵌录音播放」；无复听即无质检 |
+| 触达时段 | **08:00–21:00 + 静音窗 21:00–08:00（与 PRD §7.2 默认一致）** | v1.2 曾误引为 6:00–22:00；v1.4 核对 PRD 原文后修正，引擎与 PRD 一致 |
+| 角色模型 | **新增超级管理员；日常以超管为主，审计留痕优先于权限管制** | v1.4；团队小，超管为 `t_system_role` 配置零开发；RBAC 框架保留，商业化时再收紧 |
+| PTP | **schema 冻结、功能缓做** | `promises` 现恒空；结构先行防返工 |
+| AI Call 告警 | **钉钉 A1–A4+A6；n≥20 小样本不告；3 日抑制 + 恢复通知** | v1.3，Q3 关闭；抑制键 = alert_id + 槽位 HHMM |
+| 本批验收 | **供应商修复验证闭环**（修复前后 FAILED/BUSY 分布与告警可对照） | 不等 PTP/回款；建议出口判据 406 <5%、BUSY <25%、真实接通 ≥15%（可调） |
 
 ---
 
@@ -874,12 +957,61 @@ gantt
 |---|------|------|------|
 | Q1 | 看板冷热分离细节（热层物化视图刷新周期） | §5.1.0 架构已定为 MySQL 热 + BQ 冷；刷新策略待实现 | ⏳ 默认热层 1–5 分钟刷新 |
 | Q2 | 渠道 ROI 成本单价由谁维护、如何录入？ | §5.1.3 渠道 ROI | ❓ 待运营确认 |
-| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ❓ 待运维确认 |
+| Q3 | 异常队列外部告警渠道（钉钉/邮件）？ | §5.5.4 | ✅ v1.3 定钉钉（CRITICAL 单发 + 3 日抑制 + 恢复通知） |
+| Q9 | ~~触达窗口径对齐~~ | §5.2.4 / §11 | ✅ v1.4 核对 PRD §7.2 原文：默认 **08:00 AM ~ 09:00 PM PHT**，与引擎一致；v1.2 设计文档「6:00–22:00」系误引 |
 | Q4 | Grafana 嵌入后台还是跳转独立页面？ | §5.4.2 | ⏳ 默认跳转，嵌入成本高 |
 | Q5 | 配置变更回滚是否 Phase 1.5 必做？ | §6.4 | ⏳ 默认 P1，手动回滚可先接受 |
 | Q6 | 前端技术栈 React vs Vue 最终选型？ | §7.1 | ✅ React + Ant Design（`collection-admin/ui`） |
 | Q7 | holdout 基准组比例（5% vs 10%） | §5.7.2 策略评估 | ❓ 待策略/业务确认 |
 | Q8 | 案件检索是否切 `t_ai_collection`？ | §5.3 | ✅ **切**。旧 `t_collection` 仅兼容迁移期对账，不作目录 |
+
+---
+
+## 13. 差距地图：离「成熟稳定完整的催收作业系统」还差什么
+
+> **先把圈画清**：Pilot 上跑通的是 Phase 1 **自动触达主链路**（进件 → 投影 → 日切 → 五槽四渠道 → Facade 回写），这还不是完整催收作业系统。本节把缺口分三层，并回答「**哪些缺口能由管理后台承接**」——后台能直接解决的是第二层全部 + 第一层的可见性；第一层的根因与第三层的大多数在引擎、上游数仓或 Phase 2。
+
+### 13.1 第一层：主链路本身还没稳（后台只做可见性，修复在上游/引擎）
+
+| 缺口 | 后台承接 | 形态 |
+|---|---|---|
+| 进件覆盖：200 圈缺 57、S0 整桶为零 | ✅ 对账视图 | 看板新增「圈选 → 入案」对账区：订阅圈清单 vs 实际入案数，缺圈标红（数据源：ingestion 计数 + 圈选配置，只读） |
+| 日切续档只手动补跑验过；穷尽升档与「走完等次日」可能双计划 | ✅ 检测 + 下钻 | 单案 360 已展示 plan history；**「同案双活跃计划」检测入异常队列**（PLAN_STUCK 变体，建议随 v1.3 批实现） |
+| 圈选 Isolation 不干净（空名单 = 有什么打什么）；MANUAL_CLEANUP 管不住已 COMPLETED 旧圈（已误打 2 案） | ✅ 圈选状态视图 | 异常队列加「已终态计划收到新事件」告警；圈选管理只读视图列出各圈状态与订阅范围 |
+| 对客内容没抽到（正文、金额、DPD 占位符未在真信/真短信核对） | ✅ 抽检入口 | §6.5 `rendered_ref` 快照 + 案件 360 内容预览；P1 加「话术金额 vs 投影金额」自动 diff |
+| 接通质量（三天 2 通 ANSWERED、summary 空、借款人无发言） | ✅ 已并入 v1.3 | AI Call 分区（§5.1.1a）+ 360 转写代理 + `needs_review` |
+| inbox 补发 Job 缺失（坏消息靠 Pub/Sub 重投） | ⚠️ 只做积压视图 | inbox 积压/死信计数入看板；补发 Job 属 ingestion 侧 |
+| 03:00 投影死锁出现过一次（重投后齐，代码未改） | ⚠️ 告警 | 入案中断告警（A2 同族：窗口内零入案即告）；恢复靠上游重投 |
+
+### 13.2 第二层：规格已写、还没成为可运营系统（**后台是主要载体**）
+
+| 缺口 | 后台承接 | 状态 |
+|---|---|---|
+| AI 运营台（按波次看 FAILED/BUSY、后台听录音读转写） | ✅ | **已并入本文 v1.3**（§5.1.1a / §5.3.2 / §5.5.4 / §6.2），未开工 |
+| 转写与 summary 落库 | ✅ | 360 转写代理已设计；`result_label`/`summary` 依赖 Facade 回传 |
+| 简版观测 / 告警 | ✅ | 钉钉 CRITICAL（§5.5.4）；PEL/DLQ 演练、T5-R 不属后台 |
+| 停催 D91 真停催日未在链上验证 | ✅ | 案件检索已支持 `CEASED`；停催产出走 `format=md` 日报位核对 |
+| 部分还款金额质量（缺/负/重复未验收） | ✅ | 360 还款事件（query-time join）+ 话术金额 diff 抽检（同 13.1 第 4 行） |
+| 正式 T4 出口条件（200 案 vs 冻结 50 案 + 双人复核 + 回滚演练） | ❌ 流程治理 | 后台只提供切流开关（§5.4.3 Emergency）与回滚（`/config/rollback`）；出口条件属测试 SSOT |
+
+### 13.3 第三层：成熟催收系统通常还要、当前明确不在 Phase 1
+
+| 能力 | 现状与设计位 |
+|---|---|
+| 人机协同（案件 360、人工外呼、冻结/解冻、质检抽听） | 冻结已有（§5.6）；案件 360 v1.3 增强；坐席作业 PRD 已排除（§2.3），质检 Phase 2（§9.1） |
+| PTP 闭环（还款核对、keep/break） | `promises_json` schema 已冻结（§6.2），`promises` 现恒 `[]`；Phase 2 |
+| 策略可运营（换模板免发版、运营自助圈选） | 配置 DB 化 Phase 1.5（§5.2 / §6.3）；圈选台不在本文范围 |
+| 实验与对照 | §5.7 holdout + `is_holdout` 列已预留；对照看板 Phase 2 |
+| 渠道对账（供应商送达/已读回写 timeline） | Phase 2 |
+| 合规与频控生产验收（跨实例上限、断连 fail-close） | 引擎侧 T5 验收项，不属后台 |
+| 容量与高可用（多实例抢锁、压测定版） | 架构侧；§6.6 节点一致性视图为演进项 |
+| 作业效率（坐席工作量、接通后处置、法诉/外包接口） | Phase 2+；当前「效率」= 五槽自动打出 |
+
+### 13.4 结论
+
+1. **优先做**：v1.3 批（AI Call 分区 + 告警 + 360 代理）是第二层的主体，已设计完待开工；随批补两个第一层检测项（双活跃计划、已终态计划收到新事件），成本很低。
+2. **第一层根因**（进件覆盖、日切稳定性、圈选隔离、投影死锁）在上游与引擎，后台只保证「看得见、告得出」，修复责任不在本文范围。
+3. **第三层**按 §10 路线推进，本文已为每项留了设计位，无需提前建设。
 
 ---
 
@@ -915,6 +1047,8 @@ gantt
 ---
 
 > **修订历史**  
+> - v1.4 · 2026-08-31 · 小团队角色模式与差距地图：§3 新增超级管理员（日常以超管为主，审计留痕优先于权限管制，超管为配置零开发）；新增 §13 三层差距地图（主链路稳定性可见性 / 可运营载体 / Phase 2+ 设计位）；核对 PRD §7.2 后修正 v1.2 触达窗误引（引擎与 PRD 一致，Q9 关闭）；§7.2 API 表刷新（CaseQuery 已切投影、FacadeWebhook 双写、v1.3 待建 Controller 显式列出）  
+> - v1.3 · 2026-08-31 · 并入 AI Call 观测迭代（原《AI 通话运营台开发文档》合并至本文后删除）：看板 AI Call 分区与指标口径（§5.1.1a）、案件 360 外呼增强与录音/转写代理（修订「不内嵌录音播放」）、钉钉 CRITICAL A1–A4+A6（Q3 关闭）、`t_ai_call_session` 数据底座与回填约定（§6.2）、触达窗以引擎口径为准（Q9）、`promises_json` schema 冻结  
 > - v1.2 · 2026-08-24 · 对齐真实 Pub/Sub 投影与 AI Call Facade：案件 SSOT=`t_ai_collection`；PII（电话脱敏、列表不展示姓名）；单案补投影摘要与外呼审计；刷新「已实现 vs 待补」；合规 UI 承认为 P0 轻量能力  
 > - v1.1 · 2026-06-30 · 整合同事评审 8 条优化：holdout 评估、risk_tier 预留、Dry-run 护栏、历史快照、冷热分离、异常折叠聚合、乐观锁、节点一致性演进项  
 > - v1.0 · 2026-06-30 · 初版：整合管理后台设计讨论、用户边界确认、业内调研结论
