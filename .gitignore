@@ -45,3 +45,6 @@ node_modules/
 collection-admin/ui/dist/
 __pycache__/
 *.pyc
+
+# scripts/dev 下划线前缀 = 本地临时草稿（跑批取证、一次性修复），不入仓
+scripts/dev/_*

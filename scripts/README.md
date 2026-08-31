@@ -7,6 +7,7 @@
 | 目录 | 用途 |
 |------|------|
 | [`dev/`](./dev/) | 本地启停、健康检查、Nacos 密钥发布、环境校验 |
+| [`pilot/`](./pilot/) | Pilot 灰度运维：触达槽巡检、env 维护、手动触发日切 |
 | [`test/`](./test/) | L4 端到端、冒烟、Email E2E |
 
 ## 常用命令
@@ -31,6 +32,9 @@
 | 切到 L4b 阶段配置 | `python3 scripts/dev/merge-nacos-config.py deploy/nacos/l4b-collection.publish.yml [--apply]` |
 | 查上游实际在往哪个 topic 发 | `python3 scripts/test/observe-upstream-topics.py --create` → 等一个发布周期 → 不带参数 peek → `--delete` 回收 |
 | **开通/复验调度链（O2/O6）** | `python3 scripts/test/provision-scheduler.py [--dry-run\|--verify\|--pause\|--delete-jobs]`（幂等；纠调度与案件两条订阅的 ack / 保留 / 永不过期 + 建 4 条 `asia-northeast1` Job。别手敲 gcloud：漏 `--attributes="job=..."` 会让四条 Job 全部空转、触达静默停摆。`--verify` 还会**逐 location 翻页全扫**调度 Topic 的发布者，用于发现别处的重复发布者） |
+| 核对某触达槽执行情况 | `./scripts/pilot/check-slot.py 12:00 [PUSH]`（`--env` 覆盖 pilot.env 路径） |
+| Pilot env 维护 | `./scripts/pilot/pilot-env.py clean\|clear-whitelists\|clear-redirects`（均先备份再改） |
+| 手动触发日切 | `./scripts/pilot/publish-daily-roll.py`（凭证走 `GOOGLE_APPLICATION_CREDENTIALS`） |
 
 两个阶段的 `collection.case-service` 与 `collection.ingestion.enabled` 取值相反，**必须切换后再跑**：
 L4a 走 `/mock/ingest` + `MockCaseService`，L4b 走真实订阅 + `AiCollectionCaseService`。
