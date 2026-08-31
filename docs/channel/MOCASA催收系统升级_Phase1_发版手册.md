@@ -19,16 +19,43 @@
 - 不要手写 `docker run --env-file`（会把 JDBC/Nacos 搞乱 → 502）。起容器只用 `pilot-run.sh`。
 - 不要 `docker logs -f` 挂着不管（窗口像死机；看完 **Ctrl+C**，容器还在）。
 - `deploy/Dockerfile` 的 `COPY` 路径是**仓库根相对**的，构建上下文必须同时具备 `collection-admin/target/collection-admin.jar` 与 `deploy/certs/`。
+- **CI 与本机必须是 JDK 8**。GitHub Actions 跑 Temurin 8 + Spotless `google-java-format 1.7`（AOSP，相对 `origin/main` 增量）。本机用 11/17/21 编过不代表 CI 能过：`List.of` / `var` 会 `cannot find symbol`；在 Java 21 上跑 `spotless:apply` 会因 GJF 1.7 的 `removeUnusedImports` 直接失败。
 
 ---
 
 ## 1. 本机
 
+本机工具（用户级环境变量，新开的 PowerShell 才看得到）：
+
+| 项 | 值 |
+|---|---|
+| JDK | Temurin **8u502** `C:\Users\voghion\java\jdk8u502-b07`（`JAVA_HOME`） |
+| Maven | **3.9.11** `C:\Users\voghion\apache-maven-3.9.11`（`MAVEN_HOME`） |
+| PATH | 上述两个 `bin` |
+
+推 GitHub / 发 Pilot **之前**先过门禁（不要 `--no-verify`，不要只在 Pilot 上编）：
+
+```powershell
+$env:JAVA_HOME = "C:\Users\voghion\java\jdk8u502-b07"
+$env:Path = "$env:JAVA_HOME\bin;C:\Users\voghion\apache-maven-3.9.11\bin;$env:Path"
+mvn -version   # 必须是 Java 1.8
+
+cd <仓库根>
+git checkout <发版分支>
+mvn -B -ntp spotless:apply
+mvn -B -ntp spotless:check
+mvn -B -ntp test
+```
+
+`spotless:apply` 只改空格、换行、import，**不改逻辑**。CI 相对 `main` 改过的 Java 文件都会查，漏跑就会在 `collection-common` 等模块红。
+
+编包（上面已经全绿时才允许跳过测试）：
+
 ```bash
 cd <仓库根>
 git checkout <发版分支>
 
-mvn -pl collection-admin -am clean package -DskipTests
+mvn -pl collection-admin -am clean package -DskipTests -Dspotless.check.skip=true
 ls -lh collection-admin/target/collection-admin.jar   # 约 80–90MB
 
 scp collection-admin/target/collection-admin.jar ubuntu@$PILOT_HOST:/tmp/collection-admin.jar
@@ -110,6 +137,8 @@ docker build --no-cache -t intelligent-collection-admin:pilot .
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | Maven `Failed to delete ...jar` | 本机 Java 占用 jar | `taskkill //IM java.exe //F` 再编 |
+| CI `cannot find symbol: method of(List)` | 用了 Java 9+ 的 `List.of` | 本机切回 JDK 8 后改成 `Collections.emptyList()` / `singletonList` |
+| CI Spotless 红、本机 Java 21 `spotless:apply` 炸 | GJF 1.7 只能在 JDK 8 跑 | `$env:JAVA_HOME` 指到 8u502 再 `mvn -B -ntp spotless:apply` |
 | `COPY deploy/certs/valubo-voice-test.crt: not found` | 构建上下文缺证书 | 按 §1/§2 补传到 `/opt/app/build/deploy/certs/` |
 | 发版后接口仍 404 | COPY 路径错 / 走了缓存 | 拷到 `collection-admin/target/` + `--no-cache` |
 | health 502、容器 `Up 16 seconds` 循环 | 启动闸门失败或 JDBC | `docker logs --tail 80` 看 `Caused by`；用 `pilot-run.sh`，不要手写 `docker run` |

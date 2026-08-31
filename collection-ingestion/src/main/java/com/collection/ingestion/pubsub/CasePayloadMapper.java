@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -294,19 +295,56 @@ public class CasePayloadMapper {
         }
     }
 
+    /**
+     * 契约是 {@code yyyy-MM-dd}；数仓 ADS 源表若是 TIMESTAMP，会带成 {@code 2026-09-01T00:00:00.000}。 日历日含义不变时取前
+     * 10 位，真正乱码才毒丸（毒丸 ACK 不进 inbox / 投影 / DLQ，会静默丢案）。
+     */
     static LocalDate parseDate(Object value, String field) {
-        if (value == null || (value instanceof Number && ((Number) value).longValue() == 0L)) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDate) {
+            return (LocalDate) value;
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).toLocalDate();
+        }
+        if (value instanceof java.util.Date) {
+            return Instant.ofEpochMilli(((java.util.Date) value).getTime())
+                    .atZone(PHT)
+                    .toLocalDate();
+        }
+        if (value instanceof Number && ((Number) value).longValue() == 0L) {
             return null;
         }
         String raw = trimToNull(value.toString());
         if (raw == null || "0".equals(raw)) {
             return null;
         }
+        if (raw.length() >= 10) {
+            String head = raw.substring(0, 10);
+            if (looksLikeIsoDate(head)
+                    && (raw.length() == 10 || isDateTimeSeparator(raw.charAt(10)))) {
+                try {
+                    return LocalDate.parse(head);
+                } catch (DateTimeParseException ignored) {
+                    // fall through
+                }
+            }
+        }
         try {
             return LocalDate.parse(raw);
-        } catch (Exception e) {
+        } catch (DateTimeParseException e) {
             throw new PoisonMessageException("非法 " + field + "=" + raw);
         }
+    }
+
+    private static boolean looksLikeIsoDate(String head) {
+        return head.length() == 10 && head.charAt(4) == '-' && head.charAt(7) == '-';
+    }
+
+    private static boolean isDateTimeSeparator(char c) {
+        return c == 'T' || c == ' ' || c == '+' || c == 'Z';
     }
 
     /**

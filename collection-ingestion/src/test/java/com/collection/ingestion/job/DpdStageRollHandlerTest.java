@@ -19,7 +19,6 @@ import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
 import java.math.BigDecimal;
 import java.util.Collections;
-import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,7 +58,8 @@ class DpdStageRollHandlerTest {
     void activePlan_stageDiffers_publishesStageChanged() {
         stubCase(4, Stage.S2);
         when(planRepository.findActivePlansByCase(LOAN))
-                .thenReturn(List.of(plan(1L, Stage.S1, PlanStatus.STEP_SCHEDULED)));
+                .thenReturn(
+                        Collections.singletonList(plan(1L, Stage.S1, PlanStatus.STEP_SCHEDULED)));
 
         handler.dailyRoll();
 
@@ -72,7 +72,8 @@ class DpdStageRollHandlerTest {
     void activePlan_sameStage_noop() {
         stubCase(5, Stage.S2);
         when(planRepository.findActivePlansByCase(LOAN))
-                .thenReturn(List.of(plan(1L, Stage.S2, PlanStatus.STEP_SCHEDULED)));
+                .thenReturn(
+                        Collections.singletonList(plan(1L, Stage.S2, PlanStatus.STEP_SCHEDULED)));
 
         handler.dailyRoll();
 
@@ -84,7 +85,8 @@ class DpdStageRollHandlerTest {
     void activePlan_rollback_skipped() {
         stubCase(20, Stage.S3);
         when(planRepository.findActivePlansByCase(LOAN))
-                .thenReturn(List.of(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
+                .thenReturn(
+                        Collections.singletonList(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
 
         handler.dailyRoll();
 
@@ -143,10 +145,11 @@ class DpdStageRollHandlerTest {
     @DisplayName("最近一份 MANUAL_CLEANUP → 不建（不救活停催圈）")
     void cancelledManualCleanup_noop() {
         stubCase(32, Stage.S4);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
         ContactPlan cancelled = plan(9L, Stage.S3, PlanStatus.PLAN_CANCELLED);
         cancelled.setCancelReason(CancelReason.MANUAL_CLEANUP);
-        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(Collections.singletonList(cancelled));
 
         handler.dailyRoll();
 
@@ -157,10 +160,11 @@ class DpdStageRollHandlerTest {
     @DisplayName("最近一份 REPAID 取消 → 不建（即便投影未标结清）")
     void cancelledRepaid_noop() {
         stubCase(4, Stage.S2);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
         ContactPlan cancelled = plan(9L, Stage.S1, PlanStatus.PLAN_CANCELLED);
         cancelled.setCancelReason(CancelReason.REPAID);
-        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(Collections.singletonList(cancelled));
 
         handler.dailyRoll();
 
@@ -172,10 +176,11 @@ class DpdStageRollHandlerTest {
     void cancelledNoDueBalance_resumesWhenOutstandingReturns() {
         CaseInfo info = stubCase(8, Stage.S2);
         info.setTotalOutstanding(new BigDecimal("2500"));
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
         ContactPlan cancelled = plan(9L, Stage.S2, PlanStatus.PLAN_CANCELLED);
         cancelled.setCancelReason(CancelReason.NO_DUE_BALANCE);
-        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(Collections.singletonList(cancelled));
 
         handler.dailyRoll();
 
@@ -187,10 +192,11 @@ class DpdStageRollHandlerTest {
     void cancelledNoDueBalance_stillZero_noop() {
         CaseInfo info = stubCase(8, Stage.S2);
         info.setTotalOutstanding(BigDecimal.ZERO);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
         ContactPlan cancelled = plan(9L, Stage.S2, PlanStatus.PLAN_CANCELLED);
         cancelled.setCancelReason(CancelReason.NO_DUE_BALANCE);
-        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of(cancelled));
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(Collections.singletonList(cancelled));
 
         handler.dailyRoll();
 
@@ -198,11 +204,28 @@ class DpdStageRollHandlerTest {
     }
 
     @Test
+    @DisplayName("NO_DUE_BALANCE 取消后 S0 仅有 upcoming → 按当天档重建")
+    void cancelledNoDueBalance_s0UpcomingResumes() {
+        CaseInfo info = stubCase(-2, Stage.S0);
+        info.setTotalOutstanding(BigDecimal.ZERO);
+        info.setUpcomingAmount(new BigDecimal("1800"));
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
+        ContactPlan cancelled = plan(9L, Stage.S0, PlanStatus.PLAN_CANCELLED);
+        cancelled.setCancelReason(CancelReason.NO_DUE_BALANCE);
+        when(planRepository.findRecentPlansByCase(LOAN, 1))
+                .thenReturn(Collections.singletonList(cancelled));
+
+        handler.dailyRoll();
+
+        verifyStageChanged(Stage.S0);
+    }
+
+    @Test
     @DisplayName("从无计划（从未建档）→ 不由日切首建，等 CASE_INGESTED")
     void neverHadPlan_noop() {
         stubCase(4, Stage.S2);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
-        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
+        when(planRepository.findRecentPlansByCase(LOAN, 1)).thenReturn(Collections.emptyList());
 
         handler.dailyRoll();
 
@@ -214,7 +237,8 @@ class DpdStageRollHandlerTest {
     void dpd91_active_ceases() {
         stubCase(95, Stage.S4);
         when(planRepository.findActivePlansByCase(LOAN))
-                .thenReturn(List.of(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
+                .thenReturn(
+                        Collections.singletonList(plan(1L, Stage.S4, PlanStatus.STEP_SCHEDULED)));
 
         handler.dailyRoll();
 
@@ -226,7 +250,7 @@ class DpdStageRollHandlerTest {
     @DisplayName("dpd≥91 无活跃计划（S4 已 COMPLETED）→ 不发 CEASED")
     void dpd91_completedNoActive_noop() {
         stubCase(91, Stage.S4);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
 
         handler.dailyRoll();
 
@@ -252,9 +276,10 @@ class DpdStageRollHandlerTest {
 
     private void stubCompletedResume(int dpd, Stage lastStage, Stage projectionStage) {
         stubCase(dpd, projectionStage);
-        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(List.of());
+        when(planRepository.findActivePlansByCase(LOAN)).thenReturn(Collections.emptyList());
         when(planRepository.findRecentPlansByCase(LOAN, 1))
-                .thenReturn(List.of(plan(8L, lastStage, PlanStatus.PLAN_COMPLETED)));
+                .thenReturn(
+                        Collections.singletonList(plan(8L, lastStage, PlanStatus.PLAN_COMPLETED)));
     }
 
     private CaseInfo stubCase(int dpd, Stage stage) {

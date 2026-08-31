@@ -79,6 +79,8 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | --- | --- | --- |
 | `caseEvent` / `CASE_INGESTED` | `CasePayloadMapper.mapAiSnapshot`，进入完整快照处理 | poison 后 ACK |
 | `repaymentEvent` / `REPAYMENT` | `mapRepaymentDelta`，进入还款增量处理 | poison 后 ACK |
+
+`dueDate` / `nextDueDate` 契约是 `yyyy-MM-dd`。接入 **兼容** `2026-09-01T00:00:00.000` / `yyyy-MM-dd HH:mm:ss`（取日历日前 10 位，不按时区换日）；`0` / `null` 仍表示无日期。真正乱码才毒丸 ACK。毒丸不写 inbox、不进投影、也不进 DLQ，数仓会以为已投递。数仓 ADS 源表是 TIMESTAMP 时，发布前仍应截成日期。
 | 外部 `CASE_STAGE_CHANGED` / `CASE_CEASED` | 拒绝；阶段与停催不接受外部投递，内部产出方见[§4](#4-dpd-日切) | poison 后 ACK 并告警 |
 | 未知 `dataType` | 拒绝 | ACK、记录指标；持续出现告警 |
 

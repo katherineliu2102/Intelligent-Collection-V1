@@ -121,4 +121,50 @@ class StepResolverMissingScriptTest {
         assertThat((String) push.getMetadata().get(StepCommand.META_FALLBACK_SMS_BODY))
                 .doesNotContain("[MOCK]");
     }
+
+    @Test
+    void s0AiCallUsesUpcomingAmountNotZeroOverdue() {
+        CaseContext caseContext = new CaseContext();
+        caseContext.setCaseId(519673L);
+        caseContext.setStage(Stage.S0);
+        caseContext.setDpd(-1);
+        caseContext.setOverdueAmount(java.math.BigDecimal.ZERO);
+        caseContext.setTotalOutstanding(java.math.BigDecimal.ZERO);
+        caseContext.setUpcomingAmount(new java.math.BigDecimal("1800"));
+        caseContext.setNextDueDate(java.time.LocalDate.of(2026, 9, 1));
+
+        UserProfile profile = new UserProfile();
+        UserProfile.BasicInfo basic = new UserProfile.BasicInfo();
+        basic.setName("Ana");
+        basic.setPrimaryPhone("+639171234567");
+        profile.setBasic(basic);
+
+        ContextSnapshot snapshot = new ContextSnapshot();
+        snapshot.setCaseContext(caseContext);
+        snapshot.setUserProfile(profile);
+
+        ContactPlan plan = new ContactPlan();
+        plan.setId(1L);
+        plan.setCaseId(519673L);
+        plan.setStage(Stage.S0);
+
+        ContactPlanStep step = new ContactPlanStep();
+        step.setId(10L);
+        step.setStepOrder(1);
+        step.setChannelType(ChannelType.AI_CALL);
+        step.setTemplateId(1L);
+
+        StepCommand cmd =
+                resolver.resolve(
+                        ExecutionContext.builder()
+                                .plan(plan)
+                                .currentStep(step)
+                                .contextSnapshot(snapshot)
+                                .build());
+
+        assertThat(cmd).isNotNull();
+        assertThat(cmd.getMetadata().get("overdue_amount")).isEqualTo("1800");
+        assertThat(cmd.getMetadata().get("due_date")).isEqualTo("2026-09-01");
+        assertThat(cmd.getMetadata().get("borrower_name")).isEqualTo("Ana");
+    }
 }

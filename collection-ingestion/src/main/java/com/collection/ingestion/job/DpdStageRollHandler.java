@@ -4,12 +4,12 @@ import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.PlanStatus;
 import com.collection.common.enums.Stage;
 import com.collection.common.model.CaseInfo;
+import com.collection.common.model.CollectableAmounts;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
-import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
 import javax.annotation.Resource;
@@ -185,8 +185,7 @@ public class DpdStageRollHandler {
     }
 
     private static boolean hasPositiveOutstanding(CaseInfo info) {
-        return info.getTotalOutstanding() != null
-                && info.getTotalOutstanding().compareTo(BigDecimal.ZERO) > 0;
+        return CollectableAmounts.hasCollectableBalance(info);
     }
 
     /** 仅当目标档严格高于比对档时发 {@code STAGE_CHANGED}。回退只计数，避免 ESCALATE 后被日切打回低档。 */

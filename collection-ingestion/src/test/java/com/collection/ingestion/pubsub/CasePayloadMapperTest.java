@@ -212,4 +212,44 @@ class CasePayloadMapperTest {
                 CasePayloadMapper.occurredAt(json, snapshot.caseId, "caseEvent"));
         assertEquals(null, CasePayloadMapper.parseDate(json.get("nextDueDate"), "nextDueDate"));
     }
+
+    @Test
+    void parseDate_acceptsIsoDateAndTimestamp() {
+        assertEquals(
+                java.time.LocalDate.of(2026, 9, 1),
+                CasePayloadMapper.parseDate("2026-09-01", "dueDate"));
+        assertEquals(
+                java.time.LocalDate.of(2026, 9, 1),
+                CasePayloadMapper.parseDate("2026-09-01T00:00:00.000", "dueDate"));
+        assertEquals(
+                java.time.LocalDate.of(2026, 9, 1),
+                CasePayloadMapper.parseDate("2026-09-01 00:00:00", "nextDueDate"));
+        assertEquals(null, CasePayloadMapper.parseDate(0, "nextDueDate"));
+        assertEquals(null, CasePayloadMapper.parseDate("0", "nextDueDate"));
+        PoisonMessageException poison =
+                assertThrows(
+                        PoisonMessageException.class,
+                        () -> CasePayloadMapper.parseDate("not-a-date", "dueDate"));
+        assertTrue(poison.getMessage().contains("dueDate"));
+    }
+
+    @Test
+    void mapAiSnapshot_s0ReminderWithTimestampDueDate_isNotPoison() {
+        JSONObject json =
+                JSON.parseObject(
+                        "{\"eventId\":\"evt-s0\",\"caseId\":519673,\"userId\":1,"
+                                + "\"caseVersion\":\"abc\",\"occurredAt\":\"2026-08-31 03:00:02\","
+                                + "\"stage\":\"S0\",\"dpd\":-1,\"product\":\"3\","
+                                + "\"overdueAmount\":0,\"overduePenaltyAmount\":0,\"upcomingAmount\":1800,"
+                                + "\"dueDate\":\"2026-09-01T00:00:00.000\",\"nextDueDate\":\"2026-09-01T00:00:00.000\","
+                                + "\"borrower\":{\"phone\":\"9654453072\"}}");
+
+        CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
+        CaseProjectionAssembler assembler = new CaseProjectionAssembler();
+        com.collection.common.model.CaseProjection projection = assembler.assemble(json, snapshot);
+
+        assertEquals(java.time.LocalDate.of(2026, 9, 1), projection.getDueDate());
+        assertEquals(java.time.LocalDate.of(2026, 9, 1), projection.getNextDueDate());
+        assertEquals(new java.math.BigDecimal("1800"), projection.getUpcomingAmount());
+    }
 }

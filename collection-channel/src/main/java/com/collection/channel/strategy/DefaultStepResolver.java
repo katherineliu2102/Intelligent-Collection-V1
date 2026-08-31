@@ -240,12 +240,17 @@ public class DefaultStepResolver implements StepResolver {
         }
         CaseContext caseCtx = snapshot.getCaseContext();
         if (caseCtx != null) {
-            if (caseCtx.getOverdueAmount() != null) {
-                metadata.put("overdue_amount", caseCtx.getOverdueAmount().toPlainString());
+            if (caseCtx.getOverdueAmount() != null || caseCtx.getUpcomingAmount() != null) {
+                BigDecimal amount = ScriptLibrary.resolveAmount(caseCtx);
+                if (amount != null) {
+                    metadata.put("overdue_amount", amount.toPlainString());
+                }
             }
             metadata.put("dpd", String.valueOf(caseCtx.getDpd()));
             if (caseCtx.getDueDate() != null) {
                 metadata.put("due_date", caseCtx.getDueDate().toString());
+            } else if (caseCtx.getNextDueDate() != null) {
+                metadata.put("due_date", caseCtx.getNextDueDate().toString());
             }
         }
         if (snapshot.getUserProfile() != null

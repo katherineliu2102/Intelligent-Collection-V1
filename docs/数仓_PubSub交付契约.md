@@ -179,7 +179,8 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，**已含罚息**；映射为对客 `totalOutstanding` |
 | `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息；映射为 `penaltyAmount` |
 | `upcomingAmount` | `upcoming_amount` | 仅三期产品、下一期 D-3～D0 的该期金额；只用于提醒 |
-| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 `yyyy-MM-dd`，不能替代历史 `dueDate` |
+| `dueDate` | `due_date` | 历史到期日，输出 **`yyyy-MM-dd`**。接入兼容带时分秒的 ISO 时间戳（取日历日）；乱码才毒丸 |
+| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 **`yyyy-MM-dd`**，不能替代历史 `dueDate`。不要发 TIMESTAMP |
 | `borrower.name` | `borrower_name` | 借款人姓名 |
 | `borrower.phone` | `borrower_phone` | 可传菲律宾本地 10 位手机号；接入规范化为 E.164 |
 | `borrower.email` | `borrower_email` | 空不阻断案件，Email 渠道跳过 |
