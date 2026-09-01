@@ -4,6 +4,7 @@ import com.collection.channel.adapter.FacadeAiCallAdapter;
 import com.collection.channel.adapter.NotificationPushAdapter;
 import com.collection.channel.adapter.NotificationSmsAdapter;
 import com.collection.channel.adapter.SendGridEmailAdapter;
+import com.collection.channel.compliance.InMemoryComplianceCounterService;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.channel.strategy.PushContent;
 import com.collection.channel.strategy.ScriptLibrary;
@@ -19,11 +20,15 @@ import com.collection.common.model.ContactPlanStep;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
 import com.collection.common.service.CaseService;
+import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.spi.StepResolver;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.job.DpdStageRollHandler;
+import com.collection.ingestion.pubsub.IngestionDedupStore;
 import com.collection.ingestion.pubsub.IngestionFaultInjector;
 import com.collection.service.impl.MockCaseService;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -51,6 +56,7 @@ public class MockTriggerController {
         94804L
     };
 
+    @Resource private ComplianceCounterService complianceCounterService;
     @Resource private IngestionService ingestionService;
     @Resource private DpdStageRollHandler dpdStageRollHandler;
     @Resource private CaseService caseService;
@@ -70,6 +76,7 @@ public class MockTriggerController {
     @Resource private JdbcTemplate jdbcTemplate;
 
     @Resource private IngestionFaultInjector ingestionFaultInjector;
+    @Resource private IngestionDedupStore dedupStore;
 
     /**
      * L4b-7：预约后续 {@code count} 条白名单案件事件各失败一次 → 不 ack → PubSub 重投。
@@ -83,7 +90,37 @@ public class MockTriggerController {
         return result;
     }
 
-    /** L4b-7：撤销未触发的注入，返回被撤销的剩余次数。 */
+    /**
+     * L4b 重置：清掉指定案件的「本周期已入催」标记，使它们能再次产出 {@code CASE_INGESTED}。
+     *
+     * <p>存在的理由是消除一条手工前置。L4b 的重置只清库行，而入催标记是**进程内**状态（本地用 {@code
+     * InMemoryIngestionDedupStore}），不清就会让下一轮的入案事件被当成「已在催的每日刷新」 而只刷投影、不建计划——L4b-1 于是报「90s 内未落
+     * t_contact_plan」，长得像产品缺陷。 原先靠「跑之前先重启应用」这条纪律维持，2026-08-21 已因漏做烧掉一轮。
+     */
+    @PostMapping("/ingestion-dedup/clear")
+    public Map<String, Object> clearIngestionDedup(@RequestParam List<Long> caseIds) {
+        for (Long caseId : caseIds) {
+            dedupStore.clearIngested(caseId);
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("cleared", caseIds);
+        return result;
+    }
+
+    /**
+     * L4b-11：预约后续 {@code count} 条事件在**投影已落库、领域事件未发出**时失败一次。
+     *
+     * <p>与 {@code /arm} 的区别是注入点在提交之后，重投会命中收件箱的 PENDING_PUBLISH 补发路径而非重新写投影。
+     */
+    @PostMapping("/ingestion-fault/arm-post-projection")
+    public Map<String, Object> armIngestionFaultPostProjection(
+            @RequestParam(defaultValue = "1") int count) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("armed", ingestionFaultInjector.armPostProjection(count));
+        return result;
+    }
+
+    /** L4b-7 / L4b-11：撤销两个注入点上未触发的注入，返回被撤销的剩余次数合计。 */
     @PostMapping("/ingestion-fault/disarm")
     public Map<String, Object> disarmIngestionFault() {
         Map<String, Object> result = new HashMap<>();
@@ -95,68 +132,72 @@ public class MockTriggerController {
     public Map<String, Object> ingestionFaultStatus() {
         Map<String, Object> result = new HashMap<>();
         result.put("remaining", ingestionFaultInjector.remaining());
+        result.put("remainingPostProjection", ingestionFaultInjector.remainingPostProjection());
         return result;
     }
 
     /**
-     * 直连 Facade 打一通 AI Call（不经 plan/引擎）。默认号码 {@code channel.facade.test-callee}。
+     * L1：直连 Facade 发一通 AI Call，不经过计划或引擎。
      *
-     * <p>{@code dryRun=true} 只返回将提交的 JSON，不拨号。{@code poll=true} 在 start 后再查批次。
+     * <p>{@code dryRun=true} 只返回将发送的 JSON；{@code poll=true} 会在启动批次后查询一次状态。仅 local/test profile 暴露。
      */
     @PostMapping("/send-ai-call")
     public Map<String, Object> sendAiCall(
             @RequestParam(required = false) String phone,
-            @RequestParam(required = false) String name,
-            @RequestParam(required = false) String amount,
-            @RequestParam(required = false) Integer dpd,
+            @RequestParam(defaultValue = "Test Borrower") String name,
+            @RequestParam(defaultValue = "1000") String overdueAmount,
+            @RequestParam(defaultValue = "5") Integer dpd,
+            @RequestParam(required = false) String dueDate,
             @RequestParam(defaultValue = "false") boolean dryRun,
             @RequestParam(defaultValue = "false") boolean poll) {
         ChannelProperties.Facade facade = channelProperties.getFacade();
-        String callee = StringUtils.isNotBlank(phone) ? phone.trim() : facade.getTestCallee();
-        Map<String, Object> meta = new HashMap<String, Object>();
-        meta.put(StepCommand.META_CASE_ID, 90001L);
-        meta.put(
-                FacadeAiCallAdapter.META_BORROWER_NAME,
-                StringUtils.isNotBlank(name) ? name : "Test Borrower");
-        meta.put(
-                FacadeAiCallAdapter.META_OVERDUE_AMOUNT,
-                StringUtils.isNotBlank(amount) ? amount : "1000");
-        meta.put(FacadeAiCallAdapter.META_DPD, dpd == null ? "5" : String.valueOf(dpd));
-
+        String callee = StringUtils.defaultIfBlank(phone, facade.getTestCallee());
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put(StepCommand.META_CASE_ID, 90001L);
+        metadata.put(FacadeAiCallAdapter.META_BORROWER_NAME, name);
+        metadata.put(FacadeAiCallAdapter.META_OVERDUE_AMOUNT, overdueAmount);
+        metadata.put(FacadeAiCallAdapter.META_DPD, String.valueOf(dpd));
+        if (StringUtils.isNotBlank(dueDate)) {
+            metadata.put(FacadeAiCallAdapter.META_DUE_DATE, dueDate);
+        }
+        String smokeId = "facade-smoke:" + System.currentTimeMillis();
         StepCommand command =
                 StepCommand.builder()
                         .channelType(ChannelType.AI_CALL)
                         .targetAddress(callee)
                         .templateId("S1_VOICE_PRIMARY")
-                        .idempotencyKey("smoke:1:0")
-                        .metadata(meta)
+                        .idempotencyKey(smokeId)
+                        .providerIdempotencyKey(smokeId)
+                        .metadata(metadata)
                         .build();
 
-        Map<String, Object> m = new HashMap<String, Object>();
-        m.put("callee", FacadeAiCallAdapter.normalizeE164(callee));
-        m.put("dryRun", dryRun);
-        m.put("preview", facadeAiCallAdapter.previewPayload(command));
+        Map<String, Object> result = new HashMap<>();
+        result.put("callee", FacadeAiCallAdapter.normalizeE164(callee));
+        result.put("dryRun", dryRun);
+        result.put("preview", facadeAiCallAdapter.previewPayload(command));
         if (dryRun) {
-            m.put("ok", true);
-            m.put("result", "PREVIEW");
-            return m;
+            result.put("ok", true);
+            result.put("result", "PREVIEW");
+            return result;
         }
         if (!channelProperties.isFacadeConfigured()) {
-            return fail("AI_CALL_NOT_CONFIGURED", "set channel.facade.base-url and FACADE_API_KEY");
+            return fail(
+                    "AI_CALL_NOT_CONFIGURED",
+                    "Set channel.facade.base-url and channel.facade.api-key in Nacos.");
         }
-        StepResult result = facadeAiCallAdapter.send(command);
-        m.put("ok", result.isSuccess());
-        m.put("result", result.isSuccess() ? "DELIVERED" : result.getErrorCode());
-        m.put("retryable", result.isRetryable());
-        m.put("providerMsgId", result.getProviderMsgId());
-        if (result.isSuccess() && poll && result.getProviderMsgId() != null) {
+        StepResult dispatch = facadeAiCallAdapter.send(command);
+        result.put("ok", dispatch.isSuccess());
+        result.put("result", dispatch.isSuccess() ? "DELIVERED" : dispatch.getErrorCode());
+        result.put("retryable", dispatch.isRetryable());
+        result.put("providerMsgId", dispatch.getProviderMsgId());
+        if (dispatch.isSuccess() && poll && dispatch.getProviderMsgId() != null) {
             try {
-                m.put("batch", facadeAiCallAdapter.getBatch(result.getProviderMsgId()));
+                result.put("batch", facadeAiCallAdapter.getBatch(dispatch.getProviderMsgId()));
             } catch (Exception e) {
-                m.put("pollError", e.getMessage());
+                result.put("pollError", e.getMessage());
             }
         }
-        return m;
+        return result;
     }
 
     /**
@@ -556,9 +597,15 @@ public class MockTriggerController {
                         "DELETE FROM t_contact_plan WHERE case_id IN (" + placeholders + ")",
                         caseIds);
         ((MockCaseService) caseService).resetCases(new HashSet<>(resetCaseIds));
+        boolean counterCleared = false;
+        if (complianceCounterService instanceof InMemoryComplianceCounterService) {
+            ((InMemoryComplianceCounterService) complianceCounterService).clear(resetCaseIds);
+            counterCleared = true;
+        }
         Map<String, Object> result = ok("L4a fixed-case runtime data cleared");
         result.put("plansDeleted", plans);
         result.put("timelinesDeleted", timelines);
+        result.put("complianceCounterCleared", counterCleared);
         return result;
     }
 
@@ -570,6 +617,41 @@ public class MockTriggerController {
         }
         ingestionService.repayment(caseId, userId);
         return ok("REPAYMENT_RECEIVED published, caseId=" + caseId + " userId=" + userId);
+    }
+
+    /**
+     * L4a-3b：模拟部分还款 —— 只发 CASE_BALANCE_UPDATED，刷新活跃计划快照里的余额。
+     *
+     * <p>与 {@code /repayment} 的区别是不结清、不取消计划：阶段、模板、步骤与计划状态都必须保持原值。 L4a 没有真实 `repaymentEvent`
+     * 入口，端到端验这条只能从这里注入。
+     */
+    @PostMapping("/balance-updated")
+    public Map<String, Object> balanceUpdated(
+            @RequestParam Long caseId,
+            @RequestParam Long userId,
+            @RequestParam Integer dpd,
+            @RequestParam BigDecimal overdueAmount,
+            @RequestParam BigDecimal totalOutstanding,
+            @RequestParam(required = false, defaultValue = "0") BigDecimal penaltyAmount,
+            @RequestParam(required = false, defaultValue = "0") BigDecimal upcomingAmount,
+            @RequestParam(required = false) String nextDueDate,
+            @RequestParam(required = false, defaultValue = "IN_COLLECTION")
+                    String collectionStatus) {
+        ingestionService.balanceUpdated(
+                caseId,
+                userId,
+                dpd,
+                overdueAmount,
+                totalOutstanding,
+                penaltyAmount,
+                upcomingAmount,
+                nextDueDate == null || nextDueDate.isEmpty() ? null : LocalDate.parse(nextDueDate),
+                collectionStatus);
+        return ok(
+                "CASE_BALANCE_UPDATED published, caseId="
+                        + caseId
+                        + " totalOutstanding="
+                        + totalOutstanding);
     }
 
     /** 模拟阶段变更：取消旧阶段计划 + 创建新阶段计划。 */

@@ -10,6 +10,16 @@ spring:
       - nacos:${spring.application.name}-common.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
   main:
     web-application-type: servlet
+  datasource:
+    driver-class-name: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:com.mysql.cj.jdbc.Driver}
+    hikari:
+      # MySQL 服务端 time_zone=SYSTEM(UTC)，NOW() 写出的时间列因此是 UTC；
+      # 而引擎侧一律用 Asia/Manila 的 LocalDateTime 参与比较（频控当日起点、停摆巡检宽限期）。
+      # 参与比较的列已改为应用侧按 PHT 传参（ServiceClock），不再依赖会话时区；
+      # 本项与 JDBC URL 的 connectionTimeZone/forceConnectionTimeZoneToSession 只影响
+      # 仍由 NOW() 写入的审计列（DLQ、收件箱、发件箱、回调审计），使其与应用侧时间同轴。
+      # 实测本项只覆盖到部分连接，故 pilot 另有 DatabaseClockValidator 启动比对偏差并拒启。
+      connection-init-sql: SET time_zone = '${COLLECTION_DB_TIME_ZONE:+08:00}'
   cloud:
     nacos:
       config:
@@ -26,6 +36,14 @@ spring:
         encoding: utf-8
         enabled: true
 
+# 列名映射与枚举处理器决定 Mapper 能否正确读写，属于随代码走的行为约定而非环境差异。
+# 此前只写在 application-local.yml 与 Nacos common.yml 里：pilot 一旦连不上 Nacos，
+# 这些默认值会静默消失——snake_case 列全部映射为 null，且不会有任何报错。
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+    jdbc-type-for-null: "NULL"
 
 ---
 spring:
@@ -36,8 +54,10 @@ spring:
       - nacos:${spring.application.name}-local.yml?group=${NACOS_GROUP}&tenant=${NACOS_NAMESPACE}
 
 ---
-# Pilot 专属配置（Redis / 调度订阅 / 白名单等）可集中放 Nacos 覆盖 application-pilot.yml 的占位缺省，
-# 便于改地址或口令时无需重新构建；optional 保证 Nacos 上尚未创建该配置时不阻塞启动。
+# 被导入文档的优先级低于导入方与 profile 专属文件，故这里下发的值只对**没有**写进
+# application-pilot.yml 的键生效（如 channel.facade.api-key / callback-secret）。
+# 已写在 application-pilot.yml 里的键（spring.redis.* 等）改 Nacos 不生效，也不会报错——
+# 要改这些值必须走 .env.pilot 环境变量并重启。optional 保证 Nacos 上尚未创建该配置时不阻塞启动。
 spring:
   config:
     activate:

@@ -55,7 +55,10 @@
 ### 1.2 两条管道与 GCP 资源
 <a id="12-gcp-资源"></a><a id="60-gcp-资源"></a><a id="两条管道"></a>
 
-[§1.1](#11-入站顺序与-publisher-任务) 的每日快照与还款扫描只发到**案件 Topic**。日切不走这条管道：应用 Scheduler 打**调度 Topic**，只读已写入的 `t_ai_collection`。
+系统有两条物理隔离的 Pub/Sub 管道：
+
+- **案件 Topic**：数仓 Publisher 发布案件事实；接入层写入投影并发布内部事件。
+- **调度 Topic**：应用 Cloud Scheduler 发布时钟 tick；新系统消费 tick 后执行扫描、比对和内部事件发布。
 
 ```mermaid
 flowchart LR
@@ -65,23 +68,51 @@ flowchart LR
   ingestion --> projection["t_ai_collection"]
   ingestion --> inbox["t_ai_collection_inbox"]
   ingestion --> eventBus["内部 EventBus"]
-  appScheduler["应用 Cloud Scheduler"] --> scheduleTopic["调度 Topic · 只读"]
-  scheduleTopic --> dailyRoll["DpdStageRollHandler"]
-  projection -->|只读| dailyRoll
+  appScheduler["应用 Cloud Scheduler"] -->|"job tick"| scheduleTopic["调度 Topic"]
+  scheduleTopic --> app["新系统 / 催收引擎"]
+  projection -->|只读| app
 ```
 
-| 管道 | 谁触发 | 写 `t_ai_collection` 吗 | 产出 |
-| --- | --- | --- | --- |
-| 案件 Topic | GCP：数仓 Cloud Scheduler → Publisher → 本 Topic | 是。接入层按 `caseVersion` 指纹写入 | 内部 `CASE_INGESTED` / `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` |
-| 调度 Topic | GCP：应用 Cloud Scheduler → 本 Topic（只发 `job=dailyRoll` tick，不含案件快照） | **否**。日切只读 `t_ai_collection` | 应用比对后再发内部事件；不是读到就发。有变化才 `STAGE_CHANGED` / `CASE_CEASED` |
+| 管道 | 发布方与消息 | 业务处理 |
+| --- | --- | --- |
+| 案件 Topic | 数仓 Cloud Scheduler → Publisher → `caseEvent` / `repaymentEvent` | 接入层按 `caseVersion` 写 `t_ai_collection`，并发布内部事件 |
+| 调度 Topic | 应用 Cloud Scheduler → 三类 `job` tick | 引擎消费 tick 后处理；Scheduler 不读业务库、不写案件表 |
 
-- 两套 Topic / Scheduler / IAM / 告警**必须物理分离**。
-- 生产上都是 Cloud Scheduler 在 GCP 往各自 Topic 发 Pub/Sub。
-- Cloud Scheduler 只往调度 Topic 打一个 `job=dailyRoll` 的 tick，里面没有案件快照；应用收到后分页读 `t_ai_collection`，与活跃计划比对：
-  - 已结清 → 跳过
-  - `dpd≥91` 且有活跃计划 → `CASE_CEASED`
-  - 阶段变了（含回退）→ `STAGE_CHANGED`
-  - 无变化 → 不发
+两套 Topic、Scheduler、IAM 和告警必须物理分离：数仓只向案件 Topic 发布，应用 Scheduler 只向调度 Topic 发布。
+
+**调度 Tick 合约**
+
+**仅以 Pub/Sub attribute `job` 路由**；body 为任意非空字符串（纯文本或 JSON 均可），应用**完全不解析 body**。tick 不含案件快照或扫描条件，且数仓不发布此类消息。
+
+> **配置红线**：`job` 必须落在消息 **attribute** 上。把 `job` 只写进 body（例如 `{"type":"scheduled-tick","job":"planStepDue"}` 而不带 `--attributes`）会让每条 tick 被判为 `UNKNOWN_JOB`、记 WARN 后 ack 丢弃——**整条触达链路静默停摆**，表现为 `collection.schedule.triggered` 恒为 0 且 `skipped{reason=UNKNOWN_JOB}` 持续增长（告警见[基础设施规范 §7.4](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)）。body 里额外带 JSON 不影响路由，但不构成路由依据。
+
+| `job` | 发布频率（PHT） | 消费方 |
+| --- | --- | --- |
+| `planStepDue` | 每分钟 | 催收引擎 |
+| `callbackTimeout` | 每分钟 | 催收引擎 |
+| `dailyRoll` | 03:35–05:55，每 5 分钟 | 催收引擎 |
+
+三类 tick 各为一个独立 Pub/Sub 消息。下面直接给命令形式，**不再给「body / attributes」的示意块**——那种写法会被当成消息内容原样发出（本节末尾有实际事故记录）：
+
+```bash
+# Cloud Scheduler Job（正式入口，四条规则见基础设施规范 §5.2）
+gcloud scheduler jobs create pubsub collection-plan-step-due \
+  --schedule="* * * * *" --time-zone="Asia/Manila" \
+  --topic=<SCHEDULE_TOPIC> \
+  --message-body="scheduled-tick" \
+  --attributes="job=planStepDue"      # ← 路由只看这里
+
+# 一次性手工触发（排障用）
+gcloud pubsub topics publish <SCHEDULE_TOPIC> \
+  --message="scheduled-tick" \
+  --attribute="job=callbackTimeout"
+```
+
+`job` 取值只有 `planStepDue` / `callbackTimeout` / `dailyRoll` 三个，逐字小驼峰。`--message` / `--message-body` 的内容不参与路由，写什么都行但不能为空。
+
+> **已发生的实际事故（2026-08-21 观测确证）**：调度 Topic 上存在**第二个发布者**，每分钟在 `:01` 前后发两条消息，attributes 为**空**，而 body 是本节旧版示意块的原文（`body: scheduled-tick\nattributes:\n  job: callbackTimeout`）。即对方把「示意」当成了消息体逐字发布。这类 tick 到达应用后会被判 `UNKNOWN_JOB`、记 WARN 后 ack 丢弃，**不会触发任何扫描**——若正式入口只有这个发布者，触达链路会全程静默停摆。**已处置**：这三条 Job 在 `asia-southeast1`（`intelligent-collection-schedule-{planStepDue,callbackTimeout,dailyRoll}`），2026-08-21 已 `PAUSED`；正式入口是 `asia-northeast1` 的四条 Job。**同一 `job` 不得有两个发布者**，否则每分钟双发 tick，虽有单飞兜底但会持续制造 `IN_FLIGHT` 噪音。
+
+引擎侧处理定义见[基础设施规范 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)；`dailyRoll` 的日切判断见 [§5](#5-日切窗口与批次门控)。
 
 **案件 Topic 资源（落地上表「案件 Topic」行）**
 
@@ -148,7 +179,8 @@ flowchart LR
 | `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，**已含罚息**；映射为对客 `totalOutstanding` |
 | `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息；映射为 `penaltyAmount` |
 | `upcomingAmount` | `upcoming_amount` | 仅三期产品、下一期 D-3～D0 的该期金额；只用于提醒 |
-| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 `yyyy-MM-dd`，不能替代历史 `dueDate` |
+| `dueDate` | `due_date` | 历史到期日，输出 **`yyyy-MM-dd`**。接入兼容带时分秒的 ISO 时间戳（取日历日）；乱码才毒丸 |
+| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 **`yyyy-MM-dd`**，不能替代历史 `dueDate`。不要发 TIMESTAMP |
 | `borrower.name` | `borrower_name` | 借款人姓名 |
 | `borrower.phone` | `borrower_phone` | 可传菲律宾本地 10 位手机号；接入规范化为 E.164 |
 | `borrower.email` | `borrower_email` | 空不阻断案件，Email 渠道跳过 |
@@ -448,4 +480,4 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 - 接入入口：[AiCaseIngestionProcessor.java](../collection-ingestion/src/main/java/com/collection/ingestion/pubsub/AiCaseIngestionProcessor.java)
 - 投影持久化：[AiCaseProjectionRepository.java](../collection-service/src/main/java/com/collection/service/repository/AiCaseProjectionRepository.java)
 - 运行态 CaseService：[AiCollectionCaseService.java](../collection-service/src/main/java/com/collection/service/impl/AiCollectionCaseService.java)
-- 开发索引（非字段 SSOT）：[contracts/README_t_ai_collection_PubSub契约.md](./contracts/README_t_ai_collection_PubSub契约.md)
+- 开发索引（非字段 SSOT）：[contracts/README.md](./contracts/README.md)

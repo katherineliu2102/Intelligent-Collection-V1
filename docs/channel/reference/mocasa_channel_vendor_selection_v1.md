@@ -1,9 +1,11 @@
 # MOCASA 催收系统：全渠道触达服务商选型报告
 
+> **历史决策参考**：本报告保留选型背景与商务依据，不作为当前 Phase 1 实现规格。当前机器轨 AI_CALL 以 `FacadeAiCallAdapter` 及 `docs/channel/` 的 Facade 文档为准；LTH 仅保留人工轨现网参考。
+
 > **文档状态**：✅ 选型结论已定，部分商务条款 ⏳ 待签约确认  
 > **日期**：2026-05-28  
 > **适用范围**：MOCASA 催收系统 Phase 1（`collection-engine` + `collection-channel`），仅菲律宾市场  
-> **关联文档**：[架构设计文档](./相关资料/MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](./相关资料/MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[Email 专项报告](./philippines_fintech_email_vendor_selection_report.md)
+> **关联文档**：[架构设计文档](../../MOCASA催收系统升级_Phase1_架构设计文档.md)、[PRD](../../MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)；Email 专项报告为仓外参考资料
 
 ---
 
@@ -226,7 +228,7 @@ MOCASA Phase 1 将到期前通知、逾期催收、人工外呼整合为统一�
 | Adapter | 对应 LTH API | 关键特征 |
 |---------|-------------|----------|
 | `LthVoiceAdapter` | `voiceNotification` | 异步调用 → 等 `CHANNEL_CALLBACK` |
-| `LthHumanCallAdapter` | `createTask` / `addNumberToTask` | 长生命周期任务；超时需对账（[架构 §1.7.7](../MOCASA催收系统升级_Phase1_架构设计文档.md#177-异步回调对账)） |
+| `LthHumanCallAdapter` | `createTask` / `addNumberToTask` | 长生命周期任务；超时需对账（[架构 §1.7.7](../../MOCASA催收系统升级_Phase1_架构设计文档.md#177-异步回调对账)） |
 | PreFlight 联动 | `filterNumber` | 还款/冻结时从 LTH 任务中移除号码 |
 
 **要点**：调用后状态保持 `STEP_EXECUTING`，等回调推进；Issabel 废弃，通话记录 100% 回流 Timeline；呼损率超阈值降级渐进式外呼。

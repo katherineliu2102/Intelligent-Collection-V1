@@ -110,6 +110,7 @@ class ChannelContractL2RealSpiTest {
 
         ConfigurableExecutionGuard guard = new ConfigurableExecutionGuard();
         inject(guard, "channelProperties", channelProperties);
+        inject(guard, "emailSuppressionRepository", noSuppression());
 
         DefaultStepResolver resolver = new DefaultStepResolver();
         inject(resolver, "channelProperties", channelProperties);
@@ -193,6 +194,7 @@ class ChannelContractL2RealSpiTest {
                 "predictiveDialerService",
                 (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", SpiInvoker.direct());
+        inject(manager, "metrics", com.collection.engine.metrics.CollectionMetrics.local());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
@@ -393,7 +395,8 @@ class ChannelContractL2RealSpiTest {
         bus.drainAll();
         for (int round = 0; round < 10; round++) {
             List<ContactPlanStep> due =
-                    planRepo.findDueSteps(LocalDateTime.now().plusMinutes(lookaheadMinutes), 100);
+                    planRepo.findDueSteps(
+                            LocalDateTime.now().plusMinutes(lookaheadMinutes), 100, null);
             if (due.isEmpty()) {
                 return;
             }
@@ -445,11 +448,14 @@ class ChannelContractL2RealSpiTest {
                 .put(
                         "S1_SMS_STANDARD",
                         "MOCASA: {name}, PHP {amount} is {dpd} days overdue. Pay: {repaymentUrl}");
+        ChannelProperties.PushScript pushScript = new ChannelProperties.PushScript();
+        pushScript.setTitle("MOCASA Payment Reminder");
+        pushScript.setBody("{name}, PHP {amount} is {dpd} days overdue.");
+        props.getScripts().getPush().put("S1_PUSH_STANDARD", pushScript);
 
         props.getSendgrid().setApiKey("test-sendgrid-key");
         props.getSendgrid().setFromEmail("collections@example.test");
         props.getSendgrid().setApiUrl(wm.getHttpBaseUrl() + SENDGRID_PATH);
-        props.getSendgrid().getTemplates().put(EMAIL_SLOT, "d-contract-template");
         return props;
     }
 
@@ -498,6 +504,19 @@ class ChannelContractL2RealSpiTest {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    /** 本用例验证引擎与真实渠道 SPI 的契约，抑制名单语义由 channel 模块的 Guard 单测覆盖。 */
+    private static com.collection.common.repository.EmailSuppressionRepository noSuppression() {
+        return new com.collection.common.repository.EmailSuppressionRepository() {
+            @Override
+            public void suppress(com.collection.common.model.EmailSuppression suppression) {}
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return false;
+            }
+        };
     }
 
     private static void inject(Object target, String field, Object value) {

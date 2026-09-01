@@ -8,11 +8,22 @@ import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.GuardVerdict;
 import com.collection.common.enums.ChannelType;
+import com.collection.common.enums.ContactResult;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
+import com.collection.common.model.ContactRecord;
 import com.collection.common.model.ContextSnapshot;
+import com.collection.common.model.EmailSuppression;
 import com.collection.common.model.UserProfile;
+import com.collection.common.repository.EmailSuppressionRepository;
 import com.collection.common.service.ComplianceCounterService;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -20,6 +31,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class ConfigurableExecutionGuardTest {
 
     private ConfigurableExecutionGuard guard;
+    private Set<String> suppressedEmails;
 
     @BeforeEach
     void setUp() {
@@ -28,10 +40,49 @@ class ConfigurableExecutionGuardTest {
         properties.getCompliance().setQuietHoursStart("00:00");
         properties.getCompliance().setQuietHoursEnd("00:00");
 
+        suppressedEmails = new HashSet<>();
         guard = new ConfigurableExecutionGuard();
         ReflectionTestUtils.setField(guard, "channelProperties", properties);
         ReflectionTestUtils.setField(
                 guard, "complianceCounterService", new InMemoryComplianceCounterService());
+        ReflectionTestUtils.setField(
+                guard, "emailSuppressionRepository", suppressionRepository(suppressedEmails));
+    }
+
+    private static EmailSuppressionRepository suppressionRepository(Set<String> suppressed) {
+        return new EmailSuppressionRepository() {
+            @Override
+            public void suppress(EmailSuppression suppression) {
+                suppressed.add(suppression.getEmail());
+            }
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return suppressed.contains(email);
+            }
+        };
+    }
+
+    @Test
+    void blocksEmailOnSuppressionList() {
+        suppressedEmails.add("user@example.com");
+
+        GuardVerdict verdict = guard.evaluate(context(ChannelType.EMAIL));
+
+        assertThat(verdict.isAllowed()).isFalse();
+        assertThat(verdict.getBlockedReason()).isEqualTo("EMAIL_SUPPRESSED");
+    }
+
+    @Test
+    void suppressionDoesNotAffectOtherChannels() {
+        suppressedEmails.add("user@example.com");
+
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
+    }
+
+    @Test
+    void allowsEmailWhenNotSuppressed() {
+        assertThat(guard.evaluate(context(ChannelType.EMAIL)).isAllowed()).isTrue();
     }
 
     @Test
@@ -39,13 +90,54 @@ class ConfigurableExecutionGuardTest {
         ReflectionTestUtils.setField(
                 guard,
                 "complianceCounterService",
-                (ComplianceCounterService)
-                        (userId, channel, date, channelLimit, totalLimit) -> {
-                            throw new IllegalStateException("redis down");
-                        });
+                new ComplianceCounterService() {
+                    @Override
+                    public Counts tryConsume(
+                            Long userId,
+                            String channel,
+                            LocalDate date,
+                            int channelLimit,
+                            int totalLimit) {
+                        throw new IllegalStateException("redis down");
+                    }
+
+                    @Override
+                    public void release(Long userId, String channel, LocalDate date) {
+                        throw new UnsupportedOperationException();
+                    }
+                });
 
         assertThatThrownBy(() -> guard.evaluate(context(ChannelType.SMS)))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void firstAttemptReportsQuotaReservationForEngineToReleaseOnFailure() {
+        GuardVerdict verdict = guard.evaluate(context(ChannelType.SMS));
+
+        assertThat(verdict.isAllowed()).isTrue();
+        assertThat(verdict.getQuotaReservation()).isNotNull();
+        assertThat(verdict.getQuotaReservation().getUserId()).isEqualTo(1001L);
+        assertThat(verdict.getQuotaReservation().getChannel()).isEqualTo("SMS");
+    }
+
+    /** F2：日限为 1 时，若重试再占一次配额，退避后的重试必被自己的首次尝试挡掉，且终态被记成合规拦截。 */
+    @Test
+    void retryReusesFirstAttemptQuotaInsteadOfConsumingAnother() {
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
+
+        GuardVerdict retry = guard.evaluate(retryContext(ChannelType.SMS, 1));
+
+        assertThat(retry.isAllowed()).isTrue();
+        assertThat(retry.getQuotaReservation()).isNull();
+    }
+
+    @Test
+    void retryDoesNotBurnQuotaForOtherTouchesOfTheSameDay() {
+        assertThat(guard.evaluate(retryContext(ChannelType.SMS, 2)).isAllowed()).isTrue();
+
+        // 重试未计数，当天首次真实触达仍应放行。
+        assertThat(guard.evaluate(context(ChannelType.SMS)).isAllowed()).isTrue();
     }
 
     @Test
@@ -70,12 +162,58 @@ class ConfigurableExecutionGuardTest {
         assertThat(verdict.getBlockedReason()).contains("DAILY_TOTAL_LIMIT_EXCEEDED 4/3");
     }
 
+    @Test
+    void blocksAiCallWhenSameDayAnswered() {
+        ContactRecord answered = answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")));
+
+        GuardVerdict verdict =
+                guard.evaluate(
+                        contextWithTimeline(
+                                ChannelType.AI_CALL, Collections.singletonList(answered)));
+
+        assertThat(verdict.isAllowed()).isFalse();
+        assertThat(verdict.getBlockedReason()).isEqualTo("CONNECT_AND_STOP");
+        assertThat(verdict.getBlockedRuleType()).isEqualTo("CONNECT_AND_STOP");
+    }
+
+    @Test
+    void allowsAiCallWhenAnsweredWasYesterday() {
+        ContactRecord answered =
+                answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")).minusDays(1));
+
+        assertThat(
+                        guard.evaluate(
+                                        contextWithTimeline(
+                                                ChannelType.AI_CALL,
+                                                Collections.singletonList(answered)))
+                                .isAllowed())
+                .isTrue();
+    }
+
+    @Test
+    void connectAndStopDoesNotBlockSms() {
+        ContactRecord answered = answeredRecord(LocalDateTime.now(ZoneId.of("Asia/Manila")));
+
+        assertThat(
+                        guard.evaluate(
+                                        contextWithTimeline(
+                                                ChannelType.SMS,
+                                                Collections.singletonList(answered)))
+                                .isAllowed())
+                .isTrue();
+    }
+
     private static ExecutionContext context(ChannelType channel) {
+        return retryContext(channel, 0);
+    }
+
+    private static ExecutionContext retryContext(ChannelType channel, int retryCount) {
         ContactPlan plan = new ContactPlan();
         plan.setUserId(1001L);
 
         ContactPlanStep step = new ContactPlanStep();
         step.setChannelType(channel);
+        step.setRetryCount(retryCount);
 
         UserProfile.BasicInfo basic = new UserProfile.BasicInfo();
         basic.setPrimaryPhone("+639171234567");
@@ -93,5 +231,24 @@ class ConfigurableExecutionGuardTest {
                 .currentStep(step)
                 .contextSnapshot(snapshot)
                 .build();
+    }
+
+    private static ExecutionContext contextWithTimeline(
+            ChannelType channel, List<ContactRecord> timeline) {
+        ExecutionContext base = context(channel);
+        return ExecutionContext.builder()
+                .plan(base.getPlan())
+                .currentStep(base.getCurrentStep())
+                .contextSnapshot(base.getContextSnapshot())
+                .recentTimeline(timeline == null ? Collections.emptyList() : timeline)
+                .build();
+    }
+
+    private static ContactRecord answeredRecord(LocalDateTime createdAt) {
+        ContactRecord record = new ContactRecord();
+        record.setChannel(ChannelType.AI_CALL);
+        record.setResult(ContactResult.ANSWERED);
+        record.setCreatedAt(createdAt);
+        return record;
     }
 }

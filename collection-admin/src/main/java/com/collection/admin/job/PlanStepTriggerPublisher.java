@@ -1,5 +1,6 @@
 package com.collection.admin.job;
 
+import com.collection.admin.config.ScanProperties;
 import com.collection.common.enums.EventType;
 import com.collection.common.event.CollectionEvent;
 import com.collection.common.event.CollectionEventBus;
@@ -27,11 +28,13 @@ public class PlanStepTriggerPublisher {
     @Resource private ContactPlanRepository planRepository;
     @Resource private CollectionEventBus eventBus;
     @Resource private EngineProperties props;
+    @Resource private ScanProperties scanProps;
 
     /** @return 本次扫描发布的事件条数（供调度指标记录） */
     public int publishDueSteps() {
         int limit = props.getConsumer().getScanLimit();
-        List<ContactPlanStep> due = planRepository.findDueSteps(LocalDateTime.now(PHT), limit);
+        List<ContactPlanStep> due =
+                planRepository.findDueSteps(LocalDateTime.now(PHT), limit, scanProps.caseFilter());
         for (ContactPlanStep step : due) {
             eventBus.publish(
                     CollectionEvent.of(EventType.PLAN_STEP_DUE)
@@ -46,7 +49,8 @@ public class PlanStepTriggerPublisher {
     public int publishTimeoutSteps() {
         int limit = props.getConsumer().getScanLimit();
         List<ContactPlanStep> timeout =
-                planRepository.findTimeoutSteps(LocalDateTime.now(PHT), limit);
+                planRepository.findTimeoutSteps(
+                        LocalDateTime.now(PHT), limit, scanProps.caseFilter());
         for (ContactPlanStep step : timeout) {
             eventBus.publish(
                     CollectionEvent.of(EventType.CALLBACK_TIMEOUT)

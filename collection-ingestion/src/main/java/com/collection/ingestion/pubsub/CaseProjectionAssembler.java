@@ -34,8 +34,9 @@ public class CaseProjectionAssembler {
         projection.setPenaltyAmount(decimal(fields.get(CollectionEvent.PENALTY_AMOUNT)));
         projection.setRemainingAmount(remainingAmount(json, projection.getTotalOutstanding()));
         projection.setUpcomingAmount(json.getBigDecimal("upcomingAmount"));
-        projection.setDueDate(dueDate(fields.get(CollectionEvent.DUE_DATE), snapshot.caseId));
-        projection.setNextDueDate(dueDate(json.get("nextDueDate"), snapshot.caseId));
+        projection.setDueDate(
+                dueDate(fields.get(CollectionEvent.DUE_DATE), snapshot.caseId, "dueDate"));
+        projection.setNextDueDate(dueDate(json.get("nextDueDate"), snapshot.caseId, "nextDueDate"));
         projection.setBorrowerName((String) fields.get(CollectionEvent.NAME));
         projection.setBorrowerPhone((String) fields.get(CollectionEvent.PHONE));
         projection.setBorrowerEmail((String) fields.get(CollectionEvent.EMAIL));
@@ -51,7 +52,10 @@ public class CaseProjectionAssembler {
         projection.setCaseId(delta.caseId);
         projection.setUserId(delta.userId);
         projection.setDpd(fields.dpd);
+        // stage 与 dpd 同源同刻：只写 dpd 会让投影出现「stage 来自入案、dpd 来自还款」的矛盾组合。
+        // stagePresent=false（缺字段或取值非法）时保持基线；显式 null 是有效取值，代表不属任何催收阶段。
         projection.setStage(fields.stage == null ? null : fields.stage.name());
+        projection.setStagePresent(fields.stagePresent);
         projection.setOverdueAmount(fields.overdueAmount);
         projection.setTotalOutstanding(fields.overdueAmount);
         projection.setPenaltyAmount(fields.penaltyAmount);
@@ -82,11 +86,11 @@ public class CaseProjectionAssembler {
         return totalOutstanding == null ? BigDecimal.ZERO : totalOutstanding;
     }
 
-    private LocalDate dueDate(Object raw, Long caseId) {
+    private LocalDate dueDate(Object raw, Long caseId, String field) {
         try {
-            return CasePayloadMapper.parseDate(raw, "dueDate");
+            return CasePayloadMapper.parseDate(raw, field);
         } catch (PoisonMessageException e) {
-            throw new PoisonMessageException("非法 dueDate=" + raw + " caseId=" + caseId);
+            throw new PoisonMessageException("非法 " + field + "=" + raw + " caseId=" + caseId);
         }
     }
 

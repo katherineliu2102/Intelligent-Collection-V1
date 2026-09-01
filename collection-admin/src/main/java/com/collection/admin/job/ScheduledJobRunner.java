@@ -4,9 +4,11 @@ import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.ingestion.job.DpdStageRollHandler;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 
 /**
@@ -48,29 +50,42 @@ public class ScheduledJobRunner {
         }
     }
 
-    /** 执行一次扫描。本方法不抛异常：调度消息无论成败都会被 ack。 */
+    /**
+     * 执行一次扫描。本方法不抛异常：调度消息无论成败都会被 ack。
+     *
+     * <p>全程带 {@code job} 与 {@code scanId} 的 MDC。指标是聚合值，分不开「同一任务的两次投递」——而 T5-S5（重复投递）与
+     * T5-S6（并发单飞）恰恰要判定两条 tick 各自的去向，靠 {@code scanId} 才能把一轮扫描的日志切开。
+     */
     public void run(ScheduledJob job) {
         AtomicBoolean gate = inFlight.get(job);
-        if (!gate.compareAndSet(false, true)) {
-            metrics.scheduleSkipped(job.attribute(), SKIP_IN_FLIGHT);
-            log.warn("[Scheduler] job={} 上一轮扫描仍在执行，本次投递跳过（单飞保护）", job.attribute());
-            return;
-        }
-        long startNanos = System.nanoTime();
+        MDC.put("job", job.attribute());
         try {
-            metrics.scheduleTriggered(job.attribute());
-            int scanned = scan(job);
-            metrics.scheduleScanned(job.attribute(), scanned);
-            log.info(
-                    "[Scheduler] job={} 扫描完成 scanned={} costMs={}",
-                    job.attribute(),
-                    scanned,
-                    (System.nanoTime() - startNanos) / 1_000_000L);
-        } catch (Exception e) {
-            metrics.scheduleFailed(job.attribute());
-            log.error("[Scheduler] job={} 扫描失败，不重投，请按告警排查: {}", job.attribute(), e.toString(), e);
+            if (!gate.compareAndSet(false, true)) {
+                metrics.scheduleSkipped(job.attribute(), SKIP_IN_FLIGHT);
+                log.warn("[Scheduler] job={} 上一轮扫描仍在执行，本次投递跳过（单飞保护）", job.attribute());
+                return;
+            }
+            MDC.put("scanId", UUID.randomUUID().toString().substring(0, 8));
+            long startNanos = System.nanoTime();
+            try {
+                metrics.scheduleTriggered(job.attribute());
+                int scanned = scan(job);
+                metrics.scheduleScanned(job.attribute(), scanned);
+                log.info(
+                        "[Scheduler] job={} 扫描完成 scanned={} costMs={}",
+                        job.attribute(),
+                        scanned,
+                        (System.nanoTime() - startNanos) / 1_000_000L);
+            } catch (Exception e) {
+                metrics.scheduleFailed(job.attribute());
+                log.error(
+                        "[Scheduler] job={} 扫描失败，不重投，请按告警排查: {}", job.attribute(), e.toString(), e);
+            } finally {
+                gate.set(false);
+                MDC.remove("scanId");
+            }
         } finally {
-            gate.set(false);
+            MDC.remove("job");
         }
     }
 

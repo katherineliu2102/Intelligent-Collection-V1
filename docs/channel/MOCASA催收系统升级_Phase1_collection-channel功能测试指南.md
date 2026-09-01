@@ -4,7 +4,7 @@
 > **日期**: 2026-06-12  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [开发执行指南 §6](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#6-nacos-配置清单)、[操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)、[测试主文档](../testing/MOCASA催收系统升级_Phase1_测试文档.md)
+> **关联文档**: [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md)、[测试主文档](../testing/MOCASA催收系统升级_Phase1_测试文档.md)
 
 ---
 
@@ -55,12 +55,12 @@
 | **94201** | 无 jpushToken（phone 9451373897） | S1 · Push → SMS fallback | TC-PUSH-02 |
 | 91000 | 默认 mock | S1 | TC-REG-01 |
 
-> **Phase 1 仅 5 封 Email 联调案例**（caseId、dpd、amount、scriptSlot）：[`email-templates/email-e2e-test-cases.md`](./email-templates/email-e2e-test-cases.md)  
+> **Phase 1 仅 5 封 Email 联调案例**（caseId、dpd、amount、scriptSlot）：[`email-templates/email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md)
 > **发件人**：`collections@mocasa.com` · **收件箱**：`wzynju@126.com`
 
 ### 1.4 阶段门禁（哪个 TC 在何时可跑）
 
-与 [开发执行指南 §7 Checklist](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md#7-推荐开发时间线checklist) 对齐：
+与当前渠道实现对齐：
 
 | 最低阶段 | 可跑 TC |
 |----------|---------|
@@ -147,14 +147,12 @@ curl -X POST "http://localhost:8080/mock/case-ceased?caseId=90001&maxDpd=91"
 **骨架接口**（阶段 2 即可）：
 
 ```bash
-curl -X POST "http://localhost:8080/webhook/channel-callback?planId=<planId>&stepId=<stepId>&caseId=90006&result=ANSWERED"
+curl -X POST "http://localhost:8888/webhook/channel-callback?planId=<planId>&stepId=<stepId>&caseId=90006&result=ANSWERED"
 ```
 
-**LTH 真实路径**（阶段 4 完成后，TC-VOICE-03）：
+> 端口以 `application-local.yml` 的 `server.port: 8888` 为准（2026-08-21 更正，原示例写 8080）。验签开启时还须带 `X-Callback-Signature`：HmacSHA256 十六进制，canonical 串为 `planId:stepId:result:providerMsgId:disposition`（缺省字段写字面量 `null`），实现见 `WebhookController`。
 
-```bash
-curl -X POST "http://localhost:8080/webhook/lth/voice" -H "Content-Type: application/json" -d '{ ... }'
-```
+**Facade 入站路径**：账户级 `POST /webhook/facade-callback` 尚未实现，不能用本地 curl 替代供应商签名验证。T4 前只运行骨架 callback；真实验收按[回调入站交接](./MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md) §7 的 L2-CB 用例执行。
 
 ---
 
@@ -191,7 +189,8 @@ curl -X POST "http://localhost:8080/webhook/lth/voice" -H "Content-Type: applica
 | 前置 | `channel.notification.sms-test-mode=true`；`app-code=mocasa`；**无需** `app-key` |
 | 方式 A（推荐 · 不经 DB） | `POST /mock/send-sms?caseId=94100` |
 | 方式 B（curl 直调通知中心） | 见 [Notification 对接说明 §5.1](./MOCASA催收系统升级_Phase1_Notification对接说明.md#51-sms-测试案例可直接-curl--postman) |
-| 预期 | `code=0`、`data.requestSuccess=true`、`requestId` 非空；`data.channel` 多为 **Virtual**（测试路由，非真机送达） |
+| 预期 | `code=0`、`data.requestSuccess=true`、`requestId` 非空 |
+| ⚠ 实测修正（2026-08-24） | `data.channel` 返回 **CreativeBlue / QHSms 等真实运营商通道**，通知中心**无 Virtual 账号**（显式指定报 `no valid account`）。`testSend` 只免签名，**不抑制投递**——传真号即真实送达 |
 | 记录 | 2026-06-12 联调：`requestId=63b5afe30bfa482d8618819daa48461f`，channel=Virtual |
 
 ```powershell
@@ -212,7 +211,7 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-sms?caseId=94100" -Metho
 
 | 项 | 内容 |
 |----|------|
-| 门禁 | 运维已签发 `appKey`；**禁止** `sms-test-mode=true`（testSend 走 Virtual，不会真下发） |
+| 门禁 | 运维已签发 `appKey`；**禁止** `sms-test-mode=true`（走免签名端点，无法验证生产签名链路；注意它并不抑制投递） |
 | 前置 | `sms-test-mode=false`；Nacos `channel.notification.app-key` 已配置；`application-local.yml` 不配 `app-key` 覆盖 |
 | 方式 A（推荐 · 适配器） | `POST /mock/send-sms?caseId=94101` |
 | 方式 B（curl + 签名） | 见下方 PowerShell 签名示例 |
@@ -298,7 +297,7 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-push?caseId=94200" -Meth
 | 项 | 内容 |
 |----|------|
 | 门禁 | 阶段 2 `SendGridEmailAdapter` 已上线 |
-| 前置 | `channel.sendgrid.templates.S0_DUE_TODAY_EMAIL` 已填；`single-step=EMAIL` |
+| 前置 | `EmailMilestoneScriptSlots` 已含 `S0_DUE_TODAY_EMAIL` 的 `d-xxx`；`single-step=EMAIL` |
 | 测试数据 | **92002** → `wzynju@126.com`，S0，`dpd=0`，`amount_due=5000` |
 | 操作 | `POST /mock/ingest?caseId=92002&userId=92002&stage=S0` → 等 10~15s |
 | 预期 | ① timeline 1 条 EMAIL `DELIVERED` ② 126 邮箱收到 ③ 日志含 `S0_DUE_TODAY_EMAIL` |
@@ -307,8 +306,8 @@ Invoke-RestMethod -Uri "http://localhost:8888/mock/send-push?caseId=94200" -Meth
 
 | 项 | 内容 |
 |----|------|
-| 前置 | `application-local.yml` 填齐 **5 个** `templates`；`from-email=collections@mocasa.com`；`single-step=EMAIL` |
-| 案例表 | [`email-templates/email-e2e-test-cases.md`](./email-templates/email-e2e-test-cases.md) |
+| 前置 | 代码常量已含 5 个 `d-xxx`；`from-email=collections@mocasa.com`；`single-step=EMAIL` |
+| 案例表 | [`email-templates/email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md) |
 | 操作 | 按表 `caseId` ingest，例如 `93101`（test_s1_user1 · S1 · dpd1 · ₱2500） |
 | 预期 | 每案对应 scriptSlot 模板 + 变量与表一致 |
 
@@ -347,19 +346,12 @@ SENDGRID_FROM_EMAIL=collections@mocasa.com
 | 操作 | 回调 `result=NO_ANSWER` |
 | 预期 | timeline 记录；按 `DefaultAdvancementPolicy` 推进 |
 
-### TC-VOICE-TTS-01：TTS 与 AI_CALL 同路由
+### TC-VOICE-03：Facade 真实回调路径
 
 | 项 | 内容 |
 |----|------|
-| 前置 | `single-step=TTS`（需 PlanFactory/Mock 支持 TTS 单步或手工构造 step） |
-| 预期 | `LthVoiceAdapter` 受理；异步回调闭环同 TC-VOICE-01 |
-
-### TC-VOICE-03：LTH 真实 Webhook 路径
-
-| 项 | 内容 |
-|----|------|
-| 门禁 | 阶段 4 `/webhook/lth/voice` 已实现 |
-| 预期 | 解析话单 → `CHANNEL_CALLBACK` 含 `disposition` / `providerMsgId` |
+| 门禁 | `/webhook/facade-callback` 已实现、Facade 账户级 URL 与 secret 已登记 |
+| 预期 | 验签、`session_id` 幂等、反查和结果映射均符合回调入站交接 §7 |
 
 ---
 
@@ -510,7 +502,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 
 | 项 | 内容 |
 |----|------|
-| 门禁 | `/webhook/sendgrid` 已实现 |
+| 门禁 | `/webhook/sendgrid` ⏳ **尚未实现**，本用例阻塞（见 SendGrid 对接说明 §5） |
 | 操作 | 模拟 `delivered` / `open` 事件 |
 | 预期 | 同 `provider_msg_id` **幂等**升级 timeline；step 状态 **不变** |
 
@@ -548,7 +540,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 
 ---
 
-## 13. 通过标准（与开发执行指南 Checklist 映射）
+## 13. 通过标准
 
 ### 必过（渠道模块 Phase 1）
 
@@ -577,7 +569,6 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 
 | 文档 | 用途 |
 |------|------|
-| [开发执行指南 v1.1](./MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md) | 阶段顺序、Checklist |
 | [渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围) | 结构验证依据 |
-| [collection-channel 总规格 §6](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#6-同步渠道-vs-异步渠道) | 同步/异步完成时机 |
+| [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) | 同步/异步完成时机 |
 | [操作说明_Nacos本地启动](../操作说明_Nacos本地启动.md) | 本地启动 |

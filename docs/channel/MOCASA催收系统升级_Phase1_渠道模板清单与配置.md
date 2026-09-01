@@ -1,10 +1,10 @@
 # MOCASA Phase 1 — 渠道模板清单与配置（SSOT）
 
-> **版本**: v2.3  
-> **日期**: 2026-06-12  
+> **版本**: v2.4  
+> **日期**: 2026-08-27  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [渠道编排规格 §8.4](./MOCASA催收系统升级_Phase1_渠道编排规格.md#84-各-stage-话术槽拟议)、[collection-channel 总规格 附录 A](./MOCASA催收系统升级_Phase1_collection-channel总规格.md#附录-ascriptslot--供应商-template_id-映射表)、[策略迭代手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
+> **关联文档**: [渠道编排规格](./MOCASA催收系统升级_Phase1_渠道编排规格.md)、[collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[策略迭代手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链)
 
 ---
 
@@ -18,13 +18,13 @@
   - [2.4 S3](#24-s3d16--d30)
   - [2.5 S4](#25-s4d31--d90)
 - [3. Email（SendGrid）](#3-emailsendgrid)
-  - [3.1 配置映射](#31-配置映射)
+  - [3.1 scriptSlot → d-xxx](#31-scriptslot--d-xxx)
   - [3.2 变量与叙事](#32-变量与叙事)
   - [3.3 里程碑速查](#33-里程碑速查)
   - [3.4 建站 SOP](#34-建站-sop)
 - [4. SMS（通知中心）](#4-sms通知中心)
 - [5. App Push（通知中心 / JPush）](#5-app-push通知中心--jpush)
-- [6. Voice / AI_CALL（LTH）](#6-voice--ai_calllth)
+- [6. Voice / AI_CALL](#6-voice--ai_call)
 - [7. Nacos 配置汇总](#7-nacos-配置汇总)
 - [8. 与代码对应](#8-与代码对应)
 - [9. 关联文档](#9-关联文档)
@@ -36,8 +36,7 @@
 | 内容 | 位置 | 维护者 |
 |------|------|--------|
 | **本文件** | 全渠道 scriptSlot 总表、Nacos 约定、各渠道渲染方式 | 渠道 + 策略 |
-| [`email-templates/`](./email-templates/README.md) | Email HTML、版式、**催收叙事原则**、`subjects.md` | 策略 + 运营 |
-| [`email-templates/email-templates-test/`](./email-templates/email-templates-test/README.md) | SendGrid Test Data JSON | 运营/QA |
+| [`email-templates/`](../email-templates/README.md) | Email HTML、版式、**催收叙事原则**、`subjects.md` | 策略 + 运营 |
 | 各 Adapter 对接说明 | Notification（SMS+Push）/ SendGrid / LTH Voice | 开发 |
 
 ```
@@ -46,9 +45,8 @@ docs/
 └── email-templates/
     ├── README.md
     ├── subjects.md
-    ├── milestones/              # 13 × HTML
-    ├── conditionals/            # 4 × HTML（Phase 2）
-    └── email-templates-test/    # Test Data JSON
+    └── email-e2e-test-cases.md
+里程碑 HTML：`collection-admin/src/main/resources/catalog/email-templates/`
 ```
 
 > 原 `MOCASA催收系统升级_Phase1_Email模板清单与SendGrid配置.md` 已合并入本文档（v2.0）。
@@ -69,7 +67,7 @@ docs/
 | `S0_REMINDER` | SMS / Push | LTH / Notification Center → JPush | D-3、D-2 · 08:00 | Resolver → `sms_body` / JPush data | 待填 · 含防诈骗 | ⏳ |
 | `S0_REMINDER_URGENT` | SMS / Push | LTH / Notification Center → JPush | D-1 · 08:00 | 同上 | 待填 | ⏳ |
 | `S0_DUE_TODAY` | SMS / Push | LTH / Notification Center → JPush | D0 · 08:00 | 同上 | 待填 | ⏳ |
-| `S0_DUE_TODAY_EMAIL` | EMAIL | SendGrid | D0 · 14:00 | `d-9b485bfd24e14950a7811faf33c2b22f` | [HTML](./email-templates/milestones/S0_DUE_TODAY_EMAIL.html) · [Test Data](./email-templates/email-templates-test/test-data.sample.json) | ✅ **启用** |
+| `S0_DUE_TODAY_EMAIL` | EMAIL | SendGrid | D0 · 14:00 | `d-9b485bfd24e14950a7811faf33c2b22f` | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S0_DUE_TODAY_EMAIL.html) | ✅ **启用** |
 
 ### 2.2 S1（D+1 ~ D+3）
 
@@ -77,10 +75,10 @@ docs/
 |------------|------|--------|------|-------------------|------|---------|
 | `S1_SMS_STANDARD` | SMS | LTH | 每日 08:00 | `sms_body` | 待填 | ⏳ |
 | `S1_PUSH_STANDARD` | PUSH | FCM | 12:00 | FCM data + 深链 | 待 App | ⏳ |
-| `S1_EMAIL_OVERDUE_NOTICE` | EMAIL | SendGrid | D+1 · 14:00 | `d-bc7f5aee7e304caf93ca4d435a73a1d7` | [HTML](./email-templates/milestones/S1_EMAIL_OVERDUE_NOTICE.html) · [Test Data](./email-templates/email-templates-test/test-data-s1-d1.json) | ✅ **启用** |
-| `S1_EMAIL_STAGE_WARNING` | EMAIL | SendGrid | D+3 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S1_EMAIL_STAGE_WARNING.html) · [Test Data](./email-templates/email-templates-test/test-data-s1-d3.json) | 📦 HTML 备用 |
-| `S1_EMAIL_CONDITIONAL` | EMAIL | SendGrid | D+1 · 16:00 | _待填_ | [HTML](./email-templates/conditionals/S1_EMAIL_CONDITIONAL.html) | Phase 2 |
-| `S1_VOICE_PRIMARY` / `RETRY` | AI_CALL | LTH | Wave-1/2 | voice 参数 | 待 LTH | Mock |
+| `S1_EMAIL_OVERDUE_NOTICE` | EMAIL | SendGrid | D+1 · 14:00 | `d-bc7f5aee7e304caf93ca4d435a73a1d7` | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S1_EMAIL_OVERDUE_NOTICE.html) | ✅ **启用** |
+| `S1_EMAIL_STAGE_WARNING` | EMAIL | SendGrid | D+3 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S1_EMAIL_STAGE_WARNING.html) | 📦 HTML 备用 |
+| `S1_EMAIL_CONDITIONAL` | EMAIL | SendGrid | D+1 · 16:00 | _待填_ | 无仓库草稿 | Phase 2 |
+| `S1_VOICE_PRIMARY` / `RETRY` | AI_CALL | Facade | Wave-1/2 | Facade 参数 | 仅 L1 单 step | 未启用 |
 
 ### 2.3 S2（D+4 ~ D+15）
 
@@ -88,11 +86,11 @@ docs/
 |------------|------|--------|------|-------------------|------|---------|
 | `S2_SMS_STANDARD` / `S2_SMS_FIRM` | SMS | LTH | 08:00 | `sms_body`（不含动态 offer 变量） | 待填 | ⏳ |
 | `S2_PUSH_STANDARD` | PUSH | FCM | 12:00 | data payload | 待填 | ⏳ |
-| `S2_EMAIL_ENTRY` | EMAIL | SendGrid | D+4 · 14:00 | `d-86ed8faae3b24489ad7db8a11067b8c4` | [HTML](./email-templates/milestones/S2_EMAIL_ENTRY.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d4.json) | ✅ **启用** |
-| `S2_EMAIL_MID` | EMAIL | SendGrid | D+7 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S2_EMAIL_MID.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d7.json) | 📦 HTML 备用 |
-| `S2_EMAIL_PRE_S3` | EMAIL | SendGrid | D+12 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S2_EMAIL_PRE_S3.html) · [Test Data](./email-templates/email-templates-test/test-data-s2-d12.json) | 📦 HTML 备用 |
-| `S2_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | [conditionals/](./email-templates/conditionals/S2_EMAIL_CONDITIONAL.html) | Phase 2 |
-| `S2_VOICE_*` | AI_CALL | LTH | Wave-1/2 | voice | 待填 | Mock |
+| `S2_EMAIL_ENTRY` | EMAIL | SendGrid | D+4 · 14:00 | `d-86ed8faae3b24489ad7db8a11067b8c4` | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S2_EMAIL_ENTRY.html) | ✅ **启用** |
+| `S2_EMAIL_MID` | EMAIL | SendGrid | D+7 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S2_EMAIL_MID.html) | 📦 HTML 备用 |
+| `S2_EMAIL_PRE_S3` | EMAIL | SendGrid | D+12 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S2_EMAIL_PRE_S3.html) | 📦 HTML 备用 |
+| `S2_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | 无仓库草稿 | Phase 2 |
+| `S2_VOICE_*` | AI_CALL | Facade | Wave-1/2 | Facade 参数 | 未配置 | 未启用 |
 
 ### 2.4 S3（D+16 ~ D+30）
 
@@ -100,11 +98,11 @@ docs/
 |------------|------|--------|------|-------------------|------|---------|
 | `S3_SMS_*` | SMS | LTH | 08:00 | Pay Now 加重 | 待填 | ⏳ |
 | `S3_PUSH_STANDARD` | PUSH | FCM | 12:00 | data payload | 待填 | ⏳ |
-| `S3_EMAIL_ENTRY` | EMAIL | SendGrid | D+16 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S3_EMAIL_ENTRY.html) · [Test Data](./email-templates/email-templates-test/test-data-s3-d16.json) | 📦 HTML 备用 |
-| `S3_EMAIL_MID` | EMAIL | SendGrid | D+23 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S3_EMAIL_MID.html) · [Test Data](./email-templates/email-templates-test/test-data-s3-d23.json) | 📦 HTML 备用 |
-| `S3_EMAIL_PRE_S4` | EMAIL | SendGrid | D+30 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S3_EMAIL_PRE_S4.html) · [Test Data](./email-templates/email-templates-test/test-data-s3-d30.json) | 📦 HTML 备用 |
-| `S3_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | [conditionals/](./email-templates/conditionals/S3_EMAIL_CONDITIONAL.html) | Phase 2 |
-| `S3_VOICE_*` | AI_CALL | LTH | Wave-1/2 | voice | 待填 | Mock |
+| `S3_EMAIL_ENTRY` | EMAIL | SendGrid | D+16 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S3_EMAIL_ENTRY.html) | 📦 HTML 备用 |
+| `S3_EMAIL_MID` | EMAIL | SendGrid | D+23 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S3_EMAIL_MID.html) | 📦 HTML 备用 |
+| `S3_EMAIL_PRE_S4` | EMAIL | SendGrid | D+30 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S3_EMAIL_PRE_S4.html) | 📦 HTML 备用 |
+| `S3_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | 无仓库草稿 | Phase 2 |
+| `S3_VOICE_*` | AI_CALL | Facade | Wave-1/2 | Facade 参数 | 未配置 | 未启用 |
 
 ### 2.5 S4（D+31 ~ D+90）
 
@@ -112,50 +110,49 @@ docs/
 |------------|------|--------|------|-------------------|------|---------|
 | `S4_SMS_STANDARD` | SMS | LTH | 08:00 · Remedial | `sms_body` | 待填 | ⏳ |
 | `S4_PUSH_STANDARD` | PUSH | FCM | 12:00 | data payload | 待填 | ⏳ |
-| `S4_EMAIL_ENTRY` | EMAIL | SendGrid | D+31 · 14:00 | `d-658d5be184ab4710a19c8419ed66bca9` | [HTML](./email-templates/milestones/S4_EMAIL_ENTRY.html) · [Test Data](./email-templates/email-templates-test/test-data-s4-d31.json) | ✅ **启用** |
-| `S4_EMAIL_FINAL_REMINDER` | EMAIL | SendGrid | D+45 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S4_EMAIL_FINAL_REMINDER.html) · [Test Data](./email-templates/email-templates-test/test-data-s4-d45.json) | 📦 HTML 备用 |
-| `S4_EMAIL_MID` | EMAIL | SendGrid | D+60 · 14:00 | _无映射_ | [HTML](./email-templates/milestones/S4_EMAIL_MID.html) · [Test Data](./email-templates/email-templates-test/test-data-s4-d60.json) | 📦 HTML 备用 |
-| `S4_EMAIL_PRE_CLOSE` | EMAIL | SendGrid | D+75 · 14:00 | `d-881ce23667cc4df2abf82097b890cae1` | [HTML](./email-templates/milestones/S4_EMAIL_PRE_CLOSE.html) · [Test Data](./email-templates/email-templates-test/test-data-s4-d75.json) · ❓ 法务审 | ✅ **启用** |
-| `S4_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | [conditionals/](./email-templates/conditionals/S4_EMAIL_CONDITIONAL.html) | Phase 2 |
-| `S4_VOICE_*` | AI_CALL | LTH | Wave-1/2 | Remedial；Wave-2 仅 D+31~60 | 待填 | Mock |
+| `S4_EMAIL_ENTRY` | EMAIL | SendGrid | D+31 · 14:00 | `d-658d5be184ab4710a19c8419ed66bca9` | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S4_EMAIL_ENTRY.html) | ✅ **启用** |
+| `S4_EMAIL_FINAL_REMINDER` | EMAIL | SendGrid | D+45 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S4_EMAIL_FINAL_REMINDER.html) | 📦 HTML 备用 |
+| `S4_EMAIL_MID` | EMAIL | SendGrid | D+60 · 14:00 | _无映射_ | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S4_EMAIL_MID.html) | 📦 HTML 备用 |
+| `S4_EMAIL_PRE_CLOSE` | EMAIL | SendGrid | D+75 · 14:00 | `d-881ce23667cc4df2abf82097b890cae1` | [HTML](../../collection-admin/src/main/resources/catalog/email-templates/S4_EMAIL_PRE_CLOSE.html) · ❓ 法务审 | ✅ **启用** |
+| `S4_EMAIL_CONDITIONAL` | EMAIL | SendGrid | 16:00 | _待填_ | 无仓库草稿 | Phase 2 |
+| `S4_VOICE_*` | AI_CALL | Facade | Wave-1/2 | Facade 参数 | 未配置 | 未启用 |
 
 ---
 
 ## 3. Email（SendGrid）
 
-### 3.1 配置映射
+### 3.1 scriptSlot → d-xxx
 
-**密钥**（Nacos `intelligent-collection-local.yml`，勿提交 Git）：
+**密钥仍走 Nacos**（`api-key` / `from-email`，勿提交 Git）：
 
 ```yaml
 channel:
   sendgrid:
     api-key: SG.xxxx
     from-email: collections@mocasa.com
-  notification:
-    app-key: <运维下发>
 ```
 
-发布：`scripts/dev/publish-channel-secrets-to-nacos.ps1`（需 Nacos 写权限）或控制台手动合并。
+**scriptSlot → SendGrid `d-xxx` 只写在代码**，不写 Nacos、不写 `application-*.yml`。换模板必须发版。
 
-**scriptSlot → d-xxx**（Nacos / `application-local.yml`，**Phase 1 仅 5 项**）：
+| 位置 | 内容 |
+|------|------|
+| **SSOT** | `collection-common/.../email/EmailMilestoneScriptSlots.java` 的 `PHASE1_SENDGRID_TEMPLATE_IDS` |
+| 读取 | `SendGridEmailAdapter`、`DefaultStepResolver`（timeline `template_version`）、管理面 Catalog |
+| Phase 1 仅 5 项 | `S0_DUE_TODAY_EMAIL` / `S1_EMAIL_OVERDUE_NOTICE` / `S2_EMAIL_ENTRY` / `S4_EMAIL_ENTRY` / `S4_EMAIL_PRE_CLOSE` |
 
-```yaml
-channel:
-  sendgrid:
-    from-name: MOCASA Collections
-    templates:
-      S0_DUE_TODAY_EMAIL: d-9b485bfd24e14950a7811faf33c2b22f
-      S1_EMAIL_OVERDUE_NOTICE: d-bc7f5aee7e304caf93ca4d435a73a1d7
-      S2_EMAIL_ENTRY: d-86ed8faae3b24489ad7db8a11067b8c4
-      S4_EMAIL_ENTRY: d-658d5be184ab4710a19c8419ed66bca9
-      S4_EMAIL_PRE_CLOSE: d-881ce23667cc4df2abf82097b890cae1
-    unsubscribe-group-id: 0
-```
+当前常量：
 
-**解析顺序**（`SendGridEmailAdapter`）：`metadata.scriptSlot` → `templates` 映射 → `step.templateId`（`d-` 前缀）。**未命中则失败**（`SENDGRID_NO_TEMPLATE`），无兜底 `default-template-id`。
+| scriptSlot | SendGrid ID |
+|------------|-------------|
+| `S0_DUE_TODAY_EMAIL` | `d-9b485bfd24e14950a7811faf33c2b22f` |
+| `S1_EMAIL_OVERDUE_NOTICE` | `d-bc7f5aee7e304caf93ca4d435a73a1d7` |
+| `S2_EMAIL_ENTRY` | `d-86ed8faae3b24489ad7db8a11067b8c4` |
+| `S4_EMAIL_ENTRY` | `d-658d5be184ab4710a19c8419ed66bca9` |
+| `S4_EMAIL_PRE_CLOSE` | `d-881ce23667cc4df2abf82097b890cae1` |
 
-**E2E 联调案例**：[`email-templates/email-e2e-test-cases.md`](./email-templates/email-e2e-test-cases.md)
+**解析顺序**（`SendGridEmailAdapter`）：步骤 `templateId` 已是 `d-` 前缀则直接用 → 否则 `EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot)`。**未命中则失败**（`SENDGRID_NO_TEMPLATE`）。
+
+**E2E 联调案例**：[`email-templates/email-e2e-test-cases.md`](../email-templates/email-e2e-test-cases.md)
 
 ### 3.2 变量与叙事
 
@@ -167,8 +164,8 @@ channel:
 | `payment_link` | caseContext.repaymentUrl | Pay Now href |
 | `assignment_date` | Resolver 计算 | 仅 `S4_EMAIL_PRE_CLOSE`（D+75）：对外 **final delinquency review 日**（= 内部 D+91）；**无委外** |
 
-**叙事原则**（v3）：见 [email-templates/README §2](./email-templates/README.md#2-催收心理学矩阵)——**全程无 third-party**；D+75 用 `assignment_date` 预告 **final delinquency review**（禁写停催/委外）。
-**Subject / Preheader SSOT**：[`email-templates/subjects.md`](./email-templates/subjects.md)  
+**叙事原则**（v3）：见 [email-templates/README §2](../email-templates/README.md#2-催收心理学矩阵)——**全程无 third-party**；D+75 用 `assignment_date` 预告 **final delinquency review**（禁写停催/委外）。
+**Subject / Preheader SSOT**：[`email-templates/subjects.md`](../email-templates/subjects.md)
 **语言**：Phase 1 仅英文；S2+ 可使用泛化 payment-options 引导，但不承诺减免、不使用 `offer_*` 变量。
 
 ### 3.3 里程碑速查
@@ -183,18 +180,16 @@ channel:
 | — | 其余 8 里程碑 | 见 §2 | _无映射_ | 📦 HTML 备用 |
 | — | `S*_EMAIL_CONDITIONAL` ×4 | Phase 2 | _待填_ | Phase 2 |
 
-**Test Data 索引**：[`email-templates/email-templates-test/test-data-index.json`](./email-templates/email-templates-test/test-data-index.json)  
 **联调**：`single-step=EMAIL` + caseId **92002** → `wzynju@126.com`（优先 126，Gmail 易 DMARC 拦截）
 
 ### 3.4 建站 SOP
 
 1. Template Name = `scriptSlot`（与上表一致）
-2. Code 粘贴 `email-templates/milestones/` 或 `conditionals/` HTML
+2. Code 粘贴 `collection-admin/src/main/resources/catalog/email-templates/` 对应 HTML
 3. **Settings** 填 Subject / Preheader（`subjects.md`）
-4. **Test Data** 粘贴 `email-templates/email-templates-test/` 对应 JSON（见 `test-data-index.json`）
-5. Activate → Nacos `channel.sendgrid.templates.{scriptSlot}`
+4. Activate → 改代码 `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` 后发版（不要写 Nacos）
 
-详细步骤见 [email-templates/README §6](./email-templates/README.md#6-sendgrid-建站-sop)。
+详细步骤见 [email-templates/README §6](../email-templates/README.md#6-sendgrid-建站-sop)。
 
 ---
 
@@ -204,7 +199,7 @@ channel:
 |----|------|
 | **渲染** | `DefaultStepResolver` 按 `scriptSlot` → `sms_body` |
 | **发送** | `POST /v1/sms/send`（同步），`contentType=collection`；运营商路由在通知中心后台 |
-| **配置** | `channel.notification.base-url`、`app-code`、`app-key`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §1） |
+| **配置** | `channel.notification.base-url`、`app-code`、`app-key`（见 [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) §1） |
 | **文案存放** | Phase 1：Nacos `channel.scripts.sms`（见 §7，待 `DefaultStepResolver` 读取）；长期：策略后台 |
 | **变量** | `{name}`=borrower_name、`{amount}`=amount_due(PHP)、`{dpd}`=overdue_days、`{repaymentUrl}`=App 还款短链（优先 `caseContext.repaymentUrl`，缺失时用 `channel.scripts.sms-default-repayment-link`） |
 
@@ -240,7 +235,7 @@ channel:
 |----|------|
 | **渲染** | `title`、`body`；`data` 为 JSON object 字符串（`deep_link`、`case_id` 等，value 均为 string） |
 | **token** | `userProfile.device.jpushToken`（JPush Registration ID） |
-| **配置** | `channel.notification.*`（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §2） |
+| **配置** | `channel.notification.*`（见 [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) §2） |
 | **fallback** | 无 token / 入队前参数错误 → 同槽 SMS（§4）；JPush 投递失败 Phase 1 不自动 fallback |
 
 ### 5.1 Push 文案（英文初稿）
@@ -268,17 +263,17 @@ channel:
 }
 ```
 
-> Push `data` 的 `deep_link` 解析与跳转逻辑须与 **App 团队（李辉）** 终确认（见 [Notification 对接说明](./channel/MOCASA催收系统升级_Phase1_Notification对接说明.md) §2.3）。
+> Push `data` 的 `deep_link` 解析与跳转逻辑须与 **App 团队（李辉）** 终确认（见 [Notification 对接说明](./MOCASA催收系统升级_Phase1_Notification对接说明.md) §2.3）。
 
 ---
 
-## 6. Voice / AI_CALL（LTH）
+## 6. Voice / AI_CALL
 
 | 项 | 说明 |
 |----|------|
-| **渲染** | LTH TTS / AI 外呼脚本 + 动态参数 |
-| **配置** | `channel.lth.voice.url`、`channel.callback.base-url` |
-| **Phase 1** | Mock；TTS Adapter 暂缓 |
+| **AI_CALL** | `FacadeAiCallAdapter`；仅 L1 一案一批联调，生产回调未闭合 |
+| **配置** | `channel.facade.*`；账户级回调 URL 与 secret 在 Facade 控制台配置 |
+| **TTS / 人工外呼** | LTH 现网职责，不生成本系统 plan step |
 
 ---
 
@@ -287,7 +282,8 @@ channel:
 ```yaml
 channel:
   sendgrid:
-    templates: { ... }          # §3.1
+    api-key: SG.xxxx            # 密钥；映射不在 Nacos
+    from-email: collections@mocasa.com
   notification:
     base-url: https://service-test.mocasa.com/notification
     app-code: mocasa
@@ -295,8 +291,9 @@ channel:
     sms-content-type: collection
     sms-test-mode: false                  # true → SMS 走 /v1/sms/testSend（免签名，联调用）
     sms-test-account-name: ""             # 可选：指定测试通道账号名
-  lth:
-    voice: { url }                # SMS 已废弃；lth.sms 勿配
+  facade:
+    base-url: https://<facade-host>/api/v1/facade
+    api-key: <Nacos_or_Secret>
   callback:
     base-url: https://domain/webhook
   scripts:                        # SMS/Push 文案（§4.1/§5.1），DefaultStepResolver 按 scriptSlot 读取并注入变量
@@ -334,8 +331,8 @@ channel:
 |------|------|
 | `DefaultPlanFactory` | Stage/DPD/时刻 → step + `scriptSlot` |
 | `DefaultStepResolver` | `scriptSlot` → 渠道 payload + `dynamicTemplateData` |
-| `SendGridEmailAdapter` | Email：`scriptSlot` → `channel.sendgrid.templates` |
-| `NotificationSmsAdapter` / `NotificationPushAdapter` / `LthVoiceAdapter` | 各渠道发送 |
+| `SendGridEmailAdapter` | Email：`scriptSlot` → `EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS` |
+| `NotificationSmsAdapter` / `NotificationPushAdapter` / `FacadeAiCallAdapter` | 各渠道发送 |
 
 ---
 
@@ -343,9 +340,8 @@ channel:
 
 | 文档 | 用途 |
 |------|------|
-| [email-templates/README.md](./email-templates/README.md) | Email 设计系统、叙事原则 |
-| [email-templates/subjects.md](./email-templates/subjects.md) | Subject / Preheader |
-| [email-templates/email-templates-test/](./email-templates/email-templates-test/README.md) | Test Data |
+| [email-templates/README.md](../email-templates/README.md) | Email 设计系统、叙事原则 |
+| [email-templates/subjects.md](../email-templates/subjects.md) | Subject / Preheader |
 | [策略迭代与测试操作手册 §5.2](./MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#52-改话术--邮件正文--深链) | 运营改模板流程 |
 | [SendGrid Email 对接说明](./MOCASA催收系统升级_Phase1_SendGrid_Email对接说明.md) | Adapter |
 | [功能测试指南](./MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) | TC 冒烟 |

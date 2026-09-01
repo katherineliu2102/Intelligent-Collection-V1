@@ -53,8 +53,8 @@ public class RealCaseService implements CaseService {
     private static final Logger log = LoggerFactory.getLogger(RealCaseService.class);
 
     @Resource private CollectionCaseMapper caseMapper;
-    /** 还款深链模板，{caseId} 占位。 */
-    @Value("${collection.repayment-url-template:https://app.mocasa.test/repay/{caseId}}")
+    /** 还款深链模板，{caseId} 占位。默认值不能落在 .test 域：pilot/生产漏配时它会被渲染进真实短信正文。 */
+    @Value("${collection.repayment-url-template:https://app.mocasa.com/repay/{caseId}}")
     private String repaymentUrlTemplate;
 
     @Override

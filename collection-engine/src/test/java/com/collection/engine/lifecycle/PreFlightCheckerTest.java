@@ -73,6 +73,23 @@ class PreFlightCheckerTest {
     }
 
     @Test
+    @DisplayName("S0 逾期额为 0 但有 upcomingAmount → 放行，避免提醒案被当没钱可催")
+    void s0UpcomingOnly_passes() {
+        CaseInfo info = alive();
+        info.setStage(com.collection.common.enums.Stage.S0);
+        info.setDpd(-2);
+        info.setTotalOutstanding(BigDecimal.ZERO);
+        info.setUpcomingAmount(new BigDecimal("1800"));
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(info);
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isTrue();
+        assertThat(result.getCaseInfo().getUpcomingAmount())
+                .isEqualByComparingTo(new BigDecimal("1800"));
+    }
+
+    @Test
     @DisplayName("#5d 案件存活（未还款）→ 放行并带出实时案件数据，供渲染前刷新日变字段")
     void alive_passesWithCaseInfo() {
         when(caseService.getCaseInfo(CASE_ID)).thenReturn(alive());

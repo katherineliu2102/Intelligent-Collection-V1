@@ -3,6 +3,7 @@ package com.collection.service.repository;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,6 +21,7 @@ import com.collection.common.model.ContactRecord;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
 import com.collection.service.mapper.ContactTimelineMapper;
+import com.collection.service.support.ServiceClock;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -124,6 +126,8 @@ class ContactPlanMapperIT {
         plan.setIdempotencyKey("l3-it:" + System.nanoTime());
         plan.setRenewalPending(false);
         plan.setVersion(0);
+        plan.setCreatedAt(ServiceClock.now());
+        plan.setUpdatedAt(ServiceClock.now());
         return plan;
     }
 
@@ -138,6 +142,8 @@ class ContactPlanMapperIT {
         step.setObservationMinutes(0);
         step.setRetryCount(0);
         step.setIdempotencyKey(planId + ":" + order + ":0");
+        step.setCreatedAt(ServiceClock.now());
+        step.setUpdatedAt(ServiceClock.now());
         return step;
     }
 
@@ -192,13 +198,85 @@ class ContactPlanMapperIT {
                 assertEquals(
                         1,
                         planMapper.updateStatus(
-                                plan.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID));
-                assertEquals(1, planMapper.markCompleted(plan.getId()));
+                                plan.getId(),
+                                PlanStatus.PLAN_CANCELLED,
+                                CancelReason.REPAID,
+                                ServiceClock.now()));
+                assertEquals(1, planMapper.markCompleted(plan.getId(), ServiceClock.now()));
                 ContactPlan loaded = planMapper.selectById(plan.getId());
                 assertEquals(PlanStatus.PLAN_CANCELLED, loaded.getStatus());
                 assertEquals(CancelReason.REPAID, loaded.getCancelReason());
                 assertTrue(loaded.getStatus().isTerminal());
-                assertNotNull(loaded.getCompletedAt(), "终态计划应写 completed_at=NOW()");
+                assertNotNull(loaded.getCompletedAt(), "终态计划应写 completed_at");
+            } finally {
+                session.rollback();
+            }
+        }
+    }
+
+    /**
+     * F12：步骤乱序完成时，推进不得取到已终结的后继，排期也不得把它复活。
+     *
+     * <p>复刻生产序列（plan 829）：第 2 步先收到回调而终结，第 1 步退避重试后才落地； 第 1 步的推进按 {@code step_order + 1} 取到已
+     * COMPLETED 的第 2 步，再用无谓词的 {@code updateTriggerTime} 把它改回 PENDING，随后 {@code PLAN_STEP_DUE} 抢占成
+     * EXECUTING —— 只剩幂等锁挡在真实触达前。
+     */
+    @Test
+    void advanceAfterOutOfOrderCompletion_skipsTerminalStepAndCannotReviveIt() {
+        try (SqlSession session = factory.openSession(false)) {
+            try {
+                ContactPlanMapper planMapper = session.getMapper(ContactPlanMapper.class);
+                ContactPlanStepMapper stepMapper = session.getMapper(ContactPlanStepMapper.class);
+                ContactPlan plan = newPlan();
+                planMapper.insert(plan);
+                ContactPlanStep first = newStep(plan.getId(), 1, ChannelType.SMS, 101L);
+                ContactPlanStep second = newStep(plan.getId(), 2, ChannelType.AI_CALL, 301L);
+                ContactPlanStep third = newStep(plan.getId(), 3, ChannelType.PUSH, 102L);
+                stepMapper.insert(first);
+                stepMapper.insert(second);
+                stepMapper.insert(third);
+
+                // 第 2 步先被回调终结（乱序的成因）。
+                assertEquals(
+                        1,
+                        stepMapper.transitionStatus(
+                                second.getId(),
+                                java.util.Collections.singletonList(StepStatus.PENDING),
+                                StepStatus.COMPLETED,
+                                ContactResult.FAILED,
+                                ServiceClock.now()));
+
+                // 第 1 步完成后推进：必须跳过已终结的第 2 步，落到第 3 步。
+                ContactPlanStep next = stepMapper.selectByPlanAndOrder(plan.getId(), 2);
+                assertNotNull(next, "后面仍有未终结步骤，不应判 PLAN_EXHAUSTED");
+                assertEquals(3, next.getStepOrder(), "应跳过已 COMPLETED 的第 2 步");
+
+                // 即便调用方漏判，写时刻的终态谓词也必须拦住复活。
+                assertEquals(
+                        0,
+                        stepMapper.updateTriggerTime(
+                                second.getId(),
+                                ServiceClock.now(),
+                                StepStatus.PENDING,
+                                ServiceClock.now()),
+                        "updateTriggerTime 不得命中终态步骤");
+                assertEquals(
+                        0,
+                        stepMapper.updateTimeoutTime(
+                                second.getId(), ServiceClock.now(), ServiceClock.now()),
+                        "updateTimeoutTime 不得把终态步骤拖回 EXECUTING");
+                ContactPlanStep unchanged = stepMapper.selectById(second.getId());
+                assertEquals(StepStatus.COMPLETED, unchanged.getStatus());
+                assertNotNull(unchanged.getCompletedAt());
+
+                // 所有后继都终结时才返回 null，交由调用方判 PLAN_EXHAUSTED。
+                stepMapper.transitionStatus(
+                        third.getId(),
+                        java.util.Collections.singletonList(StepStatus.PENDING),
+                        StepStatus.SKIPPED,
+                        ContactResult.SKIPPED,
+                        ServiceClock.now());
+                assertNull(stepMapper.selectByPlanAndOrder(plan.getId(), 2), "后继全部终结时应返回 null");
             } finally {
                 session.rollback();
             }
@@ -217,10 +295,13 @@ class ContactPlanMapperIT {
                 ContactPlanStep step = newStep(plan.getId(), 1, ChannelType.SMS, 101L);
                 stepMapper.insert(step);
 
-                assertEquals(1, stepMapper.updateStatus(step.getId(), StepStatus.COMPLETED, null));
+                assertEquals(
+                        1,
+                        stepMapper.updateStatus(
+                                step.getId(), StepStatus.COMPLETED, null, ServiceClock.now()));
                 ContactPlanStep loaded = stepMapper.selectById(step.getId());
                 assertEquals(StepStatus.COMPLETED, loaded.getStatus());
-                assertNotNull(loaded.getCompletedAt(), "updateStatus 应写 completed_at=NOW()");
+                assertNotNull(loaded.getCompletedAt(), "updateStatus 应写 completed_at");
             } finally {
                 session.rollback();
             }
@@ -236,7 +317,10 @@ class ContactPlanMapperIT {
                 ContactPlan cancelled = newPlan();
                 planMapper.insert(cancelled);
                 planMapper.updateStatus(
-                        cancelled.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                        cancelled.getId(),
+                        PlanStatus.PLAN_CANCELLED,
+                        CancelReason.REPAID,
+                        ServiceClock.now());
                 ContactPlan active = newPlan();
                 active.setIdempotencyKey("l3-it-active:" + System.nanoTime());
                 planMapper.insert(active);
@@ -344,7 +428,10 @@ class ContactPlanMapperIT {
                 terminal.setIdempotencyKey("l3-it-terminal:" + System.nanoTime());
                 planMapper.insert(terminal);
                 planMapper.updateStatus(
-                        terminal.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                        terminal.getId(),
+                        PlanStatus.PLAN_CANCELLED,
+                        CancelReason.REPAID,
+                        ServiceClock.now());
                 ContactPlanStep terminalDue = newStep(terminal.getId(), 1, ChannelType.SMS, 104L);
                 terminalDue.setTriggerTime(now.minusMinutes(3));
                 terminalDue.setTimeoutTime(now.minusMinutes(3));
@@ -355,7 +442,7 @@ class ContactPlanMapperIT {
                 renewalPending.setCaseId(SENTINEL_CASE + 2);
                 renewalPending.setIdempotencyKey("l3-it-renewal:" + System.nanoTime());
                 planMapper.insert(renewalPending);
-                planMapper.markRenewalPending(renewalPending.getId());
+                planMapper.markRenewalPending(renewalPending.getId(), ServiceClock.now());
                 ContactPlanStep pendingDue =
                         newStep(renewalPending.getId(), 1, ChannelType.SMS, 105L);
                 pendingDue.setTriggerTime(now.minusMinutes(4));
@@ -363,11 +450,11 @@ class ContactPlanMapperIT {
                 pendingDue.setStatus(StepStatus.EXECUTING);
                 stepMapper.insert(pendingDue);
 
-                List<ContactPlanStep> dueSteps = stepMapper.selectDueSteps(now, 1);
+                List<ContactPlanStep> dueSteps = stepMapper.selectDueSteps(now, 1, null);
                 assertEquals(1, dueSteps.size(), "limit 应限制 due 查询结果数");
                 assertEquals(
                         earlierDue.getId(), dueSteps.get(0).getId(), "due 步骤应按 trigger_time 升序");
-                List<ContactPlanStep> allDueSteps = stepMapper.selectDueSteps(now, 10);
+                List<ContactPlanStep> allDueSteps = stepMapper.selectDueSteps(now, 10, null);
                 assertFalse(
                         allDueSteps.stream()
                                 .anyMatch(step -> terminalDue.getId().equals(step.getId())),
@@ -377,7 +464,7 @@ class ContactPlanMapperIT {
                                 .anyMatch(step -> pendingDue.getId().equals(step.getId())),
                         "renewal_pending 计划的步骤不得被 due 查询返回");
 
-                List<ContactPlanStep> timeoutSteps = stepMapper.selectTimeoutSteps(now, 10);
+                List<ContactPlanStep> timeoutSteps = stepMapper.selectTimeoutSteps(now, 10, null);
                 assertTrue(
                         timeoutSteps.stream()
                                 .anyMatch(step -> timeout.getId().equals(step.getId())),
@@ -405,7 +492,7 @@ class ContactPlanMapperIT {
                 ContactPlan oldPlan = newPlan(SENTINEL_CASE + 10, SENTINEL_USER + 10);
                 planMapper.insert(oldPlan);
 
-                assertEquals(1, planMapper.markRenewalPending(oldPlan.getId()));
+                assertEquals(1, planMapper.markRenewalPending(oldPlan.getId(), ServiceClock.now()));
                 assertEquals(
                         null,
                         planMapper.selectActiveByCaseAndStage(oldPlan.getCaseId(), Stage.S1),
@@ -416,7 +503,11 @@ class ContactPlanMapperIT {
                 planMapper.insert(replacement);
                 assertEquals(
                         1,
-                        planMapper.updateStatus(oldPlan.getId(), PlanStatus.PLAN_COMPLETED, null));
+                        planMapper.updateStatus(
+                                oldPlan.getId(),
+                                PlanStatus.PLAN_COMPLETED,
+                                null,
+                                ServiceClock.now()));
 
                 ContactPlan active =
                         planMapper.selectActiveByCaseAndStage(oldPlan.getCaseId(), Stage.S1);
@@ -532,6 +623,7 @@ class ContactPlanMapperIT {
         record.setContentSummary("L3 mapper integration test");
         record.setCost(BigDecimal.ZERO);
         record.setSource(DataSource.SYSTEM);
+        record.setCreatedAt(ServiceClock.now());
         return record;
     }
 }

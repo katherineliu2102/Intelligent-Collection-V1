@@ -43,11 +43,10 @@
   - [A.2 引擎与事件总线](#a2-引擎与事件总线)
   - [A.3 接入与 PubSub](#a3-接入与-pubsub)
   - [A.4 迁移与触达](#a4-迁移与触达)
-  - [A.5 接入层 Redis Key 索引](#a5-接入层-redis-key-索引)
+  - [A.6 定时调度](#a6-定时调度)
 - [附录 B：容量基线与生产技术准入](#附录-b容量基线与生产技术准入)
   - [B.1 上线前容量校准清单](#b1-上线前容量校准清单)
   - [B.2 生产切换门槛](#b2-生产切换门槛)
-- [附录 C：生产就绪差集登记](#附录-c生产就绪差集登记)
 
 ---
 
@@ -142,7 +141,7 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 
 > PEL Scanner 仅认领 idle 超过 `collection.redis.pel-min-idle-seconds`（初始值 120s）的消息。该值必须覆盖一次同步处理的最长时长（渠道 HTTP 重试、DB 写入和调度抖动）并保留安全裕量；恢复时间约为 `minIdle + 一个扫描周期`，而非固定秒数。
 
-> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务与扫描目标) 的调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#74-跨存储一致性修复)。
+> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务与扫描目标) 的调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.2 / §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)。
 
 ---
 
@@ -205,7 +204,7 @@ public interface CollectionEventBus {
 > 重放可能发生在原触达时点之后较久，若直接重投会产生"业务时间毒丸"——在合规禁止时段（如夜间）触发触达。
 
 - 重放前必须校验当前是否处于合规可触达时段。直接驱动渠道发送的 `PLAN_STEP_DUE` 落在窗口外时**不发布**、保持 `PENDING`，由响应中的 `deferred` 计数提示操作者在窗口内重试；非触达型事件（如 `STEP_COMPLETED`）不受窗口限制。
-- 窗口口径取 `channel.compliance.touch-window-start/end` 与 `timezone`，与 `ExecutionGuard` 同源（[核心引擎规格 §7.3 L1 基础设施异常](./MOCASA催收系统升级_Phase1_核心引擎规格.md#73-l1-基础设施异常)、[渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)），本节只约束"重放调度时机"，不重复定义合规规则。
+- 窗口口径取 `channel.compliance.touch-window-start/end` 与 `timezone`，与 `ExecutionGuard` 同源（[核心引擎规格 §5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#5-步骤执行管线)、[渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)），本节只约束"重放调度时机"，不重复定义合规规则。
 
 ---
 
@@ -227,13 +226,13 @@ Redis KV 负责幂等、步骤锁、频控和接入去重；Redis Stream 负责�
 | `collection:processed:` | 事件消费去重标记 | String（标记） | `collection:processed:{event_id}` |
 | `collection:lock:plan:` | 分布式幂等锁（步骤级） | String（SETNX） | `collection:lock:plan:{step_idempotency_key}` |
 | `collection:idempotency:` | 渠道层二次去重 | String（SETNX） | `collection:idempotency:channel:{idempotency_key}` |
-| `collection:ingestion:` | 接入层 PubSub 幂等 / 日切 dedup | String | 见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（[A.5](#a5-接入层-redis-key-索引) 索引） |
+| `collection:ingestion:` | 接入层 PubSub 幂等 / 日切 dedup | String | 见 [数据接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等) |
 
 > 接入层 key 须与旧催收 Redis **物理或前缀隔离**（新系统 `collection:*` / `ai:*`）。
 
 #### 事件消费去重的写入时机
 
-`collection:processed:{event_id}` 只在该事件的全部 Handler 成功返回后写入，随后才 `XACK`。Handler 抛异常时不写标记，消息留在 PEL 等待认领重投；因此去重只吸收"已成功处理过的重复投递"（PEL 重投、DLQ 重放同一信封），不会吞掉真正需要重试的失败。Redis 读写该标记失败时按"未处理"放行，由步骤幂等锁与渠道幂等兜底，避免去重故障阻断消费。
+`collection:processed:{event_id}` 只在该事件的全部 Handler 成功返回后写入，随后才 `XACK`。Handler 抛异常时不写标记，消息留在 PEL 等待认领重投；因此去重只吸收"已成功处理过的重复投递"（PEL 重投、DLQ 重放同一信封），不会吞掉真正需要重试的失败。命中去重而跳过时递增 `collection.event.deduped`（[§7.3](#73-指标与日志)）。Redis 读写该标记失败时按"未处理"放行，由步骤幂等锁与渠道幂等兜底，避免去重故障阻断消费。
 
 #### TTL 策略
 
@@ -241,7 +240,7 @@ Redis KV 负责幂等、步骤锁、频控和接入去重；Redis Stream 负责�
 |---|---|---|
 | 合规计数器（daily） | 当日 23:59:59 过期 | 自然日重置 |
 | 合规计数器（weekly） | 下一个 PHT 自然周结束时过期 | 自然周重置，不能按首次写入后固定 7 天过期 |
-| 步骤幂等锁 | `max(engine.step.idempotency_ttl_minutes, engine.step.callback_timeout_minutes)`；默认 60 分钟 | 覆盖异步回调窗口；代码不得仅按 15 分钟配置值解释 |
+| 步骤幂等锁 | `max(engine.step.idempotency_ttl_minutes, engine.step.callback_timeout_minutes)`；默认 15 分钟 | 必须覆盖异步回调窗口（当前 10 分钟）；调大回调窗口时本值随之抬升 |
 | 渠道层去重 | 24 小时 | 覆盖供应商回调延迟窗口 |
 | 事件消费去重 | 24 小时 | At-least-once 消费去重 |
 
@@ -253,7 +252,7 @@ Redis 实例必须配置 `maxmemory-policy = noeviction`，并通过容量余量
 
 #### 合规计数器实现约束
 
-`ExecutionGuard` 的硬超时为 50ms（[核心引擎规格 §6.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#61-接口总览)）。合规计数的读取 + 增加 + 设 TTL 必须在**单次 Redis 交互**内完成，使用 Lua 脚本或 Pipeline，目标 p99 < 10ms。
+`ExecutionGuard` 的硬超时为 50ms（[核心引擎规格 §6.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#61-接口职责与调用位置)）。合规计数的读取 + 增加 + 设 TTL 必须在**单次 Redis 交互**内完成，使用 Lua 脚本或 Pipeline，目标 p99 < 10ms。
 
 延迟上界由 `SpiInvoker` 的 50ms 硬超时兜底，**不靠客户端命令超时收紧**：同一个 Lettuce 连接工厂也服务 `XREADGROUP BLOCK 1s`，命令超时若小于 BLOCK 时长会让消费轮询每次都抛 `RedisCommandTimeoutException`。Pilot 取 `timeout=2s`、`connect-timeout=200ms`（见 [T5 Pilot 手册 §4.1](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#41-连接信息落位与变更方式)）。
 
@@ -318,7 +317,7 @@ Phase 1 有 **3 个应用任务、4 条 Cloud Scheduler 规则**。时区统一 
 
 `planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影。
 
-> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 固定窗口只是当前数仓 03:00 批次的消费缓冲；真实门控仍是该批案件消息已消费完毕，迟到则推迟并告警（[数仓契约 §6](./数仓_PubSub交付契约.md#6-日切门控)）。
+> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 固定窗口只是当前数仓 03:00 批次的消费缓冲；真实门控仍是该批案件消息已消费完毕，迟到则推迟并告警（[数仓契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控)）。
 
 生产 / Pilot 经 `PubSubScheduleConsumer → ScheduledJobRunner` 触发；`local`/`test` 的 `TriggerScanner` 只触发到期与超时扫描，本地日切通过 `POST /mock/daily-roll` 显式触发。`SchedulerEntrypointValidator` 强制生产入口与本地入口不同时启用。
 
@@ -381,7 +380,7 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 
 部署应用时必须注入 `GCP_PUBSUB_PROJECT`、`GCP_SCHEDULER_SUBSCRIPTION` 与服务账号凭证，并设置 `collection.scheduler.enabled=true`。完整键名、热更属性与样例见[附录 A.6](#a6-定时调度)；缺订阅配置、阈值非法或同时启用本地与生产入口时，应用拒绝启动。
 
-**验收边界**：Cloud Scheduler 的成功记录只证明 tick 已发布；必须同时确认应用侧 `collection.schedule.triggered` 按周期增长、`collection.schedule.failed=0`、订阅无持续未确认积压。T5 调度专项用例与证据要求见[测试文档 T5-S](./testing/MOCASA催收系统升级_Phase1_测试文档.md#t5-s-调度通道专项用例)。
+**验收边界**：Cloud Scheduler 的成功记录只证明 tick 已发布；必须同时确认应用侧 `collection.schedule.triggered` 按周期增长、`collection.schedule.failed=0`、订阅无持续未确认积压。调度专项用例与证据要求见[测试文档 T5-S](./testing/MOCASA催收系统升级_Phase1_测试文档.md#t5-s-调度通道专项)。
 
 **产品化边界（非 Phase 1 交付）**：当前生产入口是 GCP 调度订阅。非 GCP 或私有化部署应替换 tick 来源并复用 `ScheduledJobRunner` 与扫描器；不应将业务逻辑迁回调度器。XXL-Job 可作为未来适配器，但不是当前应用依赖。
 
@@ -403,7 +402,7 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
 | `STEP_COMPLETED` | 读 `getNextStep` / 写 `updateStepTriggerTime`, `updatePlanStatus`, `updateCurrentStep` |
 | `REPAYMENT_RECEIVED` | 按 `caseId` 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(REPAID)`；发布条件见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) |
-| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；受控写回 `context_snapshot.caseContext` 的运行态金额与下一期提醒字段（`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`），不变更计划/步骤/模板/渠道决策字段；stage 仍由 dailyRoll 的 `STAGE_CHANGED` 变更；发布条件见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) |
+| `CASE_BALANCE_UPDATED` | 按 case 读并锁活跃计划；受控写回 `context_snapshot.caseContext` 的运行态字段，可写字段全集与必填性以 [引擎 §4.6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#46-部分还款余额更新) 为 SSOT（`totalOutstanding` 必填，`overdueAmount`/`penaltyAmount`/`upcomingAmount`/`nextDueDate`/`dpd`/`collectionStatus` 携带才覆盖）；不变更计划/步骤/模板/渠道决策字段；**`stage` 不可写**，仍由 `STAGE_CHANGED` 变更；发布条件见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) |
 | `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED` |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
 | `planStepDueHandler` / `callbackTimeoutHandler` | 分页读 `findDueSteps` / `findTimeoutSteps`，只发布事件 |
@@ -445,7 +444,7 @@ MySQL 计划状态、Redis Stream 确认和渠道发送不构成单一分布式�
 
 ### 7.1 配置职责与来源
 
-Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；Redis、GCP（接入与调度）与渠道凭证走部署环境的 Secret 或环境变量。**键名与热更属性** → [附录 A](#附录-a生产配置键索引)；**默认值与行为语义** → 各模块正文（如 [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)）。
+Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-common.yml`）+ Spring **`@RefreshScope`** 热更；Redis、GCP（接入与调度）与渠道凭证走部署环境的 Secret 或环境变量。**键名与热更属性** → [附录 A](#附录-a生产配置键索引)；**默认值与行为语义** → 各模块正文（如 [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)）。
 
 | 来源 | 适用 | 说明 |
 |---|---|---|
@@ -457,7 +456,7 @@ Phase 1 运行时参数由 **Nacos YAML**（DataId 如 `intelligent-collection-c
 |---|---|
 | `engine.*` | 引擎运行参数：Consumer 线程池与队列、Cron/日切扫描上限、步骤幂等与回调超时、SPI 执行超时、合规日频控与静默时段 |
 | `collection.*` | 接入与基础设施开关：PubSub 消费、eventbus/idempotency 实现切换、定时扫描间隔、数据迁移双写 |
-| `channel.*` | 渠道凭证与编排参数：API 密钥、endpoint、模板/号段（同 Nacos YAML 运维下发，不入 Git；详见 [渠道开发执行指南 §6](./channel/MOCASA催收系统升级_Phase1_collection-channel开发执行指南.md)） |
+| `channel.*` | 渠道凭证与编排参数：API 密钥、endpoint、模板/号段（同 Nacos YAML 运维下发，不入 Git） |
 
 **写代码绑配置**以 `EngineProperties` / `@ConfigurationProperties` 为准。
 
@@ -482,7 +481,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### 7.3 指标与日志
 
-本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#122-应用入站)）或 DB 业务表（[§6](#6-持久层repository)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §1.6.8](./MOCASA催收系统升级_Phase1_架构设计文档.md#168-可观测性守卫)；告警/Dashboard → 《运维与协作》（待建）。
+本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#122-应用入站)）或 DB 业务表（[§6](#6-持久层与跨存储一致性)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §1.6.6](./MOCASA催收系统升级_Phase1_架构设计文档.md#166-可观测性与人工处置)；告警/Dashboard → 《运维与协作》（待建）。
 
 #### 指标（Metrics）
 
@@ -491,7 +490,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 分类 | 埋点位置 | 指标（实际名） | 类型 |
 |---|---|---|---|
 | 系统 | Actuator | JVM / HTTP / health | 自动装配，免埋点 |
-| 基础设施 | 事件总线 | `collection.event.published`, `collection.event.consumed`, `collection.event.consume.duration` | Counter（type tag）/ Timer |
+| 基础设施 | 事件总线 | `collection.event.published`, `collection.event.consumed`, `collection.event.deduped`（命中 `collection:processed:` 去重而跳过）, `collection.event.consume.duration` | Counter（type tag）/ Timer |
 | 基础设施 | Consumer 线程池 | `executor.*`（`collection.event.consumer` 前缀，由 `ExecutorServiceMetrics` 绑定：active / queued / pool.size / completed） | Gauge |
 | 基础设施 | Stream / PEL | `collection.event.pending`, `collection.event.stream.length` | Gauge（PEL 扫描周期采样） |
 | 基础设施 | DLQ | `collection.event.dlq`（入列，reason tag）、`collection.event.dlq.size` | Counter / Gauge |
@@ -502,7 +501,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 引擎 | `StuckPlanReaper` | `collection.plan.stuck` | Counter |
 | 调度 | `ScheduledJobRunner` / `PubSubScheduleConsumer` | `collection.schedule.triggered`, `collection.schedule.scan.rows`, `collection.schedule.stale.discarded`, `collection.schedule.failed`, `collection.schedule.skipped` | Counter（job tag；`skipped` 另带 reason tag） |
 
-> 引擎侧指标对应架构 §1.6.8 静默路径须可观测；本节指标均为生产最低要求。
+> 引擎侧指标对应架构 §1.6.6 静默路径须可观测；本节指标均为生产最低要求。
 
 #### 调度指标的人工巡检口径
 
@@ -554,6 +553,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | **调度扫描失败** | `collection.schedule.failed` 任意增长 | 调度消息已 ack 不会重投，须人工介入；确认失败原因后可等下一 tick 自愈或手工补发调度消息 |
 | **陈旧消息堆积** | `collection.schedule.stale.discarded` 在稳态（非重启后）持续增长 | 消费跟不上或订阅积压；查 ack deadline、消费者线程与扫描耗时 |
 | **单飞持续跳过** | `collection.schedule.skipped{reason=IN_FLIGHT}` 持续增长 | 单次扫描耗时超过触发周期，须降低批量或优化扫描 SQL |
+| **调度任务名未识别** | `collection.schedule.skipped{reason=UNKNOWN_JOB}` 任意增长 | 恒为 0。增长说明 tick 到了但路由不出去，扫描完全没跑：优先查 Scheduler Job 是否漏配或拼错 `--attributes="job=..."`（**`job` 只认 Pub/Sub attribute，写在 body 里不生效**），再查是否有非预期发布者写入调度主题。此告警与「调度静默」常同时触发，本条给出根因 |
 | **Scheduler Job 失败** | Cloud Scheduler 侧任一 Job 执行失败（运维侧告警，交付项 O7） | 查 Scheduler 服务账号对调度主题的发布权限与主题存在性 |
 | **日切未完成** | 当日 06:00 PHT 前未出现 `dailyRoll` 完成标记（交付项 O8） | 查游标推进速率、`daily-roll-batch-size` 与窗口内的丢弃/跳过计数 |
 
@@ -563,14 +563,13 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 <a id="附录运行配置与环境"></a>
 
-生产部署检索**键名与热更属性**的索引；**默认值与行为语义 SSOT 在各模块正文**（接入 §2.1 / §3.3、调度 §5 等）。热更分类语义见 [§7.2](#72-配置热更新与静态参数)。
+生产部署检索的**配置键、初始值与热更属性 SSOT**；运行行为、边界与参数取值理由仍以各模块正文为准。热更分类语义见 [§7.2](#72-配置热更新与静态参数)。
 
 | 分册 | 内容 |
 |---|---|
-| **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`） |
-| **A.3** | 接入与 PubSub 部署索引（热更属性；行为 SSOT → [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)） |
+| **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`）；**A.2b** 应用侧开关与凭证（`collection.webhook.*` / `collection.ingestion.*` / `collection.compliance.counter` 等） |
+| **A.3** | 接入与 PubSub 部署索引（热更属性；行为 SSOT → [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)） |
 | **A.4** | 迁移与触达（`collection.notification.owner`） |
-| **A.5** | 接入 dedup 键索引（SSOT → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)） |
 | **A.6** | 定时调度（`collection.scheduler.*`、调度 GCP 环境变量） |
 
 > 渠道编排参数见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)。**凭证与连接串不入 Git 仓库**。
@@ -585,7 +584,11 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `engine.consumer.queue_capacity` | `256` | N | Consumer 有界队列容量 |
 | `engine.consumer.scan_limit` | `1000` | Y | Cron / 日切单批扫描上限 |
 | `engine.step.idempotency_ttl_minutes` | `15` | Y-注意 | 步骤幂等基础值；实际 TTL 取与 callback timeout 的较大值 |
-| `engine.step.callback_timeout_minutes` | `60` | Y-注意 | 异步渠道回调等待窗口；默认决定步骤幂等实际 TTL 为 60 分钟 |
+| `engine.step.callback_timeout_minutes` | `10` | Y-注意 | 异步渠道回调等待窗口；超过 `idempotency_ttl_minutes`(15) 时会抬升步骤幂等实际 TTL |
+| `engine.step.max_retry_count` | `3` | Y | `StepResult.retryable=true` 的步骤重试上限 |
+| `engine.step.retry_base_interval_seconds` | `30` | Y | 步骤首次退避间隔 |
+| `engine.step.retry_backoff_factor` | `2` | Y | 步骤重试退避倍数 |
+| `engine.step.retry_max_interval_seconds` | `300` | Y | 步骤重试退避上限 |
 | `collection.eventbus` | `redis` | N | 生产事件总线 |
 | `collection.idempotency` | `redis` | N | 生产步骤幂等 |
 | `collection.redis.stream` | `collection:events` | N | Redis Stream key |
@@ -597,30 +600,64 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `collection.redis.pel-batch-size` | `50` | Y | 单次 PEL 扫描上限 |
 | `collection.redis.max-delivery-count` | `5` | Y | 达上限进入 DLQ |
 | `collection.redis.processed-ttl-hours` | `24` | Y | `collection:processed:{event_id}` 消费去重标记 TTL |
-| `engine.spi.execution-guard-timeout-ms` | `50` | Y-注意 | Guard 硬超时；Redis 客户端命令超时必须更短 |
+| `engine.spi.timeout-enabled` | `true` | N | `false` 时直连调用，仅限本地或单测 |
+| `engine.spi.plan-factory-timeout-ms` | `50` | Y | PlanFactory 硬超时 |
+| `engine.spi.execution-guard-timeout-ms` | `50`；**pilot 覆盖为 `500`** | Y-注意 | Guard 硬超时；Redis 客户端命令超时必须更短。2026-08-25 真拨窗口实测 50ms 在真实网络下稳定 fail-close，步骤被记成 `SKIPPED / COMPLIANCE_BLOCKED` 而外呼根本没发出，故 pilot 抬到 500ms；`timeout-enabled` 保持开启，超时仍按 fail-close 处理 |
+| `engine.spi.step-resolver-timeout-ms` | `50`；**pilot 覆盖为 `500`** | Y | StepResolver 硬超时。同上行原因 |
+| `engine.spi.advancement-policy-timeout-ms` | `10` | Y-注意 | 锁内 AdvancementPolicy 硬超时 |
+| `engine.spi.exhaustion-policy-timeout-ms` | `50` | Y | ExhaustionPolicy 硬超时 |
 | `engine.outbox.enabled` | `true` | N | 关闭即退回"提交后发布"语义，派生事件可能因发布失败而丢失；仅供本地调试 |
 | `engine.outbox.poll-interval-ms` | `2000` | Y | 发件箱兜底重发轮询间隔 |
 | `engine.outbox.grace-seconds` | `30` | Y-注意 | 入箱到可兜底重发的宽限期。过短会把正常事件重发一遍，过长则拉长故障恢复时间；须大于一次提交后发布的最长耗时 |
 | `engine.outbox.batch-size` | `200` | Y | 单轮兜底重发上限 |
 | `engine.outbox.lease-seconds` | `60` | Y-注意 | 多实例认领一条 Outbox 行的短租约；须覆盖一次 Redis publish 的最长合理耗时，实例崩溃后租约到期才允许重新认领 |
+| `engine.outbox.backoff-factor` | `3` | Y | 兜底重发退避倍数 |
+| `engine.outbox.max-backoff-seconds` | `900` | Y | 兜底重发单次退避上限 |
 | `engine.outbox.max-retry-count` | `8` | Y | 超过即置 `FAILED` 转人工（告警信号） |
 | `engine.reaper.enabled` | `true` | N | 停摆巡检开关 |
 | `engine.reaper.interval-ms` | `300000` | Y | 停摆巡检周期 |
 | `engine.reaper.idle-minutes` | `75` | Y-注意 | 计划静默多久才判定停摆；须覆盖 Outbox 默认约 65min 的自动重试窗口，且 Reaper 会排除有活跃 Outbox 的计划 |
-| `engine.compliance.daily_limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限 |
-| `engine.compliance.quiet_hours_start` / `end` | `21:00` / `08:00` | Y | PHT 静默时段 |
+| `engine.reaper.batch-size` | `200` | Y | 单次停摆巡检上限 |
+| `channel.compliance.daily-limit` | 每渠道 `1`，跨渠道合计 `3` | Y | 日频控上限。**2026-08-21 更正键名**：本行曾登记为 `engine.compliance.daily_limit`，但代码只读 `channel.compliance.*`（`ConfigurableExecutionGuard`），按旧键配置不生效 |
+| `channel.compliance.quiet-hours-start` / `-end` | `21:00` / `08:00` | Y | PHT 静默时段。键名更正同上行 |
+| `channel.facade.callback-secret` | 无默认（环境注入 `CHANNEL_FACADE_CALLBACK_SECRET`） | N | Facade 账户级回调验签密钥，**与 `collection.webhook.hmac-secret` 不是同一把**。缺失时 `/webhook/facade-callback` 把每条真实回调判成验签失败回 401，外呼照打但结果全数回不来。调度开启时 `PilotReadinessValidator` 与 `deploy/pilot-run.sh` 均拒启 |
+| `channel.facade.test-callee` | 空 | Y-注意 | **非空即把全部 AI 外呼改投该号码，不再拨打借款人**。演练期用于零真实触达地验证 Facade 契约；转真实触达前必须清空，否则线上表现是"催收全无效果"而非报错。启动日志会由 `PilotReadinessValidator` 列出所有生效的触达测试开关 |
+| `collection.db.clock-drift-threshold-seconds` | `120` | N | 启动时应用 PHT 时钟与 `SELECT NOW()` 的最大容许偏差。超过阈值时 `pilot` 拒启、其余 profile 仅告警；用于拦截会话时区未设为 +08:00（恒差 8 小时）导致的审计列错位 |
+| `engine.decision-log.enabled` / `.version` | `true` / 当前版本号 | N | 决策日志开关与版本标记 |
+| `engine.delivery-audit.hmac-key` / `.content-key-id` | 无默认（环境注入） | N | 触达内容审计的 HMAC 密钥与密钥标识；真值不入仓 |
+| `engine.plan.max-rebuild-count` | `2` | Y | 单案计划重建上限，穷尽策略据此收敛 |
+| `engine.context.history-max-records` | `50` | Y | 快照内保留的历史触达记录条数上限 |
+
+<a id="a2b-应用侧开关与凭证"></a>
+
+#### A.2b 应用侧开关与凭证（2026-08-21 补登）
+
+本组键 Pilot 已在用（见 `application-pilot.yml`），此前未入附录 A，导致照本附录配置 Pilot 会漏配验签与后端切换。
+
+| 参数 Key | 取值 | 热更 | 说明 |
+|---|---|---|---|
+| `collection.webhook.signature-required` | `true`（Java 默认与 pilot 强制；local 经环境变量默认 `false`） | N | 入站回调是否强制 HMAC 验签。`PilotReadinessValidator` 在 pilot 下校验为真，为假即拒启 |
+| `collection.webhook.hmac-secret` | 无默认（`CHANNEL_CALLBACK_HMAC_SECRET` 注入） | N | 回调验签密钥。签名 header 与 canonical 构造以 `WebhookController` 为准 |
+| `collection.case-service` | `ai`（pilot 强制） | N | 案件服务实现选择；决定读新库投影还是旧库 |
+| `collection.compliance.counter` | `memory` / `redis`（pilot 为 `redis`） | N | 频控计数后端。内存实现不跨实例，Pilot 必须为 `redis` |
+| `collection.ingestion.redis-dedup-enabled` | `false`（pilot `true`） | N | 接入去重是否走 Redis；为假时重启即失忆，只能用于本地 |
+| `collection.ingestion.reserved-subscriptions` | 含 `intelligent-collection-cases-v1-sub` 等正式订阅 | N | `IngestionIsolationGuard` 的保留清单，命中即拒启，防止联调消费正式订阅 |
+| `collection.ingestion.fault-injection-enabled` | `false` | N | L4b 故障注入开关；Pilot 与生产必须为假 |
+| `collection.repayment-url-template` | 无默认 | Y | 还款链接模板，参与话术渲染 |
+| `collection.scan.interval-ms` | 本地调度扫描间隔 | Y | 仅 local 使用；Pilot 与生产由 Cloud Scheduler 驱动，不用本项 |
+| `spring.redis.host` / `port` / `password` / `ssl` | 环境注入 | N | Redis 连接参数（区别于 `collection.redis.*` 行为参数）；真值不入仓 |
 
 <a id="a3-接入与-pubsub"></a>
 
 ### A.3 接入与 PubSub
 
-**部署索引**：运维查表写 Nacos/Secret/GCP；**默认值与语义 SSOT** → [数据接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费)（消费参数）、[§3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（dedup）、[§4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)（日切扫描）、[§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离)（白名单）。
+**部署索引**：运维查表写 Nacos/Secret/GCP；**默认值与语义 SSOT** → [数据接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)（消费参数）、[§3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)（dedup）、[§4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)（日切扫描）、[§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离)（白名单）。
 
 **GCP 环境变量**（不入仓；默认值见接入 §2.1）
 
 | 键 | 热更 | 规格 |
 |---|---|---|
-| `GCP_PUBSUB_PROJECT` | N | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费) · [C-P-01](./MOCASA催收系统升级_Phase1_数据接入规格.md#c-p-基础设施与可靠性) |
+| `GCP_PUBSUB_PROJECT` | N | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖) · [C-P-01](./MOCASA催收系统升级_Phase1_数据接入规格.md#c-p-基础设施与可靠性) |
 | `GCP_PUBSUB_SUBSCRIPTION` | N | 同上 |
 | `GOOGLE_APPLICATION_CREDENTIALS` | N | 同上 |
 
@@ -628,7 +665,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 参数 Key | 热更 | 规格 |
 |---|---|---|
-| `collection.ingestion.enabled` | Y | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-订阅与并发消费) |
+| `collection.ingestion.enabled` | Y | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖) |
 | `collection.ingestion.ack-deadline-seconds` | Y | 同上；运维建 Subscription 时 `--ack-deadline` 须与此一致 |
 | `collection.ingestion.max-concurrency` | N | 同上；改值需重启 |
 | `collection.ingestion.loan-id-whitelist` | Y | [接入 §6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离) |
@@ -641,13 +678,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 参数 Key | 取值 | 热更 | 说明 | 规格 |
 |---|---|---|---|---|
-| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
-
-### A.5 接入层 Redis Key 索引
-
-前缀 `collection:ingestion:`，与引擎 `collection:processed:` / `collection:lock:plan:` **禁止混用**；须与旧催收 Redis **物理隔离**。
-
-**键名、TTL、命中处置 SSOT** → [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)（本节仅索引，不重复 TTL 表）。前缀约定见 [§4.2](#42-key-与生命周期规格)。
+| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属。**⚠️ 2026-08-21 核查：尚无实现**——全仓无任何读取点，配置该键不产生行为差异。迁移双写启用前须先补实现，或改由部署侧（旧系统停发）承担切换 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
 
 <a id="a6-定时调度"></a>
 
@@ -695,6 +726,8 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### B.2 生产切换门槛
 
+本清单对应**移除白名单、进入稳态运营（T6 准入）**的门槛，不是 T4 / T5 逐级放量的门槛；放量阶段的可后置项与代偿口径见 [T5 手册 §3.1](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#31-运维交付物与验收证据)。
+
 - Consumer Pool 已接入 Redis Stream 消费路径，具备有界队列、背压和 MDC 透传。
 - Redis SETNX + TTL 幂等已覆盖步骤执行；key 前缀与隔离策略已统一。
 - Redis 原子频控已覆盖单渠道日上限与跨渠道日总上限，Redis 不可用时 fail-close。
@@ -702,23 +735,4 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 - Redis 使用独立实例、AOF、主从、`noeviction`、认证/TLS 与内存告警。
 - Redis 连接、Stream lag、PEL、DLQ、Consumer 线程池、合规拒绝和调度积压均已接入监控告警。
 - [B.1](#b1-上线前容量校准清单)容量数据完成回填，并确认回滚路径可执行。
-- [附录 C](#附录-c生产就绪差集登记)所列差集均已闭合。
-
----
-
-## 附录 C：生产就绪差集登记
-
-> 本表登记实现距离正文生产契约的差集，随代码与部署进展更新；测试层级、用例、执行步骤和结果不属于本文。
-
-| 能力 | 生产目标 | 当前实现 | 未闭合差集 | 阻断级别 | 闭合标准 |
-|---|---|---|---|---|---|
-| 事件消费 | 有界 Consumer Pool 并发消费，成功后 XACK，PEL 可恢复 | 已有有界 Consumer Pool、`CallerRunsPolicy` 背压、MDC 透传、Consumer Group / PEL 恢复 | Pilot 并发、队列和积压阈值尚待压测定版 | 高 | 完成容量压测并固化运行参数与告警阈值 |
-| DLQ | Redis 隔离 + MySQL 持久化 + 受控重放 | PEL 超限/不可恢复消息双写 Redis 与 `t_event_dlq`；`/ops/dlq/redrive` 以显式 eventId、必填原因、3 次上限和触达窗口门控执行重放，鉴权复用 `/ops/**` 登录拦截；状态机与门控已单测覆盖 | 真实 MySQL/Redis 联调与告警路由待 T5 环境验收 | 高 | R5/R6 演练证据与告警到达记录 |
-| 步骤幂等 | Redis `SET NX EX`，跨实例共享 | `RedisIdempotencyService` 已实现，key 统一为 `collection:lock:plan:` / `collection:idempotency:channel:` | Pilot Redis 环境与运维检索口径待验收 | 高 | 确认物理隔离、TTL 与检索口径 |
-| 事件消费去重 | 同一 `eventId` 成功处理后不再重复执行 | 消费入口按 `collection:processed:{event_id}` 判重后 ACK，成功处理后写 24h 标记；失败不写标记，仍留 PEL 重投；Redis 异常降级为不去重。四条路径已单测覆盖 | 真实 Redis 上的重投与 DLQ 重放行为待 Pilot 验证 | 高 | PEL 重投与同一 eventId 重放各一次，确认只执行一次业务 |
-| 合规频控 | Redis Lua 原子计数，单渠道与跨渠道日上限 | Pilot 使用 Redis Lua 双计数；local/test 保留内存实现；键名、PHT 过期时间与断连 fail-close 已单测覆盖 | 跨实例上限与真实 Redis 断连行为待 T5 环境验证 | 高 | T5-R8 证据及告警到达记录 |
-| 日切去重 | Redis 去重且与旧系统隔离 | `RedisDailyRollDeduplicator` 已使用 `collection:ingestion:` 前缀和 2 天 TTL | 日切 Redis 与生产配置仍待 Pilot 验收 | 高 | 确认物理隔离、配置与运维检索口径 |
-| 接入去重 | 消息重投、乱序水位与周期内重复入催跨重启/跨实例一致 | `RedisIngestionDedupStore` 承载三类 key（`dedup:msg` 7d、`last-seen` 90d Lua 水位、`ingested` 90d），内存实现仅留本地与 CI | 真实 Redis 上的重启连续性待 Pilot 验收 | 高 | 重启后重复消息仍被拦截、结清后可再次入案 |
-| 调度 | Cloud Scheduler → Pub/Sub → 应用订阅的 Trigger-to-Event | `PubSubScheduleConsumer` + `ScheduledJobRunner` 已实现：单订阅按 `job` 属性路由、按 `publishTime` 丢弃陈旧消息、一律 ack 不重投、按任务单飞、五个 `collection.schedule.*` 指标；`SchedulerEntrypointValidator` 强制配置完整性、阈值 ≤ 周期与调度入口唯一；XXL 运行时（类、依赖、配置、环境变量）已移除；全量 `dailyRoll` 仍按 Redis 游标 keyset 单页扫描并记录当日完成状态。27 例单测覆盖路由、陈旧丢弃、重复投递、并发单飞与入口唯一性 | 调度主题 / 专用订阅 / 双向 IAM / 四条 Cloud Scheduler Job / ack deadline 与消息保留 / Scheduler 失败与 06:00 未完成告警均属运维 GCP 交付（[§5.5](#55-运维--gcp-交付清单) O1–O8） | 高 | O1–O8 交付完成，且 Pilot 上观测到 `collection.schedule.triggered` 按周期增长、重启后 `stale.discarded` 出现一次尖峰后归零 |
-| 还款分流与金额 | 仅全额结清取消；部分还款刷新后续渲染所需运行态 | 已按 `fullRepayTime` / `STATUS=4` 分流；部分还款受控更新活跃计划快照的金额与下一期提醒字段；两类分支已单测覆盖 | 缺真实 PubSub 回归及金额字段质量验收 | 高 | 以真实消息覆盖缺失/负值/重复/终态、部分还款与全额结清 |
-| 可观测性 | Stream/PEL/DLQ、线程池、合规与调度均有指标和告警 | `/actuator/prometheus` 暴露 §7.3 全部指标（事件、PEL、Stream 长度、DLQ、线程池、跳过原因、SPI 超时），消费入口统一写 MDC | 告警规则、通知路由与 Dashboard 依赖 Prometheus/Alertmanager 部署 | 高（2026-08-05 决定：由阻断降级，可与渠道验证、切量并行） | 代偿期内每日人工巡检日志并手工抓取 `/actuator/prometheus` 记录 PEL/DLQ/跳过原因；最迟 T6 受控切量前完成抓取、告警路由与 Dashboard，并留存告警到达证据 |
+- [生产就绪的当前状态与闭合证据](../HANDOFF.md#d1-生产就绪差集登记)均已按其阻断级别闭合。

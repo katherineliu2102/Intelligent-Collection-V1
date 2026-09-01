@@ -19,20 +19,21 @@ public class ChannelAutoConfiguration {
                 .build();
     }
 
-    /** Facade 专用客户端。{@code channel.facade.insecure-tls=true} 时信任自签名，且不改 JVM 全局 SSL。 */
+    /**
+     * Facade 专用客户端。仅 local/test 可启用 {@code channel.facade.insecure-tls}，以支持供应商联调环境的自签名证书； 该设置不影响
+     * JVM 全局 TLS。
+     */
     @Bean
     public RestTemplate facadeRestTemplate(ChannelProperties properties) {
         ChannelProperties.Facade facade = properties.getFacade();
         int connectMs = Math.max(1, facade.getConnectTimeoutSeconds()) * 1000;
         int readMs = Math.max(1, facade.getReadTimeoutSeconds()) * 1000;
+        SimpleClientHttpRequestFactory factory;
         if (facade.isInsecureTls()) {
-            InsecureSimpleClientHttpRequestFactory factory =
-                    new InsecureSimpleClientHttpRequestFactory();
-            factory.setConnectTimeout(connectMs);
-            factory.setReadTimeout(readMs);
-            return new RestTemplate(factory);
+            factory = new InsecureSimpleClientHttpRequestFactory();
+        } else {
+            factory = new SimpleClientHttpRequestFactory();
         }
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectMs);
         factory.setReadTimeout(readMs);
         return new RestTemplate(factory);

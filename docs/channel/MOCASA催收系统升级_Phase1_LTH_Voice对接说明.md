@@ -1,7 +1,4 @@
-# MOCASA Phase 1 — AI Call 对接说明（已被取代）
-
-> ⚠️ **状态：已被取代（2026-08-17）**。机器轨 AI 外呼供应商已定为 **Valubo Facade**，`AI_CALL` 渠道 SSOT 迁至 [AI Call（Valubo Facade）接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md)。
-> 本文仅留作历史参考；其中「真人接通 = `was_ai_connected`」「disposition 仅 ANSWERED/NO_ANSWER/BUSY」等结论已被生产实测推翻，勿据此实现。LTH 现仅承接人工轨例外外呼。
+# MOCASA Phase 1 — LTH Voice 现网参考
 
 > **版本**: v1.1  
 > **日期**: 2026-07-02  
@@ -9,7 +6,7 @@
 > **模块**: `collection-channel`  
 > **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5 / §7](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[架构 §1.1](../MOCASA催收系统升级_Phase1_架构设计文档.md#11-架构总览)
 
-> **边界**：本系统机器轨语音渠道为 **`AI_CALL` 仅此一种**。**TTS / 人工外呼由 LTH 现网独立编排，与本系统无 plan step、无 Adapter、无 Webhook 交互**。
+> **边界**：本文件保留 LTH 人工轨与现网生命周期参考。Phase 1 机器轨 `AI_CALL` 使用 Facade，出站与回调以 [Facade 接入说明](./MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) 和 [回调入站交接](./MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md) 为准。LTH 不生成本系统 plan step、Adapter 或 Webhook。
 
 ---
 
@@ -29,7 +26,7 @@
 **异步渠道**：
 
 ```
-dispatch 成功 → plan STEP_EXECUTING + CALLBACK_TIMEOUT(默认60min)
+dispatch 成功 → plan STEP_EXECUTING + CALLBACK_TIMEOUT(默认10min)
   → AI Call 供应商完成 → POST /webhook/.../voice
   → CHANNEL_CALLBACK → step COMPLETED → STEP_COMPLETED
 ```

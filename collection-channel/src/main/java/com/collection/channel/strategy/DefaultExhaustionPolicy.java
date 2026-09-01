@@ -56,7 +56,7 @@ public class DefaultExhaustionPolicy implements ExhaustionPolicy {
             return ExhaustionResult.rebuild("default-rebuild", reason);
         }
 
-        Stage next = nextStage(stage);
+        Stage next = stage == null ? null : stage.next();
         if (next != null) {
             log.info("[DefaultExhaustionPolicy] {} rebuild exhausted, ESCALATE → {}", key, next);
             return ExhaustionResult.escalate(next, "rebuild limit reached, escalate from " + stage);
@@ -64,24 +64,5 @@ public class DefaultExhaustionPolicy implements ExhaustionPolicy {
 
         log.info("[DefaultExhaustionPolicy] {} fully exhausted (S4 or no escalation path)", key);
         return ExhaustionResult.complete("max rebuild & escalation exhausted at " + stage);
-    }
-
-    private static Stage nextStage(Stage current) {
-        if (current == null) {
-            return null;
-        }
-        switch (current) {
-            case S0:
-                return Stage.S1;
-            case S1:
-                return Stage.S2;
-            case S2:
-                return Stage.S3;
-            case S3:
-                return Stage.S4;
-            case S4:
-            default:
-                return null;
-        }
     }
 }

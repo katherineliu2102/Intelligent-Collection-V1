@@ -18,7 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 发件箱兜底发布器。对应核心引擎规格 §7.4。
+ * 发件箱兜底发布器。对应核心引擎规格 §7.2。
  *
  * <p>这不是业务 Cron，而是引擎内部的可靠性守护进程：不经 Cloud Scheduler，调度链路本身故障时也能推进， 与 {@code
  * RedisStreamEventBus.consume()} 同一类角色，因此不受 {@code SchedulerEntrypointValidator} 的单入口约束。

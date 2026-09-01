@@ -1,19 +1,40 @@
 # =====================================================================
-# L4b 联调：追加到 Nacos Data ID `intelligent-collection-local.yml`
-# 用途：仅覆盖 application-local.yml（jar 内）未提供 / 注释掉的三项 L4b 参数。
-#   1) collection.case-service=ai             —— 运行态仅读 t_ai_collection，yml 无此键
-#   2) collection.ingestion.loan-id-whitelist —— 联调白名单，yml 中被注释
-#   3) 新契约 dataType=caseEvent|repaymentEvent，嵌套 borrower/device；不再配置 field-map
-# enabled/project-id/subscription 亦一并显式写死，避免依赖 env（credentials 路径仍走 env）。
-# 说明：Spring Cloud Nacos 按 key 路径与 jar 内 application-local.yml 合并，本块不覆盖
+# L4b 联调：深合并到 Nacos Data ID `intelligent-collection-local.yml`
+# 用途：仅覆盖 application-local.yml（jar 内）未提供 / 注释掉的 L4b 参数 —— 只有这两个键真正生效：
+#   1) collection.case-service=ai             —— 运行态仅读 t_ai_collection，jar 内无此键
+#   2) collection.ingestion.loan-id-whitelist —— 联调白名单，jar 内被注释
+#   3) channel.* 三个供应商密钥置空           —— 零真实触达，jar 内无这三个键
+# ⚠ enabled / project-id / subscription 在 jar 内写成 ${VAR:default}，优先级高于本文件，
+#   写在这里是**空转**的；实际取值由 scripts/test/l4b-env.local.sh 的环境变量决定。
+#   保留它们只为记录本轮意图，改订阅请改环境变量 GCP_PUBSUB_SUBSCRIPTION。
+# 说明：发布工具按 key 路径与现网 Nacos 配置深合并；本块不覆盖
 #       plan-templates / scripts / compliance 等其它 collection.* 子键。
-# 无密钥；密钥（channel.notification.app-key / channel.sendgrid.api-key）另由 secrets 脚本下发。
+#
+# 订阅口径（2026-08-20 自助开通，见 scripts/test/provision-l4-pubsub.py）：
+#   L4a 合成源 → intelligent-collection-cases-test1-sub（topic intelligent-collection-cases-test1）
+#   L4b 真实源 → intelligent-collection-cases-v1-l4b-sub（挂正式 topic，扇出，不影响 -v1-sub）
+#   两者切换只改下面的 subscription 一行；合成消息**只能**发往 test1 topic。
+#
+# 零真实触达：jar 内 application-local.yml 是 Level A 口径（fallback-to-mock=false + 真密钥走 Nacos），
+# 本轮 T2/T3 不验真实送达，因此把三个供应商密钥置空并回落 MockChannelGateway
+# （DELIVERED + mock- 前缀 providerMsgId），链路照跑但不外发。
+# ⚠ 配置优先级（2026-08-21 实测纠正）：本文件经 spring.config.import 引入，优先级低于 profile 专属的
+#   application-local.yml，也低于系统环境变量。`channel.fallback-to-mock` 在 jar 内写死为 false，
+#   **不能**从这里打开，必须 export CHANNEL_FALLBACK_TO_MOCK=true（见 scripts/test/l4b-env.local.example.sh）。
+#   三个供应商密钥 jar 内不存在，所以这里的置空有效。
+# ⚠ 该 Data ID 与编排同事共用：改动前须同步，验真实送达时用 deploy/nacos/backup-*.yml 整份恢复。
 # =====================================================================
 collection:
   case-service: ai
   ingestion:
     enabled: true
     project-id: fintech-all
-    # L4b 联调指向测试订阅（见 L4b 交接清单）；Pilot/生产改 intelligent-collection-cases-v1-sub
-    subscription: intelligent-collection-cases-test1-sub
+    subscription: intelligent-collection-cases-v1-l4b-sub
     loan-id-whitelist: [99000000, 99000001, 99000002, 99000003, 99000004, 99000005]
+channel:
+  sendgrid:
+    api-key: ""
+  notification:
+    app-key: ""
+  facade:
+    api-key: ""

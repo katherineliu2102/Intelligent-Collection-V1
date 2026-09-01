@@ -14,7 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * 派生事件入箱。对应核心引擎规格 §7.4。
+ * 派生事件入箱。对应核心引擎规格 §7.2。
  *
  * <p>状态迁移提交后才发布事件，这一点本身是对的（消费者不能读到未提交状态）。 问题在于发布失败之后：原事件重投时步骤已是终态， {@code prepareStepDue} / {@code
  * recordTerminal} 一律按幂等 no-op 返回，派生事件不会被重新推导，计划就此静默停摆。

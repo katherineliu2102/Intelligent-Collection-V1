@@ -42,7 +42,7 @@ public class IngestionService {
      * ContextSnapshot，<b>运行时不读旧库 t_collection</b>。
      *
      * @param snapshotFields key 用 {@link CollectionEvent} 快照常量（DPD/PRODUCT/TOTAL_OUTSTANDING/
-     *     PENALTY_AMOUNT/DUE_DATE/FULL_REPAY_TIME/NAME/PHONE/EMAIL/JPUSH_TOKEN）；缺失字段做 null 防御。
+     *     PENALTY_AMOUNT/UPCOMING_AMOUNT/NEXT_DUE_DATE/NAME/PHONE/EMAIL/JPUSH_TOKEN）；可选提醒和联系字段缺失时不阻断。
      */
     public void ingestCase(
             Long caseId, Long userId, Stage stage, Map<String, Object> snapshotFields) {
@@ -119,8 +119,7 @@ public class IngestionService {
         return fields.get(CollectionEvent.DPD) == null
                 || fields.get(CollectionEvent.PRODUCT) == null
                 || fields.get(CollectionEvent.TOTAL_OUTSTANDING) == null
-                || fields.get(CollectionEvent.PENALTY_AMOUNT) == null
-                || fields.get(CollectionEvent.DUE_DATE) == null;
+                || fields.get(CollectionEvent.PENALTY_AMOUNT) == null;
     }
 
     private void requireFinancialFields(Long caseId, Map<String, Object> fields) {

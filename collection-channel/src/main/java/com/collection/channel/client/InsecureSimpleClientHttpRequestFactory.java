@@ -11,7 +11,11 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
-/** 仅用于 Facade 联调：信任对方自签名证书，且不改 JVM 全局默认 SSL。 生产必须使用校验完整的 {@code RestTemplate}。 */
+/**
+ * 仅用于 local/test 的 Facade 自签名证书联调，不修改 JVM 全局 TLS 默认值。
+ *
+ * <p>生产环境必须保持 {@code channel.facade.insecure-tls=false}，并使用受信任证书或专用 TrustStore。
+ */
 public final class InsecureSimpleClientHttpRequestFactory extends SimpleClientHttpRequestFactory {
 
     private final SSLSocketFactory socketFactory;
@@ -37,9 +41,9 @@ public final class InsecureSimpleClientHttpRequestFactory extends SimpleClientHt
                     };
             SSLContext context = SSLContext.getInstance("TLS");
             context.init(null, trustAll, new SecureRandom());
-            this.socketFactory = context.getSocketFactory();
+            socketFactory = context.getSocketFactory();
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to init insecure TLS factory", e);
+            throw new IllegalStateException("Failed to initialize local Facade TLS client", e);
         }
     }
 

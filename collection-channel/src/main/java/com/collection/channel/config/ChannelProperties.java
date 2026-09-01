@@ -78,29 +78,62 @@ public class ChannelProperties {
     }
 
     /**
-     * Valubo Facade AI 外呼。密钥走环境变量 {@code FACADE_API_KEY}，勿写入 Git。
+     * Valubo Facade AI 外呼 L1 联调配置。API Key 仅由 Nacos 或部署 Secret 注入，禁止写入仓库。
      *
-     * <p>{@code insecureTls=true} 仅用于对方自签名证书的联调环境。
+     * <p>{@code insecureTls=true} 仅用于 local/test 下对方的自签名证书；Pilot / production 必须使用受信任证书或专用
+     * TrustStore。
      */
     @Data
     public static class Facade {
         private String baseUrl = "";
         private String apiKey = "";
-        /** true：信任自签名（仅 local/test）。生产必须 false。 */
         private boolean insecureTls = false;
-
         private String productType = "Quick Loan";
         private String currency = "PHP";
         private String timezone = "Asia/Manila";
         private String windowStart = "08:00";
         private String windowEnd = "21:00";
-        /** 渠道冒烟默认被叫，E.164 或 63 开头均可。 */
-        private String testCallee = "+639451373897";
-        /** Facade 回调 HMAC（手册 §11.3）。与 collection.webhook.hmac-secret 不是同一把。 */
+        private String testCallee = "";
+        /** Facade 入站回调验签用的 HMAC（手册 §11.3）。与 collection.webhook.hmac-secret 不是同一把。 */
         private String callbackSecret = "";
 
         private int connectTimeoutSeconds = 5;
         private int readTimeoutSeconds = 30;
+
+        private BatchAggregation batchAggregation = new BatchAggregation();
+    }
+
+    /**
+     * AI_CALL 波次聚合：把同一触达槽的多个到期步骤合成一个 Facade 批次，使并发资源按批分配。
+     *
+     * <p>案件先缓冲在我方 Redis，直到起批那一刻才 upload，故起批前的取消（还款）无需 Facade 介入。 起批后无法撤单，与一案一批时相同；**禁止**用批级 cancel
+     * 代偿，那会停掉同批其他借款人的电话。
+     */
+    @Data
+    public static class BatchAggregation {
+        /** 关闭时回到一案一批（create → upload 1 → start），行为与聚合上线前完全一致。 */
+        private boolean enabled = false;
+        /** 最后一案入批后静默这么久即起批。 */
+        private int silenceSeconds = 15;
+        /** 从首案入批起的最长等待，防止零星到期的步骤被无限期攒着。 */
+        private int maxWaitSeconds = 120;
+        /** 单批案件上限；Facade 单次上传上限为 500。满则立即另开一批。 */
+        private int maxCasesPerBatch = 500;
+        /** flusher 轮询间隔。 */
+        private long pollIntervalMs = 5000;
+
+        /**
+         * 回调超时按「批内案数 ÷ 并发 × 单通时长 + 缓冲」估算，避免队尾还没拨就被超时哨兵判成 FAILED。 Facade
+         * 未给出每批并发的确切值前，这三个参数是保守估计，实测后再调。
+         */
+        private int assumedConcurrency = 5;
+
+        private int assumedCallSeconds = 90;
+        private int timeoutBufferMinutes = 15;
+        /** 下界与一案一批时的引擎默认一致，避免小批次反而比以前更早超时。 */
+        private int minTimeoutMinutes = 30;
+
+        private int maxTimeoutMinutes = 120;
     }
 
     /**
@@ -120,10 +153,27 @@ public class ChannelProperties {
         private String appKey = "";
         /** SMS 固定内容类型，对应后台路由 contentType。 */
         private String smsContentType = "collection";
-        /** true → SMS 走免签名测试端点 /v1/sms/testSend（联调用，appKey 可空）。 */
+        /**
+         * true → SMS 走免签名测试端点 /v1/sms/testSend（联调用，appKey 可空）。
+         *
+         * <p><b>这不是投递隔离开关。</b>2026-08-24 实测该端点返回的 {@code data.channel} 为 CreativeBlue / QHSms
+         * 等真实运营商通道，通知中心也不存在 Virtual 账号（显式指定即报 {@code no valid account}）。 Adapter 不替换手机号，payload
+         * 里始终是真实号码——开着它，短信照样真实送达。 要做到不触达真人，用 {@code smsTestRecipient}（那个才是真的改投目标，对照 PUSH 的 {@code
+         * pushTestToken} 与 AI_CALL 的 {@code testCallee}）。
+         */
         private boolean smsTestMode = false;
         /** 测试端点可选指定的通道账号名（accountName），空=默认测试路由。 */
         private String smsTestAccountName = "";
+        /**
+         * 自持号码隔离开关：非空时所有 SMS 强制改投该号码，不再发给借款人。
+         *
+         * <p>补 {@code smsTestMode} 补不了的那一半。通知中心没有 sandbox（无 Virtual 账号，测试端点仍走真实运营商）， 而 T3o
+         * 的触达对象要求全部是团队自持号码；Pilot 案件来自数仓真实数据，号码是真实借款人的， 靠"上游名单里放测试号"在真实案件上做不到。故与 PUSH 的 {@code
+         * pushTestToken}、AI_CALL 的 {@code testCallee} 对齐，在 Adapter 出口处改投。
+         *
+         * <p>生产必须留空。启动日志 {@code [PilotReadiness]} 段会把生效中的列出来。
+         */
+        private String smsTestRecipient = "";
         /**
          * true → App Push 走同步端点 /v1/app_notification/sync/send（联调，返回 requestSuccess/requestId，
          * 可见极光真实受理结果）；false → 异步 /v1/app_notification/send（生产，入队 code=0 即受理）。 注意：Push
@@ -163,10 +213,35 @@ public class ChannelProperties {
         private String fromEmail = "";
         private String fromName = "MOCASA Collections";
         private int unsubscribeGroupId = 0;
-        /** scriptSlot → SendGrid Dynamic Template ID（d-xxx）；见 Email 模板清单文档。未命中则发信失败，无兜底。 */
+        /**
+         * @deprecated 不再使用。scriptSlot → d-xxx 见 {@code
+         *     EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS}。
+         */
         private Map<String, String> templates = new HashMap<>();
         /** 默认 https://api.sendgrid.com/v3/mail/send；单测可指向 WireMock。 */
         private String apiUrl = "https://api.sendgrid.com/v3/mail/send";
+        /**
+         * 自持邮箱隔离开关：非空时所有 Email 强制改投该地址，不再发给借款人。
+         *
+         * <p>理由同 {@code channel.notification.sms-test-recipient}：EMAIL 此前是四个渠道里唯一 既无 sandbox
+         * 也无改投出口的， T3o 的「触达只发自持地址」在它上面无法成立。生产必须留空。
+         */
+        private String testRecipient = "";
+
+        /**
+         * Signed Event Webhook 的验签公钥：SendGrid 控制台给出的 base64 X.509 SubjectPublicKeyInfo（EC P-256）。
+         *
+         * <p>留空则 {@code /webhook/sendgrid} 在要求验签时一律拒收——端点公网可达，无公钥时无法区分 供应商事件与伪造事件，放行等于让任何人改写
+         * timeline 与抑制名单。
+         */
+        private String eventWebhookPublicKey = "";
+
+        /**
+         * 事件时间戳容差（秒），0 表示不校验。
+         *
+         * <p>验签只能证明报文出自 SendGrid，不能证明它是新的：截获过的合法报文可无限重放。 默认 600s 兼顾供应商重试与两端时钟漂移。
+         */
+        private long eventWebhookToleranceSeconds = 600;
     }
 
     @Data
@@ -186,7 +261,6 @@ public class ChannelProperties {
             limits.put("SMS", 1);
             limits.put("PUSH", 1);
             limits.put("EMAIL", 1);
-            // S1–S4a：上午主呼 + 下午补呼；S4b 由 PlanFactory 只生成 1 个 AI step。
             limits.put("AI_CALL", 2);
             return limits;
         }
@@ -228,13 +302,18 @@ public class ChannelProperties {
         private long templateId = 0;
     }
 
-    /** 完整 Voice 回调 URL：baseUrl + /lth/voice */
-    public String voiceCallbackUrl() {
+    /**
+     * 下发给异步渠道供应商的完整回调 URL：{@code baseUrl + /channel-callback}。
+     *
+     * <p>路径必须与应用唯一的入站端点一致。本方法此前拼 {@code /lth/voice}（LTH 供应商时代的遗留），而该路径从未有 Controller，供应商按下发地址回调只会拿到
+     * 404；系统已确定只对接 Facade，故 2026-08-21 统一指向 {@code /channel-callback} 并去掉供应商专有命名。
+     */
+    public String callbackUrl() {
         String base = callback.getBaseUrl();
         if (base == null || base.isEmpty()) {
             return "";
         }
-        return base.endsWith("/") ? base + "lth/voice" : base + "/lth/voice";
+        return base.endsWith("/") ? base + "channel-callback" : base + "/channel-callback";
     }
 
     public boolean isSendGridConfigured() {

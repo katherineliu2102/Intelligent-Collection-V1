@@ -1,11 +1,14 @@
 package com.collection.ingestion.pubsub;
 
 import com.alibaba.fastjson.JSONObject;
+import com.collection.common.event.CollectionEvent;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
 import com.collection.common.repository.CaseProjectionRepository;
 import com.collection.common.repository.CaseProjectionRepository.Outcome;
+import com.collection.common.repository.MissingCaseBaselineException;
 import com.collection.ingestion.IngestionService;
+import com.collection.ingestion.metrics.IngestionMetrics;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,10 +44,12 @@ public class AiCaseIngestionProcessor {
     @Resource private IngestionService ingestionService;
     @Resource private IngestionDedupStore dedup;
     @Resource private IngestionFaultInjector faultInjector;
+    @Resource private IngestionMetrics metrics;
 
     public void handleCaseEvent(JSONObject json, String rawPayload) {
         String eventId = requireEventId(json, MESSAGE_TYPE_CASE);
         if (dedup.isMessageProcessed(eventId)) {
+            metrics.deduped(MESSAGE_TYPE_CASE);
             return;
         }
         String eventType = json.getString("eventType");
@@ -54,6 +59,7 @@ public class AiCaseIngestionProcessor {
         }
         eventType = EVENT_CASE_INGESTED;
         CasePayloadMapper.AiSnapshot snapshot = mapper.mapAiSnapshot(json);
+        recordDueDateSource(json, snapshot);
         // L4b-7：在投影落库之前注入瞬态失败，使重投走完整的收件箱补发路径（默认关闭，仅白名单案可命中）
         faultInjector.failIfArmed(snapshot.caseId);
         CaseProjection projection = assembler.assemble(json, snapshot);
@@ -68,35 +74,44 @@ public class AiCaseIngestionProcessor {
                                 firstInCycle,
                                 projection));
         if (outcome == Outcome.APPLIED_WITHOUT_EVENT) {
-            confirmProcessed(eventId, snapshot);
+            dedup.markMessageProcessed(eventId);
             return;
         }
         if (!shouldPublish(outcome, eventId, snapshot.caseId)) {
             return;
         }
+        // L4b-11：投影已提交、领域事件未发出时注入失败，使重投命中 PENDING_PUBLISH 只补发事件的路径
+        faultInjector.failAfterProjectionIfArmed(snapshot.caseId);
         ingestionService.ingestCase(
                 snapshot.caseId, snapshot.userId, snapshot.stage, snapshot.snapshotFields);
         dedup.markIngested(snapshot.caseId);
-        confirmPublished(eventId, snapshot);
+        confirmPublished(eventId);
     }
 
     public void handleRepaymentEvent(JSONObject json, String rawPayload) {
         String eventId = requireEventId(json, MESSAGE_TYPE_REPAYMENT);
         if (dedup.isMessageProcessed(eventId)) {
+            metrics.deduped(MESSAGE_TYPE_REPAYMENT);
             return;
         }
         CasePayloadMapper.RepaymentDelta delta = mapper.mapRepaymentDelta(json);
         boolean fullCleared = delta.fullCleared;
         CaseProjection projection = assembler.assembleRepaymentDelta(delta);
-        Outcome outcome =
-                projectionRepository.applyRepaymentDelta(
-                        command(
-                                eventId,
-                                MESSAGE_TYPE_REPAYMENT,
-                                EVENT_REPAYMENT,
-                                rawPayload,
-                                true,
-                                projection));
+        Outcome outcome;
+        try {
+            outcome =
+                    projectionRepository.applyRepaymentDelta(
+                            command(
+                                    eventId,
+                                    MESSAGE_TYPE_REPAYMENT,
+                                    EVENT_REPAYMENT,
+                                    rawPayload,
+                                    true,
+                                    projection));
+        } catch (MissingCaseBaselineException e) {
+            // §3.3：缺基线不是瞬态失败，重投不会补出基线，必须 ack + 告警而非 nack 死循环
+            throw new PoisonMessageException(e.getMessage());
+        }
         if (!shouldPublish(outcome, eventId, delta.caseId)) {
             return;
         }
@@ -115,14 +130,22 @@ public class AiCaseIngestionProcessor {
                     projection.getNextDueDate(),
                     projection.getCollectionStatus());
         }
-        confirmPublished(
-                eventId,
-                new CasePayloadMapper.AiSnapshot(
-                        delta.caseId,
-                        delta.userId,
-                        null,
-                        delta.fields.stage,
-                        java.util.Collections.emptyMap()));
+        confirmPublished(eventId);
+    }
+
+    /**
+     * 记录计划排期锚点的来源。dayBlocks 靠 {@code dueDate + dpdDay} 换算日历日，缺锚点则一个槽位都排不出来， 表现为案件入库正常但静默没有任何触达 ——
+     * 2026-08-24 T3o 演练即因此 38 案全量建不出计划。
+     */
+    private void recordDueDateSource(JSONObject json, CasePayloadMapper.AiSnapshot snapshot) {
+        if (!snapshot.snapshotFields.containsKey(CollectionEvent.DUE_DATE)) {
+            metrics.dueDateSource("ABSENT");
+            log.warn(
+                    "[Ingestion] caseId={} 无 dueDate 且无法反推（缺 dpd 或 occurredAt），该案排不出任何触达槽位",
+                    snapshot.caseId);
+            return;
+        }
+        metrics.dueDateSource(json.containsKey(CollectionEvent.DUE_DATE) ? "UPSTREAM" : "DERIVED");
     }
 
     private boolean shouldPublish(Outcome outcome, String eventId, Long caseId) {
@@ -133,12 +156,8 @@ public class AiCaseIngestionProcessor {
         return false;
     }
 
-    private void confirmPublished(String eventId, CasePayloadMapper.AiSnapshot snapshot) {
+    private void confirmPublished(String eventId) {
         projectionRepository.markEventPublished(eventId);
-        confirmProcessed(eventId, snapshot);
-    }
-
-    private void confirmProcessed(String eventId, CasePayloadMapper.AiSnapshot snapshot) {
         dedup.markMessageProcessed(eventId);
     }
 

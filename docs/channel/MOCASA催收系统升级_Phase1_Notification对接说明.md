@@ -1,11 +1,10 @@
 # MOCASA Phase 1 — 通知中心对接说明（SMS + App Push）
 
-> **版本**: v1.2  
-> **日期**: 2026-08-18  
-> **v1.2**：token 上游改为 `caseEvent.device.pushToken` → 内部 `jpushToken`；SMS `{amount}` 按 Stage 分流。  
+> **版本**: v1.1  
+> **日期**: 2026-06-11  
 > **范围**: 仅覆盖菲律宾市场  
 > **模块**: `collection-channel`  
-> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[notification-send-api.md](./reference/notification-send-api.md)、[字段透传说明](./MOCASA催收系统升级_Phase1_ContextSnapshot字段透传说明.md)
+> **关联文档**: [collection-channel 总规格](./MOCASA催收系统升级_Phase1_collection-channel总规格.md)、[渠道编排规格 §3.5](./MOCASA催收系统升级_Phase1_渠道编排规格.md#35-phase-1-实现范围)、[notification-send-api.md](./reference/notification-send-api.md)、[LTH Voice](./MOCASA催收系统升级_Phase1_LTH_Voice对接说明.md)
 
 ---
 
@@ -186,7 +185,7 @@ SMS 为 **同步渠道**：`ChannelGateway.dispatch` 成功 → `STEP_COMPLETED`
 
 | 字段                              | 来源                             | 说明                                     |
 | ------------------------------- | ------------------------------ | -------------------------------------- |
-| `userProfile.device.jpushToken` | **`caseEvent.device.pushToken`** → ingestion 改名写入快照 | **JPush Registration ID**（非 FCM token）；空则 Push→SMS |
+| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion → 快照（2026-07 确认） | **JPush Registration ID**（非 FCM token） |
 
 
 `StepResolver` 将 `jpushToken` 填入 `StepCommand.targetAddress`。
@@ -322,7 +321,7 @@ collection-channel/
 | `LthSmsAdapter`                      | `NotificationSmsAdapter`                             |
 | `FcmPushAdapter` + `channel.fcm.*`   | `NotificationPushAdapter` + `channel.notification.*` |
 | `SmsDispatchAdapter` / QH/Hiway/BORI | **删除**，路由由通知中心负责                                     |
-| `ChannelProperties.lth.sms` / `lth.voice` | 废弃；外呼见 `channel.facade.voice.*` |
+| `ChannelProperties.lth.sms`          | 废弃；AI_CALL 使用 `channel.facade.*`，LTH 为系统外人工轨 |
 
 
 ### 4.5 幂等
@@ -408,17 +407,17 @@ POST {base-url}/v1/sms/send
 | 快照 | StepCommand | API 字段 |
 |------|-------------|----------|
 | `basic.primaryPhone` | `targetAddress` | `mobile` |
-| Resolver 渲染 | `metadata.sms_body` | `content`（S0 `{amount}`=`upcomingAmount`；S1+=逾期总额） |
+| Resolver 渲染 | `metadata.sms_body` | `content` |
 | — | — | `contentType=collection` |
 
 ### 6.2 Push
 
 | 快照字段 | 上游来源 | StepCommand | API 字段 |
 |----------|----------|-------------|----------|
-| `userProfile.device.jpushToken` | **`device.pushToken`** → ingestion 改名为 `jpushToken` | `targetAddress` | `token` |
+| `userProfile.device.jpushToken` | **`case_push` 消息体** → ingestion（§2.2；可选降级读 `t_user_device_token`） | `targetAddress` | `token` |
 | Resolver 渲染 | — | `metadata.title` | `title` |
 | Resolver 渲染 | — | `metadata.body` | `body` |
-| `caseContext.repaymentUrl` 等 | 引擎模板 / Nacos 兜底（消息不带） | `metadata.pushData`（JSON 字符串） | `data` |
+| `caseContext.repaymentUrl` 等 | ingestion / 信贷结账链路 | `metadata.pushData`（JSON 字符串） | `data` |
 
 `pushData` 内字段：`scene`（固定 `collection`）、`case_id`、`deep_link`（来自 `repaymentUrl`）、`script_slot`（来自 `metadata.scriptSlot`）；**value 均为 string**。
 
@@ -490,7 +489,7 @@ Nacos：`biz.smartPrefix` / `globePrefix` / `ditoPrefix`（号段 → 运营商�
 
 ## 9. StepResult 映射（草案）
 
-> **状态**：供 `NotificationSmsAdapter` / `NotificationPushAdapter` 实现参考；与 [引擎渠道执行契约对齐（已定稿正本）](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) 对齐（4 项已于 2026-06-11 定稿）。`errorCode` 仅落 timeline，引擎不解析。
+> **状态**：供 `NotificationSmsAdapter` / `NotificationPushAdapter` 实现参考；与 [引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) 的已定稿语义对齐。`errorCode` 仅落 timeline，引擎不解析。
 
 ### 9.1 SMS
 
@@ -572,9 +571,9 @@ fallback 成功后按 **§9.1 SMS** 映射；`metadata.fallback_sms=true`。
 
 | ID  | Account Name        | Operator           | Weight | 底层供应商文档                                                                |
 | --- | ------------------- | ------------------ | ------ | ---------------------------------------------------------------------- |
-| 340 | QHSmsNotice         | other, globe, dito | 3      | [QH SMS](../../../AI%20collection/相关资料/QH%20SMS%20接口.md)               |
-| 341 | HiWaySmsOther       | dito, other, globe | 2      | [HiwayIO API](../../../AI%20collection/相关资料/HiwayIO-API%201.5.2.docx)  |
-| 339 | bori Mocasa-MKT-002 | smart              | 1      | [BORI HTTP](../../../AI%20collection/相关资料/【BORI】HTTP%20对接开发文档1.0.docx) |
+| 340 | QHSmsNotice         | other, globe, dito | 3      | [QH SMS](./reference/QH%20SMS%20接口.md)               |
+| 341 | HiWaySmsOther       | dito, other, globe | 2      | [HiwayIO API](./reference/HiwayIO-API%201.5.2.docx)  |
+| 339 | bori Mocasa-MKT-002 | smart              | 1      | [BORI HTTP](./reference/【BORI】HTTP%20对接开发文档1.0.docx) |
 | —   | 新 Smart 线路（测试中）     | smart              | TBD    | 同上                                                                     |
 
 

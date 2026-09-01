@@ -19,6 +19,13 @@ public class RedisComplianceCounterService implements ComplianceCounterService {
                     "local c=redis.call('INCR',KEYS[1]); if c==1 then redis.call('EXPIREAT',KEYS[1],ARGV[1]) end; "
                             + "local t=redis.call('INCR',KEYS[2]); if t==1 then redis.call('EXPIREAT',KEYS[2],ARGV[1]) end; return {c,t}",
                     java.util.List.class);
+    /** 归还预占。只在键存在且为正时递减：不新建键（避免给未占用的用户凭空写入带 TTL 的 0）， 也不会因重复归还把计数压成负数——负数等于放大该用户当天的额度。 */
+    private static final DefaultRedisScript<Long> RELEASE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "for i=1,2 do local v=redis.call('GET',KEYS[i]); "
+                            + "if v and tonumber(v)>0 then redis.call('DECR',KEYS[i]) end end; return 1",
+                    Long.class);
+
     private final StringRedisTemplate redis;
 
     public RedisComplianceCounterService(StringRedisTemplate redis) {
@@ -40,5 +47,12 @@ public class RedisComplianceCounterService implements ComplianceCounterService {
             throw new IllegalStateException("compliance Redis Lua empty response");
         return new Counts(
                 ((Number) result.get(0)).longValue(), ((Number) result.get(1)).longValue());
+    }
+
+    @Override
+    public void release(Long userId, String channel, LocalDate date) {
+        String base = KEY_PREFIX + userId + ":";
+        redis.execute(
+                RELEASE_SCRIPT, Arrays.asList(base + channel + ":" + date, base + "ALL:" + date));
     }
 }

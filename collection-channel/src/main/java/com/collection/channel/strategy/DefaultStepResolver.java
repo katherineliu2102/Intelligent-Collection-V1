@@ -1,7 +1,6 @@
 package com.collection.channel.strategy;
 
 import com.alibaba.fastjson.JSON;
-import com.collection.channel.adapter.FacadeAiCallAdapter;
 import com.collection.channel.config.ChannelProperties;
 import com.collection.common.dto.ExecutionContext;
 import com.collection.common.dto.StepCommand;
@@ -19,6 +18,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import javax.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
@@ -35,9 +35,10 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>SMS/Push 文案从 {@code channel.scripts}（{@link ScriptLibrary}）读取并注入 {@code
- * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时回退占位串。Push {@code data.deep_link} 取 repaymentUrl，缺失用
- * {@code push-default-deep-link} 兜底。
+ * {name}/{amount}/{dpd}/{repaymentUrl}}； 未配置该槽时返回 {@code null}（引擎 SKIPPED），与 EMAIL 一致。Push {@code
+ * data.deep_link} 取 repaymentUrl，缺失用 {@code push-default-deep-link} 兜底。
  */
+@Slf4j
 @Component
 public class DefaultStepResolver implements StepResolver {
 
@@ -76,6 +77,20 @@ public class DefaultStepResolver implements StepResolver {
             }
         }
 
+        // SMS/PUSH 同样 fail-close：槽位在 DB 与 YAML 都取不到文案时跳过，不发占位串。
+        // 曾经的兜底是 "[MOCK] <slot> <url>" 并照发，一次漏配就等于把内部槽位名与测试域名
+        // 投递到真实客户；而漏配是运营动作（新增 stage / 改槽位命名）必然复现的失误。
+        if (isMessageChannel(step.getChannelType())
+                && !hasScript(step.getChannelType(), scriptSlot, snapshot)) {
+            log.error(
+                    "[StepResolver] 缺少文案，跳过该步骤 channel={} scriptSlot={} caseId={} —— "
+                            + "请补 t_script_template(ACTIVE) 或 channel.scripts",
+                    step.getChannelType(),
+                    scriptSlot,
+                    context.getPlan().getCaseId());
+            return null;
+        }
+
         ScriptVars vars = scriptLibrary.buildVars(snapshot);
         Map<String, Object> metadata = new HashMap<>();
 
@@ -96,21 +111,21 @@ public class DefaultStepResolver implements StepResolver {
             metadata.put(StepCommand.META_CASE_ID, caseId);
         }
         if (context.getPlan().getId() != null) {
-            metadata.put(FacadeAiCallAdapter.META_PLAN_ID, context.getPlan().getId());
+            metadata.put("plan_id", context.getPlan().getId());
         }
         if (step.getId() != null) {
-            metadata.put(FacadeAiCallAdapter.META_STEP_ID, step.getId());
+            metadata.put("step_id", step.getId());
         }
 
         fillChannelMetadata(step.getChannelType(), metadata, snapshot, scriptSlot, vars);
 
         if (step.getChannelType().isAsyncChannel()) {
-            String callbackUrl = channelProperties.voiceCallbackUrl();
+            String callbackUrl = channelProperties.callbackUrl();
             if (StringUtils.isBlank(callbackUrl)) {
                 callbackUrl = channelProperties.getCallback().getBaseUrl();
             }
             metadata.put(StepCommand.META_CALLBACK_URL, callbackUrl);
-            metadata.put(StepCommand.META_TIMEOUT_MINUTES, 60);
+            metadata.put(StepCommand.META_TIMEOUT_MINUTES, 30);
         }
 
         return StepCommand.builder()
@@ -139,13 +154,13 @@ public class DefaultStepResolver implements StepResolver {
      *
      * <ul>
      *   <li>SMS / PUSH 命中 DB → {@code db:<该行 config_version>}，未命中 → {@code nacos:<releaseVersion>}
-     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与 {@code
-     *       SendGridEmailAdapter.resolveTemplateId} 同一份映射）
+     *   <li>EMAIL 正文托管在 SendGrid，本地只传 dynamic data → {@code sendgrid:<模板 ID>}（与 {@link
+     *       EmailMilestoneScriptSlots#sendGridTemplateId} 同一份映射）
      * </ul>
      */
     private String resolveTemplateVersion(ChannelType channel, String scriptSlot) {
         if (channel == ChannelType.EMAIL) {
-            String templateId = channelProperties.getSendgrid().getTemplates().get(scriptSlot);
+            String templateId = EmailMilestoneScriptSlots.sendGridTemplateId(scriptSlot);
             if (StringUtils.isNotBlank(templateId)) {
                 return "sendgrid:" + templateId;
             }
@@ -194,76 +209,75 @@ public class DefaultStepResolver implements StepResolver {
             String scriptSlot,
             ScriptVars vars) {
         CaseContext caseCtx = snapshot != null ? snapshot.getCaseContext() : null;
-        String repaymentUrl = caseCtx != null ? caseCtx.getRepaymentUrl() : null;
 
-        if (channel == ChannelType.SMS) {
-            String body = scriptLibrary.renderSms(scriptSlot, vars);
-            metadata.put(
-                    StepCommand.META_SMS_BODY,
-                    body != null ? body : buildFallbackSmsBody(scriptSlot, repaymentUrl));
+        // SMS/PUSH 的文案完备性已由 resolve() 的 fail-close 前置保证，此处不再有占位兜底。
+        if (channel == ChannelType.AI_CALL) {
+            fillAiCallMetadata(metadata, snapshot);
+        } else if (channel == ChannelType.SMS) {
+            metadata.put(StepCommand.META_SMS_BODY, scriptLibrary.renderSms(scriptSlot, vars));
         } else if (channel == ChannelType.EMAIL) {
             metadata.put(
                     StepCommand.META_DYNAMIC_TEMPLATE_DATA,
                     buildEmailTemplateData(snapshot, scriptSlot));
         } else if (channel == ChannelType.PUSH) {
             PushContent push = scriptLibrary.renderPush(scriptSlot, vars);
-            metadata.put(
-                    StepCommand.META_TITLE,
-                    push != null && push.getTitle() != null
-                            ? push.getTitle()
-                            : "MOCASA Payment Reminder");
-            metadata.put(
-                    StepCommand.META_BODY,
-                    push != null && push.getBody() != null
-                            ? push.getBody()
-                            : "[MOCK] " + scriptSlot);
+            metadata.put(StepCommand.META_TITLE, push.getTitle());
+            metadata.put(StepCommand.META_BODY, push.getBody());
             metadata.put(
                     StepCommand.META_PUSH_DATA, buildPushDataJson(snapshot, scriptSlot, metadata));
 
             // Push 无 token → fallback SMS：复用同阶段 SMS 文案
             String smsSlot = deriveMsgScriptSlot(ChannelType.SMS, caseCtx);
-            String fallbackBody = scriptLibrary.renderSms(smsSlot, vars);
             metadata.put(
-                    StepCommand.META_FALLBACK_SMS_BODY,
-                    fallbackBody != null
-                            ? fallbackBody
-                            : buildFallbackSmsBody(scriptSlot, repaymentUrl));
-        } else if (channel == ChannelType.AI_CALL) {
-            fillAiCallMetadata(metadata, snapshot, vars);
+                    StepCommand.META_FALLBACK_SMS_BODY, scriptLibrary.renderSms(smsSlot, vars));
         }
     }
 
-    private void fillAiCallMetadata(
-            Map<String, Object> metadata, ContextSnapshot snapshot, ScriptVars vars) {
-        if (vars != null && StringUtils.isNotBlank(vars.getName())) {
-            metadata.put(FacadeAiCallAdapter.META_BORROWER_NAME, vars.getName().trim());
-        } else if (snapshot != null
-                && snapshot.getUserProfile() != null
-                && snapshot.getUserProfile().getBasic() != null
-                && StringUtils.isNotBlank(snapshot.getUserProfile().getBasic().getName())) {
-            metadata.put(
-                    FacadeAiCallAdapter.META_BORROWER_NAME,
-                    snapshot.getUserProfile().getBasic().getName().trim());
-        }
-        CaseContext ctx = snapshot != null ? snapshot.getCaseContext() : null;
-        if (ctx == null) {
+    /** Facade AI 外呼的必填业务上下文。缺失金额或姓名时不伪造值，Adapter 会安全拒绝该 dispatch。 */
+    private static void fillAiCallMetadata(Map<String, Object> metadata, ContextSnapshot snapshot) {
+        if (snapshot == null) {
             return;
         }
-        BigDecimal overdue = ctx.getOverdueAmount();
-        if (overdue == null) {
-            overdue = ctx.getTotalOutstanding();
+        CaseContext caseCtx = snapshot.getCaseContext();
+        if (caseCtx != null) {
+            if (caseCtx.getOverdueAmount() != null || caseCtx.getUpcomingAmount() != null) {
+                BigDecimal amount = ScriptLibrary.resolveAmount(caseCtx);
+                if (amount != null) {
+                    metadata.put("overdue_amount", amount.toPlainString());
+                }
+            }
+            metadata.put("dpd", String.valueOf(caseCtx.getDpd()));
+            if (caseCtx.getDueDate() != null) {
+                metadata.put("due_date", caseCtx.getDueDate().toString());
+            } else if (caseCtx.getNextDueDate() != null) {
+                metadata.put("due_date", caseCtx.getNextDueDate().toString());
+            }
         }
-        if (overdue != null) {
-            metadata.put(FacadeAiCallAdapter.META_OVERDUE_AMOUNT, overdue.toPlainString());
-        }
-        metadata.put(FacadeAiCallAdapter.META_DPD, String.valueOf(ctx.getDpd()));
-        if (ctx.getDueDate() != null) {
-            metadata.put(FacadeAiCallAdapter.META_DUE_DATE, ctx.getDueDate().toString());
+        if (snapshot.getUserProfile() != null
+                && snapshot.getUserProfile().getBasic() != null
+                && StringUtils.isNotBlank(snapshot.getUserProfile().getBasic().getName())) {
+            metadata.put("borrower_name", snapshot.getUserProfile().getBasic().getName());
         }
     }
 
-    private static String buildFallbackSmsBody(String scriptSlot, String repaymentUrl) {
-        return "[MOCK] " + scriptSlot + (repaymentUrl != null ? " " + repaymentUrl : "");
+    private static boolean isMessageChannel(ChannelType channel) {
+        return channel == ChannelType.SMS || channel == ChannelType.PUSH;
+    }
+
+    /**
+     * 该步骤能否渲染出真实文案。
+     *
+     * <p>PUSH 额外要求同阶段 SMS 槽位存在：无 token 或投递失败时 PushAdapter 会改发 SMS（[渠道编排规格 §7.1]）， 缺 SMS 文案时那条
+     * fallback 同样会退化成占位串。
+     */
+    private boolean hasScript(ChannelType channel, String scriptSlot, ContextSnapshot snapshot) {
+        if (channel == ChannelType.SMS) {
+            return scriptLibrary.hasSms(scriptSlot);
+        }
+        String fallbackSlot =
+                deriveMsgScriptSlot(
+                        ChannelType.SMS, snapshot != null ? snapshot.getCaseContext() : null);
+        return scriptLibrary.hasPush(scriptSlot) && scriptLibrary.hasSms(fallbackSlot);
     }
 
     private String buildPushDataJson(

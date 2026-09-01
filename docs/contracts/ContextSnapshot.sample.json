@@ -9,7 +9,6 @@
     "overdueAmount": 1200.00,
     "penaltyAmount": 80.00,
     "totalOutstanding": 1280.00,
-    "upcomingAmount": null,
     "loanTerms": 3,
     "disbursementDate": "2026-04-20",
     "dueDate": "2026-06-01",

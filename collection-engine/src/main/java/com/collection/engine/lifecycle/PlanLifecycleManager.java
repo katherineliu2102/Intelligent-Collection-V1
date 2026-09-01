@@ -13,11 +13,13 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.engine.outbox.OutboxEventSink;
 import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Resource;
@@ -48,6 +50,7 @@ public class PlanLifecycleManager {
     @Resource private ExhaustionPolicy exhaustionPolicy;
     @Resource private PredictiveDialerService predictiveDialerService;
     @Resource private SpiInvoker spiInvoker;
+    @Resource private CollectionMetrics metrics;
 
     @Autowired(required = false)
     private OutboxEventSink outboxEventSink;
@@ -113,8 +116,7 @@ public class PlanLifecycleManager {
                 continue;
             }
             if (locked.getStage() != newStage) {
-                planRepository.updatePlanStatus(
-                        locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.STAGE_UPGRADE);
+                cancelPlan(locked, CancelReason.STAGE_UPGRADE);
                 log.info(
                         "[stageChanged] cancelled old plan {} ({}→{})",
                         locked.getId(),
@@ -122,6 +124,7 @@ public class PlanLifecycleManager {
                         newStage);
             }
         }
+        // 无活跃计划时仍建新档（日切：上一档 PLAN_COMPLETED 且投影档已更高）。
         createPlanForStage(caseId, newStage, carriedInfo, carried, null);
         return noEvents();
     }
@@ -138,8 +141,7 @@ public class PlanLifecycleManager {
             if (locked == null || locked.isTerminal()) {
                 continue;
             }
-            planRepository.updatePlanStatus(
-                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
+            cancelPlan(locked, CancelReason.CEASED);
             log.info("[caseCeased] cancelled plan {} (CEASED)", locked.getId());
         }
         return noEvents();
@@ -160,8 +162,7 @@ public class PlanLifecycleManager {
             if (locked == null || locked.isTerminal()) {
                 continue;
             }
-            planRepository.updatePlanStatus(
-                    locked.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+            cancelPlan(locked, CancelReason.REPAID);
             log.info("[repayment] cancelled plan {} (REPAID)", locked.getId());
         }
         try {
@@ -251,11 +252,16 @@ public class PlanLifecycleManager {
         if (plan.getStatus() == PlanStatus.PENDING
                 || plan.getStatus() == PlanStatus.STEP_SCHEDULED
                 || plan.getStatus() == PlanStatus.STEP_EXECUTING) {
+            // 先抢步骤再动计划：抢占失败时计划状态必须保持原样，否则会把已被上一次投递
+            // 推进到下一步（或已终结）的计划按回 STEP_EXECUTING，造成计划侧停摆。
+            // 清空 trigger_time 防止扫描器在处理窗口内重复投递（幂等锁亦兜底）。
+            if (!planRepository.markStepExecuting(stepId)) {
+                log.info("[stepDue] step {} 已终结或被并发抢占，跳过本次投递", stepId);
+                return StepDuePreparation.noop();
+            }
             // 状态前置（PENDING/SCHEDULED 首次执行；EXECUTING 为退避重试再触发）
             planRepository.updatePlanStatus(planId, PlanStatus.STEP_EXECUTING, null);
             planRepository.markStarted(planId);
-            // 清空 trigger_time 防止扫描器在处理窗口内重复投递（幂等锁亦兜底）
-            planRepository.markStepExecuting(stepId);
             plan.setStatus(PlanStatus.STEP_EXECUTING);
             return StepDuePreparation.toExecute(plan, step);
         }
@@ -283,6 +289,15 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
+        // 异步步可能在计划已被后续 due 推走后才收口：步骤要关，但不得按旧步再 ADVANCE_NEXT。
+        if (!planAwaitsAsyncOutcome(plan)) {
+            log.info(
+                    "[advance] plan {} already {}, skip STEP_COMPLETED for step {}",
+                    planId,
+                    plan.getStatus(),
+                    stepId);
+            return noEvents();
+        }
         ContactPlanStep completed = planRepository.findStepById(stepId);
         StepResult stepResult = toStepResult(completed);
 
@@ -295,6 +310,10 @@ public class PlanLifecycleManager {
 
         switch (decision) {
             case ADVANCE_NEXT:
+                if (completed.getChannelType() == ChannelType.AI_CALL
+                        && completed.getResult() == ContactResult.ANSWERED) {
+                    skipSameDayPendingAiCalls(planId, completed);
+                }
                 ContactPlanStep next = planRepository.getNextStep(planId, completed.getStepOrder());
                 if (next == null) {
                     log.info("[advance] plan {} no next step → PLAN_EXHAUSTED", planId);
@@ -336,15 +355,10 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        // AI_CALL 等 disposition（EXECUTING）；Phase 2 消息观察期（WAITING）可短路结转
-        // Phase 1 SMS/PUSH/EMAIL 同步完成，不进 WAITING（引擎 §4.3.3 / §5⑦）
-        if (plan == null
-                || (plan.getStatus() != PlanStatus.STEP_EXECUTING
-                        && plan.getStatus() != PlanStatus.STEP_WAITING)) {
-            return noEvents(); // 非执行/等待态（已处理/已取消），静默吸收
-        }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        if (step == null) {
+        // 收口看步骤是否仍 EXECUTING，不看计划态：后续 due 可能已把计划推到 STEP_SCHEDULED。
+        // 计划终态（取消/完成）仍关掉悬挂步，避免超时扫描永远摸到它。
+        if (plan == null || step == null) {
             return noEvents();
         }
         String callbackOutcome = event.getString(CollectionEvent.DISPOSITION);
@@ -363,8 +377,16 @@ public class PlanLifecycleManager {
                 null)) {
             return noEvents();
         }
-        log.info("[callback] plan {} step {} result {}", planId, stepId, result);
-        // 入箱已由 recordTerminal 在同一事务内完成，此处只负责提交后的即时发布。
+        log.info(
+                "[callback] plan {} step {} result {} (planStatus={})",
+                planId,
+                stepId,
+                result,
+                plan.getStatus());
+        // 入箱已由 recordTerminal 在同一事务内完成；计划已离开本步时不再即时推进。
+        if (!planAwaitsAsyncOutcome(plan)) {
+            return noEvents();
+        }
         return single(EngineEvents.stepCompleted(plan, step));
     }
 
@@ -376,25 +398,30 @@ public class PlanLifecycleManager {
         Long stepId = event.getLong(CollectionEvent.STEP_ID);
 
         ContactPlan plan = planRepository.findPlanWithLock(planId);
-        if (plan == null || plan.getStatus() != PlanStatus.STEP_EXECUTING) {
-            return noEvents(); // 回调已正常处理
-        }
         ContactPlanStep step = planRepository.findStepById(stepId);
-        if (step == null
-                || !stepOutcomeRecorder.recordTerminal(
-                        plan,
-                        step,
-                        StepStatus.EXECUTING,
-                        StepStatus.FAILED,
-                        ContactResult.FAILED,
-                        step.getChannelType(),
-                        null,
-                        JsonUtil.toJson(
-                                java.util.Collections.singletonMap(
-                                        "errorCode", "CALLBACK_TIMEOUT")))) {
+        if (plan == null || step == null) {
             return noEvents();
         }
-        log.info("[callbackTimeout] plan {} step {} → FAILED", planId, stepId);
+        if (!stepOutcomeRecorder.recordTerminal(
+                plan,
+                step,
+                StepStatus.EXECUTING,
+                StepStatus.FAILED,
+                ContactResult.FAILED,
+                step.getChannelType(),
+                null,
+                JsonUtil.toJson(
+                        java.util.Collections.singletonMap("errorCode", "CALLBACK_TIMEOUT")))) {
+            return noEvents();
+        }
+        log.info(
+                "[callbackTimeout] plan {} step {} → FAILED (planStatus={})",
+                planId,
+                stepId,
+                plan.getStatus());
+        if (!planAwaitsAsyncOutcome(plan)) {
+            return noEvents();
+        }
         return single(EngineEvents.stepCompleted(plan, step));
     }
 
@@ -424,14 +451,35 @@ public class PlanLifecycleManager {
             case REBUILD:
                 // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
                 planRepository.markRenewalPending(planId);
-                if (!createPlanForStage(
+                if (createPlanForStage(
                         plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
-                    throw new IllegalStateException(
-                            "REBUILD did not create successor plan: " + planId);
+                    planRepository.updatePlanStatus(
+                            planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
+                    log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                    return noEvents();
                 }
-                planRepository.updatePlanStatus(
-                        planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
-                log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
+                // Factory 0 步（本阶段已无未来槽）不是故障：收口旧计划，有下一档则升档。
+                planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
+                if ((caseInfo != null && isCeased(caseInfo))
+                        || (snapshot != null
+                                && snapshot.getCaseContext() != null
+                                && "CEASED"
+                                        .equalsIgnoreCase(
+                                                snapshot.getCaseContext().getCollectionStatus()))) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor (ceased), COMPLETE",
+                            planId);
+                    return noEvents();
+                }
+                Stage next = plan.getStage() == null ? null : plan.getStage().next();
+                if (next != null) {
+                    log.info(
+                            "[exhausted] plan {} REBUILD produced no successor, ESCALATE → {}",
+                            planId,
+                            next);
+                    return single(enqueued(EngineEvents.stageEscalated(plan, next.name())));
+                }
+                log.info("[exhausted] plan {} REBUILD produced no successor, COMPLETE", planId);
                 return noEvents();
             case ESCALATE:
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
@@ -460,9 +508,11 @@ public class PlanLifecycleManager {
         if (caseService.isRepaid(caseId)) {
             List<ContactPlan> active = planRepository.findActivePlansByCase(caseId);
             for (ContactPlan p : active) {
-                planRepository.findPlanWithLock(p.getId());
-                planRepository.updatePlanStatus(
-                        p.getId(), PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+                ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+                if (locked == null || locked.isTerminal()) {
+                    continue;
+                }
+                cancelPlan(locked, CancelReason.REPAID);
             }
             log.info("[ptpExpired] case {} repaid → compensating cancel", caseId);
             return noEvents();
@@ -503,6 +553,7 @@ public class PlanLifecycleManager {
             Long excludedActivePlanId) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
+            metrics.planCreation(null, "NO_STAGE");
             return false;
         }
         ContactPlan activePlan = planRepository.findActivePlanByCaseAndStage(caseId, stage);
@@ -511,6 +562,7 @@ public class PlanLifecycleManager {
                     "[create] caseId={} stage={} already has active plan, idempotent skip",
                     caseId,
                     stage);
+            metrics.planCreation(stage.name(), "IDEMPOTENT_SKIP");
             return false; // 单活跃计划约束 / 幂等
         }
         // 决策 B：优先用传入的 caseInfo / snapshot（事件 payload / carry-forward）；
@@ -519,6 +571,7 @@ public class PlanLifecycleManager {
                 providedCaseInfo != null ? providedCaseInfo : caseService.getCaseInfo(caseId);
         if (caseInfo != null && isCeased(caseInfo)) {
             log.info("[create] caseId={} is CEASED, skip PlanFactory.create", caseId);
+            metrics.planCreation(stage.name(), "CEASED");
             return false;
         }
         ContextSnapshot snapshot =
@@ -529,6 +582,7 @@ public class PlanLifecycleManager {
                 && snapshot.getCaseContext() != null
                 && "CEASED".equalsIgnoreCase(snapshot.getCaseContext().getCollectionStatus())) {
             log.info("[create] caseId={} snapshot collectionStatus=CEASED, skip", caseId);
+            metrics.planCreation(stage.name(), "CEASED");
             return false;
         }
 
@@ -541,6 +595,7 @@ public class PlanLifecycleManager {
                     "[create] PlanFactory returned null for case {} stage {}, no plan",
                     caseId,
                     stage);
+            metrics.planCreation(stage.name(), "FACTORY_RETURNED_NULL");
             return false;
         }
         plan.setCaseId(caseId);
@@ -549,6 +604,9 @@ public class PlanLifecycleManager {
         }
         plan.setStage(stage);
         plan.setStatus(PlanStatus.PENDING);
+        if (snapshot != null && snapshot.getCaseContext() != null && stage != null) {
+            snapshot.getCaseContext().setStage(stage);
+        }
         plan.setContextSnapshot(JsonUtil.toJson(snapshot));
         plan.setTotalSteps(plan.getSteps().size());
         plan.setCurrentStep(0);
@@ -572,7 +630,70 @@ public class PlanLifecycleManager {
                 caseId,
                 stage,
                 plan.getTotalSteps());
+        metrics.planCreation(stage.name(), "CREATED");
         return true;
+    }
+
+    private void cancelPlan(ContactPlan locked, CancelReason reason) {
+        planRepository.updatePlanStatus(locked.getId(), PlanStatus.PLAN_CANCELLED, reason);
+        int closed = planRepository.skipOpenSteps(locked.getId(), ContactResult.SKIPPED);
+        if (closed > 0) {
+            log.info(
+                    "[cancel] plan {} skipped {} open step(s) after {}",
+                    locked.getId(),
+                    closed,
+                    reason);
+        }
+    }
+
+    /**
+     * CONNECT_AND_STOP：真人接通后，把同日尚未执行的 AI_CALL 标 SKIPPED，避免下午补呼。 只处理 PENDING；已在拨打中的 EXECUTING
+     * 不打断。SMS/PUSH/EMAIL 同日步骤保留。
+     */
+    private void skipSameDayPendingAiCalls(Long planId, ContactPlanStep answered) {
+        List<ContactPlanStep> steps = planRepository.findStepsByPlan(planId);
+        if (steps == null || steps.isEmpty()) {
+            return;
+        }
+        LocalDate answeredDay = stepDayPht(answered);
+        if (answeredDay == null) {
+            return;
+        }
+        for (ContactPlanStep candidate : steps) {
+            if (candidate.getStepOrder() <= answered.getStepOrder()) {
+                continue;
+            }
+            if (candidate.getChannelType() != ChannelType.AI_CALL) {
+                continue;
+            }
+            if (candidate.getStatus() != StepStatus.PENDING) {
+                continue;
+            }
+            LocalDate candidateDay = stepDayPht(candidate);
+            if (candidateDay == null || !answeredDay.equals(candidateDay)) {
+                continue;
+            }
+            planRepository.updateStepStatus(
+                    candidate.getId(), StepStatus.SKIPPED, ContactResult.SKIPPED);
+            log.info(
+                    "[advance] CONNECT_AND_STOP skip plan {} step {} (same-day AI_CALL after ANSWERED)",
+                    planId,
+                    candidate.getId());
+        }
+    }
+
+    private static LocalDate stepDayPht(ContactPlanStep step) {
+        LocalDateTime when = step.getOriginalTriggerTime();
+        if (when == null) {
+            when = step.getTriggerTime();
+        }
+        if (when == null) {
+            when = step.getCompletedAt();
+        }
+        if (when == null) {
+            when = step.getExecutedAt();
+        }
+        return when == null ? null : when.atZone(ZoneId.of("Asia/Manila")).toLocalDate();
     }
 
     // ───────────────────────── 辅助 ─────────────────────────
@@ -629,6 +750,8 @@ public class PlanLifecycleManager {
         try {
             return ContactResult.valueOf(raw.toUpperCase());
         } catch (IllegalArgumentException e) {
+            // Unknown provider outcomes must fail closed. Treating a vendor-specific
+            // value (for example VOICEMAIL) as ANSWERED would falsely record contact.
             return ContactResult.FAILED;
         }
     }
@@ -666,7 +789,6 @@ public class PlanLifecycleManager {
         ctx.setOverdueAmount(event.getBigDecimal(CollectionEvent.OVERDUE_AMOUNT));
         ctx.setTotalOutstanding(event.getBigDecimal(CollectionEvent.TOTAL_OUTSTANDING));
         ctx.setPenaltyAmount(event.getBigDecimal(CollectionEvent.PENALTY_AMOUNT));
-        ctx.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
         ctx.setDueDate(parseDate(event.getString(CollectionEvent.DUE_DATE)));
         ctx.setUpcomingAmount(event.getBigDecimal(CollectionEvent.UPCOMING_AMOUNT));
         ctx.setNextDueDate(parseDate(event.getString(CollectionEvent.NEXT_DUE_DATE)));
@@ -789,12 +911,21 @@ public class PlanLifecycleManager {
         return plans == null || plans.isEmpty() ? null : plans.get(0);
     }
 
+    /**
+     * 计划仍停在「等本步回调/观察期」时才允许 STEP_COMPLETED 推进。 STEP_SCHEDULED 表示后续 due 已经把日程推走，再推进会把 current_step
+     * 拽回旧步。
+     */
+    private boolean planAwaitsAsyncOutcome(ContactPlan plan) {
+        return plan.getStatus() == PlanStatus.STEP_EXECUTING
+                || plan.getStatus() == PlanStatus.STEP_WAITING;
+    }
+
     private List<CollectionEvent> noEvents() {
         return new ArrayList<>();
     }
 
     /**
-     * 在当前事务内把事件写入发件箱，再交给调用方于提交后即时发布（核心引擎规格 §7.4）。
+     * 在当前事务内把事件写入发件箱，再交给调用方于提交后即时发布（核心引擎规格 §7.2）。
      *
      * <p>不入箱的话，提交后发布一旦失败，原事件重投时状态已是终态、这些分支不会被再次走到， 事件就永久消失、计划静默停摆。
      */

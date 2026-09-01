@@ -69,6 +69,48 @@ class NotificationSmsAdapterTest {
         assertFalse(result.isRetryable());
     }
 
+    /** 自持号码隔离：通知中心没有 sandbox，不改投就会真实送达借款人（F1）。 */
+    @Test
+    void testRecipientOverridesTarget() {
+        properties.getNotification().setSmsTestRecipient("+639451374358");
+        stubFor(
+                post(urlEqualTo("/v1/sms/send"))
+                        .willReturn(
+                                aResponse()
+                                        .withStatus(200)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(
+                                                "{\"code\":0,\"msg\":\"success\",\"data\":{\"requestSuccess\":true,\"channel\":\"QHSms\",\"requestId\":\"req-9\"}}")));
+
+        assertTrue(adapter.send(smsCommand()).isSuccess());
+
+        verify(
+                postRequestedFor(urlEqualTo("/v1/sms/send"))
+                        .withRequestBody(matchingJsonPath("$.mobile", equalTo("639451374358"))));
+    }
+
+    /** 改投必须在空号校验之后：否则「上游没给号码」会被改投掩盖成发送成功，与 F1 同类。 */
+    @Test
+    void testRecipientDoesNotMaskMissingTarget() {
+        properties.getNotification().setSmsTestRecipient("+639451374358");
+
+        StepResult result =
+                adapter.send(
+                        StepCommand.builder()
+                                .channelType(ChannelType.SMS)
+                                .targetAddress("")
+                                .idempotencyKey("1:1:0")
+                                .metadata(
+                                        new HashMap<>(
+                                                Collections.singletonMap(
+                                                        StepCommand.META_SMS_BODY, "Hello test")))
+                                .build());
+
+        assertFalse(result.isSuccess());
+        assertEquals("INVALID_MSISDN", result.getErrorCode());
+        verify(0, postRequestedFor(urlEqualTo("/v1/sms/send")));
+    }
+
     @Test
     void rejectedNoAccount() {
         stubFor(

@@ -17,6 +17,7 @@ import com.collection.common.model.DecisionLog;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
+import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
@@ -31,6 +32,7 @@ import java.util.Map;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -64,6 +66,10 @@ public class StepExecutionOrchestrator {
     @Autowired(required = false)
     private OutboxEventSink outboxEventSink;
 
+    /** 可选：Guard 未预占配额（自定义实现或未配日限）时全程用不到，纯逻辑单测也不必注入。 */
+    @Autowired(required = false)
+    private ComplianceCounterService complianceCounterService;
+
     /** 字段默认值保证手工构造（纯逻辑单测）时不为 null；Spring 环境由容器覆盖为共享注册表。 */
     @Resource
     private com.collection.engine.metrics.CollectionMetrics metrics =
@@ -72,6 +78,50 @@ public class StepExecutionOrchestrator {
     @Resource private com.collection.engine.config.EngineProperties props;
 
     public void executeStep(ContactPlan plan, ContactPlanStep step) {
+        Map<String, String> priorMdc = putStepMdc(plan, step);
+        try {
+            executeStepWithMdc(plan, step);
+        } finally {
+            restoreMdc(priorMdc);
+        }
+    }
+
+    /**
+     * 管线全程带 plan/step/channel 的 MDC。
+     *
+     * <p>事件总线消费线程已按事件载荷写入 {@code planId}/{@code stepId}，但那条路径只在 Redis 实现下完整（{@code
+     * InMemoryEventBus} 不写 stepId），且重试与 SPI 跨线程后要靠它续上。 这里按入参再写一次，使「Guard 拦截 / 渠道失败」的日志无论由谁触发都能关联到
+     * plan/step ——T3o-O3 与 T5-R11 的断言即在此。
+     */
+    private Map<String, String> putStepMdc(ContactPlan plan, ContactPlanStep step) {
+        Map<String, String> prior = new LinkedHashMap<>();
+        putMdc(prior, "caseId", plan == null ? null : plan.getCaseId());
+        putMdc(prior, "planId", plan == null ? null : plan.getId());
+        putMdc(prior, "stepId", step == null ? null : step.getId());
+        putMdc(prior, "stepOrder", step == null ? null : step.getStepOrder());
+        putMdc(prior, "channel", step == null ? null : step.getChannelType());
+        return prior;
+    }
+
+    private static void putMdc(Map<String, String> prior, String key, Object value) {
+        prior.put(key, MDC.get(key));
+        if (value != null) {
+            MDC.put(key, String.valueOf(value));
+        }
+    }
+
+    private static void restoreMdc(Map<String, String> prior) {
+        prior.forEach(
+                (key, value) -> {
+                    if (value == null) {
+                        MDC.remove(key);
+                    } else {
+                        MDC.put(key, value);
+                    }
+                });
+    }
+
+    private void executeStepWithMdc(ContactPlan plan, ContactPlanStep step) {
         String idempotencyKey = buildIdempotencyKey(plan, step);
         String executionLockKey = STEP_LOCK_PREFIX + idempotencyKey;
 
@@ -92,7 +142,7 @@ public class StepExecutionOrchestrator {
         }
     }
 
-    /** 执行锁已获取后的管线。调用渠道前抛异常时，外层释放锁再 NACK，避免 PEL 重投被旧锁吸收； 一旦调用渠道，锁须保留到 TTL，由渠道幂等和 §7.4 处理外部副作用。 */
+    /** 执行锁已获取后的管线。调用渠道前抛异常时，外层释放锁再 NACK，避免 PEL 重投被旧锁吸收； 一旦调用渠道，锁须保留到 TTL，由渠道幂等和 §7.3 处理外部副作用。 */
     private void executeStepAfterLock(
             ContactPlan plan, ContactPlanStep step, ExecutionState state) {
         // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
@@ -102,26 +152,41 @@ public class StepExecutionOrchestrator {
             // 否则消息渠道没有 callback timeout 会永久滞留。案件不存在不写 timeline。
             planRepository.updatePlanStatus(
                     plan.getId(), PlanStatus.PLAN_CANCELLED, preFlight.getBlockingReason());
+            int closed = planRepository.skipOpenSteps(plan.getId(), ContactResult.SKIPPED);
             log.info(
-                    "[execStep] preflight blocked plan {} → PLAN_CANCELLED ({})",
+                    "[execStep] preflight blocked plan {} → PLAN_CANCELLED ({}) skippedOpen={}",
                     plan.getId(),
-                    preFlight.getBlockingReason());
+                    preFlight.getBlockingReason(),
+                    closed);
             return;
         }
 
-        planRepository.markStepExecuting(step.getId());
+        // 调用渠道前的最后一道闸：prepareStepDue 提交后到此处之间，回调或超时路径可能已把
+        // 步骤收敛为终态，此时继续执行就是一次重复触达。
+        if (!planRepository.markStepExecuting(step.getId())) {
+            log.info("[execStep] step {} 已终结，放弃执行（避免重复触达）", step.getId());
+            return;
+        }
         ExecutionContext context = contextAssembler.assemble(plan, step);
         refreshVolatileFields(context, preFlight.getCaseInfo());
 
-        // ── ③ 业务级守卫（合规，硬超时 20ms） ──
+        // ── ③ 业务级守卫（合规，硬超时见 engine.spi.execution-guard-timeout-ms，默认 50ms） ──
         GuardVerdict verdict;
         try {
             verdict =
                     spiInvoker.call(
                             SpiType.EXECUTION_GUARD, () -> executionGuard.evaluate(context));
         } catch (Exception e) {
-            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §4.1）
+            // fail-close：异常或超时均标记 SKIPPED + 告警，推进下一步（核心引擎规格 §5）
             log.warn("[execStep] ExecutionGuard failed (fail-close → SKIPPED): {}", e.getMessage());
+            markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
+            return;
+        }
+        // 非法 null 与抛异常同等处理：合规无法判断时宁可漏触达，也不得因 NPE 让事件反复重投直至 DLQ。
+        if (verdict == null) {
+            log.warn(
+                    "[execStep] ExecutionGuard returned null (fail-close → SKIPPED) step {}",
+                    step.getId());
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, "GUARD_ERROR");
             return;
         }
@@ -144,6 +209,9 @@ public class StepExecutionOrchestrator {
             markSkipped(plan, step, ContactResult.COMPLIANCE_BLOCKED, verdict.getBlockedRuleType());
             return;
         }
+        // Guard 已预占日频配额；下面每条「确认未发出」的出口都要归还，否则这次没送达的尝试
+        // 会白扣客户当天该渠道的额度（生产日限为 1 时即当天零触达）。
+        GuardVerdict.QuotaReservation reservation = verdict.getQuotaReservation();
 
         // ── ④ 步骤解析（零 DB I/O，硬超时 50ms） ──
         StepCommand command;
@@ -153,6 +221,7 @@ public class StepExecutionOrchestrator {
         } catch (Exception e) {
             // 异常 / 超时 → FAILED → 推进（核心引擎规格 §4.1）
             log.warn("[execStep] StepResolver failed → FAILED: {}", e.getMessage());
+            releaseQuota(reservation, "RESOLVER_ERROR");
             markFailed(plan, step, "RESOLVER_ERROR");
             return;
         }
@@ -162,6 +231,7 @@ public class StepExecutionOrchestrator {
             log.info(
                     "[execStep] StepResolver returned null → SKIPPED (no-op) step {}",
                     step.getId());
+            releaseQuota(reservation, "RESOLVER_NO_OP");
             markStrategySkipped(plan, step);
             return;
         }
@@ -220,6 +290,13 @@ public class StepExecutionOrchestrator {
                         delaySec,
                         newCount);
                 return; // plan 保持 STEP_EXECUTING
+            }
+            // retryable=true 是渠道对「请求未写给供应商」的证明（熔断未调用、凭证缺失、连接被拒、
+            // 供应商显式拒绝受理），此时这次触达确定没出网，预占的配额必须还回去。
+            // retryable=false 属结果未知（读超时、写后中断、5xx），宁可少发一次也不归还——
+            // 重复骚扰是合规事故，漏一次只是少一次触达。
+            if (result.isRetryable()) {
+                releaseQuota(reservation, result.getErrorCode());
             }
             markFailed(plan, step, result.getErrorCode());
             return;
@@ -287,6 +364,30 @@ public class StepExecutionOrchestrator {
         }
     }
 
+    /** 归还 Guard 的配额预占。失败只告警：少还一次配额偏保守，不值得让已收敛的步骤重新抛错。 */
+    private void releaseQuota(GuardVerdict.QuotaReservation reservation, String reason) {
+        if (reservation == null || complianceCounterService == null) {
+            return;
+        }
+        try {
+            complianceCounterService.release(
+                    reservation.getUserId(), reservation.getChannel(), reservation.getDate());
+            log.info(
+                    "[execStep] released daily quota user={} channel={} date={} ({}, not dispatched)",
+                    reservation.getUserId(),
+                    reservation.getChannel(),
+                    reservation.getDate(),
+                    reason);
+        } catch (RuntimeException e) {
+            log.error(
+                    "[execStep] failed to release daily quota user={} channel={} date={}",
+                    reservation.getUserId(),
+                    reservation.getChannel(),
+                    reservation.getDate(),
+                    e);
+        }
+    }
+
     private void releaseExecutionLock(String executionLockKey, String idempotencyKey) {
         try {
             idempotencyService.release(executionLockKey);
@@ -345,7 +446,7 @@ public class StepExecutionOrchestrator {
     }
 
     /**
-     * 提交后即时发布。事件已由状态迁移所在事务写入发件箱（核心引擎规格 §7.4），发布成功即销账； 发布抛错或进程在此处被杀，都只是留下一条待重发记录，由 {@code
+     * 提交后即时发布。事件已由状态迁移所在事务写入发件箱（核心引擎规格 §7.2），发布成功即销账； 发布抛错或进程在此处被杀，都只是留下一条待重发记录，由 {@code
      * OutboxPublisher} 兜底。
      */
     private void publishStepCompleted(ContactPlan plan, ContactPlanStep step) {
@@ -394,8 +495,7 @@ public class StepExecutionOrchestrator {
      * <p>文案里的逾期天数与金额必须是发送时刻的值：快照的 dpd 冻结于建计划时刻，而单个阶段最长跨 60 天 （S4 = DPD
      * 31–90），不刷新会连续数十天对用户播报错误的逾期天数；余额同理，仅靠 CASE_BALANCE_UPDATED 只能覆盖还款场景。
      *
-     * <p><b>不覆盖 stage</b>：阶段决定模板与话术，必须与所属计划一致，否则同一计划内会串话术。 实际渲染用的数值随 {@code
-     * t_decision_log.input_snapshot} 落库，保留审计能力。
+     * <p>stage 跟当天投影：同一计划跨 DPD 边界时句子跟今天档，不跟建计划时冻住的 snapshot.stage。
      */
     private void refreshVolatileFields(ExecutionContext context, CaseInfo info) {
         if (context == null || info == null || context.getContextSnapshot() == null) {
@@ -405,6 +505,7 @@ public class StepExecutionOrchestrator {
         if (ctx == null) {
             return;
         }
+        ctx.setStage(info.getStage());
         ctx.setDpd(info.getDpd());
         if (info.getTotalOutstanding() != null) {
             ctx.setTotalOutstanding(info.getTotalOutstanding());

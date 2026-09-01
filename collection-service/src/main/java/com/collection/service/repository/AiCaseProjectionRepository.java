@@ -3,6 +3,7 @@ package com.collection.service.repository;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
 import com.collection.common.repository.CaseProjectionRepository;
+import com.collection.common.repository.MissingCaseBaselineException;
 import com.collection.service.mapper.AiCollectionInboxMapper;
 import com.collection.service.mapper.AiCollectionInboxRow;
 import com.collection.service.mapper.AiCollectionProjectionMapper;
@@ -52,8 +53,7 @@ public class AiCaseProjectionRepository implements CaseProjectionRepository {
         CaseProjection delta = command.getProjection();
         CaseProjection current = projectionMapper.selectProjectionForUpdate(delta.getCaseId());
         if (current == null) {
-            throw new IllegalStateException(
-                    "repaymentEvent 缺完整 caseEvent 基线，caseId=" + delta.getCaseId());
+            throw new MissingCaseBaselineException(delta.getCaseId());
         }
         if (delta.getUpdatedAt() != null
                 && current.getUpdatedAt() != null
@@ -75,13 +75,26 @@ public class AiCaseProjectionRepository implements CaseProjectionRepository {
         inboxMapper.markPublished(eventId);
     }
 
-    /** 行锁下比较内容指纹：不存在则插入，指纹变化才覆盖。 */
+    /**
+     * 行锁下比较内容指纹与事实时间：不存在则插入，指纹相同或快照更旧都不覆盖。
+     *
+     * <p>时间比较不是为了防上游乱序（数仓按批次顺序发布），而是为了防 Pub/Sub at-least-once 造成的**重投乱序**： 先发的旧快照处理失败被
+     * nack、后发的新快照先落库，旧消息重试回来时 `eventId` 去重帮不上忙（它从未成功处理过）， 只比指纹就会把旧数据盖回去。只拒绝**严格更早**的 {@code
+     * updatedAt}，因此等时刻的每日快照刷新不受影响； {@code updatedAt} 来自 payload 的 {@code occurredAt}，缺失即在接入侧
+     * poison，故此处可信。
+     */
     private boolean upsert(CaseProjection projection) {
-        String current = projectionMapper.selectVersionForUpdate(projection.getCaseId());
+        CaseProjection current = projectionMapper.selectProjectionForUpdate(projection.getCaseId());
         if (current == null) {
             return projectionMapper.insert(projection) == 1;
         }
-        if (current.equals(projection.getCaseVersion())) {
+        if (current.getCaseVersion() != null
+                && current.getCaseVersion().equals(projection.getCaseVersion())) {
+            return false;
+        }
+        if (projection.getUpdatedAt() != null
+                && current.getUpdatedAt() != null
+                && projection.getUpdatedAt().isBefore(current.getUpdatedAt())) {
             return false;
         }
         return projectionMapper.updateIfChanged(projection) == 1;
@@ -101,10 +114,15 @@ public class AiCaseProjectionRepository implements CaseProjectionRepository {
         return row;
     }
 
+    /** 合并还款增量：dpd/stage 需通过自洽性护栏，否则保留基线值由日切纠正。 */
     private void mergeRepayment(CaseProjection current, CaseProjection delta) {
         current.setUserId(delta.getUserId());
-        current.setDpd(delta.getDpd());
-        current.setStage(delta.getStage());
+        if (RepaymentConsistencyGuard.acceptsDpdAndStage(current, delta)) {
+            current.setDpd(delta.getDpd());
+            if (delta.isStagePresent()) {
+                current.setStage(delta.getStage());
+            }
+        }
         current.setCollectionStatus(delta.getCollectionStatus());
         current.setOverdueAmount(delta.getOverdueAmount());
         current.setTotalOutstanding(delta.getTotalOutstanding());

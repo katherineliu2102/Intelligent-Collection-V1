@@ -4,7 +4,7 @@ package com.collection.common.enums;
  * 触达结果。对应领域模型 §2.2。
  *
  * <p>priority 用于回调更新时的"只升级不降级"判定： DELIVERED(1) &lt; READ(2) &lt; CLICKED(3) &lt; REPLIED(4)。
- * 电话类结果（ANSWERED/VOICEMAIL/NO_ANSWER/BUSY）及失败类为终态，priority=0，不参与升级链。
+ * 电话类结果（ANSWERED/NO_ANSWER/BUSY）及失败类为终态，priority=0，不参与升级链。
  */
 public enum ContactResult {
     DELIVERED(1),
@@ -14,11 +14,6 @@ public enum ContactResult {
     ANSWERED(0),
     NO_ANSWER(0),
     BUSY(0),
-    /**
-     * 线路接通但非真人对话：语音信箱 / 来电筛选助理。计线路接通，不计真人接通，不触发 CONNECT_AND_STOP。 CALL_SCREENING 同落此值，靠
-     * CHANNEL_CALLBACK.disposition 区分。
-     */
-    VOICEMAIL(0),
     FAILED(0),
     REJECTED(0),
     SENT_NO_RESPONSE(0),

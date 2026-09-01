@@ -11,18 +11,11 @@
 
 | 文档 | 用途 |
 |------|------|
-| [README_ContextSnapshot契约对齐.md](./README_ContextSnapshot契约对齐.md) | 快照字段最小必填集、来源、金额 SSOT、开放问题 |
+| [README_ContextSnapshot契约对齐.md](./README_ContextSnapshot契约对齐.md) | 快照字段最小必填集、寻址与金额 SSOT |
 | [ContextSnapshot.sample.json](./ContextSnapshot.sample.json) + [空地址样例](./ContextSnapshot.empty-address.sample.json) | **冻结的快照样例**，分别覆盖可触达与 Guard 空地址路径 |
-| [README_t_ai_collection_PubSub契约.md](./README_t_ai_collection_PubSub契约.md) | 索引；字段/样例/验收 SSOT → [数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md) |
+| [数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md) | 字段、样例、GCP 资源与验收 SSOT |
 | [caseEvent.sample.json](./caseEvent.sample.json) + [repaymentEvent.sample.json](./repaymentEvent.sample.json) | **冻结的独立 Pub/Sub message 样例**；每份均为单案 `{dataType, data}` body，不是批量 envelope |
-| [README_编排同事对齐清单.md](./README_编排同事对齐清单.md) | collection-channel 的 SPI、快照字段与执行边界对齐清单 |
-| [MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md](./MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md) | dispatch 回填 / metadata / 观察期 / 空地址 4 项(**已定稿 2026-06-11**) + token 口径 |
-
-## 历史结论(📦 只读)
-
-| 文档 | 说明 |
-|------|------|
-| [MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md](./_archive/MOCASA催收系统升级_Phase1_ContextSnapshot契约对齐_re.md) | 编排同事一次性审阅回复(2026-06-09)；已拍板结论已并入 [活跃契约](./README_ContextSnapshot契约对齐.md) |
+| [引擎渠道执行契约](./MOCASA催收系统升级_Phase1_引擎渠道执行契约.md) | 已定稿的 dispatch、metadata、观察期、空地址与 token 语义；供应商幂等透传、Facade AI_CALL 回调未闭合 |
 
 ## 定稿要点(速查)
 

@@ -2,8 +2,8 @@ package com.collection.engine.lifecycle;
 
 import com.collection.common.enums.CancelReason;
 import com.collection.common.model.CaseInfo;
+import com.collection.common.model.CollectableAmounts;
 import com.collection.common.service.CaseService;
-import java.math.BigDecimal;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,9 +39,8 @@ public class PreFlightChecker {
             log.info("[PreFlight] caseId={} already repaid, skip", caseId);
             return PreFlightResult.blocked(CancelReason.REPAID, info);
         }
-        if (info.getTotalOutstanding() != null
-                && info.getTotalOutstanding().compareTo(BigDecimal.ZERO) <= 0) {
-            log.info("[PreFlight] caseId={} has no due balance, skip", caseId);
+        if (CollectableAmounts.shouldBlockNoDueBalance(info)) {
+            log.info("[PreFlight] caseId={} has no collectable balance, skip", caseId);
             return PreFlightResult.blocked(CancelReason.NO_DUE_BALANCE, info);
         }
         return PreFlightResult.passed(info);

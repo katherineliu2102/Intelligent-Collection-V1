@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -12,12 +13,14 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
  * 把数仓 {@code caseEvent} / {@code repaymentEvent} 完整快照映射为领域事件 payload（语义字段 → {@link CollectionEvent}
  * 常量 key，契约见领域模型 §6.2）。
  */
+@Slf4j
 @Component
 public class CasePayloadMapper {
 
@@ -62,10 +65,20 @@ public class CasePayloadMapper {
         }
     }
 
-    /** 避免将增量字段与完整快照的必填约束混在一起。 */
+    /**
+     * 避免将增量字段与完整快照的必填约束混在一起。
+     *
+     * <p>{@code stage} 随还款同步：还款会改变未结清的到期期次，数仓在 `repaymentEvent` 里给出的 stage 与 dpd 是同一时刻的口径， 只取 dpd
+     * 不取 stage 会让投影出现「stage 来自入案、dpd 来自还款」的自相矛盾组合。
+     *
+     * <p>但解析必须宽松：非法取值只跳过本字段，不能抛 poison。为一个字段丢掉真实还款，会让已还清的 客户继续被催，代价远高于 stage 晚一个日切才纠正。
+     */
     public static final class CaseProjectionFields {
         public Integer dpd;
         public Stage stage;
+        /** 事件显式携带 stage 且取值合法（含显式 null）时为 true；非法取值按「未携带」处理以保基线。 */
+        public boolean stagePresent;
+
         public BigDecimal overdueAmount;
         public BigDecimal penaltyAmount;
         public BigDecimal upcomingAmount;
@@ -117,6 +130,12 @@ public class CasePayloadMapper {
         putRawDecimal(fields, json, CollectionEvent.UPCOMING_AMOUNT);
         putRawStr(fields, json, CollectionEvent.NEXT_DUE_DATE);
         putRawStr(fields, json, CollectionEvent.DUE_DATE);
+        if (!fields.containsKey(CollectionEvent.DUE_DATE)) {
+            LocalDate derived = deriveDueDate(json);
+            if (derived != null) {
+                fields.put(CollectionEvent.DUE_DATE, derived.toString());
+            }
+        }
         JSONObject borrower = json.getJSONObject("borrower");
         if (borrower != null) {
             putRawStr(fields, borrower, CollectionEvent.NAME);
@@ -150,7 +169,13 @@ public class CasePayloadMapper {
         }
         CaseProjectionFields fields = new CaseProjectionFields();
         fields.dpd = json.getInteger(CollectionEvent.DPD);
-        fields.stage = parseStage(trimToNull(json.getString(CollectionEvent.STAGE)));
+        if (json.containsKey(CollectionEvent.STAGE)) {
+            String raw = trimToNull(json.getString(CollectionEvent.STAGE));
+            fields.stage = raw == null ? null : parseStageLenient(raw, caseId);
+            // 非法取值时 parseStageLenient 返回 null，但那是「解析失败」不是「阶段为空」，
+            // 不能当作 present——否则一个错字就会把基线阶段清掉。
+            fields.stagePresent = raw == null || fields.stage != null;
+        }
         fields.overdueAmount = getDecimal(json, "overdueAmount");
         fields.penaltyAmount = getDecimal(json, "overduePenaltyAmount");
         if (fields.penaltyAmount == null) {
@@ -166,10 +191,9 @@ public class CasePayloadMapper {
         if (fields.dpd == null
                 || fields.overdueAmount == null
                 || fields.penaltyAmount == null
-                || fields.upcomingAmount == null
                 || fields.overdueAmount.signum() < 0
                 || fields.penaltyAmount.signum() < 0
-                || fields.upcomingAmount.signum() < 0) {
+                || (fields.upcomingAmount != null && fields.upcomingAmount.signum() < 0)) {
             throw new PoisonMessageException("repaymentEvent 缺有效增量金额或 dpd，caseId=" + caseId);
         }
         return new RepaymentDelta(caseId, userId, fullCleared, fields);
@@ -217,6 +241,23 @@ public class CasePayloadMapper {
         }
     }
 
+    /** 还款增量专用：非法 stage 只跳过本字段并留痕，不得升级为 poison 而丢掉整笔还款。 */
+    private Stage parseStageLenient(String stageRaw, Long caseId) {
+        String trimmed = trimToNull(stageRaw);
+        if (trimmed == null) {
+            return null;
+        }
+        try {
+            return Stage.valueOf(trimmed.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn(
+                    "[Ingestion] caseId={} repaymentEvent 非法 stage={}，本次不同步阶段，其余还款字段照常入账",
+                    caseId,
+                    trimmed);
+            return null;
+        }
+    }
+
     private void requireFinancialFields(Long caseId, Map<String, Object> fields) {
         if (fields.get(CollectionEvent.DPD) == null
                 || fields.get(CollectionEvent.PRODUCT) == null
@@ -254,18 +295,84 @@ public class CasePayloadMapper {
         }
     }
 
+    /**
+     * 契约是 {@code yyyy-MM-dd}；数仓 ADS 源表若是 TIMESTAMP，会带成 {@code 2026-09-01T00:00:00.000}。 日历日含义不变时取前
+     * 10 位，真正乱码才毒丸（毒丸 ACK 不进 inbox / 投影 / DLQ，会静默丢案）。
+     */
     static LocalDate parseDate(Object value, String field) {
-        if (value == null || (value instanceof Number && ((Number) value).longValue() == 0L)) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDate) {
+            return (LocalDate) value;
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).toLocalDate();
+        }
+        if (value instanceof java.util.Date) {
+            return Instant.ofEpochMilli(((java.util.Date) value).getTime())
+                    .atZone(PHT)
+                    .toLocalDate();
+        }
+        if (value instanceof Number && ((Number) value).longValue() == 0L) {
             return null;
         }
         String raw = trimToNull(value.toString());
         if (raw == null || "0".equals(raw)) {
             return null;
         }
+        if (raw.length() >= 10) {
+            String head = raw.substring(0, 10);
+            if (looksLikeIsoDate(head)
+                    && (raw.length() == 10 || isDateTimeSeparator(raw.charAt(10)))) {
+                try {
+                    return LocalDate.parse(head);
+                } catch (DateTimeParseException ignored) {
+                    // fall through
+                }
+            }
+        }
         try {
             return LocalDate.parse(raw);
-        } catch (Exception e) {
+        } catch (DateTimeParseException e) {
             throw new PoisonMessageException("非法 " + field + "=" + raw);
+        }
+    }
+
+    private static boolean looksLikeIsoDate(String head) {
+        return head.length() == 10 && head.charAt(4) == '-' && head.charAt(7) == '-';
+    }
+
+    private static boolean isDateTimeSeparator(char c) {
+        return c == 'T' || c == ' ' || c == '+' || c == 'Z';
+    }
+
+    /**
+     * 缺 dueDate 时由 {@code occurredAt - dpd} 反推。
+     *
+     * <p>计划模板是 dayBlocks 绝对槽位模型，靠 {@code dueDate + dpdDay} 把"模板第几天"换算成日历日； 锚点缺失时 {@code
+     * PhtSlotScheduleCalculator.futureSlots} 直接返回空，一个步骤都排不出来， 表现为全量案件建不出计划。而交付契约的 caseEvent 字段表里没有
+     * dueDate，上游至今未下发。
+     *
+     * <p>事件自带一组等价锚点：occurredAt 当天的 dpd。dpd 口径为应还日之后的自然日数，故可直接反推。 必须用 occurredAt 而非当天——dpd
+     * 是快照时点的值，用当天反推会按事件在队列里滞留的时长整体偏移。
+     *
+     * <p>上游若补发 dueDate 则以上游为准，本方法不参与。
+     */
+    private static LocalDate deriveDueDate(JSONObject json) {
+        Integer dpd = json.getInteger(CollectionEvent.DPD);
+        String raw = trimToNull(json.getString("occurredAt"));
+        if (dpd == null || raw == null) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(raw).atZoneSameInstant(PHT).toLocalDate().minusDays(dpd);
+        } catch (DateTimeParseException ignored) {
+            try {
+                return LocalDateTime.parse(raw, LOCAL_OCCURRED_AT).toLocalDate().minusDays(dpd);
+            } catch (DateTimeParseException e) {
+                return null;
+            }
         }
     }
 

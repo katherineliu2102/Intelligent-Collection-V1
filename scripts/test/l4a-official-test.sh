@@ -273,7 +273,10 @@ if ! curl -s -o /dev/null -w "%{http_code}" "$PLANS/active/by-case/1" | grep -qE
   echo "✗ 无法连接 $HOST"; exit 1
 fi
 pass "App 可达 $HOST"
-if post "$MOCK/reset-l4a" | pp; then
+# L4A_SKIP_RESET=1 保留上一轮现场，用于只复跑收口断言取证（清库会把待查的异常行一起删掉）。
+if [ "${L4A_SKIP_RESET:-0}" = "1" ]; then
+  echo "   ! L4A_SKIP_RESET=1，跳过清理（仅取证用，逐条用例结果不可信）"
+elif post "$MOCK/reset-l4a" | pp; then
   pass "L4a 固定案例运行数据已清理"
 else
   echo "✗ 无法清理 L4a 固定案例运行数据"; exit 1
@@ -321,6 +324,83 @@ wait_active_count "$CASE_REPAY" 1 45 || fail "L4a-3 初始计划未在时限内�
 post "$MOCK/repayment?userId=$CASE_REPAY&caseId=$CASE_REPAY" | pp
 wait_active_count "$CASE_REPAY" 0 30 && pass "L4a-3 活跃计划数=0" || fail "L4a-3 活跃计划未取消"
 wait_cancel "$CASE_REPAY" "REPAID" 30 && pass "L4a-3 cancelReason=REPAID" || assert_cancel "$CASE_REPAY" "REPAID" "L4a-3"
+sleep 1
+fi
+
+if should_run 3b; then
+# =============================================================================
+# L4a-3b 部分还款只刷余额（94101）
+# =============================================================================
+# 与 L4a-3 的分水岭：结清取消计划，部分还款只能改快照里的余额。
+#
+# 不变量只取「部分还款不该碰」的维度：计划身份（同一个 plan 仍在活跃列表里，即没被取消重建）、
+# stage、模板、总步数、步骤的 id 与渠道。**不含 status / currentStep / 步骤 status**——
+# 计划建好后调度器就在独立推进它，这些字段本来就会自己往前走，拿它们当不变量只会测出调度器在工作。
+hdr "L4a-3b 部分还款运行态刷新 (case=$CASE_REPAY)"
+post "$MOCK/reset-l4a" >/dev/null
+post "$MOCK/ingest?caseId=$CASE_REPAY&userId=$CASE_REPAY&stage=S1" | pp
+wait_active_count "$CASE_REPAY" 1 45 || fail "L4a-3b 初始计划未在时限内创建"
+
+plan_identity() {
+  get "$PLANS/active/by-case/$CASE_REPAY" | python3 -c "
+import json,sys
+p=json.load(sys.stdin)
+if not p:
+    print('NO_ACTIVE_PLAN'); sys.exit(0)
+p=p[0]
+print('%s|%s|%s|%s' % (p['id'], p.get('stage'), p.get('planTemplateId'), p.get('totalSteps')))
+"
+}
+plan_amount() {
+  get "$PLANS/active/by-case/$CASE_REPAY" | python3 -c "
+import json,sys
+p=json.load(sys.stdin)
+if not p: sys.exit(0)
+cc=(json.loads(p[0].get('contextSnapshot') or '{}').get('caseContext') or {})
+v=cc.get('totalOutstanding')
+print('' if v is None else '%.2f' % float(v))
+" 2>/dev/null
+}
+step_shape() {
+  get "$PLANS/$1/steps" | python3 -c "
+import json,sys
+print(','.join('%s:%s' % (s.get('id'), s.get('channelType')) for s in json.load(sys.stdin)))
+"
+}
+
+before_key="$(plan_identity)"
+plan_id="$(echo "$before_key" | cut -d'|' -f1)"
+before_amount="$(plan_amount)"
+before_steps="$(step_shape "$plan_id")"
+echo "   基线 plan=$before_key totalOutstanding=$before_amount steps=$before_steps"
+
+post "$MOCK/balance-updated?caseId=$CASE_REPAY&userId=$CASE_REPAY&dpd=2&overdueAmount=800.00&totalOutstanding=800.00&penaltyAmount=50.00&upcomingAmount=200.00&collectionStatus=IN_COLLECTION" | pp
+
+refreshed=0
+for _ in $(seq 1 15); do
+  now_amount="$(plan_amount)"
+  [ "$now_amount" = "800.00" ] && { refreshed=1; break; }
+  sleep 2
+done
+if [ "$refreshed" = "1" ]; then
+  pass "L4a-3b 快照余额已刷新（$before_amount → 800.00）"
+else
+  fail "L4a-3b 快照余额未刷新（当前 ${now_amount}，期望 800.00）"
+fi
+
+after_key="$(plan_identity)"
+if [ "$after_key" = "$before_key" ]; then
+  pass "L4a-3b 计划身份/stage/模板/总步数均未变（${after_key}）"
+else
+  fail "L4a-3b 部分还款改动了计划：$before_key → $after_key"
+fi
+
+after_steps="$(step_shape "$plan_id")"
+if [ "$after_steps" = "$before_steps" ]; then
+  pass "L4a-3b 步骤集合与渠道未变"
+else
+  fail "L4a-3b 步骤被改写：$before_steps → $after_steps"
+fi
 sleep 1
 fi
 
@@ -469,6 +549,72 @@ get "$PLANS/by-case/$CASE_REBUILD/history?limit=8" | pp
 st=$(get "$PLANS/active/by-case/$CASE_REBUILD" | python3 -c "import json,sys; ps=json.load(sys.stdin); print(ps[0]['stage'] if ps else '')" 2>/dev/null)
 [ "$st" = "S2" ] && pass "L4a-全 ESCALATE 后活跃计划 stage=S2" || echo "   WARN ESCALATE stage=$st (查日志 [exhausted] ESCALATE)"
 fi
+
+# =============================================================================
+# 收口不变式：逐条用例全绿也可能留下不收敛的步骤行（2026-08-21 实测：官方 25 项全过，
+# 库里仍有 3 行 status=EXECUTING 但 result/completed_at 已写、两个时间列均为 NULL 的步骤）。
+# 这两条断言按"跑完之后全局扫一遍"取证，与单条用例的成功判定互补。
+# =============================================================================
+hdr "L4a-收口 步骤行收敛性"
+# 采样全部涉案计划的步骤行，输出稳定排序的 "plan step status result completedAt triggerTime timeoutTime"。
+snapshot_steps() {
+  for cid in $CASE_THREE $CASE_OBS $CASE_REPAY $CASE_IDEM $CASE_GMAIL \
+             $CASE_GUARD $CASE_GUARD_FREQ $CASE_REBUILD 92001 93101 93201; do
+    for pid in $(get "$PLANS/by-case/$cid/history?limit=8" \
+          | python3 -c "import json,sys;print(' '.join(str(p['id']) for p in json.load(sys.stdin)))" 2>/dev/null); do
+      get "$PLANS/$pid/steps" | python3 -c "
+import json,sys
+plan=sys.argv[1]
+for s in json.load(sys.stdin):
+    print('%s %s %s %s %s %s %s' % (plan, s.get('id'), s.get('status'), s.get('result'),
+          s.get('completedAt'), s.get('triggerTime'), s.get('timeoutTime')))
+" "$pid" 2>/dev/null
+    done
+  done | sort
+}
+
+# 收口断言：先等系统静默，再判定。
+#
+# 必须等静默的原因：步骤在 markExecuting（清空 trigger_time）与终态写入之间，**合法地**处于
+# EXECUTING 且 trigger_time / timeout_time 两列皆空。在这个派发窗口内采样，会把健康步骤误判为悬挂
+# ——2026-08-21 实测 step 1330 被判 UNREACHABLE，而它在断言后 0.3 秒即收敛为 FAILED。
+# 静默判据用「连续两次采样完全一致」而非「距上次写入 N 秒」，因为 /steps 接口不暴露 updated_at。
+assert_step_convergence() {
+  local grace="$1" settle="${2:-20}" waited=0 prev cur settled=0
+  cur=$(snapshot_steps)
+  while [ "$waited" -lt "$grace" ]; do
+    sleep "$settle"; waited=$((waited + settle))
+    prev="$cur"; cur=$(snapshot_steps)
+    if [ "$prev" = "$cur" ]; then settled=1; break; fi
+  done
+  local out
+  out=$(echo "$cur" | python3 -c "
+import sys
+for line in sys.stdin:
+    f=line.split()
+    if len(f) != 7: continue
+    plan, step, st, result, completed, trigger, timeout = f
+    none=('None','null','')
+    # 非终态却已写完成时刻：状态与完成时刻由同一条 UPDATE 写入，静默后仍矛盾即有第二个写入方。
+    if st in ('PENDING','EXECUTING') and completed not in none:
+        print('CONTRADICT plan=%s step=%s status=%s completedAt=%s result=%s' % (plan, step, st, completed, result))
+    # 两个扫描都摸不到：due 扫 trigger_time、timeout 扫 timeout_time，静默后均空即永久悬挂。
+    elif st == 'EXECUTING' and trigger in none and timeout in none:
+        print('UNREACHABLE plan=%s step=%s result=%s' % (plan, step, result))
+")
+  if [ "$settled" -eq 0 ]; then
+    fail "L4a-收口 ${grace}s 内步骤行仍在变化，未达静默，判定不可信"
+    echo "$out"
+    return
+  fi
+  if [ -z "$out" ]; then
+    pass "L4a-收口 静默后无悬挂步骤（非终态未写 completed_at、EXECUTING 至少可被一种扫描拾取）"
+  else
+    echo "$out"
+    fail "L4a-收口 静默后仍有不收敛步骤行（$(echo "$out" | wc -l | tr -d ' ') 行）"
+  fi
+}
+assert_step_convergence 120
 
 # ---- 汇总 --------------------------------------------------------------------
 hdr "汇总：PASS=$PASS FAIL=$FAIL"

@@ -32,6 +32,14 @@ public class CaseProjection {
     /** 增量还款消息显式携带 nextDueDate（可为 null）时为 true。 */
     private boolean nextDueDatePresent;
 
+    /**
+     * 增量还款消息显式携带 stage（可为 null）时为 true。
+     *
+     * <p>数仓口径下 {@code stage=null} 是有含义的取值——下一个未还 dueDate 超过 3 天即不属任何催收阶段。 因此必须把「没给该字段」与「明确给了
+     * null」区分开，否则前者会被当成后者清空基线，或后者被当成 前者而永远写不进去。
+     */
+    private boolean stagePresent;
+
     private String borrowerName;
     private String borrowerPhone;
     private String borrowerEmail;

@@ -79,7 +79,9 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | --- | --- | --- |
 | `caseEvent` / `CASE_INGESTED` | `CasePayloadMapper.mapAiSnapshot`，进入完整快照处理 | poison 后 ACK |
 | `repaymentEvent` / `REPAYMENT` | `mapRepaymentDelta`，进入还款增量处理 | poison 后 ACK |
-| 外部 `CASE_STAGE_CHANGED` / `CASE_CEASED` | 拒绝；阶段和停催仅由日切产出 | poison 后 ACK 并告警 |
+
+`dueDate` / `nextDueDate` 契约是 `yyyy-MM-dd`。接入 **兼容** `2026-09-01T00:00:00.000` / `yyyy-MM-dd HH:mm:ss`（取日历日前 10 位，不按时区换日）；`0` / `null` 仍表示无日期。真正乱码才毒丸 ACK。毒丸不写 inbox、不进投影、也不进 DLQ，数仓会以为已投递。数仓 ADS 源表是 TIMESTAMP 时，发布前仍应截成日期。
+| 外部 `CASE_STAGE_CHANGED` / `CASE_CEASED` | 拒绝；阶段与停催不接受外部投递，内部产出方见[§4](#4-dpd-日切) | poison 后 ACK 并告警 |
 | 未知 `dataType` | 拒绝 | ACK、记录指标；持续出现告警 |
 
 `repaymentEvent` 只携带还款后的 `dpd`、`stage`、金额和下一期提醒字段，不得带 `caseVersion`、产品、借款人或设备。已结清、D+91 与在催状态由投影组装时派生；接入不信任或依赖外部 `collectionStatus`。
@@ -96,7 +98,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 收件箱为最终幂等判据：同一 `eventId` 重投命中收件箱即跳过；`caseEvent` 指纹相同或 `repaymentEvent.occurredAt` 早于投影时，收件箱标记 `SKIPPED` 且不覆盖投影。Redis key（`collection:ingestion:*`）仅用于快速去重、日切 keyset 游标和完成标记，并与旧催收隔离。具体键名见[基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)。
 
 ### 3.3 按消息类型的处理矩阵
-<a id="222-repaymentevent"></a>
+<a id="33-按消息类型的处理矩阵"></a><a id="222-repaymentevent"></a>
 
 | 场景 | 投影行为 | 内部事件 |
 | --- | --- | --- |
@@ -110,13 +112,15 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 
 ### 3.4 内部事件发布与 PENDING 补发
 
-接入在投影事务提交后经 `CollectionEventBus` 发布事件；字段定义见[领域模型 §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)，传输可靠性见[基础设施 §2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#2-事件总线redis-stream)。
+接入在投影事务提交后经 `CollectionEventBus` 发布事件；字段定义见[领域模型 §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)，传输可靠性见[基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)。
 
 | 事件 | 触发条件 |
 | --- | --- |
 | `CASE_INGESTED` | 首次有效 `caseEvent` 入催 |
 | `REPAYMENT_RECEIVED` | `repaymentEvent.isFullCleared=true` |
-| `CASE_BALANCE_UPDATED` | 非结清 `repaymentEvent` 合并投影成功 |
+| `CASE_BALANCE_UPDATED` | 非结清 `repaymentEvent` 合并投影成功；引擎侧可写快照字段见[领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段) |
+| `STAGE_CHANGED` | 日切比对投影发现阶段变化，见[§4](#4-dpd-日切) |
+| `CASE_CEASED` | 日切发现 `dpd >= 91` 且仍有活跃计划，见[§4](#4-dpd-日切) |
 
 投影与收件箱同事务提交。若提交后内部事件尚未发布，收件箱保留 `PENDING`；同一消息重投时只补发内部事件，不重复写投影，成功后标记 `PUBLISHED`。
 
@@ -129,11 +133,13 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 时间 | 03:35–05:55 PHT，每 5 分钟处理一个 keyset 分页；06:00 PHT 前完成，否则告警 |
 | 前置 | 当日 `caseEvent` 批次已消费完毕；批次门控目标与延迟处置见[数仓交付契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) |
 | 扫描 | 联调使用 `loan-id-whitelist`；生产按 `case_id` keyset 分页，Redis 保存游标与完成标记。单轮上限为 `collection.ingestion.daily-roll-batch-size`（Pilot `1000`）；按日案件量与单页耗时调优 |
-| 阶段变化 | 活跃计划的 stage 与投影不同（含回退）时发布 `STAGE_CHANGED` |
-| 停催 | `dpd >= 91` 且仍有活跃计划时发布 `CASE_CEASED` |
-| 重跑 | 同日同一目标 stage 或停催事件不重复发布 |
+| 阶段变化 | 投影 stage 的**严重度高于**活跃计划 stage 时发布 `STAGE_CHANGED`；低于时**不发**，只记指标（见下方「阶段单调前进」）。**无活跃计划**时：最近一份 `PLAN_COMPLETED` 且投影档更高 → 同样发布（档末日走完后次日建 S0→S1 … S3→S4）；`PLAN_CANCELLED` + `NO_DUE_BALANCE` 且投影已有应还余额 → 按当天档发布。`MANUAL_CLEANUP` / `REPAID` / `CEASED` 不续建 |
+| 停催 | `dpd >= 91` 且仍有活跃计划时发布 `CASE_CEASED`。无活跃计划不发（投影已由当日 `caseEvent` 派生 `CEASED`） |
+| 重跑 | 同一案件在同一 `dpd` 下，同类事件（`stage` / `ceased`）只发一次；去重键 `collection:ingestion:dedup:{type}:{loanId}:{dpd}`，TTL 2 天 |
 
-`STAGE_CHANGED` / `CASE_CEASED` 只能由该 Job 产出；外部 Topic 的同名事件必须按 poison 处理。
+**阶段单调前进（与引擎 ESCALATE 的优先级）**：日切**不得**因投影 stage 低于计划 stage 而发布回退事件。引擎的穷尽升档（[核心引擎 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)）会把活跃计划的 stage 抬到高于 DPD 推导值，而引擎从不回写 `t_ai_collection`，因此"计划 stage > 投影 stage"是**升档后的正常稳态**，不是漂移。若日切按"不同即发"处理，就会把升档计划按 `STAGE_UPGRADE` 取消并重建回低阶段，下一轮穷尽再次升档，形成降档 ping-pong。DPD 真实下降（部分还款）已由 `CASE_BALANCE_UPDATED` 更新快照金额，Phase 1 不因此降低已在运行的催收强度。
+
+`CASE_CEASED` 只能由该 Job 产出。`STAGE_CHANGED` 有两个合法发布方——本 Job 与引擎穷尽升档（发布者列见[领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)）；两者语义不同：本 Job 走[引擎 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理) 取消旧计划再建，升档则旧计划已是终态。外部 Topic 投递的同名事件仍必须按 poison 处理。
 
 ## 5. 迁移与 replay
 <a id="6-迁移与双写"></a><a id="61-联调隔离"></a>

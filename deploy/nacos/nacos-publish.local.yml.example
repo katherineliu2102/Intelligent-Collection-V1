@@ -11,9 +11,10 @@ channel:
   notification:
     app-key: <运维下发>
   facade:
-    base-url: https://34.158.34.184/api/v1/facade
-    api-key: sk_live_xxxx
-    insecure-tls: true
-    product-type: "Quick Loan"
+    base-url: https://facade.example.internal/api/v1/facade
+    api-key: <运维下发>
+    # 仅 local/test 的供应商自签名证书联调允许 true；Pilot / production 必须 false。
+    insecure-tls: false
+    product-type: Quick Loan
     currency: PHP
-    test-callee: "+639451373897"
+    test-callee: "+639000000000"

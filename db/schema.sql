@@ -530,6 +530,21 @@ CREATE TABLE IF NOT EXISTS t_user_device_token (
     INDEX idx_synced_at (synced_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 Push Token 镜像（数仓日同步）';
 
+-- 7.2.6 Email 抑制名单（SendGrid Event Webhook 写入，ExecutionGuard 读取）。
+-- 按地址而非按案件：hard bounce 与投诉都是地址级事实，同一地址换个案件再发仍会退信，
+-- 并持续损耗发信域信誉。SendGrid 自家 suppression list 会在供应商侧拦掉发信，但本地不知情，
+-- 于是每个里程碑照旧建 EMAIL 步骤、调一次 API、拿一个 dropped，step 记成渠道失败——
+-- 本地留一份才能在 Guard 就 BLOCK，把「地址已废」表达成合规拦截。
+CREATE TABLE IF NOT EXISTS t_email_suppression (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    email               VARCHAR(256)    NOT NULL COMMENT '收件地址，写入前统一小写去空白',
+    reason              VARCHAR(32)     NOT NULL COMMENT 'HARD_BOUNCE/DROPPED/SPAM_REPORT/UNSUBSCRIBE',
+    detail              VARCHAR(512)    NULL     COMMENT '供应商原因原文，截断 512',
+    case_id             BIGINT          NULL     COMMENT '首次触发抑制的案件，仅作溯源',
+    created_at          DATETIME        NOT NULL COMMENT '抑制发生时间（PHT，应用侧传入）',
+    UNIQUE KEY uk_email_suppression_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Email 抑制名单（退信/投诉/退订）';
+
 -- 7.2.2 用户画像扩展表 t_user_profile_ext：Phase 1 不建表，押后 Phase 2
 --   原因：Phase 1 无代码消费 / 无 mapper（MockProfileService 仅填 basic + device.jpushToken）。
 --   待数仓/号码检测供应商就绪或坐席标记上线再建，届时同步领域模型 §7.2.2。

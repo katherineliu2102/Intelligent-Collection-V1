@@ -64,12 +64,12 @@ import org.junit.jupiter.api.Test;
  * <p>定位：用<b>编码了 2026-06-11 定稿契约语义的可配置替身</b>（StepResolver / ExecutionGuard /
  * ChannelGateway）驱动<b>真实引擎组件</b>，断言引擎在各渠道返回情形下的行为。 编排同事真实化 Mock 后，契约语义一致即对接即绿；本类是双方对接的验收基线。
  *
- * <p>契约依据：{@code docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约对齐_待编排确认.md}
+ * <p>契约依据：{@code docs/contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md}
  *
  * <ul>
  *   <li>StepResult 3 情形：发送受理(success) / 网络超时(retryable) / 其他异常(不重试)
  *   <li>观察期：PUSH/EMAIL 无、SMS 等 DLR（默认 10min）
- *   <li>空地址：方案 A（Guard block NO_EMAIL/NO_PHONE/NO_TOKEN → SKIPPED）；PUSH 叠加 C（fallback SMS）
+ *   <li>空地址：Guard block NO_EMAIL/NO_PHONE/NO_TOKEN_NO_PHONE → SKIPPED；PUSH 无 token 时 fallback SMS
  *   <li>幂等 key：plan:stepOrder:retryCount
  * </ul>
  */
@@ -149,6 +149,7 @@ class ChannelContractL2Test {
                 "predictiveDialerService",
                 (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
+        inject(manager, "metrics", com.collection.engine.metrics.CollectionMetrics.local());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
@@ -321,7 +322,7 @@ class ChannelContractL2Test {
         // 入案 + 首步到期
         bus.publish(stepIngest());
         bus.drainAll();
-        List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100);
+        List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100, null);
         assertThat(due).hasSize(1);
         Long planId = due.get(0).getPlanId();
         Long stepId = due.get(0).getId();
@@ -341,7 +342,7 @@ class ChannelContractL2Test {
         bus.publish(stepIngest());
         bus.drainAll();
         for (int i = 0; i < 10; i++) {
-            List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100);
+            List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100, null);
             if (due.isEmpty()) {
                 break;
             }
@@ -688,12 +689,20 @@ class ChannelContractL2Test {
 
         @Override
         public ContactPlanStep getNextStep(Long planId, int currentStepOrder) {
+            // 与持久化实现同语义：序号更大且未终结的第一条，跳过乱序先完成的后继（台账 F12）。
+            ContactPlanStep best = null;
             for (ContactPlanStep s : steps.values()) {
-                if (planId.equals(s.getPlanId()) && s.getStepOrder() == currentStepOrder + 1) {
-                    return s;
+                if (!planId.equals(s.getPlanId()) || s.getStepOrder() <= currentStepOrder) {
+                    continue;
+                }
+                if (s.getStatus() != null && s.getStatus().isTerminal()) {
+                    continue;
+                }
+                if (best == null || s.getStepOrder() < best.getStepOrder()) {
+                    best = s;
                 }
             }
-            return null;
+            return best;
         }
 
         @Override
@@ -711,11 +720,13 @@ class ChannelContractL2Test {
         public void updateStepTriggerTime(
                 Long stepId, LocalDateTime triggerTime, StepStatus status) {
             ContactPlanStep s = steps.get(stepId);
-            if (s != null) {
-                s.setTriggerTime(triggerTime);
-                if (status != null) {
-                    s.setStatus(status);
-                }
+            // 终态守卫与持久化实现的 SQL 谓词一致，不得复活已终结步骤（台账 F12）。
+            if (s == null || (s.getStatus() != null && s.getStatus().isTerminal())) {
+                return;
+            }
+            s.setTriggerTime(triggerTime);
+            if (status != null) {
+                s.setStatus(status);
             }
         }
 
@@ -736,7 +747,8 @@ class ChannelContractL2Test {
         }
 
         @Override
-        public List<ContactPlanStep> findDueSteps(LocalDateTime now, int limit) {
+        public List<ContactPlanStep> findDueSteps(
+                LocalDateTime now, int limit, List<Long> caseIdFilter) {
             List<ContactPlanStep> list = new ArrayList<>();
             for (ContactPlanStep s : steps.values()) {
                 ContactPlan p = plans.get(s.getPlanId());
@@ -744,7 +756,10 @@ class ChannelContractL2Test {
                         && s.getTriggerTime() != null
                         && !s.getTriggerTime().isAfter(now)
                         && p != null
-                        && !p.isTerminal()) {
+                        && !p.isTerminal()
+                        && (caseIdFilter == null
+                                || caseIdFilter.isEmpty()
+                                || caseIdFilter.contains(p.getCaseId()))) {
                     list.add(s);
                 }
             }
@@ -752,7 +767,8 @@ class ChannelContractL2Test {
         }
 
         @Override
-        public List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit) {
+        public List<ContactPlanStep> findTimeoutSteps(
+                LocalDateTime now, int limit, List<Long> caseIdFilter) {
             return Collections.emptyList();
         }
     }

@@ -81,6 +81,7 @@ class FullChainIntegrationTest {
     private InMemoryPlanRepository planRepo;
     private InMemoryTimelineRepository timelineRepo;
     private RecordingStepResolver stepResolver;
+    private PlanLifecycleManager manager;
 
     @BeforeEach
     void wire() {
@@ -120,7 +121,7 @@ class FullChainIntegrationTest {
         inject(orchestrator, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
         inject(orchestrator, "props", props);
 
-        PlanLifecycleManager manager = new PlanLifecycleManager();
+        manager = new PlanLifecycleManager();
         inject(manager, "planRepository", planRepo);
         inject(manager, "stepOutcomeRecorder", outcomeRecorder);
         inject(manager, "caseService", caseService);
@@ -138,6 +139,7 @@ class FullChainIntegrationTest {
                 "predictiveDialerService",
                 (PredictiveDialerService) (userId, caseId) -> {});
         inject(manager, "spiInvoker", com.collection.engine.spi.SpiInvoker.direct());
+        inject(manager, "metrics", com.collection.engine.metrics.CollectionMetrics.local());
 
         EventConsumerDispatcher dispatcher = new EventConsumerDispatcher();
         inject(dispatcher, "eventBus", bus);
@@ -159,7 +161,7 @@ class FullChainIntegrationTest {
 
         // 模拟 TriggerScanner：循环扫描到期步骤 → 发 PLAN_STEP_DUE，直到无到期步骤
         for (int i = 0; i < 10; i++) {
-            List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100);
+            List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100, null);
             if (due.isEmpty()) {
                 break;
             }
@@ -183,6 +185,114 @@ class FullChainIntegrationTest {
         assertThat(stepResolver.targetByChannel.get(ChannelType.SMS)).isEqualTo(PHONE);
         assertThat(stepResolver.targetByChannel.get(ChannelType.PUSH)).isEqualTo(FCM);
         assertThat(stepResolver.targetByChannel.get(ChannelType.EMAIL)).isEqualTo(EMAIL);
+    }
+
+    // ───────── 至少一次投递：重复 / 并发的 PLAN_STEP_DUE（生产 Pub/Sub 语义） ─────────
+
+    @Test
+    @DisplayName("L1-DUP1 步骤已完成后重投 PLAN_STEP_DUE → 不复活步骤、不二次触达")
+    void duplicateStepDue_afterCompletion_doesNotResurrect() {
+        ContactPlanStep first = ingestAndRunFirstStep();
+        int touchesAfterFirstRun = timelineRepo.records.size();
+
+        // ack 超时导致的重投：同一条 STEP_DUE 再来一次
+        bus.publish(
+                CollectionEvent.of(EventType.PLAN_STEP_DUE)
+                        .with(CollectionEvent.PLAN_ID, first.getPlanId())
+                        .with(CollectionEvent.STEP_ID, first.getId()));
+        bus.drainAll();
+
+        ContactPlanStep reloaded = planRepo.findStepById(first.getId());
+        assertThat(reloaded.getStatus().isTerminal()).as("已终结的步骤不得被重投改回 EXECUTING").isTrue();
+        assertThat(timelineRepo.records).as("重投不得产生第二次触达").hasSize(touchesAfterFirstRun);
+    }
+
+    @Test
+    @DisplayName("L1-DUP2 步骤已终结时并发重投 → 全部抢占失败，行不被改回 EXECUTING")
+    void concurrentStepDue_onTerminalStep_neverResurrects() throws Exception {
+        // CAS 的职责边界：只排除终态。非终态的重复抢占是合法的（退避重试要复用同一行），
+        // 那一侧由幂等锁防重复触达，见 DUP3。
+        ContactPlanStep done = ingestAndRunFirstStep();
+        assertThat(planRepo.findStepById(done.getId()).getStatus().isTerminal()).isTrue();
+
+        List<Boolean> claims = runConcurrently(4, () -> planRepo.markStepExecuting(done.getId()));
+
+        assertThat(claims).as("终态步骤的任何抢占都必须失败").containsOnly(false);
+        ContactPlanStep reloaded = planRepo.findStepById(done.getId());
+        assertThat(reloaded.getStatus().isTerminal()).isTrue();
+        assertThat(reloaded.getTriggerTime())
+                .as("抢占失败不得清空 trigger_time —— 那正是悬挂的成因")
+                .isEqualTo(done.getTriggerTime());
+    }
+
+    @Test
+    @DisplayName("L1-DUP3 未执行步骤并发重投 → 只产生一次触达（幂等锁）")
+    void concurrentStepDue_onFreshStep_touchesOnce() throws Exception {
+        ContactPlanStep pending = ingestAndGetFirstPendingStep();
+        CollectionEvent due =
+                CollectionEvent.of(EventType.PLAN_STEP_DUE)
+                        .with(CollectionEvent.PLAN_ID, pending.getPlanId())
+                        .with(CollectionEvent.STEP_ID, pending.getId());
+
+        runConcurrently(
+                2,
+                () -> {
+                    bus.publish(due);
+                    bus.drainAll();
+                    return true;
+                });
+
+        assertThat(timelineRepo.records).as("同一步骤并发重复投递只允许一次真实触达").hasSize(1);
+    }
+
+    /** 并发跑同一段逻辑，返回各线程的结果。用栅栏让线程尽量同时进入临界区。 */
+    private <T> List<T> runConcurrently(int threads, java.util.concurrent.Callable<T> task)
+            throws Exception {
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(threads);
+        try {
+            List<java.util.concurrent.Future<T>> futures = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                futures.add(
+                        pool.submit(
+                                () -> {
+                                    start.await();
+                                    return task.call();
+                                }));
+            }
+            start.countDown();
+            List<T> out = new ArrayList<>();
+            for (java.util.concurrent.Future<T> f : futures) {
+                out.add(f.get(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            return out;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** 跑完第一个步骤（含渠道调度与终态回写），返回该步骤。 */
+    private ContactPlanStep ingestAndRunFirstStep() {
+        ContactPlanStep pending = ingestAndGetFirstPendingStep();
+        bus.publish(
+                CollectionEvent.of(EventType.PLAN_STEP_DUE)
+                        .with(CollectionEvent.PLAN_ID, pending.getPlanId())
+                        .with(CollectionEvent.STEP_ID, pending.getId()));
+        bus.drainAll();
+        return pending;
+    }
+
+    private ContactPlanStep ingestAndGetFirstPendingStep() {
+        bus.publish(
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.STAGE, Stage.S1.name()));
+        bus.drainAll();
+        List<ContactPlanStep> due = planRepo.findDueSteps(LocalDateTime.now(), 100, null);
+        assertThat(due).as("入案后应有到期步骤").isNotEmpty();
+        return due.get(0);
     }
 
     @Test
@@ -434,12 +544,20 @@ class FullChainIntegrationTest {
 
         @Override
         public ContactPlanStep getNextStep(Long planId, int currentStepOrder) {
+            // 与持久化实现同语义：序号更大且未终结的第一条，跳过乱序先完成的后继（台账 F12）。
+            ContactPlanStep best = null;
             for (ContactPlanStep s : steps.values()) {
-                if (planId.equals(s.getPlanId()) && s.getStepOrder() == currentStepOrder + 1) {
-                    return s;
+                if (!planId.equals(s.getPlanId()) || s.getStepOrder() <= currentStepOrder) {
+                    continue;
+                }
+                if (s.getStatus() != null && s.getStatus().isTerminal()) {
+                    continue;
+                }
+                if (best == null || s.getStepOrder() < best.getStepOrder()) {
+                    best = s;
                 }
             }
-            return null;
+            return best;
         }
 
         @Override
@@ -453,15 +571,35 @@ class FullChainIntegrationTest {
             }
         }
 
+        /**
+         * 复刻持久化实现的条件更新语义：{@code WHERE id = ? AND status NOT IN (终态)}。 synchronized 对应 UPDATE
+         * 语句在行锁下的原子判定，缺了它就无法在内存里重现并发投递的竞态。 同时必须清空 triggerTime —— 悬挂的成因正是「状态被改回 EXECUTING 且两个时间列都空」。
+         */
+        @Override
+        public synchronized boolean markStepExecuting(Long stepId) {
+            ContactPlanStep s = steps.get(stepId);
+            if (s == null || (s.getStatus() != null && s.getStatus().isTerminal())) {
+                return false;
+            }
+            s.setStatus(StepStatus.EXECUTING);
+            s.setTriggerTime(null);
+            if (s.getExecutedAt() == null) {
+                s.setExecutedAt(LocalDateTime.now());
+            }
+            return true;
+        }
+
         @Override
         public void updateStepTriggerTime(
                 Long stepId, LocalDateTime triggerTime, StepStatus status) {
             ContactPlanStep s = steps.get(stepId);
-            if (s != null) {
-                s.setTriggerTime(triggerTime);
-                if (status != null) {
-                    s.setStatus(status);
-                }
+            // 终态守卫与持久化实现的 SQL 谓词一致，不得复活已终结步骤（台账 F12）。
+            if (s == null || (s.getStatus() != null && s.getStatus().isTerminal())) {
+                return;
+            }
+            s.setTriggerTime(triggerTime);
+            if (status != null) {
+                s.setStatus(status);
             }
         }
 
@@ -482,7 +620,8 @@ class FullChainIntegrationTest {
         }
 
         @Override
-        public List<ContactPlanStep> findDueSteps(LocalDateTime now, int limit) {
+        public List<ContactPlanStep> findDueSteps(
+                LocalDateTime now, int limit, List<Long> caseIdFilter) {
             List<ContactPlanStep> list = new ArrayList<>();
             for (ContactPlanStep s : steps.values()) {
                 ContactPlan p = plans.get(s.getPlanId());
@@ -490,7 +629,10 @@ class FullChainIntegrationTest {
                         && s.getTriggerTime() != null
                         && !s.getTriggerTime().isAfter(now)
                         && p != null
-                        && !p.isTerminal()) {
+                        && !p.isTerminal()
+                        && (caseIdFilter == null
+                                || caseIdFilter.isEmpty()
+                                || caseIdFilter.contains(p.getCaseId()))) {
                     list.add(s);
                 }
             }
@@ -498,13 +640,15 @@ class FullChainIntegrationTest {
         }
 
         @Override
-        public List<ContactPlanStep> findTimeoutSteps(LocalDateTime now, int limit) {
+        public List<ContactPlanStep> findTimeoutSteps(
+                LocalDateTime now, int limit, List<Long> caseIdFilter) {
             return Collections.emptyList();
         }
     }
 
     static class InMemoryTimelineRepository implements TimelineRepository {
-        final List<ContactRecord> records = new ArrayList<>();
+        // 并发重复投递用例会从多个线程写入，需线程安全容器
+        final List<ContactRecord> records = Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public void writeTimeline(ContactRecord record) {

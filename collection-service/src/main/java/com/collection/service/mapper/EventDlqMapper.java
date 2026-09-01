@@ -30,8 +30,15 @@ public interface EventDlqMapper {
             "UPDATE t_event_dlq SET status='REDRIVEN', redriven_at=NOW() WHERE event_id=#{eventId} AND status='REDRIVING'")
     int markRedriven(@Param("eventId") String eventId);
 
+    /**
+     * 终止只改状态与审计列，{@code failure_reason} 原样保留。
+     *
+     * <p>此前把 {@code failure_reason} 原地改写成 {@code NON_RECOVERABLE:<原因>}，有两处代价：按该列聚合的
+     * 告警会把同一类故障拆成终止前后两个桶；列语义从「为何失败」漂移成「为何终止」。而终止分类、 决策人与其填写的理由本该落在 {@code redrive_reason}——DLQ
+     * 表是审计表，一条 DLQ 可能代表一次 未送达的客户触达，「谁决定不再重试、依据什么」正是它要回答的问题。
+     */
     @Update(
-            "UPDATE t_event_dlq SET status='TERMINATED', failure_reason=#{reason}, terminated_at=NOW() "
+            "UPDATE t_event_dlq SET status='TERMINATED', redrive_reason=#{reason}, terminated_at=NOW() "
                     + "WHERE event_id=#{eventId}")
     int markTerminated(@Param("eventId") String eventId, @Param("reason") String reason);
 

@@ -39,10 +39,8 @@ public class CollectionEvent {
     public static final String PRODUCT = "product";
     public static final String OVERDUE_AMOUNT = "overdueAmount";
     public static final String TOTAL_OUTSTANDING = "totalOutstanding";
-    /** S0 对客金额：DPD ∈ [-3,0] 窗口期，可空。 */
-    public static final String UPCOMING_AMOUNT = "upcomingAmount";
-
     public static final String PENALTY_AMOUNT = "penaltyAmount";
+    public static final String UPCOMING_AMOUNT = "upcomingAmount";
     public static final String DUE_DATE = "dueDate";
     public static final String NEXT_DUE_DATE = "nextDueDate";
     public static final String FULL_REPAY_TIME = "fullRepayTime";

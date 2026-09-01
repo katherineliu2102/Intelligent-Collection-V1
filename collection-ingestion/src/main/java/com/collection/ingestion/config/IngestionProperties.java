@@ -1,6 +1,7 @@
 package com.collection.ingestion.config;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -41,6 +42,18 @@ public class IngestionProperties {
 
     /** 仅处理名单内 loan_id；空 = 全量（§6.1 联调隔离，名单不入仓）。 */
     private List<Long> loanIdWhitelist = new ArrayList<>();
+
+    /**
+     * 保留给 Pilot / 生产的订阅名。local / test profile 配到这些订阅会被 {@link
+     * com.collection.ingestion.config.IngestionIsolationGuard} 拒绝启动 —— 联调必须走自己的隔离订阅，
+     * 不能与生产消费者争抢同一条订阅的消息。
+     */
+    private List<String> reservedSubscriptions =
+            new ArrayList<>(
+                    Arrays.asList(
+                            "intelligent-collection-cases-v1-sub",
+                            "collection-cases-sub",
+                            "collection-cases-ai-v1-sub"));
 
     /** 白名单为空时是否启用旧库全量日切；默认关闭，避免未经审批扫描全表。 */
     private boolean dailyRollFullScanEnabled = false;

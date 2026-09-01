@@ -55,6 +55,12 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
+        <!-- 只取 BCrypt，不引 spring-boot-starter-security：后者会给全部端点套上默认过滤器链，
+             与既有的 AdminAuthInterceptor 和免鉴权的回调路径冲突。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

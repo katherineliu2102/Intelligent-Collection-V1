@@ -4,33 +4,48 @@ spring:
     port: ${COLLECTION_REDIS_PORT:6379}
     password: ${COLLECTION_REDIS_PASSWORD:}
     ssl: ${COLLECTION_REDIS_SSL:false}
-    # 事件总线 / 频控实际在 DB 0。不要绑 COLLECTION_REDIS_DB（env 里常是 3，绑上会读空库丢事件）。
-    database: 0
+    # 与其他服务共用实例时用独立 db 隔离键空间，我方才敢做 FLUSHDB 之类的整库操作。
+    # 只隔键空间，不隔进程：内存、单线程命令执行、AOF 与重启仍然共享。
+    # 注意 Redis Cluster 只支持 db0，若将来迁集群，非 0 的取值需先迁回 db0。
+    database: ${COLLECTION_REDIS_DB:0}
     connect-timeout: 200ms
     # 命令超时必须大于 XREADGROUP 的 BLOCK 1s，否则消费轮询每次都抛 RedisCommandTimeoutException。
     # 合规频控等短命令的延迟上界由 SpiInvoker 的 50ms 硬超时兜底（超时按 fail-close 处理）。
     timeout: 2s
 
-# Pilot 必须打开：否则 SELECT plan_id / channel_type 无法映射到 Java 字段，
-# 调度发出的 PLAN_STEP_DUE 会丢掉 planId，步骤永远停在 PENDING。
-mybatis:
-  configuration:
-    map-underscore-to-camel-case: true
-
-# Redis 频控/解析在 50ms 内完不成会 fail-close 成 SKIPPED，外呼发不出去。
-# 生产与 Pilot 对齐 500ms；仍保留 SPI 硬超时，不要关 timeout-enabled。
+# Guard 走 Redis 频控、Resolver 要读模板，50ms 的默认硬超时在真实网络上会稳定 fail-close：
+# 2026-08-25 真拨窗口里步骤 1392 即因此被记成 SKIPPED / COMPLIANCE_BLOCKED，外呼根本没发出去。
+# 放宽到 500ms，但**不关** timeout-enabled —— 超时仍按 fail-close 处理，只是阈值贴合真实延迟。
 engine:
   spi:
     execution-guard-timeout-ms: ${ENGINE_SPI_EXECUTION_GUARD_TIMEOUT_MS:500}
     step-resolver-timeout-ms: ${ENGINE_SPI_STEP_RESOLVER_TIMEOUT_MS:500}
+  fault-injection:
+    # T5-R3…R6 与 R13 要求「同一条消息反复失败」，真实故障（吊销权限、锁行）会波及其他事件、
+    # 取不到干净证据，故用受控注入。开关只在 T3o 取证期置 true，且必须显式 arm 才会生效
+    # （见 /ops/fault-injection）。**T4 前必须置回 false 并确认 armed=false。**
+    enabled: ${ENGINE_FAULT_INJECTION_ENABLED:false}
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
+  endpoint:
+    health:
+      # 默认只回 {"status":"DOWN"}，看不出是哪个依赖挂了。Pilot 期没有接告警平台，
+      # 全靠人工拉这个端点判读，必须带明细（Pub/Sub 订阅流终止原因即在此暴露）。
+      show-details: always
 
 collection:
+  # 渲染进 SMS 正文 / Push deep_link / Email payment_link 的还款地址，必须显式给值：
+  # 缺省会落到代码默认模板，客户点开是打不开的链接。占位符仅支持 {caseId}。
+  repayment-url-template: ${COLLECTION_REPAYMENT_URL_TEMPLATE}
+  # 到期扫描是独立于接入的第二个入口。空名单 = 扫库内全部到期步骤（Pilot 单实例已放行）。
+  # 加量/换名单走数仓 Publisher，不必再手改 COLLECTION_SCAN_CASE_IDS。
+  scan:
+    case-id-whitelist: ${COLLECTION_SCAN_CASE_IDS:}
+    allow-full-scan: ${COLLECTION_SCAN_ALLOW_FULL:false}
   compliance:
     counter: redis
   eventbus: redis
@@ -55,18 +70,40 @@ collection:
   webhook:
     signature-required: true
     hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET}
+  # 管理面账号只经环境变量注入，哈希不入仓。无默认值：缺失时启动闸门直接拒绝，
+  # 而不是退化成一个人人可登录（此前的行为）或无人可登录的实例。
+  # 写进 pilot.env 时哈希必须单引号包裹，否则 $2y$10$ 会被 shell 展开成空串。
+  admin:
+    auth:
+      accounts:
+        - username: ${COLLECTION_ADMIN_USER}
+          password-hash: ${COLLECTION_ADMIN_PASSWORD_HASH}
+          role: SYSTEM_ADMIN
   ingestion:
     enabled: true
     # 案件接入订阅，与上面的调度订阅各走各的；缺值时 PubSubCaseConsumer 启动即失败。
     project-id: ${GCP_PUBSUB_PROJECT:}
     subscription: ${GCP_PUBSUB_SUBSCRIPTION:}
     redis-dedup-enabled: true
-    daily-roll-full-scan-enabled: false
+    # 空接入名单时按 t_ai_collection keyset 滚；名单非空仍只滚名单。
+    daily-roll-full-scan-enabled: ${COLLECTION_DAILY_ROLL_FULL_SCAN_ENABLED:true}
     daily-roll-batch-size: 1000
-    # 白名单由 Nacos/环境下发；空名单会扩大处理范围，Pilot 启动校验必须拒绝。
+    # 空 = 消费订阅里有什么就进什么。加量/换名单走数仓 Publisher。
     loan-id-whitelist: ${COLLECTION_PILOT_LOAN_IDS:}
 
 channel:
   fallback-to-mock: false
-  # facade.callback-secret 由 Nacos 下发；勿用空的 ${FACADE_CALLBACK_SECRET:} 冲掉。
-  # 紧急覆盖：CHANNEL_FACADE_CALLBACK_SECRET。Pilot 启动要求非空。
+  # facade.api-key 与 facade.callback-secret 均由 Nacos / 部署 Secret 下发，此处**不写占位符**：
+  # 写成 ${CHANNEL_FACADE_CALLBACK_SECRET:} 会在环境变量为空时把 Nacos 的值冲成空串，
+  # 表现为每条真实回调都验签失败回 401。紧急覆盖直接设同名环境变量（松散绑定优先级更高）。
+  # 调度开启时 PilotReadinessValidator 要求 callback-secret 非空。
+  compliance:
+    # 里程碑日的槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，
+    # 沿用默认的合计 3 次会让当天后两个槽位被 ExecutionGuard 拦掉。
+    # 外呼 2 次/案/日对齐编排规格 §7.11（S4 D+61~90 降为 1 次由 dayBlocks 少铺一个槽实现，不靠日限）。
+    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:5}
+    daily-limit:
+      SMS: ${CHANNEL_DAILY_LIMIT_SMS:1}
+      PUSH: ${CHANNEL_DAILY_LIMIT_PUSH:1}
+      EMAIL: ${CHANNEL_DAILY_LIMIT_EMAIL:1}
+      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:2}

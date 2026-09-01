@@ -66,15 +66,15 @@ class ProductionChannelContractL2Test {
         properties.getSendgrid().setFromEmail("collections@example.test");
         properties.getSendgrid().setApiUrl(wm.getHttpBaseUrl() + "/v3/mail/send");
         properties
-                .getSendgrid()
-                .getTemplates()
-                .put("S1_EMAIL_OVERDUE_NOTICE", "d-contract-template");
-        properties
                 .getScripts()
                 .getSms()
                 .put(
                         "S1_SMS_STANDARD",
                         "MOCASA: {name}, PHP {amount} is {dpd} days overdue. Pay: {repaymentUrl}");
+        ChannelProperties.PushScript pushScript = new ChannelProperties.PushScript();
+        pushScript.setTitle("MOCASA Payment Reminder");
+        pushScript.setBody("{name}, PHP {amount} is {dpd} days overdue.");
+        properties.getScripts().getPush().put("S1_PUSH_STANDARD", pushScript);
 
         ScriptLibrary scriptLibrary = new ScriptLibrary();
         ReflectionTestUtils.setField(scriptLibrary, "channelProperties", properties);
@@ -92,6 +92,7 @@ class ProductionChannelContractL2Test {
                 guard,
                 "complianceCounterService",
                 new com.collection.channel.compliance.InMemoryComplianceCounterService());
+        ReflectionTestUtils.setField(guard, "emailSuppressionRepository", noSuppression());
 
         NotificationClient notificationClient = new NotificationClient();
         ReflectionTestUtils.setField(notificationClient, "properties", properties);
@@ -125,6 +126,19 @@ class ProductionChannelContractL2Test {
         ReflectionTestUtils.setField(gateway, "idempotencyService", new TestIdempotencyService());
         ReflectionTestUtils.setField(gateway, "channelProperties", properties);
         gateway.initAdapterMap();
+    }
+
+    /** 本用例只验证生产路径的编排，抑制名单语义由 ConfigurableExecutionGuardTest 覆盖。 */
+    private static com.collection.common.repository.EmailSuppressionRepository noSuppression() {
+        return new com.collection.common.repository.EmailSuppressionRepository() {
+            @Override
+            public void suppress(com.collection.common.model.EmailSuppression suppression) {}
+
+            @Override
+            public boolean isSuppressed(String email) {
+                return false;
+            }
+        };
     }
 
     @Test
@@ -173,7 +187,9 @@ class ProductionChannelContractL2Test {
         verify(
                 postRequestedFor(urlEqualTo("/v3/mail/send"))
                         .withRequestBody(
-                                matchingJsonPath("$.template_id", equalTo("d-contract-template"))));
+                                matchingJsonPath(
+                                        "$.template_id",
+                                        equalTo("d-bc7f5aee7e304caf93ca4d435a73a1d7"))));
     }
 
     @Test

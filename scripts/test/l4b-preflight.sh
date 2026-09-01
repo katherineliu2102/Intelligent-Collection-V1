@@ -14,6 +14,8 @@ STRICT=0
 
 BASE="${L4B_BASE_URL:-http://localhost:8888}"
 EXPECTED_SUB="${GCP_PUBSUB_SUBSCRIPTION:-intelligent-collection-cases-test1-sub}"
+# 与 IngestionIsolationGuard.reservedSubscriptions 一致：接上这些订阅就是从生产消费者手里抢消息
+RESERVED_SUBS=("intelligent-collection-cases-v1-sub" "collection-cases-sub" "collection-cases-ai-v1-sub")
 NACOS_DATA_ID="${NACOS_DATA_ID:-intelligent-collection-local.yml}"
 PASS=0
 WARN=0
@@ -66,14 +68,22 @@ check_gcp_env() {
     export CLOUDSDK_PYTHON=/usr/bin/python3
   fi
   [[ -n "${GCP_PUBSUB_PROJECT:-}" ]] && pass "GCP_PUBSUB_PROJECT 已设" || fail "GCP_PUBSUB_PROJECT 未设"
+  local configured_sub="${GCP_PUBSUB_SUBSCRIPTION:-$EXPECTED_SUB}"
+  local reserved
+  for reserved in "${RESERVED_SUBS[@]}"; do
+    if [[ "$configured_sub" == "$reserved" ]]; then
+      fail "订阅 $configured_sub 是生产订阅，联调禁止消费（同一订阅只投一个消费者，会抢走生产消息）"
+      break
+    fi
+  done
   if [[ -n "${GCP_PUBSUB_SUBSCRIPTION:-}" ]]; then
     if [[ "$GCP_PUBSUB_SUBSCRIPTION" == "$EXPECTED_SUB" ]]; then
       pass "GCP_PUBSUB_SUBSCRIPTION=$GCP_PUBSUB_SUBSCRIPTION"
     else
-      warn "GCP_PUBSUB_SUBSCRIPTION=$GCP_PUBSUB_SUBSCRIPTION（文档定稿名: $EXPECTED_SUB）"
+      warn "GCP_PUBSUB_SUBSCRIPTION=${GCP_PUBSUB_SUBSCRIPTION}（文档定稿名: ${EXPECTED_SUB}）"
     fi
   else
-    warn "GCP_PUBSUB_SUBSCRIPTION 未设（默认定稿名: $EXPECTED_SUB）"
+    warn "GCP_PUBSUB_SUBSCRIPTION 未设（默认定稿名: ${EXPECTED_SUB}）"
   fi
   if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
     if [[ -f "$GOOGLE_APPLICATION_CREDENTIALS" ]]; then
@@ -206,7 +216,7 @@ check_db() {
 check_manual_reminders() {
   hdr "须人工确认（preflight 无法自动验）"
   ylw "  • L4a 8 条已通过（见 logs/run/l4a.last.log）"
-  ylw "  • 运维已建 PubSub 订阅 intelligent-collection-cases-test1-sub（挂 topic intelligent-collection-cases-test1）"
+  ylw "  • PubSub 资源已开通（python3 scripts/test/provision-l4-pubsub.py，幂等可重跑）：合成源 test1(+sub)、真实源 -v1-l4b-sub、死信 -dlq"
   ylw "  • loan_id 白名单清单（不入仓）"
   ylw "  • L4b 日切走 POST /mock/daily-roll，不接生产调度；真实调度通道（Cloud Scheduler → 调度 PubSub → 应用订阅）在 T5 交付验收"
   ylw "  • /actuator/beans 核对 A1–A6 薄/全"

@@ -122,7 +122,9 @@ public class CatalogService {
         s.put("stagesCount", stages != null ? stages.size() : 0);
         s.put("channelsLive", countChannelsByPhase(channels, "LIVE"));
         s.put("emailActiveCount", EmailMilestoneScriptSlots.PHASE1_ACTIVE.size());
-        s.put("emailConfiguredCount", channelProperties.getSendgrid().getTemplates().size());
+        s.put(
+                "emailConfiguredCount",
+                EmailMilestoneScriptSlots.PHASE1_SENDGRID_TEMPLATE_IDS.size());
         s.put("smsConfiguredCount", channelProperties.getScripts().getSms().size());
         s.put("pushConfiguredCount", channelProperties.getScripts().getPush().size());
         return s;
@@ -267,7 +269,7 @@ public class CatalogService {
     }
 
     private Map<String, Object> buildEmailRow(Map<String, Object> row, String slot) {
-        String tid = channelProperties.getSendgrid().getTemplates().get(slot);
+        String tid = EmailMilestoneScriptSlots.sendGridTemplateId(slot);
         row.put("templateId", maskTemplateId(tid));
         row.put("templateIdFull", emptyToDash(tid));
         row.put("configured", tid != null && !tid.isEmpty());

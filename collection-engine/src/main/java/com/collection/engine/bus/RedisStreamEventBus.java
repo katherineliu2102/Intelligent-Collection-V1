@@ -7,10 +7,13 @@ import com.collection.common.event.EventHandler;
 import com.collection.common.model.EventDlq;
 import com.collection.common.repository.EventDlqRepository;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.fault.EngineFaultInjector;
 import com.collection.engine.metrics.CollectionMetrics;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -33,10 +36,13 @@ import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.PendingMessages;
+import org.springframework.data.redis.connection.stream.PendingMessagesSummary;
 import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -53,11 +59,17 @@ public class RedisStreamEventBus implements CollectionEventBus {
     private final StringRedisTemplate redisTemplate;
     private final CollectionMetrics metrics;
     @Resource private EventDlqRepository eventDlqRepository;
+
+    /** 默认值保证手工构造（纯逻辑单测）时不为 null；Spring 环境由容器覆盖。默认实例恒不注入。 */
+    @Resource private EngineFaultInjector faultInjector = EngineFaultInjector.disabled();
+
     private final Map<EventType, List<EventHandler>> handlers = new ConcurrentHashMap<>();
     private volatile long lastBackpressureWarnNanos;
-    private volatile int pendingSize;
+    private volatile long pendingSize;
     private volatile long streamLength;
     private volatile long dlqSize;
+    private volatile Throwable consumeFailure;
+    private volatile long consecutiveConsumeFailures;
     private ThreadPoolExecutor consumerPool;
 
     @Value("${collection.redis.stream:collection:events}")
@@ -95,16 +107,20 @@ public class RedisStreamEventBus implements CollectionEventBus {
     @PostConstruct
     public void initConsumerGroup() {
         initConsumerPool();
+        ensureConsumerGroup();
+    }
+
+    /**
+     * 幂等建组。除 {@code @PostConstruct} 外，消费循环发现 group 消失时也会调用。
+     *
+     * <p>createGroup 底层是 XGROUP CREATE ... MKSTREAM，流不存在会一并建出来。 曾用一条 {@code {"bootstrap":"1"}}
+     * 假记录先把流撑起来，但那条记录没有 event 字段， 组建好之后每次重启写入的那条都会被投递并判成解析失败进 DLQ——DLQ 深度因此随重启次数 单调增长，真实故障被淹没在噪声里。
+     */
+    private void ensureConsumerGroup() {
         try {
-            redisTemplate
-                    .opsForStream()
-                    .add(
-                            StreamRecords.newRecord()
-                                    .ofMap(Collections.singletonMap("bootstrap", "1"))
-                                    .withStreamKey(streamKey));
             redisTemplate.opsForStream().createGroup(streamKey, ReadOffset.latest(), consumerGroup);
         } catch (Exception ignored) {
-            // group 已存在是正常启动路径；连接异常交给首次 publish/consume 暴露。
+            // group 已存在是正常路径；连接异常交给首次 publish/consume 暴露。
         }
     }
 
@@ -155,13 +171,23 @@ public class RedisStreamEventBus implements CollectionEventBus {
     /** Pilot 的 Redis consumer；调度入口仅负责数据库 due/timeout/daily-roll 扫描并发事件到本总线。 */
     @Scheduled(fixedDelayString = "${collection.redis.poll-interval-ms:1000}")
     public void consume() {
-        List<MapRecord<String, Object, Object>> records =
-                redisTemplate
-                        .opsForStream()
-                        .read(
-                                Consumer.from(consumerGroup, consumerName),
-                                StreamReadOptions.empty().count(20).block(Duration.ofSeconds(1)),
-                                StreamOffset.create(streamKey, ReadOffset.lastConsumed()));
+        List<MapRecord<String, Object, Object>> records;
+        try {
+            records =
+                    redisTemplate
+                            .opsForStream()
+                            .read(
+                                    Consumer.from(consumerGroup, consumerName),
+                                    StreamReadOptions.empty()
+                                            .count(20)
+                                            .block(Duration.ofSeconds(1)),
+                                    StreamOffset.create(streamKey, ReadOffset.lastConsumed()));
+        } catch (Exception e) {
+            recordConsumeFailure(e);
+            return;
+        }
+        consumeFailure = null;
+        consecutiveConsumeFailures = 0;
         if (records == null) {
             return;
         }
@@ -170,14 +196,70 @@ public class RedisStreamEventBus implements CollectionEventBus {
         }
     }
 
+    /**
+     * 消费失败的收敛处理：group 消失时就地重建，其余只记录状态。
+     *
+     * <p>group 会因 Redis 未持久化重启或人为删除而消失，此后每次 XREADGROUP 都抛 NOGROUP。 建组原先只在 {@code @PostConstruct}
+     * 做过一次，于是总线永久停摆直到有人重启进程—— 2026-08-25 实际发生：Redis 重启后应用空转十余小时，其间一条事件都没消费。 这里补上重建，满足「恢复后无需重启即自愈」。
+     *
+     * <p>异常不再上抛：@Scheduled 的默认行为是把栈打进日志，按 1 秒一轮会把磁盘刷满， 真实原因反而被自己的重复日志淹没。改为按退避打印，并把状态交给健康检查暴露。
+     */
+    private void recordConsumeFailure(Exception e) {
+        consumeFailure = e;
+        long failures = ++consecutiveConsumeFailures;
+        if (isMissingGroup(e)) {
+            log.error(
+                    "[RedisStreamEventBus] consumer group '{}' on '{}' is gone (failure #{}), recreating",
+                    consumerGroup,
+                    streamKey,
+                    failures,
+                    failures == 1 ? e : null);
+            ensureConsumerGroup();
+            return;
+        }
+        // 1、2、4、8… 轮各打一次，避免每秒一条栈把真实原因淹掉。
+        if (Long.bitCount(failures) == 1) {
+            log.error("[RedisStreamEventBus] consume failed (failure #{})", failures, e);
+        }
+    }
+
+    /** NOGROUP 只能从报文里认：Lettuce 把它归到通用的命令执行异常，没有独立异常类型。 */
+    private static boolean isMissingGroup(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && message.contains("NOGROUP")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /** 供健康检查判定：非 null 表示最近一次拉取失败，总线当前不在消费。 */
+    public Throwable getConsumeFailure() {
+        return consumeFailure;
+    }
+
+    public long getConsecutiveConsumeFailures() {
+        return consecutiveConsumeFailures;
+    }
+
     /** 接管长时间未 ACK 的 PEL 消息。低于最大投递次数的消息 claim 后立即按相同逻辑处理；超过阈值 进入专用 DLQ stream，并确认原消息，避免永久积压。 */
     @Scheduled(fixedDelayString = "${collection.redis.pel-scan-interval-ms:30000}")
     public void reclaimPending() {
-        PendingMessages pending =
-                redisTemplate
-                        .opsForStream()
-                        .pending(streamKey, consumerGroup, Range.unbounded(), pelBatchSize);
-        pendingSize = pending.size();
+        PendingMessages pending;
+        try {
+            pending =
+                    redisTemplate
+                            .opsForStream()
+                            .pending(streamKey, consumerGroup, Range.unbounded(), pelBatchSize);
+        } catch (Exception e) {
+            // 与 consume 同源：group 消失时这里也会抛，交给同一段收敛逻辑重建并退避打印。
+            recordConsumeFailure(e);
+            return;
+        }
         sampleStreamGauges();
         for (PendingMessage message : pending) {
             if (message.getElapsedTimeSinceLastDelivery()
@@ -204,8 +286,17 @@ public class RedisStreamEventBus implements CollectionEventBus {
         }
     }
 
+    /**
+     * 采样三个 Redis 侧读数。
+     *
+     * <p>PEL 深度必须走 XPENDING 的<b>汇总</b>形式。明细形式受 {@code count} 限制（默认 50）， 用它的返回条数喂 gauge 会让指标恒被夹在
+     * 50：积压涨到几千也只显示 50，阈值设在 50 以上的告警 永远不触发，Dashboard 上是一条直线。指标存在、能抓取、数值是错的，属最难发现的观测缺陷。
+     */
     private void sampleStreamGauges() {
         try {
+            PendingMessagesSummary summary =
+                    redisTemplate.opsForStream().pending(streamKey, consumerGroup);
+            pendingSize = summary == null ? 0L : summary.getTotalPendingMessages();
             Long length = redisTemplate.opsForStream().size(streamKey);
             streamLength = length == null ? 0L : length;
             Long dlq = redisTemplate.opsForStream().size(streamKey + ":dlq");
@@ -213,6 +304,106 @@ public class RedisStreamEventBus implements CollectionEventBus {
         } catch (Exception e) {
             log.warn("[RedisStreamEventBus] stream gauge sampling failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * T3o-O4 的可查询证据：Stream / PEL / DLQ 深度、消费去重键与工作池水位。
+     *
+     * <p>与三个 gauge 的区别是这里<b>实时打 Redis</b>。gauge 只在 PEL 扫描周期（默认 30s）采样一次，做故障注入时 读到的往往是注入前的旧值；判定
+     * T5-R3 「消息滞留 PEL」这类用例必须是当下读数。
+     *
+     * <p>PEL 明细只取最老的若干条：判「有没有卡住、卡了多久」看最老一条即可，全量拉取在积压时会打爆响应。 深度一律取 XPENDING 汇总值，不用明细条数（见 {@link
+     * #sampleStreamGauges()} 的说明）。
+     */
+    public Map<String, Object> evidenceSnapshot(int pelSampleSize, int dedupSampleSize) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("streamKey", streamKey);
+        snapshot.put("consumerGroup", consumerGroup);
+        snapshot.put("consumerName", consumerName);
+        try {
+            Long length = redisTemplate.opsForStream().size(streamKey);
+            snapshot.put("streamLength", length == null ? 0L : length);
+            Long dlq = redisTemplate.opsForStream().size(streamKey + ":dlq");
+            snapshot.put("dlqSize", dlq == null ? 0L : dlq);
+            PendingMessagesSummary summary =
+                    redisTemplate.opsForStream().pending(streamKey, consumerGroup);
+            snapshot.put("pendingTotal", summary == null ? 0L : summary.getTotalPendingMessages());
+            snapshot.put(
+                    "pendingPerConsumer",
+                    summary == null
+                            ? Collections.emptyMap()
+                            : summary.getPendingMessagesPerConsumer());
+            snapshot.put("oldestPending", oldestPending(pelSampleSize));
+            snapshot.put("dedupKeys", dedupKeySample(dedupSampleSize));
+        } catch (Exception e) {
+            // 证据端点不能因 Redis 抖动整体 500，否则排障时连"读不到"都区分不出是没数据还是没连上。
+            snapshot.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        snapshot.put("consumerPool", consumerPoolSnapshot());
+        snapshot.put(
+                "lastConsumeFailure", consumeFailure == null ? null : consumeFailure.toString());
+        snapshot.put("consecutiveConsumeFailures", consecutiveConsumeFailures);
+        // 演练期间必须能一眼看出「这批失败是注入的还是真的」，否则事后翻证据两者分不开。
+        snapshot.put("faultInjection", faultInjector.status());
+        return snapshot;
+    }
+
+    private List<Map<String, Object>> oldestPending(int sampleSize) {
+        PendingMessages messages =
+                redisTemplate
+                        .opsForStream()
+                        .pending(
+                                streamKey,
+                                consumerGroup,
+                                Range.unbounded(),
+                                Math.max(1, sampleSize));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (PendingMessage message : messages) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", message.getIdAsString());
+            row.put("consumer", message.getConsumerName());
+            row.put("idleMs", message.getElapsedTimeSinceLastDelivery().toMillis());
+            row.put("deliveryCount", message.getTotalDeliveryCount());
+            row.put("willDeadLetter", message.getTotalDeliveryCount() >= maxDeliveryCount);
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /** 用 SCAN 取有界样本。这套 Redis 与其他服务同实例，KEYS 会阻塞单线程命令执行影响邻居服务。 */
+    private Map<String, Object> dedupKeySample(int sampleSize) {
+        int limit = Math.max(1, sampleSize);
+        List<String> keys = new ArrayList<>();
+        boolean truncated = false;
+        ScanOptions options =
+                ScanOptions.scanOptions().match(PROCESSED_PREFIX + "*").count(64).build();
+        try (Cursor<String> cursor = redisTemplate.scan(options)) {
+            while (cursor.hasNext()) {
+                if (keys.size() >= limit) {
+                    truncated = true;
+                    break;
+                }
+                keys.add(cursor.next());
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("prefix", PROCESSED_PREFIX);
+        result.put("sample", keys);
+        result.put("truncated", truncated);
+        return result;
+    }
+
+    private Map<String, Object> consumerPoolSnapshot() {
+        Map<String, Object> pool = new LinkedHashMap<>();
+        if (consumerPool == null) {
+            return pool;
+        }
+        pool.put("poolSize", consumerPool.getPoolSize());
+        pool.put("activeCount", consumerPool.getActiveCount());
+        pool.put("queueSize", consumerPool.getQueue().size());
+        pool.put("queueRemainingCapacity", consumerPool.getQueue().remainingCapacity());
+        pool.put("completedTaskCount", consumerPool.getCompletedTaskCount());
+        return pool;
     }
 
     private void deadLetter(PendingMessage message) {
@@ -244,6 +435,15 @@ public class RedisStreamEventBus implements CollectionEventBus {
                     }
                     try {
                         process(record);
+                    } catch (Exception e) {
+                        // 兜底网，不是主防线（主防线是 process 内部逐段的 try）。任务抛错会让
+                        // ThreadPoolExecutor 弃掉并重建工作线程，期间该记录既未 ACK 也未进 DLQ，
+                        // 只能等 reclaim；而线程死亡只在 stderr 留一行没有时间戳、没有 MDC 的
+                        // "Exception in thread"，与业务日志对不上时间线。捕获后至少留下可检索的证据。
+                        log.error(
+                                "[RedisStreamEventBus] task escaped process(), id={} — 该记录留待 reclaim",
+                                record.getId(),
+                                e);
                     } finally {
                         MDC.clear();
                     }
@@ -254,7 +454,13 @@ public class RedisStreamEventBus implements CollectionEventBus {
         long started = System.nanoTime();
         Object raw = record.getValue().get(FIELD_EVENT);
         if (raw == null) {
-            persistDlq(record, "DESERIALIZATION_FAILURE", 1);
+            // 与解析失败区分开：这里根本没尝试解析，是有人往流里塞了不带 event 字段的记录。
+            log.error(
+                    "[RedisStreamEventBus] record without '{}' field, id={} fields={}",
+                    FIELD_EVENT,
+                    record.getId(),
+                    record.getValue().keySet());
+            persistDlq(record, "MISSING_EVENT_FIELD", 1);
             acknowledge(record);
             return;
         }
@@ -283,10 +489,14 @@ public class RedisStreamEventBus implements CollectionEventBus {
             return;
         }
         try {
+            faultInjector.failIfArmed(EngineFaultInjector.Position.BEFORE_HANDLER, event);
             for (EventHandler handler : eventHandlers) {
                 handler.handle(event);
             }
             markProcessed(event);
+            // 去重标记已写、ACK 未发——生产上「提交后进程崩」就落在这一瞬间。
+            // 重投应命中 alreadyProcessed 直接跳过（T5-R13）。
+            faultInjector.failIfArmed(EngineFaultInjector.Position.AFTER_HANDLER, event);
             acknowledge(record);
             metrics.eventConsumed(event.getEventType().name());
             metrics.eventDuration(event.getEventType().name(), System.nanoTime() - started);
@@ -330,29 +540,65 @@ public class RedisStreamEventBus implements CollectionEventBus {
     private Map<String, String> dlqValues(
             MapRecord<String, Object, Object> record, String reason, long deliveryCount) {
         Map<String, String> values = new HashMap<>();
-        values.put(FIELD_EVENT, String.valueOf(record.getValue().get(FIELD_EVENT)));
+        values.put(FIELD_EVENT, dlqPayload(record));
         values.put("reason", reason);
         values.put("deliveries", String.valueOf(deliveryCount));
         return values;
     }
 
-    private void putMdc(CollectionEvent event) {
-        MDC.put("eventId", String.valueOf(event.getEventId()));
-        putMdcIfPresent("caseId", event.getLong(CollectionEvent.CASE_ID));
-        putMdcIfPresent("planId", event.getLong(CollectionEvent.PLAN_ID));
-        putMdcIfPresent("stepId", event.getLong(CollectionEvent.STEP_ID));
+    /**
+     * DLQ 里留下的载荷，保证是合法 JSON。
+     *
+     * <p>缺 {@code event} 字段时退回整条记录，而不是写字面 {@code "null"}—— 进 DLQ
+     * 的记录已经没法自我解释，再把唯一的线索丢掉，运维只能看到一条无从下手的失败。
+     *
+     * <p>非法 JSON 必须包一层：{@code t_event_dlq.payload} 是 {@code JSON NOT NULL} 列，把解析失败的原文直接塞进去 会让
+     * INSERT 报错——而这正是「反序列化失败」这条路径的常态输入。落库失败就不会 ACK， 毒消息回到 PEL 反复重投，最终又走进同一段代码再次失败，「进 DLQ
+     * 隔离」反而变成死循环。
+     */
+    private String dlqPayload(MapRecord<String, Object, Object> record) {
+        Object raw = record.getValue().get(FIELD_EVENT);
+        if (raw == null) {
+            return JsonUtil.toJson(record.getValue());
+        }
+        String text = String.valueOf(raw);
+        try {
+            JsonUtil.fromJson(text, Object.class);
+            return text;
+        } catch (Exception notJson) {
+            return JsonUtil.toJson(Collections.singletonMap("raw", text));
+        }
     }
 
-    private void putMdcIfPresent(String key, Long value) {
+    /**
+     * MDC 取值一律走 {@link CollectionEvent#getString}，不走 {@code getLong}。
+     *
+     * <p>MDC 的值本来就是字符串，解析成 Long 再 {@code toString} 回去没有收益，却引入了一条失败路径： {@code getLong} 用 {@code
+     * Long.valueOf(v.toString())}，payload 里一个非数字的 planId 就会抛 {@code NumberFormatException}。本方法在
+     * {@link #process} 里位于「反序列化失败」与「handler 失败」 两段 try 之间，抛出后异常一路逃到线程池的 uncaught
+     * handler，打死一个工作线程，而该记录既未 ACK 也未进 DLQ——毒丸每被投递一次就吃掉一个线程（2026-08-25 Pilot 实测：t5r-poison-001 连杀 3
+     * 个， 最终靠投递次数上限而非异常处理才收敛）。
+     *
+     * <p>改用 {@code getString} 后畸形值原样进 MDC，日志里能直接看到「planId=not-a-number」， 而事件继续走到
+     * handler，由后者抛出有业务含义的错误并进入正常的重试 / DLQ 路径。
+     */
+    private void putMdc(CollectionEvent event) {
+        MDC.put("eventId", String.valueOf(event.getEventId()));
+        putMdcIfPresent("caseId", event.getString(CollectionEvent.CASE_ID));
+        putMdcIfPresent("planId", event.getString(CollectionEvent.PLAN_ID));
+        putMdcIfPresent("stepId", event.getString(CollectionEvent.STEP_ID));
+    }
+
+    private void putMdcIfPresent(String key, String value) {
         if (value != null) {
-            MDC.put(key, String.valueOf(value));
+            MDC.put(key, value);
         }
     }
 
     /** Redis 隔离与 MySQL 审计必须同时成功；调用方仅在此成功后 ACK PEL。 */
     private void persistDlq(
             MapRecord<String, Object, Object> record, String reason, long deliveryCount) {
-        String raw = String.valueOf(record.getValue().get(FIELD_EVENT));
+        String raw = dlqPayload(record);
         CollectionEvent event;
         try {
             event = JsonUtil.fromJson(raw, CollectionEvent.class);

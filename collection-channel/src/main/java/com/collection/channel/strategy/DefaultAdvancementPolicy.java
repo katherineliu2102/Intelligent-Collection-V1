@@ -10,16 +10,17 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 /**
- * Phase 1 简化版 AdvancementPolicy —— 按步序 + 成功/失败做推进决策。
+ * Phase 1 AdvancementPolicy —— 按步序推进。
  *
- * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为按 contactResult 细分的生产实现。
+ * <p>真人接通后取消当日 AI 补呼不在本 SPI 内改步骤（SPI 只读、不得写 plan）。由引擎在 {@code ADVANCE_NEXT} 之后把同日未执行的 {@code
+ * AI_CALL} 标为 SKIPPED（CONNECT_AND_STOP）。
  *
  * <p>决策逻辑：
  *
  * <ul>
- *   <li>非末步 → ADVANCE_NEXT（不管成功失败，继续走下一步）
- *   <li>末步 + success → PLAN_COMPLETED
- *   <li>末步 + !success → PLAN_EXHAUSTED（触发 ExhaustionPolicy）
+ *   <li>非末步 → ADVANCE_NEXT
+ *   <li>末步 + success → PLAN_COMPLETED（本档计划结束，不等于停催；下一档由次日日切 {@code STAGE_CHANGED} 建）
+ *   <li>末步 + !success → PLAN_EXHAUSTED
  * </ul>
  */
 @Primary

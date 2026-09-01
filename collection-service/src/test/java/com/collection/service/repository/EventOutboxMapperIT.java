@@ -94,14 +94,13 @@ class EventOutboxMapperIT {
 
             try (SqlSession session = factory.openSession(true)) {
                 EventOutboxMapper mapper = session.getMapper(EventOutboxMapper.class);
-                OutboxEvent row =
-                        mapper.selectClaimableForRepublish(now.plusMinutes(5), 10).stream()
-                                .filter(r -> eventId.equals(r.getEventId()))
-                                .findFirst()
-                                .orElse(null);
-                // 已认领且租约未到期，不应再出现在可认领列表
+                // 参考时刻必须落在租约窗口内（lease_until = now+60s），否则查的是「租约已到期」这条分支
                 assertTrue(
-                        row == null, "PROCESSING 且 lease 未到期时不应被 selectClaimableForRepublish 返回");
+                        claimable(mapper, eventId, now.plusSeconds(30)) == null,
+                        "PROCESSING 且 lease 未到期时不应被 selectClaimableForRepublish 返回");
+                assertTrue(
+                        claimable(mapper, eventId, leaseUntil.plusSeconds(1)) != null,
+                        "租约到期后必须重新可认领，否则事件会永久卡在 PROCESSING");
             }
         } finally {
             executor.shutdownNow();
@@ -161,6 +160,15 @@ class EventOutboxMapperIT {
         } finally {
             deleteOutbox(eventId);
         }
+    }
+
+    /** 指定参考时刻下该 eventId 是否可被认领；null 表示不在可认领列表。 */
+    private static OutboxEvent claimable(
+            EventOutboxMapper mapper, String eventId, LocalDateTime asOf) {
+        return mapper.selectClaimableForRepublish(asOf, 50).stream()
+                .filter(r -> eventId.equals(r.getEventId()))
+                .findFirst()
+                .orElse(null);
     }
 
     private static int claimOnce(

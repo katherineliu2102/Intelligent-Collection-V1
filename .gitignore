@@ -24,6 +24,9 @@ credentials.json
 *credentials*.json
 *-sa.json
 gcp-*.json
+# 控制台下载的服务账号密钥默认叫 <project>-<keyId>.json，不含 credentials/sa 字样，
+# 上面几条都盖不住，必须按项目名单独兜一条
+fintech-all-*.json
 
 # L4b 本地环境脚本（真值不入仓；保留 .example 模板）
 scripts/test/l4b-env.local.sh
@@ -34,4 +37,14 @@ deploy/secrets/*
 deploy/nacos/nacos-publish.local.yml
 # 发布脚本拉取的现网快照，含 JDBC 口令与渠道密钥
 deploy/nacos/backup-*.yml
+# 只读账号下落盘的合并结果（供控制台粘贴），同样含明文密钥
+deploy/nacos/merged-*.yml
+# 访问凭据速查（含明文口令），由个人自行保管，不入仓
+docs/ops/*.local.md
 node_modules/
+collection-admin/ui/dist/
+__pycache__/
+*.pyc
+
+# scripts/dev 下划线前缀 = 本地临时草稿（跑批取证、一次性修复），不入仓
+scripts/dev/_*

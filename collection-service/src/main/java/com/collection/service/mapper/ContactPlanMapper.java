@@ -7,7 +7,13 @@ import java.time.LocalDateTime;
 import java.util.List;
 import org.apache.ibatis.annotations.*;
 
-/** t_contact_plan 持久化（注解式 MyBatis）。 依赖 application 配置 map-underscore-to-camel-case=true 完成列名映射。 */
+/**
+ * t_contact_plan 持久化（注解式 MyBatis）。 依赖 application 配置 map-underscore-to-camel-case=true 完成列名映射。
+ *
+ * <p>时间列一律由调用方以 {@code Asia/Manila} 传入（{@link com.collection.service.support.ServiceClock}）， 不使用
+ * {@code NOW()}：{@code updated_at} 是停摆巡检的比较列，库端会话时区漂移会让宽限期恒被满足。 表上的 {@code ON UPDATE
+ * CURRENT_TIMESTAMP} 只在未显式赋值时生效，因此每条 UPDATE 都必须显式写 {@code updated_at}。
+ */
 @Mapper
 public interface ContactPlanMapper {
 
@@ -19,7 +25,7 @@ public interface ContactPlanMapper {
                     + "VALUES "
                     + "(#{caseId}, #{userId}, #{stage}, #{planTemplateId}, #{status}, #{currentStep}, #{totalSteps}, "
                     + " #{cancelReason}, #{contextSnapshot}, #{idempotencyKey}, #{renewalPending}, #{version}, "
-                    + " #{startedAt}, #{completedAt}, NOW(), NOW())")
+                    + " #{startedAt}, #{completedAt}, #{createdAt}, #{updatedAt})")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(ContactPlan plan);
 
@@ -44,11 +50,13 @@ public interface ContactPlanMapper {
     List<ContactPlan> selectActiveByCase(@Param("caseId") Long caseId);
 
     @Update(
-            "UPDATE t_contact_plan SET context_snapshot = #{contextSnapshot}, updated_at = NOW() "
+            "UPDATE t_contact_plan SET context_snapshot = #{contextSnapshot}, updated_at = #{now} "
                     + "WHERE id = #{planId} AND renewal_pending = 0 "
                     + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')")
     int updateActiveContextSnapshot(
-            @Param("planId") Long planId, @Param("contextSnapshot") String contextSnapshot);
+            @Param("planId") Long planId,
+            @Param("contextSnapshot") String contextSnapshot,
+            @Param("now") LocalDateTime now);
 
     @Select(
             "SELECT * FROM t_contact_plan "
@@ -95,31 +103,35 @@ public interface ContactPlanMapper {
 
     @Update(
             "UPDATE t_contact_plan SET status = #{status}, cancel_reason = #{cancelReason}, "
-                    + "version = version + 1, updated_at = NOW() WHERE id = #{planId} "
+                    + "version = version + 1, updated_at = #{now} WHERE id = #{planId} "
                     + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')")
     int updateStatus(
             @Param("planId") Long planId,
             @Param("status") PlanStatus status,
-            @Param("cancelReason") com.collection.common.enums.CancelReason cancelReason);
+            @Param("cancelReason") com.collection.common.enums.CancelReason cancelReason,
+            @Param("now") LocalDateTime now);
 
     @Update(
-            "UPDATE t_contact_plan SET renewal_pending = 1, version = version + 1, updated_at = NOW() "
+            "UPDATE t_contact_plan SET renewal_pending = 1, version = version + 1, updated_at = #{now} "
                     + "WHERE id = #{planId} AND renewal_pending = 0 "
                     + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED')")
-    int markRenewalPending(@Param("planId") Long planId);
+    int markRenewalPending(@Param("planId") Long planId, @Param("now") LocalDateTime now);
 
     @Update(
-            "UPDATE t_contact_plan SET started_at = NOW(), version = version + 1, updated_at = NOW() "
+            "UPDATE t_contact_plan SET started_at = #{now}, version = version + 1, updated_at = #{now} "
                     + "WHERE id = #{planId} AND started_at IS NULL")
-    int markStarted(@Param("planId") Long planId);
+    int markStarted(@Param("planId") Long planId, @Param("now") LocalDateTime now);
 
     @Update(
-            "UPDATE t_contact_plan SET completed_at = NOW(), version = version + 1, updated_at = NOW() "
+            "UPDATE t_contact_plan SET completed_at = #{now}, version = version + 1, updated_at = #{now} "
                     + "WHERE id = #{planId}")
-    int markCompleted(@Param("planId") Long planId);
+    int markCompleted(@Param("planId") Long planId, @Param("now") LocalDateTime now);
 
     @Update(
-            "UPDATE t_contact_plan SET current_step = #{currentStep}, version = version + 1, updated_at = NOW() "
+            "UPDATE t_contact_plan SET current_step = #{currentStep}, version = version + 1, updated_at = #{now} "
                     + "WHERE id = #{planId}")
-    int updateCurrentStep(@Param("planId") Long planId, @Param("currentStep") int currentStep);
+    int updateCurrentStep(
+            @Param("planId") Long planId,
+            @Param("currentStep") int currentStep,
+            @Param("now") LocalDateTime now);
 }

@@ -68,6 +68,18 @@ public class CollectionMetrics {
     }
 
     /** 非终态但不会再被任何扫描拾取的计划数。恒应为 0。 */
+    /**
+     * 计划创建结果。CREATED 之外的每种结局都必须可计数——2026-08-24 T3o 演练中 38 个案件因缺 dueDate 全量建不出计划， 而 PlanFactory 返回
+     * null 只打一行 WARN，指标上完全看不见，外部只能观察到"没有触达"， 无法区分是没案子、还是案子全被静默丢了。
+     */
+    public void planCreation(String stage, String outcome) {
+        Counter.builder("collection.plan.creation")
+                .tag("stage", stage == null ? "unknown" : stage)
+                .tag("outcome", outcome)
+                .register(registry)
+                .increment();
+    }
+
     public void planStuck(int count) {
         Counter.builder("collection.plan.stuck").register(registry).increment(count);
     }
@@ -151,7 +163,16 @@ public class CollectionMetrics {
                 registry, executor, name);
     }
 
+    /**
+     * 注册取值型仪表。
+     *
+     * <p>必须 {@code strongReference}：Micrometer 默认只对被测对象持弱引用，而这里传入的 supplier 是调用方的 lambda，除仪表外无人持有，
+     * 一次 GC 后即被回收，指标随之永久变成 NaN。2026-08-24 在 Pilot 机实测到 {@code collection.event.pending} 等四个仪表全部
+     * NaN， 根因即此——且不报错、不掉指标名，只有值是 NaN。
+     */
     public void gauge(String name, Supplier<Number> value) {
-        Gauge.builder(name, value, supplier -> supplier.get().doubleValue()).register(registry);
+        Gauge.builder(name, value, supplier -> supplier.get().doubleValue())
+                .strongReference(true)
+                .register(registry);
     }
 }

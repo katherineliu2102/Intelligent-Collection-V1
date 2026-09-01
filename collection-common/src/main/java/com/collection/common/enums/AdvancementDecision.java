@@ -4,7 +4,7 @@ package com.collection.common.enums;
 public enum AdvancementDecision {
     /** 推进到下一步：注册下一步 Job 或立即执行。 */
     ADVANCE_NEXT,
-    /** 计划完成：进入终态 PLAN_COMPLETED。 */
+    /** 本档计划完成：进入终态 PLAN_COMPLETED。不等于停催；下一档由次日日切 STAGE_CHANGED 建。 */
     PLAN_COMPLETED,
     /** 计划穷尽：发布 PLAN_EXHAUSTED 事件 → §2.5。 */
     PLAN_EXHAUSTED

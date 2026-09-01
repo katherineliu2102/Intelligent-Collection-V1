@@ -32,7 +32,7 @@ jobs:
       - name: Check commit messages (Angular convention)
         if: github.event_name == 'pull_request'
         run: |
-          PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([a-z0-9._-]+\))?!?: .+'
+          PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\([a-z0-9._/-]+\))?!?: .+'
           FAIL=0
           while IFS= read -r msg; do
             case "$msg" in "Merge "*|"Revert "*) continue ;; esac

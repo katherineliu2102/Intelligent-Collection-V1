@@ -3,10 +3,12 @@ package com.collection.engine.lifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -34,8 +36,10 @@ import com.collection.common.spi.AdvancementPolicy;
 import com.collection.common.spi.ExhaustionPolicy;
 import com.collection.common.spi.PlanFactory;
 import com.collection.common.util.JsonUtil;
+import com.collection.engine.metrics.CollectionMetrics;
 import com.collection.engine.spi.SpiInvoker;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,6 +77,7 @@ class PlanLifecycleManagerTest {
     @Mock private ExhaustionPolicy exhaustionPolicy;
     @Mock private PredictiveDialerService predictiveDialerService;
     @Spy private SpiInvoker spiInvoker = SpiInvoker.direct();
+    @Spy private CollectionMetrics metrics = CollectionMetrics.local();
 
     @InjectMocks private PlanLifecycleManager manager;
 
@@ -83,6 +88,8 @@ class PlanLifecycleManagerTest {
     void setUp() {
         plan = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);
         step = newStep(STEP_ID, 1, ChannelType.SMS, StepStatus.EXECUTING);
+        // 默认「抢到执行权」；抢占失败的分支由专门用例覆盖
+        lenient().when(planRepository.markStepExecuting(any())).thenReturn(true);
     }
 
     private ContactPlan newPlan(long id, PlanStatus status, Stage stage) {
@@ -182,6 +189,39 @@ class PlanLifecycleManagerTest {
         assertThat(prep.isExecute()).isTrue();
         verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_EXECUTING, null);
         verify(planRepository).markStarted(PLAN_ID);
+    }
+
+    @Test
+    @DisplayName("#17b 抢占失败（步骤已被并发投递终结）→ noop 且计划状态一律不动")
+    void prepareStepDue_claimLost_leavesPlanUntouched() {
+        // 生产 Pub/Sub 至少一次：重复的 PLAN_STEP_DUE 在读到非终态后、写入前被另一路终结。
+        // 此时若仍把计划按回 STEP_EXECUTING，已被上一次投递推进或终结的计划会停摆。
+        plan.setStatus(PlanStatus.PENDING);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(planRepository.markStepExecuting(STEP_ID)).thenReturn(false);
+
+        StepDuePreparation prep = manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
+
+        assertThat(prep.isExecute()).isFalse();
+        assertThat(prep.getEvents()).isEmpty();
+        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), any(), any());
+        verify(planRepository, never()).markStarted(PLAN_ID);
+    }
+
+    @Test
+    @DisplayName("#17c 抢占先于计划写入：抢到才允许改计划状态（顺序不可颠倒）")
+    void prepareStepDue_claimsStepBeforeTouchingPlan() {
+        plan.setStatus(PlanStatus.PENDING);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+
+        manager.prepareStepDue(stepEvent(EventType.PLAN_STEP_DUE));
+
+        InOrder order = org.mockito.Mockito.inOrder(planRepository);
+        order.verify(planRepository).markStepExecuting(STEP_ID);
+        order.verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.STEP_EXECUTING, null);
+        order.verify(planRepository).markStarted(PLAN_ID);
     }
 
     @Test
@@ -348,6 +388,24 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
+    @DisplayName("#24 还款取消计划时收口 PENDING/EXECUTING，避免超时扫描捞不到")
+    void onRepaymentReceived_skipsOpenSteps() {
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.skipOpenSteps(eq(PLAN_ID), eq(ContactResult.SKIPPED))).thenReturn(2);
+
+        manager.onRepaymentReceived(
+                CollectionEvent.of(EventType.REPAYMENT_RECEIVED)
+                        .with(CollectionEvent.USER_ID, USER_ID)
+                        .with(CollectionEvent.CASE_ID, CASE_ID));
+
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.REPAID);
+        verify(planRepository).skipOpenSteps(PLAN_ID, ContactResult.SKIPPED);
+    }
+
+    @Test
     @DisplayName("#24 并发终态先写：还款取锁后发现已完成 → 不覆写计划状态")
     void onRepaymentReceived_lockedPlanAlreadyTerminal_doesNotOverwrite() {
         ContactPlan stale = newPlan(PLAN_ID, PlanStatus.STEP_EXECUTING, Stage.S2);
@@ -415,6 +473,45 @@ class PlanLifecycleManagerTest {
         when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
         when(exhaustionPolicy.handle(any(), any(), any()))
                 .thenReturn(ExhaustionResult.complete("stop"));
+
+        List<CollectionEvent> out = manager.onPlanExhausted(planExhaustedEvent());
+
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("REBUILD 未建出后继计划且仍有下一档 → 旧计划完成 + ESCALATE")
+    void onPlanExhausted_rebuildNoSuccessor_escalates() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(null);
+
+        List<CollectionEvent> out = manager.onPlanExhausted(planExhaustedEvent());
+
+        verify(planRepository).markRenewalPending(PLAN_ID);
+        verify(planRepository, never()).savePlan(any());
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getEventType()).isEqualTo(EventType.STAGE_CHANGED);
+        assertThat(out.get(0).getString(CollectionEvent.STAGE)).isEqualTo("S3");
+    }
+
+    @Test
+    @DisplayName("REBUILD 未建出后继计划且已是 S4 → 旧计划完成，无后续事件")
+    void onPlanExhausted_rebuildNoSuccessor_completesAtS4() {
+        plan.setStage(Stage.S4);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S4)).thenReturn(null);
+        when(planFactory.create(any(), eq(Stage.S4), any())).thenReturn(null);
 
         List<CollectionEvent> out = manager.onPlanExhausted(planExhaustedEvent());
 
@@ -623,6 +720,61 @@ class PlanLifecycleManagerTest {
         assertThat(out).isEmpty();
     }
 
+    @Test
+    @DisplayName("CONNECT_AND_STOP：AI_CALL 接通后跳过同日 PENDING 补呼，保留短信与次日外呼")
+    void onStepCompleted_answeredAiCall_skipsSameDayPendingRetry() {
+        ContactPlanStep answered = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        answered.setResult(ContactResult.ANSWERED);
+        answered.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+
+        ContactPlanStep sameDayRetry = newStep(202L, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        sameDayRetry.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        ContactPlanStep sameDaySms = newStep(203L, 3, ChannelType.SMS, StepStatus.PENDING);
+        sameDaySms.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        ContactPlanStep nextDayCall = newStep(204L, 4, ChannelType.AI_CALL, StepStatus.PENDING);
+        nextDayCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 27, 9, 15));
+        ContactPlanStep executingCall = newStep(205L, 5, ChannelType.AI_CALL, StepStatus.EXECUTING);
+        executingCall.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 16, 0));
+
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(answered);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        when(planRepository.findStepsByPlan(PLAN_ID))
+                .thenReturn(
+                        Arrays.asList(
+                                answered, sameDayRetry, sameDaySms, nextDayCall, executingCall));
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 3, ChannelType.SMS, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 12, 0));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository).updateStepStatus(202L, StepStatus.SKIPPED, ContactResult.SKIPPED);
+        verify(planRepository, never()).updateStepStatus(eq(203L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(204L), any(), any());
+        verify(planRepository, never()).updateStepStatus(eq(205L), any(), any());
+    }
+
+    @Test
+    @DisplayName("CONNECT_AND_STOP：未接通不跳过同日补呼")
+    void onStepCompleted_noAnswer_doesNotSkipRetry() {
+        ContactPlanStep completed = newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.COMPLETED);
+        completed.setResult(ContactResult.NO_ANSWER);
+        completed.setOriginalTriggerTime(LocalDateTime.of(2026, 8, 26, 9, 15));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(completed);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.ADVANCE_NEXT);
+        ContactPlanStep next = newStep(NEXT_STEP_ID, 2, ChannelType.AI_CALL, StepStatus.PENDING);
+        next.setTriggerTime(LocalDateTime.of(2026, 8, 26, 14, 30));
+        when(planRepository.getNextStep(PLAN_ID, 1)).thenReturn(next);
+
+        manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(planRepository, never()).findStepsByPlan(anyLong());
+        verify(planRepository, never())
+                .updateStepStatus(eq(NEXT_STEP_ID), eq(StepStatus.SKIPPED), any());
+    }
+
     // ───────────────────────── 差集补全：链路③ 观察期缺省结转（D26） ─────────────────────────
 
     @Test
@@ -644,15 +796,35 @@ class PlanLifecycleManagerTest {
     // ───────────────────────── 差集补全：链路④ 异步回调态拦截/映射（D16/D17/D18） ─────────────────────────
 
     @Test
-    @DisplayName("④-D16 回调时计划已终态（非 EXECUTING/WAITING）→ 静默吸收，不改步骤")
-    void onChannelCallback_nonExecuting_silentlyAbsorbs() {
+    @DisplayName("④-D16 回调时计划已终态但步骤仍 EXECUTING → 关步骤、不推进")
+    void onChannelCallback_cancelledPlan_closesExecutingStepWithoutAdvance() {
         ContactPlan cancelled = newPlan(PLAN_ID, PlanStatus.PLAN_CANCELLED, Stage.S2);
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(cancelled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         CollectionEvent event = stepEvent(EventType.CHANNEL_CALLBACK).with("result", "ANSWERED");
         List<CollectionEvent> out = manager.onChannelCallback(event);
 
-        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(cancelled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.ANSWERED),
+                        eq(step.getChannelType()),
+                        any(),
+                        any());
         assertThat(out).isEmpty();
     }
 
@@ -691,20 +863,120 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
-    @DisplayName("④-D17 超时兜底时计划非 STEP_EXECUTING（回调已正常处理）→ 忽略")
-    void onCallbackTimeout_nonExecuting_noop() {
+    @DisplayName("④-D17 超时兜底时计划已终态但步骤仍 EXECUTING → 关步骤、不推进")
+    void onCallbackTimeout_cancelledPlan_closesExecutingStepWithoutAdvance() {
         ContactPlan completed = newPlan(PLAN_ID, PlanStatus.PLAN_COMPLETED, Stage.S2);
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(completed);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
 
         List<CollectionEvent> out =
                 manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
 
-        verify(planRepository, never()).updateStepStatus(any(), any(), any());
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(completed),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        org.mockito.ArgumentMatchers.contains("CALLBACK_TIMEOUT"));
         assertThat(out).isEmpty();
     }
 
     @Test
-    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值兜底 FAILED")
+    @DisplayName("计划已 STEP_SCHEDULED 时回调仍收口步骤，不发布 STEP_COMPLETED")
+    void onChannelCallback_scheduledPlan_closesStepWithoutAdvance() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        any(),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
+
+        List<CollectionEvent> out =
+                manager.onChannelCallback(
+                        stepEvent(EventType.CHANNEL_CALLBACK).with("result", "FAILED"));
+
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(scheduled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.COMPLETED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        any());
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("计划已 STEP_SCHEDULED 时超时仍收口步骤，不发布 STEP_COMPLETED")
+    void onCallbackTimeout_scheduledPlan_closesStepWithoutAdvance() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(stepOutcomeRecorder.recordTerminal(
+                        any(),
+                        any(),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        any(),
+                        any(),
+                        any()))
+                .thenReturn(true);
+
+        List<CollectionEvent> out =
+                manager.onCallbackTimeout(stepEvent(EventType.CALLBACK_TIMEOUT));
+
+        verify(stepOutcomeRecorder)
+                .recordTerminal(
+                        eq(scheduled),
+                        eq(step),
+                        eq(StepStatus.EXECUTING),
+                        eq(StepStatus.FAILED),
+                        eq(ContactResult.FAILED),
+                        eq(step.getChannelType()),
+                        any(),
+                        org.mockito.ArgumentMatchers.contains("CALLBACK_TIMEOUT"));
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("计划已 STEP_SCHEDULED 时迟到的 STEP_COMPLETED 不再 ADVANCE_NEXT")
+    void onStepCompleted_scheduledPlan_doesNotRewind() {
+        ContactPlan scheduled = newPlan(PLAN_ID, PlanStatus.STEP_SCHEDULED, Stage.S2);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(scheduled);
+
+        List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        verify(advancementPolicy, never()).decide(any(), any());
+        verify(planRepository, never()).getNextStep(anyLong(), anyInt());
+        assertThat(out).isEmpty();
+    }
+
+    @Test
+    @DisplayName("④-D18 回调 result 映射：NO_ANSWER/BUSY 透传，非法值 fail-close")
     void onChannelCallback_mapsResultVariants() {
         when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan); // STEP_EXECUTING
         when(planRepository.findStepById(STEP_ID)).thenReturn(step);
@@ -803,6 +1075,68 @@ class PlanLifecycleManagerTest {
                         .with(CollectionEvent.CASE_ID, CASE_ID));
 
         verify(planRepository, never()).findActivePlansByCase(CASE_ID);
+    }
+
+    @Test
+    @DisplayName("部分还款：携带的可选字段才覆盖，未携带的保留原值不写 null")
+    void onCaseBalanceUpdated_onlyOverwritesFieldsPresentInEvent() {
+        ContextSnapshot before = snapshotWithOutstanding(new BigDecimal("5000"));
+        CaseContext context = before.getCaseContext();
+        context.setDpd(7);
+        context.setOverdueAmount(new BigDecimal("800"));
+        context.setPenaltyAmount(new BigDecimal("30"));
+        context.setUpcomingAmount(new BigDecimal("1200"));
+        context.setNextDueDate(LocalDate.of(2026, 9, 1));
+        context.setCollectionStatus("IN_COLLECTION");
+        plan.setContextSnapshot(JsonUtil.toJson(before));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.updateActivePlanContextSnapshot(eq(PLAN_ID), anyString()))
+                .thenReturn(true);
+
+        // 只携带 totalOutstanding 与 upcomingAmount：其余可选字段必须保持原值
+        manager.onCaseBalanceUpdated(
+                balanceEvent(new BigDecimal("3200.50"))
+                        .with(CollectionEvent.UPCOMING_AMOUNT, new BigDecimal("900")));
+
+        ArgumentCaptor<String> snapshotJson = ArgumentCaptor.forClass(String.class);
+        verify(planRepository).updateActivePlanContextSnapshot(eq(PLAN_ID), snapshotJson.capture());
+        CaseContext updated =
+                JsonUtil.fromJson(snapshotJson.getValue(), ContextSnapshot.class).getCaseContext();
+        assertThat(updated.getTotalOutstanding()).isEqualByComparingTo(new BigDecimal("3200.50"));
+        assertThat(updated.getUpcomingAmount()).isEqualByComparingTo(new BigDecimal("900"));
+        assertThat(updated.getDpd()).isEqualTo(7);
+        assertThat(updated.getOverdueAmount()).isEqualByComparingTo(new BigDecimal("800"));
+        assertThat(updated.getPenaltyAmount()).isEqualByComparingTo(new BigDecimal("30"));
+        assertThat(updated.getNextDueDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(updated.getCollectionStatus()).isEqualTo("IN_COLLECTION");
+    }
+
+    @Test
+    @DisplayName("部分还款：stage 不被改写，催收强度不因 DPD 下降而回退")
+    void onCaseBalanceUpdated_neverRewritesStage() {
+        ContextSnapshot before = snapshotWithOutstanding(new BigDecimal("5000"));
+        before.getCaseContext().setStage(Stage.S3);
+        plan.setContextSnapshot(JsonUtil.toJson(before));
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.updateActivePlanContextSnapshot(eq(PLAN_ID), anyString()))
+                .thenReturn(true);
+
+        manager.onCaseBalanceUpdated(
+                balanceEvent(new BigDecimal("100"))
+                        .with(CollectionEvent.STAGE, Stage.S1.name())
+                        .with(CollectionEvent.DPD, 1));
+
+        ArgumentCaptor<String> snapshotJson = ArgumentCaptor.forClass(String.class);
+        verify(planRepository).updateActivePlanContextSnapshot(eq(PLAN_ID), snapshotJson.capture());
+        CaseContext updated =
+                JsonUtil.fromJson(snapshotJson.getValue(), ContextSnapshot.class).getCaseContext();
+        assertThat(updated.getStage()).isEqualTo(Stage.S3);
+        assertThat(updated.getDpd()).isEqualTo(1);
+        verify(planRepository, never()).updatePlanStatus(eq(PLAN_ID), any(), any());
     }
 
     private CollectionEvent balanceEvent(BigDecimal amount) {

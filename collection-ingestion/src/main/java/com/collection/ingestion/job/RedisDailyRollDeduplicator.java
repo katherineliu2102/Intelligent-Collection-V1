@@ -2,7 +2,10 @@ package com.collection.ingestion.job;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -37,6 +40,9 @@ public class RedisDailyRollDeduplicator {
 
     public void advanceCursor(Long loanId) {
         redisTemplate.opsForValue().set(cursorKey(), String.valueOf(loanId), Duration.ofDays(2));
+        redisTemplate
+                .opsForValue()
+                .set(advancedAtKey(), LocalDateTime.now(PHT).toString(), Duration.ofDays(2));
     }
 
     public void clearCursor() {
@@ -52,12 +58,32 @@ public class RedisDailyRollDeduplicator {
         clearCursor();
     }
 
+    /**
+     * T3o-O3 / T5-S7 的可查询证据：日切窗口内游标是否在推进、当日完成标记是否已写。
+     *
+     * <p>窗口是 03:35–05:55 每 5 分钟续跑，判「按时完成」要区分三种状态：还没开始、在推进、已完成。 只看完成标记分不出后两者与「卡住不动」，故一并给出游标值与上次推进时间。
+     */
+    public Map<String, Object> evidenceSnapshot() {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("businessDate", businessDate());
+        snapshot.put("cursorKey", cursorKey());
+        snapshot.put("cursor", currentCursor());
+        snapshot.put("completedKey", completedKey());
+        snapshot.put("completedToday", completedToday());
+        snapshot.put("lastAdvancedAt", redisTemplate.opsForValue().get(advancedAtKey()));
+        return snapshot;
+    }
+
     private String cursorKey() {
         return ROLL_KEY_PREFIX + businessDate() + ":cursor";
     }
 
     private String completedKey() {
         return ROLL_KEY_PREFIX + businessDate() + ":completed";
+    }
+
+    private String advancedAtKey() {
+        return ROLL_KEY_PREFIX + businessDate() + ":cursor-advanced-at";
     }
 
     private String businessDate() {

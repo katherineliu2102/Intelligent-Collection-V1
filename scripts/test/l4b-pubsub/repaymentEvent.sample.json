@@ -1,7 +1,7 @@
 {
   "dataType": "repaymentEvent",
   "data": {
-    "eventId": "l4b-repay-99000001-0001",
+    "eventId": "3c9a1e57-24b8-4f6d-9a1c-7e5b0d2f8a41",
     "eventType": "REPAYMENT",
     "occurredAt": "2026-08-12T10:06:00+08:00",
     "caseId": "99000001",

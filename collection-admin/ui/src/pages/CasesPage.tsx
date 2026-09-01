@@ -163,6 +163,12 @@ export function CasesPage() {
           <Form.Item name="userId" label="User ID">
             <Input />
           </Form.Item>
+          <Form.Item name="stage" label="Stage">
+            <Input placeholder="S0–S4" />
+          </Form.Item>
+          <Form.Item name="collectionStatus" label="Collection Status">
+            <Input placeholder="IN_COLLECTION" />
+          </Form.Item>
           <Button type="primary" onClick={query} loading={loading}>
             Search
           </Button>
@@ -187,6 +193,8 @@ export function CasesPage() {
             { title: "User ID", dataIndex: "userId" },
             { title: "Stage", dataIndex: "stage" },
             { title: "DPD", dataIndex: "dpd" },
+            { title: "Collection Status", dataIndex: "collectionStatus" },
+            { title: "Product", dataIndex: "product" },
             { title: "Plan Status", dataIndex: "planStatus" },
             { title: "Frozen", dataIndex: "frozen", render: (v) => (v ? "Y" : "N") },
             { title: "Phone", dataIndex: "phone" },
