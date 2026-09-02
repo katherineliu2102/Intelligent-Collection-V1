@@ -64,6 +64,8 @@ public class CaseProjectionAssembler {
         projection.setNextDueDatePresent(fields.nextDueDatePresent);
         projection.setCollectionStatus(
                 delta.fullCleared ? "SETTLED" : fields.dpd >= 91 ? "CEASED" : "IN_COLLECTION");
+        projection.setLastPaidAmount(fields.paidAmount);
+        projection.setSettledAt(fields.repayTime);
         projection.setUpdatedAt(fields.occurredAt);
         return projection;
     }

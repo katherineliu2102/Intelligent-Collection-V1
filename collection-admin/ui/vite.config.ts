@@ -14,6 +14,9 @@ export default defineConfig({
       "/config": "http://localhost:8888",
       // 只代理 API 子路径；勿代理 /dashboard 页面路由（否则会返回 JSON Login required）
       "/dashboard/outreach": "http://localhost:8888",
+      "/dashboard/portfolio": "http://localhost:8888",
+      "/dashboard/aicall": "http://localhost:8888",
+      "/dashboard/risk": "http://localhost:8888",
       "/dashboard/recovery": "http://localhost:8888",
       "/dashboard/evaluation": "http://localhost:8888",
       "/catalog": "http://localhost:8888",

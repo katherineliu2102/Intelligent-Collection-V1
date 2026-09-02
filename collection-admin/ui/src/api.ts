@@ -25,10 +25,10 @@ async function request(path: string, init?: RequestInit) {
 }
 
 export const api = {
-  login(username: string, role: string) {
+  login(username: string, password: string) {
     return request("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, role })
+      body: JSON.stringify({ username, password })
     });
   },
   me() {
@@ -147,6 +147,15 @@ export const api = {
   },
   dashboardOutreachRealtime(days = 30) {
     return request(`/dashboard/outreach/realtime?days=${days}`);
+  },
+  dashboardPortfolio() {
+    return request("/dashboard/portfolio");
+  },
+  dashboardAicallRealtime(days = 7) {
+    return request(`/dashboard/aicall/realtime?days=${days}`);
+  },
+  dashboardRisk() {
+    return request("/dashboard/risk");
   },
   deactivatePlanTemplate(templateCode: string) {
     return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {

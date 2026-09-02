@@ -309,6 +309,48 @@ DELIMITER ;
 CALL sp_schema_relax_callback_audit_ids();
 DROP PROCEDURE IF EXISTS sp_schema_relax_callback_audit_ids;
 
+-- AI Call 会话底座（v1.3 设计，v1.6 首次落库，对应设计文档 §6.2 / §5.1.4）：
+-- 结构化提取 Facade `session.completed` 回调，供看板 AI Call 分区（业务结果首屏 + 渠道卫生层）按原生词聚合。
+-- 与 t_channel_callback_audit 分工：audit 存完整 canonical_payload（审计/重放 SSOT），本表存结构化列（查询/聚合 SSOT）。
+-- 两套口径（§6.2）：本表存供应商原生词（was_answered/was_ai_connected/line_reason/sip_code/final_failure_reason/result_label），
+-- 映射后 ContactResult 仍在 step/timeline，互不覆盖。字段名以《FACADE客户接入手册》§9.3/§9.4 为准。
+-- stage/dpd 快照由写路径从 plan/step 上下文补（回调不带）；is_synthetic 由 mock 触发通道标记。
+CREATE TABLE IF NOT EXISTS t_ai_call_session (
+    id                   BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    session_id           VARCHAR(128)    NOT NULL COMMENT 'Facade session_id',
+    batch_id             VARCHAR(128)    NULL COMMENT 'Facade batch_id / external_batch_id',
+    case_id              BIGINT          NULL COMMENT 'loan_id；identity 未解析时可空',
+    plan_id              BIGINT          NULL,
+    step_id              BIGINT          NULL,
+    event                VARCHAR(32)     NULL COMMENT 'session.completed / batch.completed',
+    -- 电信层（原生词）
+    was_ringing          TINYINT(1)      NULL COMMENT 'line_outcome.was_ringing（线路/号码质量）',
+    was_answered         TINYINT(1)      NULL COMMENT 'line_outcome.was_answered（客户接起，含信箱/筛选）',
+    was_ai_connected     TINYINT(1)      NULL COMMENT 'line_outcome.was_ai_connected（真人多轮 = 结果链 L1）',
+    line_reason          VARCHAR(32)     NULL COMMENT 'line_outcome.reason：NORMAL/VOICEMAIL/CALL_SCREENING',
+    sip_code             VARCHAR(32)     NULL COMMENT 'line_outcome.sip_code（406/486/487/603...；未接通时常见）',
+    final_failure_reason VARCHAR(64)     NULL COMMENT 'BUSY/NO_ANSWER/FORBIDDEN/DECLINE/TEMP_UNAVAILABLE/REQUEST_TIMEOUT/INVALID_NUMBER/MEDIA_NEGOTIATION_FAILED/SIP_SERVER_ERROR',
+    -- 业务层（ai_result，9/1 实证真实接通会回传）
+    result_label         VARCHAR(64)     NULL COMMENT 'ai_result.result_label（开放标签集：promise_to_pay/follow_up_required/dispute/...，不冻结枚举）',
+    summary              TEXT            NULL COMMENT 'ai_result.summary；非空可作 needs_review 辅助清除信号',
+    promises_json        JSON            NULL COMMENT 'ai_result.promises[] 原始数组（amount/currency/promised_date）；现恒空',
+    -- 观测辅助
+    caller_cli           VARCHAR(32)     NULL COMMENT 'parties.caller_cli 实际外显主叫（当前 6310001）',
+    dialed_at            DATETIME        NULL COMMENT 'dial_timeline.dialed_at',
+    answered_at          DATETIME        NULL COMMENT 'dial_timeline.answered_at；未回传为 NULL，禁止记 0',
+    ended_at             DATETIME        NULL COMMENT 'dial_timeline.ended_at；时长由 ended_at-answered_at 派生',
+    needs_review         TINYINT(1)      NULL COMMENT 'was_answered=1 且无借款人发言（转写判定，未定前退化人工）',
+    is_synthetic         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'mock/测试会话；看板默认过滤',
+    stage_snapshot       VARCHAR(16)     NULL COMMENT '会话发生时 stage 快照（S0-S4），写路径从 plan/step 补',
+    dpd_snapshot         INT             NULL COMMENT '会话发生时 dpd 快照，写路径从 plan/step 补',
+    received_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ai_call_session_id (session_id),
+    INDEX idx_ai_call_session_received (received_at),
+    INDEX idx_ai_call_session_case (case_id, received_at),
+    INDEX idx_ai_call_session_batch (batch_id),
+    INDEX idx_ai_call_session_label (result_label, received_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Call 会话底座（原生词，看板聚合用）';
+
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
@@ -387,6 +429,8 @@ CREATE TABLE IF NOT EXISTS t_ai_collection (
     overdue_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '已到期未结清总额，含罚息',
     total_outstanding       DECIMAL(18,2)   NOT NULL COMMENT '已到期且未结清，对客金额',
     penalty_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0,
+    last_paid_amount        DECIMAL(18,2)   NULL COMMENT '最近一次还款金额（repaymentEvent.paidAmount）',
+    settled_at              DATETIME        NULL COMMENT '最近一次还款时间（repaymentEvent.repayTime，PHT）',
     remaining_amount        DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '废弃历史字段，不再表示全部未结清',
     upcoming_amount         DECIMAL(18,2)   NULL COMMENT '三期下一期 D-3～D0 待还金额',
     due_date                DATE            NULL,
@@ -472,6 +516,32 @@ END //
 DELIMITER ;
 CALL sp_schema_add_ai_collection_repayment_fields();
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_repayment_fields;
+
+-- 既有环境迁移：还款金额与时间字段（「当日回收金额」热层数据底座）。
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_paid_fields;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_collection_paid_fields()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'last_paid_amount'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN last_paid_amount DECIMAL(18,2) NULL COMMENT '最近一次还款金额（repaymentEvent.paidAmount）'
+            AFTER penalty_amount;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'settled_at'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN settled_at DATETIME NULL COMMENT '最近一次还款时间（repaymentEvent.repayTime，PHT）'
+            AFTER last_paid_amount;
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_collection_paid_fields();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_paid_fields;
 
 -- 既有环境迁移：数仓不再写业务库，t_ai_collection_outbox 无发布器也无消费者。
 -- 归档需求由 t_ai_collection_inbox.payload 承接；确认数仓侧发布器已下线、无 PENDING 记录后再执行下一行。
