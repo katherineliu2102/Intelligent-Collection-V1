@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>dpd 1~90 且投影阶段<b>严重度高于</b>计划当前阶段 → 发 {@code STAGE_CHANGED}
+ *   <li>dpd 1~90 且无活跃计划、最近完成计划 stage 低于投影 → 发 {@code STAGE_CHANGED}（补洞）
  *   <li>dpd 1~90 且投影阶段低于计划阶段 → <b>不发</b>（阶段单调前进，见 {@link #rollOne}）
  *   <li>dpd ≥ 91 且仍有活跃计划 → 发 {@code CASE_CEASED}
  *   <li>已结清（{@code SETTLED}）→ 跳过
@@ -130,7 +131,14 @@ public class DpdStageRollHandler {
         }
 
         Stage current = active.isEmpty() ? null : active.get(0).getStage();
-        if (current == null || current == newStage) {
+        if (current == null) {
+            ContactPlan lastCompleted = planRepository.getLastCompletedPlan(loanId);
+            if (lastCompleted == null || lastCompleted.getStage() == null) {
+                return; // 首张计划归 CASE_INGESTED；无完成计划不在日切补建
+            }
+            current = lastCompleted.getStage();
+        }
+        if (current == newStage) {
             return;
         }
         if (newStage == null) {

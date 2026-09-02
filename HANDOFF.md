@@ -63,7 +63,8 @@ SPI 签名与约束 → [核心引擎规格 §6](./docs/MOCASA催收系统升级
 |---|---|
 | 两类事件联调 | `caseEvent` / `repaymentEvent` 真 Topic 连通 + 样例全链路。测试入口已开通（2026-08-20，`scripts/test/provision-l4-pubsub.py`）：合成源 `intelligent-collection-cases-test1(+sub)`、真实源 `intelligent-collection-cases-v1-l4b-sub`（挂正式 topic 扇出，不影响 `-v1-sub`）、死信 `-dlq(+sub)`。**上游当前未向契约 topic 发布**：独立订阅跨过 03:00 PHT 日切窗口后仍为 0 条（扇出保证创建后的消息必有副本），两个历史 topic 同期也为 0；需数仓确认实际发布 topic 与节奏，探针见 `scripts/test/observe-upstream-topics.py` |
 | 日切 Pilot | 全量 keyset + Redis 游标；批次完成门控（固定时间窗 → 水位信号） |
-| 日切阶段单调前进 | ✅ 已闭合：`DpdStageRollHandler.rollOne` 仅在投影 stage 严重度更高时发 `STAGE_CHANGED`，回退只计数不发事件，避免与引擎 ESCALATE 形成降档 ping-pong（[数据接入 §4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)）；`DpdStageRollHandlerTest` 14 例覆盖（含同日重跑只发一次） |
+| 日切阶段单调前进 | ✅ 已闭合：`DpdStageRollHandler.rollOne` 仅在投影 stage 严重度更高时发 `STAGE_CHANGED`，回退只计数不发事件，避免与引擎 ESCALATE 形成降档 ping-pong（[数据接入 §4](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)） |
+| 日切无活跃计划补洞 | ✅ 2026-08-31：无活跃时读 `getLastCompletedPlan`，仅投影 stage 严格高于最近完成计划才发 `STAGE_CHANGED`；无完成计划不发；S4 穷尽后同 stage 不重建。仓储方法已有，未改 SQL |
 | 白名单过滤 | ✅ 已闭合：`PubSubCaseConsumer` 在路由前按 `collection.ingestion.loan-id-whitelist` 过滤，名单外 ack 跳过、空名单放行；取不到 `caseId` 时放行交映射层按 poison 处置 |
 | 联调隔离闸门 | ✅ 已闭合：`IngestionIsolationGuard` 在 local/test profile 下拒绝「消费保留生产订阅」与「白名单为空」两种配置，在建立订阅前失败；pilot 由 `PilotReadinessValidator` 接管 |
 | 无基线还款处置 | ✅ 已闭合：仓储改抛 `MissingCaseBaselineException`，接入层转 `PoisonMessageException` → ack + 告警。此前抛 `IllegalStateException` 会被当瞬态失败 nack，形成永不收敛的重投 |
@@ -97,6 +98,7 @@ SPI 签名与约束 → [核心引擎规格 §6](./docs/MOCASA催收系统升级
 | 压测 | Consumer 池、队列、ack-deadline vs p99 |
 | I/O SPI 超时 | Guard 等须自带 client 超时（`Future.cancel` 掐不断卡死 I/O） |
 | **时区口径** | ✅ 已闭合（2026-08-21 17:19 复跑 L3 全套 30 例全绿，L4a 上 31 条步骤行同行时间列全为 PHT）。以下保留问题现场与两条失败修法，供改这块代码时参考。原始问题（2026-08-21 L3-7 首跑暴露）：MySQL `system_time_zone=UTC`，`NOW()` 写出 UTC；而 `ContextAssembler` 按 `Asia/Manila` 算当日频控边界、`StuckPlanReaper` 按 JVM 默认时区算停摆宽限。两者都与 `NOW()` 写入的列（`t_contact_timeline.created_at`、`t_contact_plan.updated_at`）直接比较，恒差 8 小时 → ①当日触达漏计 PHT 00:00–08:00，频控可能超发；②停摆宽限恒被满足。到期/超时扫描与发件箱租约不受影响（比较双方均为应用写入）。修法与验收见[测试文档附录 C](./docs/testing/MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)<br>**已试过两条基础设施层修法，均不足**：①Hikari `connection-init-sql`（`application.yml`）只覆盖到部分连接；②JDBC URL 上 `forceConnectionTimeZoneToSession=true`（`start-local.sh` 注入）——注意**必须配数值偏移 `connectionTimeZone=%2B08:00`**，下发命名时区会因该实例未加载时区表而让每条连接都建不起来（`Unknown or incorrect time zone: 'Asia/Shanghai'`）。加上②之后绝大多数列已落 Manila，但实测 `t_contact_plan_step.executed_at` 仍会落 UTC（同一行 `dispatched_at`/`updated_at` 却是 Manila）。**已按第三条修法落地（2026-08-21）**：`collection-service` 三个 mapper（plan / step / timeline）的时间列改为 `ServiceClock.now()` 传参，`ContactPlanRepositoryImpl` / `TimelineRepositoryImpl` 负责下发；新增 `DatabaseClockValidator`（`collection-admin`）在启动时比对应用 PHT 时钟与 `SELECT NOW()`，偏差超 `collection.db.clock-drift-threshold-seconds`（默认 120s）时 pilot 拒启、其余 profile 仅告警。**验收已完成**：带 `L3_IT_DB_URL` 复跑 `ContactPlanMapperIT` / `StepScheduleAuditMapperIT` 全绿，`executed_at` 与同行其余列同为 PHT；回归守卫为 `StepScheduleAuditMapperIT#timeColumns_landOnPhtNotDatabaseSessionTimeZone`（同一行内 `created_at`/`updated_at`/`executed_at` 与应用 PHT 时钟偏差须在 5 分钟内）。改动已通知服务同事 |
+| 末步穷尽闸门 / REBUILD 次日首步 | ✅ 2026-08-31：`onStepCompleted` 在仍在催时不采纳 `AdvancementPolicy.PLAN_COMPLETED`，改发 `PLAN_EXHAUSTED`；`REBUILD` 首步 `trigger_time` 不得早于次日 08:00 PHT。[核心引擎 §4.3.2 / §4.5](./docs/MOCASA催收系统升级_Phase1_核心引擎规格.md#432-step_completed)。**剩余**：`DefaultAdvancementPolicy` 末步仍返回 `PLAN_COMPLETED`（引擎改写兜住）；编排替换生产策略时建议对齐，不阻断 |
 
 #### D.1 生产就绪差集登记
 

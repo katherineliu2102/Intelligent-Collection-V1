@@ -40,6 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class PlanLifecycleManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlanLifecycleManager.class);
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
+    private static final int COLLECTION_WINDOW_START_HOUR = 8;
 
     @Resource private ContactPlanRepository planRepository;
     @Resource private TimelineRepository timelineRepository;
@@ -339,8 +341,14 @@ public class PlanLifecycleManager {
                 return noEvents();
 
             case PLAN_COMPLETED:
+                if (stillInCollection(plan)) {
+                    log.info(
+                            "[advance] plan {} last-step PLAN_COMPLETED while still collecting → PLAN_EXHAUSTED",
+                            planId);
+                    return single(enqueued(EngineEvents.planExhausted(plan)));
+                }
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
-                log.info("[advance] plan {} → PLAN_COMPLETED", planId);
+                log.info("[advance] plan {} → PLAN_COMPLETED (no longer collecting)", planId);
                 return noEvents();
 
             case PLAN_EXHAUSTED:
@@ -454,7 +462,7 @@ public class PlanLifecycleManager {
                 // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
                 planRepository.markRenewalPending(planId);
                 if (createPlanForStage(
-                        plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
+                        plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null, true)) {
                     planRepository.updatePlanStatus(
                             planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
                     log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
@@ -537,7 +545,7 @@ public class PlanLifecycleManager {
                         SpiType.EXHAUSTION_POLICY,
                         () -> exhaustionPolicy.handle(last, caseInfo, snapshot));
         if (result.getAction() == ExhaustionAction.REBUILD) {
-            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot, null);
+            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot, null, true);
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
         }
         return noEvents();
@@ -551,6 +559,17 @@ public class PlanLifecycleManager {
             CaseInfo providedCaseInfo,
             ContextSnapshot providedSnapshot,
             Long excludedActivePlanId) {
+        return createPlanForStage(
+                caseId, stage, providedCaseInfo, providedSnapshot, excludedActivePlanId, false);
+    }
+
+    private boolean createPlanForStage(
+            Long caseId,
+            Stage stage,
+            CaseInfo providedCaseInfo,
+            ContextSnapshot providedSnapshot,
+            Long excludedActivePlanId,
+            boolean rebuildSameStage) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
             metrics.planCreation(null, "NO_STAGE");
@@ -615,8 +634,10 @@ public class PlanLifecycleManager {
             first.setStepOrder(1);
             if (first.getTriggerTime() == null) {
                 first.setTriggerTime(
-                        LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
-                                .plusMinutes(Math.max(0, first.getDelayMinutes())));
+                        LocalDateTime.now(PHT).plusMinutes(Math.max(0, first.getDelayMinutes())));
+            }
+            if (rebuildSameStage) {
+                clampFirstStepToNextPhtMorning(first);
             }
             first.setStatus(StepStatus.PENDING);
         }
@@ -743,6 +764,37 @@ public class PlanLifecycleManager {
 
     private boolean isCeased(CaseInfo caseInfo) {
         return "CEASED".equalsIgnoreCase(caseInfo.getCaseStatus());
+    }
+
+    /**
+     * 仍在催收窗口：缺快照时偏向穷尽（避免安静停催）。仅 CEASED / SETTLED / 结清视为已离开催收。
+     */
+    private boolean stillInCollection(ContactPlan plan) {
+        ContextSnapshot snap = snapshotFromPlan(plan);
+        if (snap != null && snap.getCaseContext() != null) {
+            String status = snap.getCaseContext().getCollectionStatus();
+            if (status != null
+                    && ("CEASED".equalsIgnoreCase(status) || "SETTLED".equalsIgnoreCase(status))) {
+                return false;
+            }
+        }
+        CaseInfo info = caseInfoFromSnapshot(snap);
+        return info == null || (!isCeased(info) && !info.isRepaid());
+    }
+
+    /** REBUILD 首步不得早于次日 08:00 PHT；Factory 已排更晚则保留。 */
+    private void clampFirstStepToNextPhtMorning(ContactPlanStep first) {
+        LocalDateTime floor = LocalDate.now(PHT).plusDays(1).atTime(COLLECTION_WINDOW_START_HOUR, 0);
+        if (first.getTriggerTime() == null || first.getTriggerTime().isBefore(floor)) {
+            first.setTriggerTime(floor);
+        }
+        if (first.getOriginalTriggerTime() == null
+                || first.getOriginalTriggerTime().isBefore(first.getTriggerTime())) {
+            first.setOriginalTriggerTime(first.getTriggerTime());
+        }
+        log.info(
+                "[create] REBUILD first step trigger_time clamped to {} PHT",
+                first.getTriggerTime());
     }
 
     // ───────────── 决策 B：快照来源 = 事件 payload / carry-forward（不读旧库） ─────────────

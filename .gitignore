@@ -45,3 +45,6 @@ node_modules/
 collection-admin/ui/dist/
 __pycache__/
 *.pyc
+
+# Cursor 本地治理（hooks / skills / rules），不入远程
+.cursor/

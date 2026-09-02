@@ -1,9 +1,29 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
-> **适用版本**：Phase 1 / Phase 1.5 切片（配置治理基础）；2026-08-25 补入触达看板、文案保存护栏与 AI Call 观测口径
-> **读者**：运营、测试、策略、研发联调同事
-> **数据源**：当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。
-> **关联文档**：[`管理后台设计文档`](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md)
+> **版本**: Phase 1 / Phase 1.5 切片（配置治理基础）  
+> **日期**: 2026-09-01  
+> **状态**: ✅ 操作说明（测试库）；设计 SSOT 见设计文档  
+> **读者**: 运营、测试、策略、研发联调同事  
+> **数据源**: 当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。  
+> **关联文档**: [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md) · Nacos / 进程启动见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)
+
+---
+
+## 目录
+
+- [1. 系统概览](#1-系统概览)
+- [2. 启动与登录](#2-启动与登录)
+- [3. 各页面操作](#3-各页面操作)
+  - [3.1 Data Analysis](#31-data-analysis触达看板)
+  - [3.2 Strategy Config](#32-strategy-config策略配置)
+  - [3.3 Templates](#33-templates文案模板--可编辑热更新)
+  - [3.4 Case Monitor](#34-case-monitor案件监控)
+  - [3.5 Ops / Compliance / System](#35-ops-queue--compliance--system-admin)
+- [4. 常见「看起来没数据」说明](#4-常见看起来没数据说明)
+- [5. 后台热更新短信 / 计划模板（已支持）](#5-后台热更新短信--计划模板已支持)
+- [6. 数据链路自查（REST / SQL）](#6-数据链路自查rest--sql)
+- [7. 故障排查](#7-故障排查)
+- [8. 附录：默认账号与测试地址](#8-附录默认账号与测试地址)
 
 ---
 
@@ -34,26 +54,41 @@
 
 ## 2. 启动与登录
 
-### 2.1 一键启动（推荐）
+进程、Nacos 与 `.env` 的通用说明见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)。本节只覆盖后台 UI。
+
+### 2.1 一键启动（推荐，Windows）
 
 在项目根目录执行，脚本会按需拉起后端(8888)与前端(5173)并打开浏览器：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\dev\start-admin.ps1
+powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
 ```
 
-关掉这两个 PowerShell 窗口（或 Ctrl+C）即停服务。
+关掉这两个 PowerShell 窗口（或 Ctrl+C）即停服务。仓库目前没有 `start-admin.sh`。
 
-### 2.2 手动启动后端
+### 2.2 macOS / Linux（两步）
+
+```bash
+# 项目根目录 — 后端
+./scripts/dev/start-local.sh
+
+# 另开终端 — 前端
+cd collection-admin/ui
+npm install     # 首次
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+浏览器打开 `http://127.0.0.1:5173`。
+
+### 2.3 手动启动后端（Windows）
 
 ```powershell
-# 项目根目录
 powershell -ExecutionPolicy Bypass -File "scripts/dev/start-local.ps1"
 ```
 
 启动成功后健康检查 `http://localhost:8888/actuator/health` 返回 `{"status":"UP"}`。
 
-### 2.3 手动启动前端
+### 2.4 手动启动前端（Windows）
 
 ```powershell
 $env:Path = "C:\Program Files\nodejs;" + $env:Path
@@ -66,21 +101,18 @@ npm run dev -- --host 127.0.0.1 --port 5173
 > 修改 `vite.config.ts`（如新增代理）后**必须重启** dev server 才生效。
 > `npm run dev` 不会开机自启，重启机器后要重新拉起。
 
-### 2.4 登录
+### 2.5 登录
 
-浏览器打开 `http://127.0.0.1:5173`，本地默认账号 `admin` / `local-dev`（角色 `SYSTEM_ADMIN`）。会话基于 Cookie，前端所有请求带 `credentials: include`。
+浏览器打开 `http://127.0.0.1:5173`。本地账号只存在于 **local profile**（不连生产库、不对外暴露端口）；用户名/口令见 `.env.example` 与登录页提示，pilot/生产账号只经环境变量注入，`PilotReadinessValidator` 会强制至少配一个可用账号，否则拒绝启动。会话基于 Cookie，前端所有请求带 `credentials: include`。
 
-> 该弱口令**仅 local profile 可用**：local 不连生产库、不对外暴露端口。pilot/生产账号只经环境变量注入，且 `PilotReadinessValidator` 会强制至少配一个可用账号，否则拒绝启动。
+### 2.6 30 秒自检
 
-### 2.5 30 秒自检
-
-```powershell
-Invoke-WebRequest http://localhost:8888/actuator/health -UseBasicParsing   # 应 200
-Invoke-WebRequest http://127.0.0.1:5173 -UseBasicParsing                   # 应 200
-Invoke-WebRequest http://127.0.0.1:5173/dashboard -UseBasicParsing         # 应 200 且为 HTML
+```bash
+curl -sS http://localhost:8888/actuator/health    # 应 200
+curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:5173/dashboard
 ```
 
-第三条若返回 JSON，说明 Vite 把整段 `/dashboard` 代理到了后端——只应代理 `/dashboard/outreach` 等 API 子路径。
+Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vite 把整段 `/dashboard` 代理到了后端——只应代理 `/dashboard/outreach` 等 API 子路径。
 
 ---
 
@@ -145,7 +177,7 @@ Invoke-WebRequest http://127.0.0.1:5173/dashboard -UseBasicParsing         # 应
 >
 > **注意**：时间线按 `userId` 查询（案件行已带 userId）；计划历史按 `caseId` 查询，包含终态计划，因此已完成的 L4b 催收也能看到。
 
-**列表隐私口径**（PRD §8.2 / §9）：
+**列表隐私口径**（[PRD §8.2](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md#82-隐私与数据安全) / [§9](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md#9-产品层已拍板决策)）：
 
 | 列 | 是否展示 | 说明 |
 |----|----------|------|
@@ -287,13 +319,15 @@ SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, 
 | 看板接口 500 | 看后端日志，确认 MySQL / Nacos 连通 |
 | Catalog 接口报错 | 确认 `catalog/catalog-metadata.json`、`script-drafts.json` 存在于 classpath |
 
-**为什么经常"打不开"**：前后端是两个进程、必须同时跑，关窗口即停；`8888` 是 API 不是页面，容易被误存书签；`npm run dev` 不开机自启。日常直接用 §2.1 的一键脚本。
+**为什么经常"打不开"**：前后端是两个进程、必须同时跑，关窗口即停；`8888` 是 API 不是页面，容易被误存书签；`npm run dev` 不开机自启。日常直接用 §2.1 的一键脚本。页面与权限设计见 [管理后台设计文档 §4 / §5](./MOCASA催收系统升级_Phase1_管理后台设计文档.md#4-信息架构总览)。
 
 ---
 
 ## 8. 附录：默认账号与测试地址
 
-- 登录：`admin` / `local-dev`（角色 `SYSTEM_ADMIN`，仅 local profile）
+以下均为**测试 / L4b 占位**，不是生产凭据；不得写入生产密钥。
+
+- 登录：`admin` / `local-dev`（角色 `SYSTEM_ADMIN`，仅 local profile；与 `.env.example` 一致）
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://localhost:8888`
 - L4b 统一触达地址：手机 `+639451374358` / 邮箱 `wzynju@126.com` / Push token `1a0018970bf0c19de04`

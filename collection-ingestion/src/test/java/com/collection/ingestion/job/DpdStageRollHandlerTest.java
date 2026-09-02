@@ -115,10 +115,44 @@ class DpdStageRollHandlerTest {
     }
 
     @Test
-    @DisplayName("无活跃计划 → 不发布阶段事件")
+    @DisplayName("无活跃且无已完成计划 → 不发布阶段事件（首张计划归 CASE_INGESTED）")
     void publishesNothingWithoutActivePlan() {
         givenProjection(20);
         when(planRepository.findActivePlansByCase(LOAN_ID)).thenReturn(Collections.emptyList());
+        when(planRepository.getLastCompletedPlan(LOAN_ID)).thenReturn(null);
+
+        handler.dailyRoll();
+
+        verify(ingestionService, never())
+                .changeStage(anyLong(), anyLong(), any(Stage.class), any());
+    }
+
+    @Test
+    @DisplayName("无活跃且最近完成 S1、投影已是 S3 → 补发 STAGE_CHANGED")
+    void publishesStageChangedWhenNoActivePlanAndProjectionHigherThanLastCompleted() {
+        givenProjection(20); // S3
+        when(planRepository.findActivePlansByCase(LOAN_ID)).thenReturn(Collections.emptyList());
+        ContactPlan last = new ContactPlan();
+        last.setId(9L);
+        last.setCaseId(LOAN_ID);
+        last.setStage(Stage.S1);
+        when(planRepository.getLastCompletedPlan(LOAN_ID)).thenReturn(last);
+
+        handler.dailyRoll();
+
+        verify(ingestionService).changeStage(eq(LOAN_ID), eq(USER_ID), eq(Stage.S3), any());
+    }
+
+    @Test
+    @DisplayName("无活跃且最近完成 S4、投影仍 S4 → 不重建（穷尽 COMPLETE）")
+    void doesNotRebuildWhenLastCompletedAlreadyAtProjectionStage() {
+        givenProjection(75); // S4
+        when(planRepository.findActivePlansByCase(LOAN_ID)).thenReturn(Collections.emptyList());
+        ContactPlan last = new ContactPlan();
+        last.setId(9L);
+        last.setCaseId(LOAN_ID);
+        last.setStage(Stage.S4);
+        when(planRepository.getLastCompletedPlan(LOAN_ID)).thenReturn(last);
 
         handler.dailyRoll();
 

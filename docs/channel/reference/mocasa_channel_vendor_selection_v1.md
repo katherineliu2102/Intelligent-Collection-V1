@@ -228,7 +228,7 @@ MOCASA Phase 1 将到期前通知、逾期催收、人工外呼整合为统一�
 | Adapter | 对应 LTH API | 关键特征 |
 |---------|-------------|----------|
 | `LthVoiceAdapter` | `voiceNotification` | 异步调用 → 等 `CHANNEL_CALLBACK` |
-| `LthHumanCallAdapter` | `createTask` / `addNumberToTask` | 长生命周期任务；超时需对账（[架构 §1.7.7](../../MOCASA催收系统升级_Phase1_架构设计文档.md#177-异步回调对账)） |
+| `LthHumanCallAdapter` | `createTask` / `addNumberToTask` | 长生命周期任务；超时需对账（[架构 §2.5](../../MOCASA催收系统升级_Phase1_架构设计文档.md#25-外部交互安全)） |
 | PreFlight 联动 | `filterNumber` | 还款/冻结时从 LTH 任务中移除号码 |
 
 **要点**：调用后状态保持 `STEP_EXECUTING`，等回调推进；Issabel 废弃，通话记录 100% 回流 Timeline；呼损率超阈值降级渐进式外呼。
