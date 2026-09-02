@@ -1,7 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 基础设施交互规范
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
-> **日期**: 2026-08-13
+> **日期**: 2026-09-01  
+> **状态**: ✅ 已确定（Redis / 调度 / 配置键 SSOT）  
 > **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)、[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)
 
 ---
@@ -40,9 +41,11 @@
   - [7.3 指标与日志](#73-指标与日志)
   - [7.4 告警最低要求](#74-告警最低要求)
 - [附录 A：生产配置键索引](#附录-a生产配置键索引)
+  - [A.1 历史编号占位](#a1-编号说明)
   - [A.2 引擎与事件总线](#a2-引擎与事件总线)
   - [A.3 接入与 PubSub](#a3-接入与-pubsub)
   - [A.4 迁移与触达](#a4-迁移与触达)
+  - [A.5 历史编号占位](#a5-编号说明)
   - [A.6 定时调度](#a6-定时调度)
 - [附录 B：容量基线与生产技术准入](#附录-b容量基线与生产技术准入)
   - [B.1 上线前容量校准清单](#b1-上线前容量校准清单)
@@ -54,7 +57,7 @@
 
 ### 1.1 文档定位与覆盖范围
 
-本文定义 Phase 1 的**生产基础设施契约**：Redis Stream、Redis KV、定时调度、Repository 访问、配置、可观测性与容量约束；仅定义各模块在生产运行时必须满足的基础设施边界。
+本文定义 Phase 1 的**生产基础设施契约**：Redis Stream、Redis KV、定时调度、Repository 访问、配置、可观测性与容量约束；仅定义各模块在生产运行时必须满足的基础设施边界。**行为与取值理由以各模块正文为准**；[附录 A](#附录-a生产配置键索引) 只索引键名、热更属性与初始值，不替代模块规格。
 
 ### 1.2 生产运行不变量
 
@@ -112,9 +115,9 @@ Consumer、Cron 与 PEL Scanner 三组线程互不共享线程池；任一组阻
 | 参数 | 值 | 说明 |
 |---|---|---|
 | 类型 | `ThreadPoolExecutor` | 非 `ScheduledThreadPool`，调度由消费循环自驱 |
-| corePoolSize | `engine.consumer.thread_pool_size`（初始值 8） | 等于消费并发度；上线前按容量校准结果确定 |
+| corePoolSize | `engine.consumer.thread_pool_size`（初始值 8） | 等于消费并发度；`8` 为 [附录 B.1](#b1-上线前容量校准清单) 校准前的工程默认 |
 | maximumPoolSize | = corePoolSize | 固定大小，不动态扩缩；突发流量由队列缓冲 |
-| workQueue | `LinkedBlockingQueue(engine.consumer.queue_capacity)`（初始值 256） | 有界队列；上线前按可接受排队时延和单任务内存确定 |
+| workQueue | `LinkedBlockingQueue(engine.consumer.queue_capacity)`（初始值 256） | 有界队列；`256` 为 [附录 B.1](#b1-上线前容量校准清单) 校准前的工程默认 |
 | rejectedExecutionHandler | `CallerRunsPolicy` | 队列满时阻塞消费循环线程，XREADGROUP 暂停拉取，Redis Stream 自然积压但不丢消息 |
 | threadFactory | `NamedThreadFactory("engine-consumer-%d")` | 线程命名便于日志 / thread dump 定位 |
 | keepAliveTime | 0（core 不回收） | 固定池大小 |
@@ -481,7 +484,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### 7.3 指标与日志
 
-本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#122-应用入站)）或 DB 业务表（[§6](#6-持久层与跨存储一致性)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §1.6.6](./MOCASA催收系统升级_Phase1_架构设计文档.md#166-可观测性与人工处置)；告警/Dashboard → 《运维与协作》（待建）。
+本节约束引擎/基础设施的 **Metrics 埋点 + MDC 日志**（→ Prometheus / 日志平台），**不是**后台单案查询（[架构 §1.6](./MOCASA催收系统升级_Phase1_架构设计文档.md#17-应用层-collection-admin)）或 DB 业务表（[§6](#6-持久层与跨存储一致性)）。Phase 1：**Metrics + Logging 做**，Tracing 不做（MDC `eventId`/`caseId` 串联排障）。原则 → [架构 §2.6](./MOCASA催收系统升级_Phase1_架构设计文档.md#166-可观测性与人工处置)；告警/Dashboard → 《运维与协作》（待建）。
 
 #### 指标（Metrics）
 
@@ -501,7 +504,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | 引擎 | `StuckPlanReaper` | `collection.plan.stuck` | Counter |
 | 调度 | `ScheduledJobRunner` / `PubSubScheduleConsumer` | `collection.schedule.triggered`, `collection.schedule.scan.rows`, `collection.schedule.stale.discarded`, `collection.schedule.failed`, `collection.schedule.skipped` | Counter（job tag；`skipped` 另带 reason tag） |
 
-> 引擎侧指标对应架构 §1.6.6 静默路径须可观测；本节指标均为生产最低要求。
+> 引擎侧指标对应架构 §2.6 静默路径须可观测；本节指标均为生产最低要求。
 
 #### 调度指标的人工巡检口径
 
@@ -567,12 +570,19 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 分册 | 内容 |
 |---|---|
+| **A.1** | 不单列：原运行环境键已并入 A.2 / A.2b |
 | **A.2** | 引擎与 Redis（`engine.*` / `collection.redis.*` / `collection.eventbus`）；**A.2b** 应用侧开关与凭证（`collection.webhook.*` / `collection.ingestion.*` / `collection.compliance.counter` 等） |
 | **A.3** | 接入与 PubSub 部署索引（热更属性；行为 SSOT → [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)） |
 | **A.4** | 迁移与触达（`collection.notification.owner`） |
+| **A.5** | 不单列：原调度键已并入 A.6 |
 | **A.6** | 定时调度（`collection.scheduler.*`、调度 GCP 环境变量） |
 
 > 渠道编排参数见 [渠道编排规格](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)。**凭证与连接串不入 Git 仓库**。
+
+### A.1 历史编号占位
+<a id="a1-编号说明"></a>
+
+附录 A 历史上曾单列运行环境分册。现行键表从 A.2 起编，避免与已引用的 A.2–A.6 锚点错位。本节省略独立键表。
 
 ### A.2 引擎与事件总线
 
@@ -651,7 +661,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### A.3 接入与 PubSub
 
-**部署索引**：运维查表写 Nacos/Secret/GCP；**默认值与语义 SSOT** → [数据接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)（消费参数）、[§3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)（dedup）、[§4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-阶段变更与-dpd-日切)（日切扫描）、[§6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离)（白名单）。
+**部署索引**：运维查表写 Nacos/Secret/GCP；**默认值与语义 SSOT** → [数据接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖)（消费参数）、[§3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)（dedup）、[§4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)（日切扫描）、[§5](./MOCASA催收系统升级_Phase1_数据接入规格.md#5-迁移与-replay)（白名单 / replay）。
 
 **GCP 环境变量**（不入仓；默认值见接入 §2.1）
 
@@ -668,9 +678,9 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 | `collection.ingestion.enabled` | Y | [接入 §2.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#21-消费者配置与外部资源依赖) |
 | `collection.ingestion.ack-deadline-seconds` | Y | 同上；运维建 Subscription 时 `--ack-deadline` 须与此一致 |
 | `collection.ingestion.max-concurrency` | N | 同上；改值需重启 |
-| `collection.ingestion.loan-id-whitelist` | Y | [接入 §6.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#61-联调隔离) |
-| `collection.ingestion.daily-roll-full-scan-enabled` | N | [接入 §4.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#42-读库与扫描) |
-| `collection.ingestion.daily-roll-batch-size` | N | [接入 §4.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#43-日切流程) |
+| `collection.ingestion.loan-id-whitelist` | Y | [接入 §5](./MOCASA催收系统升级_Phase1_数据接入规格.md#5-迁移与-replay) |
+| `collection.ingestion.daily-roll-full-scan-enabled` | N | [接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切) |
+| `collection.ingestion.daily-roll-batch-size` | N | [接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切) |
 
 <a id="a4-迁移与触达"></a>
 
@@ -678,9 +688,14 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 | 参数 Key | 取值 | 热更 | 说明 | 规格 |
 |---|---|---|---|---|
-| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属。**⚠️ 2026-08-21 核查：尚无实现**——全仓无任何读取点，配置该键不产生行为差异。迁移双写启用前须先补实现，或改由部署侧（旧系统停发）承担切换 | [接入 §6.1～§6.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#6-迁移与双写) |
+| `collection.notification.owner` | `LEGACY` / `PARALLEL`（= MIGRATING）/ `NEW` | Y | D-3~D0 触达职责归属。❓ 待确认（2026-08-21 核查：尚无实现）——全仓无任何读取点，配置该键不产生行为差异。迁移双写启用前须先补实现，或改由部署侧（旧系统停发）承担切换 | [接入 §5](./MOCASA催收系统升级_Phase1_数据接入规格.md#5-迁移与-replay) |
 
 <a id="a6-定时调度"></a>
+
+### A.5 历史编号占位
+<a id="a5-编号说明"></a>
+
+原 A.5 调度键已并入 [A.6](#a6-定时调度)，不再单列。本节省略独立键表。
 
 ### A.6 定时调度
 

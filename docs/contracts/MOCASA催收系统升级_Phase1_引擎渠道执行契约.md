@@ -1,8 +1,23 @@
 # 引擎↔渠道执行契约
 
-> 适用：`collection-engine`、`collection-channel`
-> 字段与寻址：[ContextSnapshot 契约](./README_ContextSnapshot契约对齐.md)
-> 状态机与 SPI：[核心引擎规格](../MOCASA催收系统升级_Phase1_核心引擎规格.md)
+> **状态**: ✅ 已确定（dispatch / metadata / 观察期 / 空地址 / token）；未闭合项见 [未对齐](#未对齐)  
+> **日期**: 2026-09-01  
+> **适用范围**: `collection-engine`、`collection-channel`  
+> **上游**: 字段与寻址 [ContextSnapshot 契约](./README_ContextSnapshot契约对齐.md)；状态机与 SPI [核心引擎规格 §4 / §6](../MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)
+
+---
+
+## 目录
+
+- [已对齐](#已对齐)
+  - [StepResult 与重试](#stepresult-与重试)
+  - [StepCommand](#stepcommand)
+  - [完成、观察期与幂等](#完成观察期与幂等)
+  - [空地址](#空地址)
+- [未对齐](#未对齐)
+- [固定边界](#固定边界)
+
+---
 
 ## 已对齐
 
@@ -45,10 +60,10 @@
 
 ## 未对齐
 
-| 项目 | 当前状态 |
-|---|---|
-| 供应商幂等透传 | 已生成稳定键 `providerIdempotencyKey={planId}:{stepOrder}`；Notification 与 SendGrid 尚未透传，Facade 仅映射为 `externalBatchId`，供应商去重保证未验证。Phase 1 不据此放开结果未知后的重试。 |
-| Facade AI_CALL 回调 | 通用回调入口已具备；Facade 的账户级回调反查、签名和结果映射未完成，详见 [Facade 回调入站交接](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md)。 |
+| 项目 | 状态 | 说明 |
+|---|---|---|
+| 供应商幂等透传 | ❓ 待确认 | 已生成稳定键 `providerIdempotencyKey={planId}:{stepOrder}`；Notification 与 SendGrid 尚未透传，Facade 仅映射为 `externalBatchId`，供应商去重保证未验证。须编排同事确认各供应商是否接受该键。⏳ Phase 1 不据此放开结果未知后的重试（默认按已对齐的「未知即不重发」）。 |
+| Facade AI_CALL 回调 | ❓ 待确认 | 通用回调入口已具备；Facade 的账户级回调反查、签名和结果映射未完成，须编排同事按 [Facade 回调入站交接 §2 / §3](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade回调入站交接.md#2-关联怎么从回调找回步骤) 闭合。 |
 
 ## 固定边界
 

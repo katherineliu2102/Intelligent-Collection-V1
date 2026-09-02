@@ -1,6 +1,7 @@
 # Phase 1 数仓 Pub/Sub 交付契约
 
-> **版本**: Phase 1 · 菲律宾市场 · 2026-08-17
+> **版本**: Phase 1 · 菲律宾市场 · 2026-09-01  
+> **状态**: ✅ 已确定（数仓对外消息 SSOT）  
 > **读者**: 数仓 / Publisher 开发、运维、新催收接入  
 > **本文是数仓对外唯一 SSOT**（由原「对齐清单」与「Pub/Sub 交付说明」合并）。接入消费、ACK、日切实现 → [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)；调度 Topic 部署 → [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)。
 
@@ -10,16 +11,20 @@
 
 - [1. 封面与边界](#1-封面与边界)
   - [1.1 入站顺序与 Publisher 任务](#11-入站顺序与-publisher-任务)
-  - [1.2 两条管道与 GCP 资源](#12-gcp-资源)
+  - [1.2 两条管道与 GCP 资源](#12-两条管道与-gcp-资源)
 - [2. 计算口径与事件契约](#2-计算口径与事件契约)
   - [2.1 两类事实事件](#21-两类事实事件)
   - [2.2 消息字段](#22-消息字段)
   - [2.3 消息样例](#23-消息样例)
 - [3. 发布可靠性](#3-发布可靠性)
+  - [3.1 eventId](#31-eventid)
+  - [3.2 caseVersion](#32-caseversion)
 - [4. 场景矩阵](#4-场景矩阵)
 - [5. 日切窗口与批次门控](#5-日切窗口与批次门控)
 - [6. 上线验收](#6-上线验收)
+- [附录 A：历史编号占位](#附录-a历史编号占位)
 - [附录 B：inbox 只读说明](#附录-binbox-只读说明数仓无需实现)
+- [参考实现](#参考实现)
 
 ---
 
@@ -47,13 +52,13 @@
 
 | 任务 | 时区 | 频率 | 输出 | 关键约束 |
 | --- | --- | --- | --- | --- |
-| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 每案一条 `caseEvent/CASE_INGESTED` | `dpd >= -3` 逐条完整快照；`caseVersion` 为内容指纹（[§3.2](#42-caseversion)）；走 [§1.2](#12-gcp-资源) 案件 Topic；已有周期由接入层按指纹决定刷新或略过 |
+| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 每案一条 `caseEvent/CASE_INGESTED` | `dpd >= -3` 逐条完整快照；`caseVersion` 为内容指纹（[§3.2](#32-caseversion)）；走 [§1.2](#12-gcp-资源) 案件 Topic；已有周期由接入层按指纹决定刷新或略过 |
 | 还款扫描 | `Asia/Manila` | 每 15 分钟 | 每案一条 `repaymentEvent/REPAYMENT` | 仅成功正向还款的**增量**；账务结清状态落库后至少等待 **360 秒**；同样走案件 Topic |
 
 每条消息独立 publish。消息体使用单案 `{dataType, data}` envelope；`data` 只承载一个案件或还款事实，不得包装多案。Publisher 可在单次任务中连续/并发发多条。
 
 ### 1.2 两条管道与 GCP 资源
-<a id="12-gcp-资源"></a><a id="60-gcp-资源"></a><a id="两条管道"></a>
+<a id="12-两条管道与-gcp-资源"></a><a id="12-gcp-资源"></a><a id="60-gcp-资源"></a><a id="两条管道"></a>
 
 系统有两条物理隔离的 Pub/Sub 管道：
 
@@ -95,14 +100,14 @@ flowchart LR
 三类 tick 各为一个独立 Pub/Sub 消息。下面直接给命令形式，**不再给「body / attributes」的示意块**——那种写法会被当成消息内容原样发出（本节末尾有实际事故记录）：
 
 ```bash
-# Cloud Scheduler Job（正式入口，四条规则见基础设施规范 §5.2）
+# 正式入口：Cloud Scheduler Job（四条规则见基础设施规范 §5.2）
 gcloud scheduler jobs create pubsub collection-plan-step-due \
   --schedule="* * * * *" --time-zone="Asia/Manila" \
   --topic=<SCHEDULE_TOPIC> \
   --message-body="scheduled-tick" \
   --attributes="job=planStepDue"      # ← 路由只看这里
 
-# 一次性手工触发（排障用）
+# 排障用：一次性手工触发
 gcloud pubsub topics publish <SCHEDULE_TOPIC> \
   --message="scheduled-tick" \
   --attribute="job=callbackTimeout"
@@ -145,7 +150,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `caseEvent` | 可省略；有值时仅允许 `CASE_INGESTED` | 每日完整快照（`dpd >= -3` 逐案） |
 | `repaymentEvent` | `REPAYMENT` | 成功正向还款增量，延迟 360 秒 |
 
-`caseEvent` 是完整案件快照，含身份、产品、DPD、stage、金额、下一期提醒和联系人设备信息。`repaymentEvent` 是增量：**不得**携带 `caseVersion`、`product`、`borrower`、`device` 或 `collectionStatus`；它必须携带还款后的 `dpd`、`stage`、金额和下一期提醒字段。接入在已有投影上合并这些运行态字段；`stage` 不直接改变计划，阶段事件仍由日切独占产生。
+`caseEvent` 是完整案件快照，含身份、产品、DPD、stage、金额、下一期提醒和联系人设备信息。`repaymentEvent` 是增量：**不得**携带 `caseVersion`、`product`、`borrower`、`device` 或 `collectionStatus`；它必须携带还款后的 `dpd`、金额和下一期提醒字段，可兼容携带 `stage`。接入在已有投影上合并允许更新的运行态字段；`repaymentEvent.stage` 不解析、不校验、不持久化，也不触发阶段变更。阶段事件仍由日切独占产生。
 
 ### 2.2 消息字段
 <a id="22-消息字段"></a><a id="22-dpd金额与催收状态"></a><a id="23-信封字段对照与样例"></a><a id="32-公共信封"></a><a id="62-公共信封"></a><a id="24-投影字段对照"></a><a id="4-t_ai_collection-当前案件表"></a>
@@ -164,12 +169,12 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 
 | 消息字段 | `t_ai_collection` 列名 | 口径 |
 | --- | --- | --- |
-| `eventId` | — | publish 前 UUID；复用见 [§3.1](#41-eventid) |
+| `eventId` | — | publish 前 UUID；复用见 [§3.1](#31-eventid) |
 | `eventType` | — | 可省略；有值时固定 `CASE_INGESTED` |
 | `occurredAt` | `updated_at` | `yyyy-MM-dd HH:mm:ss`，按 `Asia/Manila` 解释 |
 | `caseId` | `case_id` | `loan_id`，可转 `Long`；非法进隔离/告警，不得静默跳过 |
 | `userId` | `user_id` | 用户标识 |
-| `caseVersion` | `case_version` | 内容指纹（hex 字符串）；公式见 [§3.2](#42-caseversion) |
+| `caseVersion` | `case_version` | 内容指纹（hex 字符串）；公式见 [§3.2](#32-caseversion) |
 | `product` | `product` | `t_loan.product_id` 的数字字符串；`3`、`4` 表示 3 期产品 |
 | `dpd` | `dpd` | 见下方 [DPD 与 stage](#21-dpd-与阶段映射) |
 | `stage` | `stage` | 由 `dpd` 映射；`dpd >= 91` 可空 |
@@ -179,8 +184,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，**已含罚息**；映射为对客 `totalOutstanding` |
 | `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息；映射为 `penaltyAmount` |
 | `upcomingAmount` | `upcoming_amount` | 仅三期产品、下一期 D-3～D0 的该期金额；只用于提醒 |
-| `dueDate` | `due_date` | 历史到期日，输出 **`yyyy-MM-dd`**。接入兼容带时分秒的 ISO 时间戳（取日历日）；乱码才毒丸 |
-| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 **`yyyy-MM-dd`**，不能替代历史 `dueDate`。不要发 TIMESTAMP |
+| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 `yyyy-MM-dd`，不能替代历史 `dueDate` |
 | `borrower.name` | `borrower_name` | 借款人姓名 |
 | `borrower.phone` | `borrower_phone` | 可传菲律宾本地 10 位手机号；接入规范化为 E.164 |
 | `borrower.email` | `borrower_email` | 空不阻断案件，Email 渠道跳过 |
@@ -201,7 +205,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `repayTime` | — | 还款发生时间，ISO-8601，带 `+08:00` |
 | `paidAmount` | — | 本笔成功还款金额 |
 | `dpd` | `dpd` | 还款后的最大逾期天数 |
-| `stage` | `stage` | 还款后的阶段；D+91 可空，不直接产生 `STAGE_CHANGED` |
+| `stage` | — | 可兼容携带的上游字段；接入忽略，不解析、校验或持久化，D+91 可空 |
 | `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，已含罚息 |
 | `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息，包含在 `overdueAmount` 内 |
 | `upcomingAmount` | `upcoming_amount` | 三期产品下一期 D-3～D0 的该期金额；仅提醒 |
@@ -213,7 +217,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 #### DPD 与 stage
 <a id="21-dpd-与阶段映射"></a><a id="41-dpd-与阶段映射"></a>
 
-数仓按内部口径计算 loan 级最大 `dpd`；已结清期不参与。接入不重算，只消费消息中的 `dpd` 与 `stage`。
+数仓按内部口径计算 loan 级最大 `dpd`；已结清期不参与。接入不重算 `caseEvent` 中的 `dpd` 与 `stage`；`repaymentEvent.stage` 即使存在也一律忽略。
 
 | DPD | stage | 说明 |
 | --- | --- | --- |
@@ -322,6 +326,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 取消业务库 Outbox 后，投递可靠性由数仓 Publisher + Topic 保留/重放承担。
 
 ### 3.1 `eventId`
+<a id="31-eventid"></a>
 <a id="41-eventid"></a><a id="32-eventid-与重试"></a>
 
 - publish **前**生成 UUID，全局唯一。
@@ -329,6 +334,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 - 发布失败必须重试并告警，不能只记日志。
 
 ### 3.2 `caseVersion`
+<a id="32-caseversion"></a>
 <a id="42-caseversion"></a><a id="31-caseversion"></a>
 
 `caseVersion` 是数仓为 `caseEvent` 按当日完整快照算出的**内容指纹**，不是单调整数，也不是 Pub/Sub `messageId`。`repaymentEvent` 是无版本增量，接入以 `eventId` 去重、以 `occurredAt` 拒绝旧增量覆盖新投影。
@@ -423,11 +429,11 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | 扫描 | MySQL keyset 分页；Redis 存当日游标与完成标记 |
 | 完成 | **06:00 PHT** 前跑完；未完成必须告警 |
 
-「数据齐了」指当日 `caseEvent` 批次**已被接入消费完毕**，不是时钟到点。Phase 1 当前仍按固定时间窗触发日切（接入规格 C-D-06 / C-X-05）；批次完成信号与显式门控待运维确认后接入。
+「数据齐了」指当日 `caseEvent` 批次**已被接入消费完毕**，不是时钟到点。Phase 1 当前仍按固定时间窗触发日切（接入规格运行清单）；❓ 批次完成信号与显式门控待数仓/运维给出可审计形式后接入。⏳ 在信号落地前，默认以 inbox / 投影消费进度与固定窗口共同判断「齐了」，避免发明新的信号格式。
 
 运维协同：
 
-1. 数仓在每日案件快照 publish 完成后发出**可审计的批次完成信号**（形式待定）。
+1. 数仓在每日案件快照 publish 完成后发出**可审计的批次完成信号**。❓ 待确认：形式由数仓给出（本文不发明格式）。
 2. 接入侧以 inbox / 投影消费进度确认批次就绪；批次迟到则推迟日切并告警，不得基于不完整投影产出阶段/停催事件（目标门控）。
 3. **06:00 PHT** 前未完成日切，按 Runbook 排查 Publisher、案件订阅、投影消费与 Redis 游标。
 
@@ -442,7 +448,7 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | --- | --- | --- | --- |
 | 1 | 消息契约 | `dataType`、两类 body 字段、完整/增量边界、独立 message 及联系方式均与 [§2.2](#22-消息字段) 一致；正常与拒绝样例均通过接入校验 | 数仓 + 接入 |
 | 2 | 案件与 DPD | `caseId` 非空、唯一、规范数字；已结清期不参与 DPD；仅 `dpd >= -3` 发 `caseEvent`，stage 映射正确 | 数仓 |
-| 3 | 快照指纹 | `caseVersion` 按 [§3.2](#42-caseversion) 生成；输入变化则指纹变化、相同则略过；重试/重放复用原值 | 数仓 + 接入 |
+| 3 | 快照指纹 | `caseVersion` 按 [§3.2](#32-caseversion) 生成；输入变化则指纹变化、相同则略过；重试/重放复用原值 | 数仓 + 接入 |
 | 4 | 金额、提醒与状态 | `overdueAmount` 含罚息且不含未到期；`overduePenaltyAmount` 为其中罚息；三期提醒字段符合 D-3～D0 定义；接入正确派生 `SETTLED` / `CEASED` / `IN_COLLECTION` | 数仓 + 接入 |
 | 5 | 还款发布 | 仅成功正向还款；账务结清状态落库至少 360 秒后发布增量 `repaymentEvent` | 数仓 |
 | 6 | Publisher 可靠性 | 发布失败重试并告警；重试/重放复用 `eventId`；保留期内可按时间点重放 | 数仓 + 运维 |
@@ -455,6 +461,13 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 ---
 
+## 附录 A：历史编号占位
+<a id="附录-a历史编号占位"></a>
+
+早期合并前曾用「附录 A」承载字段对照。现行字段与口径在 [§2](#2-计算口径与事件契约)，本节省略独立正文。旧锚点仍落在各节 `<a id>` 上。
+
+---
+
 ## 附录 B：inbox 只读说明（数仓无需实现）
 
 <a id="附录-binbox-只读说明数仓无需实现"></a>
@@ -462,15 +475,7 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 `t_ai_collection_inbox` 是接入侧幂等与可靠性记录，替代原 `t_ai_collection_outbox`。数仓不读写本表。
 
-投影写 MySQL、内部事件走 Redis Stream，两者无法原子提交。接入在同一事务内写收件箱并更新投影，提交后才发领域事件：
-
-| 场景 | 收件箱状态 | 消息重投后 |
-| --- | --- | --- |
-| 正常处理完成 | `PUBLISHED` | 整条跳过 |
-| 投影已写入但事件未发出 | `PENDING` | 不重复写投影，只补发领域事件 |
-| `caseEvent` 指纹与投影相同，或 `repaymentEvent.occurredAt` 早于投影 | `SKIPPED` | 跳过 |
-
-原 `t_ai_collection_outbox` 已废弃。既有环境在确认数仓发布器下线、无待投递记录后删除。
+接入在同一事务内写收件箱并更新投影，提交后才发领域事件。收件箱三种状态（`PUBLISHED` / `PENDING` / `SKIPPED`）与重投行为见 [数据接入规格 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)。原 `t_ai_collection_outbox` 已废弃。
 
 ---
 
