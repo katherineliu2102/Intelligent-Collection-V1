@@ -25,6 +25,7 @@
 | [T3o 执行取证手册](./MOCASA催收系统升级_Phase1_T3o执行取证手册.md) | T5-S / T5-R / T3o-O 逐条的注入手法、命令与断言字段；判定口径仍以测试 SSOT 为准 |
 | [按日 Owner 路由改造计划](../MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md) | 新旧系统按日分流轮换的机制设计（缺席对账 + 归属日 + 水位门控）；含修订记录 |
 | [按日 Owner 路由开发计划](./MOCASA催收系统升级_Phase1_按日Owner路由开发计划.md) | 四轨道分工、G1/G2 灰度闸门、已拍板决策与待拍板项；跨团队需求文档入口 |
+| [Owner 路由 E2E 手册 T1-7](./MOCASA催收系统升级_Phase1_Owner路由E2E手册_T1-7.md) | mock owner feed 注入手法、§7.1 八场景矩阵与断言 SQL；E2E-6 已拍板跳过 |
 
 渠道 `TC-*` 细节见[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)。渠道架构中的 L1/L3 不等于测试 SSOT 的 L1/L3。
 

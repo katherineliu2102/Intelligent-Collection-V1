@@ -12,6 +12,7 @@
 #   ./publish-test-messages.sh case                 # 发 caseEvent 6 案（99000000..99000005）
 #   ./publish-test-messages.sh repay 99000001       # 发 repayment（默认 99000001）
 #   ./publish-test-messages.sh file path/to.json caseEvent   # 发指定文件（attr dataType 由第3参数给）
+#   ./publish-test-messages.sh ownerfeed 名单.txt [dpd偏移] ["occurredAt"]  # Owner 路由 E2E（T1-7）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -150,6 +151,70 @@ JSON
   rm -f "$tmp"
 }
 
+# Owner 路由 E2E（T1-7）：按名单文件逐案发布 owner=NEW 的 caseEvent，
+# 模拟数仓每日「当日 NEW 名单全量重发」的 Publisher 行为。
+#
+# 迁出/再入不由本模式表达——名单本身就是当日 NEW 集：
+#   模拟迁出（LEAVE）= 当日名单去掉该案（缺席 → 03:35 对账取消其活跃计划）
+#   模拟再入（ENTER）= 次日名单加回该案（对账重发 CASE_INGESTED 建新计划）
+#
+# dpd 偏移默认 0 = 同内容重发（caseVersion 不变，验证「指纹相同仍刷新归属日」的
+# updateOwnerDate 路径，§7.1 场景 4）；传 N 模拟真实每日 dpd 递增（内容变 →
+# caseVersion 变 → 全量刷新路径）。两条路径都是 §7.1 必测。
+#
+# occurredAt 覆盖参数用于构造乱序/跨日迟到消息（§7.1 场景 1）：传早于当前的
+# PHT 时间戳即可；默认当前 PHT 时间。
+#
+# 不支持发 owner=LEGACY：契约要求数仓只向新系统 topic 发 NEW 案件，消费侧收到
+# 非 NEW owner 按 PoisonMessage 进 DLQ。需要验证毒消息路径时用 file 模式手工构造。
+ownerfeed_publish() {
+  local lid="$1" dpd_offset="$2" occurred_at="${3:-}"
+  local row dpd principal interest penalty amount stg eid cv tmp
+  row="$(MYSQL_PWD="${DB_PASS:-}" mysql -N -B -h"${DB_HOST:?缺 DB_HOST}" -P"${DB_PORT:-3306}" \
+    -u"${DB_USER}" "${DB_NAME}" -e \
+    "SELECT overdue_days, principal, interest, overdue, total_not_paid
+       FROM t_collection WHERE loan_id='${lid}' LIMIT 1" 2>/dev/null)"
+  [ -n "$row" ] || { echo "[ownerfeed] ✗ 旧库无 loan_id=${lid} 的行" >&2; return 1; }
+  dpd="$(( $(echo "$row" | awk '{print $1}') + dpd_offset ))"
+  principal="$(echo "$row" | awk '{print $2}')"
+  interest="$(echo "$row" | awk '{print $3}')"
+  penalty="$(echo "$row" | awk '{print $4}')"
+  amount="$(echo "$row" | awk '{print $5}')"
+  stg="$(stage_from_dpd "$dpd")"
+  eid="$(new_event_id)"
+  cv="$(case_version "$lid" "$dpd" "$amount" "0.00" "0" "0")"
+  [ -n "$occurred_at" ] || occurred_at="$(TZ=Asia/Manila date '+%Y-%m-%d %H:%M:%S')"
+  tmp="$(mktemp)"
+  cat > "$tmp" <<JSON
+{
+  "dataType": "caseEvent",
+  "data": {
+    "eventId": "${eid}",
+    "occurredAt": "${occurred_at}",
+    "caseId": ${lid},
+    "userId": ${lid},
+    "owner": "NEW",
+    "caseVersion": "${cv}",
+    "product": "3",
+    "stage": "${stg}",
+    "dpd": ${dpd},
+    "collectionStatus": "IN_COLLECTION",
+    "overduePrincipal": ${principal},
+    "overdueInterest": ${interest},
+    "overdueAmount": ${amount},
+    "overduePenaltyAmount": ${penalty},
+    "upcomingAmount": 0.00,
+    "nextDueDate": 0,
+    "borrower": {"name": "Owner Feed ${lid}", "phone": "9451374358", "email": "l4b@example.com", "language": "en"},
+    "device": {"pushToken": "1a0018970bf0c19de04"}
+  }
+}
+JSON
+  echo "[ownerfeed] case=${lid} dpd=${dpd} stage=${stg} occurredAt=${occurred_at} owner=NEW"
+  publish_one "$tmp" "caseEvent" "$eid"
+  rm -f "$tmp"
+}
+
 MODE="${1:-case}"
 case "$MODE" in
   case1)
@@ -198,12 +263,29 @@ JSON
     publish_one "$tmp" "repaymentEvent" "$eid"
     rm -f "$tmp"
     ;;
+  ownerfeed)
+    # T1-7 Owner 路由 E2E：按名单发当日 NEW 集（名单文件每行一个 loan_id，# 注释/空行忽略）
+    list="${2:?用法: ownerfeed <loan_id名单文件> [dpd偏移] [occurredAt覆盖]}"
+    dpd_offset="${3:-0}"
+    occurred_at="${4:-}"
+    : "${DB_HOST:?缺 DB_HOST —— 合成载荷需按旧库 IC_TEST_% 行取 dpd/金额，见 l4b-env.local.sh}"
+    command -v mysql >/dev/null 2>&1 || { echo "[ownerfeed] 缺 mysql 客户端" >&2; exit 1; }
+    [ -f "$list" ] || { echo "[ownerfeed] ✗ 名单文件不存在: $list" >&2; exit 1; }
+    n=0
+    while IFS= read -r lid || [ -n "$lid" ]; do
+      lid="$(echo "$lid" | tr -d '[:space:]')"
+      case "$lid" in ""|'#'*) continue ;; esac
+      ownerfeed_publish "$lid" "$dpd_offset" "$occurred_at" || exit 1
+      n=$((n+1))
+    done < "$list"
+    echo "[ownerfeed] 名单发布完成：${n} 案 owner=NEW（topic=$TOPIC dpd偏移=${dpd_offset}）"
+    ;;
   file)
     f="${2:?用法: file <path.json> <dataType>}"; dt="${3:?dataType}"
     publish_one "$f" "$dt" "L4B-FILE-$(date +%s)"
     ;;
   *)
-    echo "[publish] 未知模式 '$MODE'（case|repay|file）" >&2; exit 1 ;;
+    echo "[publish] 未知模式 '$MODE'（case|case1|repay|ownerfeed|file）" >&2; exit 1 ;;
 esac
 
 echo "[publish] 完成。查看应用日志 [Ingestion] 确认消费与白名单/落库。"

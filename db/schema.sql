@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
     current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
     total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/CASE_NOT_FOUND/COMPLAINT/MANUAL（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
+    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/CASE_NOT_FOUND/NO_DUE_BALANCE/ROUTED_TO_LEGACY/COMPLAINT/MANUAL/MANUAL_CLEANUP（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键 case_id:stage:create_timestamp',
     renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',

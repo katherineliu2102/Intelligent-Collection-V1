@@ -5,6 +5,7 @@
     "occurredAt": "2026-08-12 03:00:00",
     "caseId": 99000000,
     "userId": 99000000,
+    "owner": "NEW",
     "caseVersion": "60ecd3bdb44cfbb655df39a3528e2700",
     "product": "3",
     "stage": "S1",
