@@ -43,6 +43,8 @@ deploy/nacos/merged-*.yml
 docs/ops/*.local.md
 node_modules/
 collection-admin/ui/dist/
+# Vite dev server 运行时临时文件（vite.config.local.ts.timestamp-*.mjs）
+*.timestamp-*.mjs
 __pycache__/
 *.pyc
 

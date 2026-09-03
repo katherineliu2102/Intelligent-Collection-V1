@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""8/31 自动跑取数。不打印 PII。"""
+from pathlib import Path
+import os
+import subprocess
+
+TODAY = "2026-08-31"
+CSV = "/tmp/e2e200_loan_ids_20260829.csv"
+OLD40_SAMPLE = "466438,482686,489935,502131,520049"
+S0_MISSING_0830 = (
+    # filled at runtime from CSV buckets if present; else leave query by dpd
+)
+
+
+def envfile():
+    vals = {}
+    for line in Path("/opt/app/pilot.env").read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        vals[k] = v.strip().strip('"').strip("'")
+    return vals
+
+
+def parse_ids(raw):
+    raw = (raw or "").replace(";", ",").replace(" ", "")
+    return [x for x in raw.split(",") if x]
+
+
+def load_csv():
+    ids = []
+    p = Path(CSV)
+    if not p.exists():
+        return []
+    for line in p.read_text().splitlines():
+        body = line.strip()
+        if body and body.lower() != "loan_id":
+            ids.append(body)
+    return ids
+
+
+def mysql(vals, sql):
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = vals["COLLECTION_DB_PASSWORD"]
+    return subprocess.check_output(
+        [
+            "mysql",
+            "-N",
+            "-h",
+            vals["COLLECTION_DB_HOST"],
+            "-P",
+            vals.get("COLLECTION_DB_PORT", "3306"),
+            "-u",
+            vals["COLLECTION_DB_USERNAME"],
+            vals["COLLECTION_DB_NAME"],
+            "-e",
+            sql,
+        ],
+        env=env,
+        stderr=subprocess.STDOUT,
+    ).decode()
+
+
+def logs(pat, extra="| tail -40"):
+    cmd = "docker logs --since 20h collection-admin 2>&1 | grep -E %s %s" % (
+        repr(pat),
+        extra,
+    )
+    out = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    return (out.stdout or "").strip()
+
+
+def main():
+    vals = envfile()
+    csv_ids = load_csv()
+    pilot = parse_ids(vals.get("COLLECTION_PILOT_LOAN_IDS", ""))
+    scan = parse_ids(vals.get("COLLECTION_SCAN_CASE_IDS", ""))
+    print("=== env ===")
+    print("pilot", len(pilot), "scan", len(scan), "csv", len(csv_ids))
+    print("daily_roll_env", vals.get("COLLECTION_DAILY_ROLL_FULL_SCAN_ENABLED", "<unset>"))
+    insp = subprocess.check_output(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "{{.State.Status}} {{.State.StartedAt}}",
+            "collection-admin",
+        ],
+        text=True,
+    ).strip()
+    print("container", insp)
+    health = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "http://127.0.0.1:8080/actuator/health",
+        ],
+        capture_output=True,
+        text=True,
+    ).stdout
+    print("health", health)
+
+    csv_in = ",".join(csv_ids) if csv_ids else "0"
+
+    print("=== t_ai_collection total / 200 / not200 ===")
+    print("total", mysql(vals, "SELECT COUNT(*) FROM t_ai_collection").strip())
+    print(
+        "in200",
+        mysql(
+            vals,
+            "SELECT COUNT(*) FROM t_ai_collection WHERE case_id IN (%s)" % csv_in,
+        ).strip(),
+    )
+    print(
+        "not200",
+        mysql(
+            vals,
+            "SELECT COUNT(*) FROM t_ai_collection WHERE case_id NOT IN (%s)" % csv_in,
+        ).strip(),
+    )
+    print("=== projection ALL by status/stage/dpd ===")
+    print(
+        mysql(
+            vals,
+            "SELECT collection_status, IFNULL(stage,'NULL'), dpd, COUNT(*) n "
+            "FROM t_ai_collection GROUP BY 1,2,3 ORDER BY 1,2,3",
+        )
+    )
+    print("=== projection 200 by status/stage/dpd ===")
+    print(
+        mysql(
+            vals,
+            "SELECT collection_status, IFNULL(stage,'NULL'), dpd, COUNT(*) n "
+            "FROM t_ai_collection WHERE case_id IN (%s) "
+            "GROUP BY 1,2,3 ORDER BY 1,2,3" % csv_in,
+        )
+    )
+    print("=== projection NOT200 by status/stage/dpd ===")
+    print(
+        mysql(
+            vals,
+            "SELECT collection_status, IFNULL(stage,'NULL'), dpd, COUNT(*) n "
+            "FROM t_ai_collection WHERE case_id NOT IN (%s) "
+            "GROUP BY 1,2,3 ORDER BY 1,2,3" % csv_in,
+        )
+    )
+
+    print("=== inbox today ALL ===")
+    print(
+        mysql(
+            vals,
+            "SELECT message_type, COUNT(*) n, MIN(created_at), MAX(created_at), "
+            "COUNT(DISTINCT case_id) cases "
+            "FROM t_ai_collection_inbox "
+            "WHERE created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "GROUP BY 1" % (TODAY, TODAY),
+        )
+    )
+    print("=== inbox today in 200 ===")
+    print(
+        mysql(
+            vals,
+            "SELECT message_type, COUNT(*) n, COUNT(DISTINCT case_id) cases, "
+            "MIN(created_at), MAX(created_at) "
+            "FROM t_ai_collection_inbox "
+            "WHERE created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "AND case_id IN (%s) GROUP BY 1" % (TODAY, TODAY, csv_in),
+        )
+    )
+    print("=== inbox today NOT in 200 ===")
+    print(
+        mysql(
+            vals,
+            "SELECT message_type, COUNT(*) n, COUNT(DISTINCT case_id) cases "
+            "FROM t_ai_collection_inbox "
+            "WHERE created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "AND case_id NOT IN (%s) GROUP BY 1" % (TODAY, TODAY, csv_in),
+        )
+    )
+    print("=== inbox caseEvent NOT200 ids (no PII) ===")
+    print(
+        mysql(
+            vals,
+            "SELECT case_id FROM t_ai_collection_inbox "
+            "WHERE created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "AND message_type='caseEvent' AND case_id NOT IN (%s) "
+            "ORDER BY case_id" % (TODAY, TODAY, csv_in),
+        )
+    )
+
+    print("=== 200 still missing from projection ===")
+    print(
+        mysql(
+            vals,
+            "SELECT COUNT(*) FROM (SELECT %s AS id UNION ALL SELECT 0) t "
+            "WHERE 0" % csv_ids[0],
+        )
+    )
+    missing_sql = (
+        "SELECT x.case_id FROM ("
+        + " UNION ALL ".join("SELECT %s AS case_id" % i for i in csv_ids)
+        + ") x LEFT JOIN t_ai_collection c ON c.case_id=x.case_id "
+        "WHERE c.case_id IS NULL ORDER BY x.case_id"
+    )
+    missing = mysql(vals, missing_sql).strip().split()
+    print("missing_n", len(missing))
+    print("missing_ids", ",".join(missing))
+
+    print("=== plans 200 active ===")
+    print(
+        mysql(
+            vals,
+            "SELECT status, stage, COUNT(*) n FROM t_contact_plan "
+            "WHERE case_id IN (%s) AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+            "GROUP BY 1,2 ORDER BY 1,2" % csv_in,
+        )
+    )
+    print("=== plans NOT200 active ===")
+    print(
+        mysql(
+            vals,
+            "SELECT status, stage, COUNT(*) n FROM t_contact_plan "
+            "WHERE case_id NOT IN (%s) AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+            "GROUP BY 1,2 ORDER BY 1,2" % csv_in,
+        )
+    )
+
+    print("=== today steps by orig trigger / channel / status / result (ALL) ===")
+    print(
+        mysql(
+            vals,
+            "SELECT DATE_FORMAT(s.original_trigger_time,'%%H:%%i') slot, "
+            "s.channel_type, s.status, IFNULL(s.result,'') result, COUNT(*) n "
+            "FROM t_contact_plan_step s "
+            "JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.original_trigger_time >= '%s 00:00:00' "
+            "AND s.original_trigger_time < '%s 23:59:59' "
+            "GROUP BY 1,2,3,4 ORDER BY 1,2,3,4" % (TODAY, TODAY),
+        )
+    )
+    print("=== today executed_at by channel (ALL) ===")
+    print(
+        mysql(
+            vals,
+            "SELECT s.channel_type, s.status, IFNULL(s.result,'') result, COUNT(*) n, "
+            "MIN(s.executed_at), MAX(s.executed_at) "
+            "FROM t_contact_plan_step s "
+            "JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.executed_at >= '%s 00:00:00' AND s.executed_at < '%s 23:59:59' "
+            "GROUP BY 1,2,3" % (TODAY, TODAY),
+        )
+    )
+    print("=== today executed NOT in 200 ===")
+    print(
+        mysql(
+            vals,
+            "SELECT s.channel_type, COUNT(*) n "
+            "FROM t_contact_plan_step s "
+            "JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.executed_at >= '%s 00:00:00' AND s.executed_at < '%s 23:59:59' "
+            "AND p.case_id NOT IN (%s) GROUP BY 1" % (TODAY, TODAY, csv_in),
+        )
+    )
+    print("=== old40 sample today executed ===")
+    print(
+        mysql(
+            vals,
+            "SELECT p.case_id, s.channel_type, COUNT(*) n "
+            "FROM t_contact_plan_step s JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.executed_at >= '%s 00:00:00' AND s.executed_at < '%s 23:59:59' "
+            "AND p.case_id IN (%s) GROUP BY 1,2" % (TODAY, TODAY, OLD40_SAMPLE),
+        )
+    )
+
+    print("=== email today steps ===")
+    print(
+        mysql(
+            vals,
+            "SELECT DATE_FORMAT(s.original_trigger_time,'%%H:%%i') slot, "
+            "s.status, IFNULL(s.result,''), COUNT(*) n, "
+            "COUNT(DISTINCT p.case_id) cases "
+            "FROM t_contact_plan_step s JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.channel_type='EMAIL' "
+            "AND s.original_trigger_time >= '%s 00:00:00' "
+            "AND s.original_trigger_time < '%s 23:59:59' "
+            "GROUP BY 1,2,3" % (TODAY, TODAY),
+        )
+    )
+    print("=== email today cases dpd/stage ===")
+    print(
+        mysql(
+            vals,
+            "SELECT c.dpd, IFNULL(c.stage,'NULL'), COUNT(DISTINCT p.case_id) n "
+            "FROM t_contact_plan_step s "
+            "JOIN t_contact_plan p ON p.id=s.plan_id "
+            "LEFT JOIN t_ai_collection c ON c.case_id=p.case_id "
+            "WHERE s.channel_type='EMAIL' "
+            "AND s.original_trigger_time >= '%s 00:00:00' "
+            "AND s.original_trigger_time < '%s 23:59:59' "
+            "GROUP BY 1,2 ORDER BY 1,2" % (TODAY, TODAY),
+        )
+    )
+
+    print("=== AI answered today ===")
+    print(
+        mysql(
+            vals,
+            "SELECT p.case_id, s.id, s.plan_id, s.result, s.executed_at, s.completed_at "
+            "FROM t_contact_plan_step s JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.channel_type='AI_CALL' AND s.result='ANSWERED' "
+            "AND s.executed_at >= '%s 00:00:00' AND s.executed_at < '%s 23:59:59'"
+            % (TODAY, TODAY),
+        )
+    )
+    print("=== hanging EXECUTING ===")
+    print(
+        mysql(
+            vals,
+            "SELECT s.id, p.case_id, s.plan_id, s.channel_type, "
+            "p.status, IFNULL(s.timeout_time,'NULL'), s.executed_at "
+            "FROM t_contact_plan_step s JOIN t_contact_plan p ON p.id=s.plan_id "
+            "WHERE s.status='EXECUTING'",
+        )
+    )
+    print("=== outbox pending ===")
+    print(
+        mysql(vals, "SELECT COUNT(*) FROM t_event_outbox WHERE status='PENDING'").strip()
+    )
+    print("=== dlq today ===")
+    print(
+        mysql(
+            vals,
+            "SELECT COUNT(*) FROM t_event_dlq WHERE created_at >= '%s 00:00:00'"
+            % TODAY,
+        ).strip()
+    )
+    print("=== timeline today OUT ===")
+    print(
+        mysql(
+            vals,
+            "SELECT channel_type, COUNT(*) n FROM t_contact_timeline "
+            "WHERE created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "GROUP BY 1" % (TODAY, TODAY),
+        )
+    )
+    print("=== repay today cases ===")
+    print(
+        mysql(
+            vals,
+            "SELECT case_id, COUNT(*) n, MIN(created_at), MAX(created_at) "
+            "FROM t_ai_collection_inbox "
+            "WHERE message_type='repaymentEvent' "
+            "AND created_at >= '%s 00:00:00' AND created_at < '%s 23:59:59' "
+            "GROUP BY 1 ORDER BY 1" % (TODAY, TODAY),
+        )
+    )
+    print("=== skipOpen / cancel logs today ===")
+    print(logs("skipped .* open step|skipOpen|PLAN_CANCELLED", "| grep '%s' | tail -20" % TODAY) or "(none)")
+    print("=== WHITELIST ===")
+    print(logs("WHITELIST_SKIPPED|案件不在白名单", "| grep '%s' | tail -10" % TODAY) or "(none)")
+    print("=== daily roll logs ===")
+    print(logs("DpdStageRollHandler|daily roll completed|dailyRoll", "| grep '%s' | tail -40" % TODAY))
+    print("=== slot ticks ===")
+    print(
+        logs(
+            "planStepDue scanned|wave=|batch started|FacadeBatch|SETNX",
+            "| grep '%s' | grep -E '08:00|09:15|12:00|14:00|14:30|03:3|03:4|03:5' | tail -80"
+            % TODAY,
+        )
+    )
+    print("=== ERROR today ===")
+    print(logs(" ERROR ", "| grep '%s' | tail -25" % TODAY) or "(none)")
+    print("=== deadlock ===")
+    print(logs("Deadlock", "| grep '%s' | tail -10" % TODAY) or "(none)")
+
+
+if __name__ == "__main__":
+    main()
