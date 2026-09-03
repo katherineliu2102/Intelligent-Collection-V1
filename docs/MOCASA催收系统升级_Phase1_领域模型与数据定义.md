@@ -201,7 +201,7 @@ flowchart TB
 
 | 形态         | 对象                                         | 定义节       | 落库                                | 触发事件 / 阶段                                                                                        | 职责                                            |
 | ---------- | ------------------------------------------ | --------- | --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
+| **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` 取消；`CASE_OWNER_RECONCILED` 迁出取消 / 重入再建；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
 | **持久实体**   | ContactPlanStep                            | §3.2      | `t_contact_plan_step`             | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进                                      | 计划内单步；含 trigger/timeout 调度字段                  |
 | **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记          | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
 | **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
@@ -523,6 +523,7 @@ loan_id（上游）
 | STEP_COMPLETED | 活跃 | 步骤完成后推进 |
 | PLAN_EXHAUSTED | 活跃 | 计划穷尽后续建决策 |
 | CASE_CEASED | 活跃 | DPD≥91 停催 |
+| CASE_OWNER_RECONCILED | 活跃 | 按日 Owner 路由对账哨兵：03:35 PHT 对账完成后发布；引擎据此迁出归属日非当日的活跃计划、为归属日为当日且无活跃计划的案件重入建计划（[核心引擎 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 | PTP_EXPIRED | Phase 2 预留 | Phase 1 不生产、不消费 |
 
 ### 2.7 CancelReason（计划取消原因）
@@ -536,9 +537,10 @@ loan_id（上游）
 | REPAID        | 用户已还款                          |
 | STAGE_UPGRADE | 阶段变更：取消旧 stage 计划并新建（与模板是否相同无关，见 [核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 | CEASED        | Max DPD ≥91 完全停催（CASE_CEASED） |
+| ROUTED_TO_LEGACY | 按日 Owner 迁出：案件当日归属非 NEW，取消活跃计划且不续建；重入另走建计划（[核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 
 
-> Phase 1 三值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
+> Phase 1 四值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
 >
 > **Phase 2 预留**（枚举值保留，Phase 1 不使用）：`COMPLAINT`（投诉终态取消）、`MANUAL`（管理后台人工取消）、`PTP_EXPIRED`（PTP 到期未还款）。
 
@@ -1164,6 +1166,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | PLAN_EXHAUSTED              | engine                                               | `caseId`、`planId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CALLBACK_TIMEOUT            | collection-admin（调度订阅 `job=callbackTimeout`）        | `planId`、`stepId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CASE_CEASED                 | ingestion（日切 / mock）                                 | `caseId`、`maxDpd`                                                                                                                                 | `caseId` 必填；`maxDpd` 缺省 91                                                                                                                                                                                                                                                                                            |
+| CASE_OWNER_RECONCILED       | ingestion（`DpdStageRollHandler` 对账阶段）               | `reconciledDate`                                                                                                                                  | `reconciledDate` 必填（对账归属日，PHT 日期）。全局触发事件，不携带案件清单；引擎按 `t_ai_collection.owner_date` 分页扫描判定迁出 / 重入（[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)）                                                                                                                                      |
 | PTP_EXPIRED（**Phase 2 预留**） | （Phase 2）                                            | `caseId`、`ptpId`                                                                                                                                  | Phase 1 不生产、不消费（不入 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 路由表）                                                                                                                                                                                                                                                                        |
 
 
@@ -1194,7 +1197,7 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
     current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
     total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT '取消原因: REPAID/STAGE_UPGRADE/CEASED（Phase 2 预留 COMPLAINT/MANUAL/PTP_EXPIRED）',
+    cancel_reason       VARCHAR(64)     NULL     COMMENT '取消原因: REPAID/STAGE_UPGRADE/CEASED/ROUTED_TO_LEGACY（Phase 2 预留 COMPLAINT/MANUAL/PTP_EXPIRED）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键（case_id:stage:create_timestamp），防止事件重投重复创建。Phase 1 预留',
     renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',
@@ -1408,6 +1411,7 @@ CREATE TABLE IF NOT EXISTS t_user_device_token (
 | 2026-07-11 | §2.7 删引擎管辖列；§2.8 删 fromDpd 复述；删 §2.10，辅助枚举并入总览表 | §2 / 引擎 §4.1              |
 | 2026-07-11 | §2/§3 节首统一：`Java`+`落库`/`载体`（§2）、`Java`+`表`+DDL+`用途`（§3） | §2 / §3                     |
 | 2026-07-12 | §4/§5 节首统一：`Java`+`落库`（§4 快照）、`Java`+`载体`（§5 SPI DTO）；修正 dto 包路径 | §4 / §5                     |
+| 2026-09-03 | **按日 Owner 路由改造（SSOT 先行）**：§2.6 新增 `CASE_OWNER_RECONCILED`（对账哨兵事件）；§2.7 新增 `ROUTED_TO_LEGACY`（Phase 1 引擎写入值由三值变四值）；§1.3 ContactPlan 触发事件补「迁出取消 / 重入再建」；§6.2 新增 `CASE_OWNER_RECONCILED` payload 行（`reconciledDate`，全局触发不携带案件清单）；附录 A.1.1 `cancel_reason` COMMENT 同步。`db/schema.sql` 双写与 Java 枚举落地为实施阶段待办（[改造计划 §6.2](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)） | §1.3 / §2.6 / §2.7 / §6.2 / 附录 A |
 
 
 ---

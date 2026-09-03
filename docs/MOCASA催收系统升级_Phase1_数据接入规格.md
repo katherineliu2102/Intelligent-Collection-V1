@@ -21,6 +21,7 @@
 - [4. DPD 日切](#4-dpd-日切)
 - [5. 迁移与 replay](#5-迁移与-replay)
 - [附录：Phase 1 运行清单](#附录phase-1-运行清单)
+- [变更记录](#变更记录)
 
 ---
 
@@ -95,20 +96,22 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 
 <a id="33-接入幂等键"></a>
 
-收件箱为最终幂等判据：同一 `eventId` 重投命中收件箱即跳过；`caseEvent` 指纹相同或 `repaymentEvent.occurredAt` 早于投影时，收件箱标记 `SKIPPED` 且不覆盖投影。Redis key（`collection:ingestion:*`）仅用于快速去重、日切 keyset 游标和完成标记，并与旧催收隔离。具体键名见[基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)。
+收件箱为最终幂等判据：同一 `eventId` 重投命中收件箱即跳过；`caseEvent` 指纹相同时收件箱标记 `SKIPPED`、业务快照不覆盖投影，但 `owner_date` 仍按 `date(occurredAt)` 刷新（按日 Owner 路由：指纹相同不代表当天仍归属 NEW）；`repaymentEvent.occurredAt` 早于投影时标记 `SKIPPED` 且不覆盖。Redis key（`collection:ingestion:*`）仅用于快速去重、日切 keyset 游标和完成标记，并与旧催收隔离。具体键名见[基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录运行配置与环境)。
 
 ### 3.3 按消息类型的处理矩阵
 <a id="33-按消息类型的处理矩阵"></a><a id="222-repaymentevent"></a>
 
 | 场景 | 投影行为 | 内部事件 |
 | --- | --- | --- |
-| 新 `caseEvent` | 无行则插入；指纹变化则刷新 | 首次入催为 `CASE_INGESTED` |
-| 指纹相同的 `caseEvent` | 收件箱标记 `SKIPPED` | 无 |
-| 已有周期的变更 `caseEvent` | 刷新投影 | 不重复建计划；阶段变化由日切处理 |
+| 新 `caseEvent` | 无行则插入；指纹变化则刷新；`owner_date` 按 `date(occurredAt)` 刷新 | 首次入催为 `CASE_INGESTED` |
+| 指纹相同的 `caseEvent` | 收件箱标记 `SKIPPED`；`owner_date` 仍按 `date(occurredAt)` 刷新 | 无（归属日刷新不发内部事件，对账见[§4](#4-dpd-日切)） |
+| 已有周期的变更 `caseEvent` | 刷新投影（含 `owner_date`） | 不重复建计划；阶段变化由日切处理 |
 | 新的整笔结清 `repaymentEvent` | 行锁读取完整快照，合并增量并派生 `SETTLED` | `REPAYMENT_RECEIVED` |
 | 新的部分还款 `repaymentEvent` | 合并运行态字段并派生 `IN_COLLECTION` | `CASE_BALANCE_UPDATED` |
 | 无完整快照基线的 `repaymentEvent` | 视为异常；不从旧库回填产品、借款人或设备 | poison 后 ACK |
 | 早于投影的 `repaymentEvent` | 收件箱标记 `SKIPPED` | 无 |
+
+> 🔄 **2026-09-03 修订（按日 Owner 路由）**：§3.2 与本表新增 `owner_date` 刷新语义——原「指纹相同 → SKIPPED 不覆盖投影」会漏刷当日 NEW 归属日（指纹相同不代表当天仍归属 NEW）；现指纹相同仍按 `date(occurredAt)` 刷新 `owner_date`，业务快照行为不变。`owner` / `owner_date` 为投影新增列（实施阶段落 DDL，[改造计划 §6.2](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)）。
 
 ### 3.4 内部事件发布与 PENDING 补发
 
@@ -121,6 +124,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | `CASE_BALANCE_UPDATED` | 非结清 `repaymentEvent` 合并投影成功；引擎侧可写快照字段见[领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段) |
 | `STAGE_CHANGED` | 日切比对投影发现阶段变化，见[§4](#4-dpd-日切) |
 | `CASE_CEASED` | 日切发现 `dpd >= 91` 且仍有活跃计划，见[§4](#4-dpd-日切) |
+| `CASE_OWNER_RECONCILED` | 03:35 PHT 对账时刻到达且当日 inbox 已有 NEW `caseEvent`；当日零收时推迟对账并告警，不得视为「今天零案」，见[§4](#4-dpd-日切) |
 
 投影与收件箱同事务提交。若提交后内部事件尚未发布，收件箱保留 `PENDING`；同一消息重投时只补发内部事件，不重复写投影，成功后标记 `PUBLISHED`。
 
@@ -131,11 +135,14 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 项 | 行为 |
 | --- | --- |
 | 时间 | 03:35–05:55 PHT，每 5 分钟处理一个 keyset 分页；06:00 PHT 前完成，否则告警 |
-| 前置 | 当日 `caseEvent` 批次已消费完毕；批次门控目标与延迟处置见[数仓交付契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) |
+| owner 对账 | `dailyRoll` **第一阶段**：03:35 PHT 起对 `t_ai_collection` 分页对账——归属日（`owner_date`）非当日的活跃计划迁出（引擎以 `ROUTED_TO_LEGACY` 取消，不续建）；归属日为当日且无活跃计划的案件重入建计划。全局水位 `owner_reconciled_date` 写成当日后才进入既有 Stage 日切；重复 `dailyRoll` 消息只恢复未完成的对账，不重复取消或建计划。当日 inbox 零 NEW 案件时推迟对账并告警，不得视为「今天零案」 |
+| 前置 | 当日 `caseEvent` 批次已消费完毕；owner 对账（第一阶段）完成后才执行 Stage 日切；批次门控目标与延迟处置见[数仓交付契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) |
 | 扫描 | 联调使用 `loan-id-whitelist`；生产按 `case_id` keyset 分页，Redis 保存游标与完成标记。单轮上限为 `collection.ingestion.daily-roll-batch-size`（Pilot `1000`）；按日案件量与单页耗时调优 |
 | 阶段变化 | 投影 stage 的**严重度高于**活跃计划 stage 时发布 `STAGE_CHANGED`；低于时**不发**，只记指标（见下方「阶段单调前进」）。**无活跃计划**时：最近一份 `PLAN_COMPLETED` 且投影档更高 → 同样发布（档末日走完后次日建 S0→S1 … S3→S4）；`PLAN_CANCELLED` + `NO_DUE_BALANCE` 且投影已有应还余额 → 按当天档发布。`MANUAL_CLEANUP` / `REPAID` / `CEASED` 不续建 |
 | 停催 | `dpd >= 91` 且仍有活跃计划时发布 `CASE_CEASED`。无活跃计划不发（投影已由当日 `caseEvent` 派生 `CEASED`） |
 | 重跑 | 同一案件在同一 `dpd` 下，同类事件（`stage` / `ceased`）只发一次；去重键 `collection:ingestion:dedup:{type}:{loanId}:{dpd}`，TTL 2 天 |
+
+> 🔄 **2026-09-03 修订（按日 Owner 路由）**：本表新增「owner 对账」行——`dailyRoll` 第一阶段先做 owner 对账（迁出 `ROUTED_TO_LEGACY` + 重入建计划），水位 `owner_reconciled_date` 写成当日后才进入既有 Stage 日切；「前置」行同步补充该顺序约束。§3.4 事件表新增 `CASE_OWNER_RECONCILED` 触发条件。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
 
 **阶段单调前进（与引擎 ESCALATE 的优先级）**：日切**不得**因投影 stage 低于计划 stage 而发布回退事件。引擎的穷尽升档（[核心引擎 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)）会把活跃计划的 stage 抬到高于 DPD 推导值，而引擎从不回写 `t_ai_collection`，因此"计划 stage > 投影 stage"是**升档后的正常稳态**，不是漂移。若日切按"不同即发"处理，就会把升档计划按 `STAGE_UPGRADE` 取消并重建回低阶段，下一轮穷尽再次升档，形成降档 ping-pong。DPD 真实下降（部分还款）已由 `CASE_BALANCE_UPDATED` 更新快照金额，Phase 1 不因此降低已在运行的催收强度。
 
@@ -170,3 +177,12 @@ Phase 1 当前由数仓直发 Pub/Sub 驱动入案；无论触达 owner 如何�
 | 每日对账 | 数仓按 `dataType` 的发布量与接入 ack / nack / poison / dedup 对比 | 批次完成信号、DLQ、投影写入失败 |
 
 运行阈值、告警级别、Dashboard 和 Runbook 由运维在上线单维护，不在本文重复定义。
+
+---
+
+## 变更记录
+
+| 日期 | 变更 | 影响面 |
+| --- | --- | --- |
+| 2026-09-03 | 按日 Owner 路由（SSOT 先行）：§3.2 / §3.3 新增 `owner_date` 刷新语义（指纹相同仍按 `date(occurredAt)` 刷新归属日，业务快照不变）；§3.4 事件表新增 `CASE_OWNER_RECONCILED`；§4 日切新增「owner 对账」第一阶段行（迁出 + 重入 + `owner_reconciled_date` 水位门控）并收紧「前置」行。`owner` / `owner_date` 投影列落库为实施阶段待办（[改造计划 §6.2](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)） | §3.2 / §3.3 / §3.4 / §4 |
+

@@ -20,6 +20,7 @@
 - [5. 日切窗口与批次门控](#5-日切窗口与批次门控)
 - [6. 上线验收](#6-上线验收)
 - [附录 B：inbox 只读说明](#附录-binbox-只读说明数仓无需实现)
+- [变更记录](#变更记录)
 
 ---
 
@@ -47,7 +48,7 @@
 
 | 任务 | 时区 | 频率 | 输出 | 关键约束 |
 | --- | --- | --- | --- | --- |
-| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 每案一条 `caseEvent/CASE_INGESTED` | `dpd >= -3` 逐条完整快照；`caseVersion` 为内容指纹（[§3.2](#42-caseversion)）；走 [§1.2](#12-gcp-资源) 案件 Topic；已有周期由接入层按指纹决定刷新或略过 |
+| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 每案一条 `caseEvent/CASE_INGESTED` | **仅当日 `owner=NEW` 案件**（按日 Owner 路由：LEGACY 案件不发消息，新系统按缺席迁出）；`dpd >= -3` 逐条完整快照；`caseVersion` 为内容指纹（[§3.2](#42-caseversion)）；走 [§1.2](#12-gcp-资源) 案件 Topic；已有周期由接入层按指纹决定刷新或略过 |
 | 还款扫描 | `Asia/Manila` | 每 15 分钟 | 每案一条 `repaymentEvent/REPAYMENT` | 仅成功正向还款的**增量**；账务结清状态落库后至少等待 **360 秒**；同样走案件 Topic |
 
 每条消息独立 publish。消息体使用单案 `{dataType, data}` envelope；`data` 只承载一个案件或还款事实，不得包装多案。Publisher 可在单次任务中连续/并发发多条。
@@ -160,13 +161,14 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `data` | 是 | 单案业务 payload object；不得含多案数组 |
 
 #### `caseEvent` 字段
-`dataType=caseEvent`。每日对 `dpd >= -3` 逐案发一条；以下字段均位于 `data`。
+`dataType=caseEvent`。每日对 `dpd >= -3` 且当日 `owner=NEW` 的案件逐案发一条；以下字段均位于 `data`。
 
 | 消息字段 | `t_ai_collection` 列名 | 口径 |
 | --- | --- | --- |
 | `eventId` | — | publish 前 UUID；复用见 [§3.1](#41-eventid) |
 | `eventType` | — | 可省略；有值时固定 `CASE_INGESTED` |
-| `occurredAt` | `updated_at` | `yyyy-MM-dd HH:mm:ss`，按 `Asia/Manila` 解释 |
+| `owner` | `owner` | 新增必填：发给新系统的案件固定为 `NEW`；Phase 1 只发 NEW 案件，不发 LEGACY 变更。接入据此与 `owner_date` 支撑按日 Owner 对账（[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)） |
+| `occurredAt` | `updated_at` | `yyyy-MM-dd HH:mm:ss`，按 `Asia/Manila` 解释；**PHT 日历日 = 当日 NEW 归属日**，接入派生 `owner_date` |
 | `caseId` | `case_id` | `loan_id`，可转 `Long`；非法进隔离/告警，不得静默跳过 |
 | `userId` | `user_id` | 用户标识 |
 | `caseVersion` | `case_version` | 内容指纹（hex 字符串）；公式见 [§3.2](#42-caseversion) |
@@ -386,8 +388,8 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 | 项 | 约定 |
 | --- | --- |
-| 内容 | 当日全部在催与当日发生过状态变化的案件的**完整快照** |
-| 语义 | 首次入催触发建计划；已有周期只刷新投影，**不**重复入催、不发阶段/停催 |
+| 内容 | 当日全部在催、当日发生过状态变化且**当日 `owner=NEW`** 的案件的**完整快照**（按日 Owner 路由：LEGACY 案件不发） |
+| 语义 | 首次入催触发建计划；已有周期只刷新投影，**不**重复入催、不发阶段/停催；当日 NEW 归属日即使指纹未变也逐日刷新 |
 | 覆盖 | 逐案发消息；禁止全表覆盖、清空重建或旁路 SQL |
 | 时间 | 日切窗口（[§5](#5-日切窗口与批次门控)）开始前完成发布 |
 
@@ -408,6 +410,8 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | 历史修正 / 漏发补齐 | 每日 `caseEvent` | 指纹不同则刷新；已有周期不重复入催 | 下一次日切据新投影推进 |
 | D-4 及更早 | 不发布 | 不写入 | 不触达 |
 
+> 🔄 **2026-09-03 修订（按日 Owner 路由）**：本矩阵及 §1.1 Publisher 任务、§2.2 `caseEvent` 头部、§3.5 每日刷新均收紧为**仅当日 `owner=NEW` 案件发布**——原「`dpd >= -3` 全量逐案发布」会使缺席对账失效（每天都像 NEW）。`caseEvent` 字段表新增 `owner` 必填字段；`occurredAt` 口径补「PHT 日历日 = 当日 NEW 归属日」。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
+
 ---
 
 ## 5. 日切窗口与批次门控
@@ -423,13 +427,15 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | 扫描 | MySQL keyset 分页；Redis 存当日游标与完成标记 |
 | 完成 | **06:00 PHT** 前跑完；未完成必须告警 |
 
-「数据齐了」指当日 `caseEvent` 批次**已被接入消费完毕**，不是时钟到点。Phase 1 当前仍按固定时间窗触发日切（接入规格 C-D-06 / C-X-05）；批次完成信号与显式门控待运维确认后接入。
+「数据齐了」指当日 `caseEvent` 批次**已被接入消费完毕**，不是时钟到点。Phase 1 当前仍按固定时间窗触发日切（接入规格 C-D-06 / C-X-05）；批次完成信号与显式门控 **Phase 1 明确不做**（对账按固定时刻 03:35 PHT，见按日 Owner 路由改造计划），出现漏发事故后再评估补做。
 
 运维协同：
 
-1. 数仓在每日案件快照 publish 完成后发出**可审计的批次完成信号**（形式待定）。
+1. 批次完成信号 **Phase 1 明确不做**（按固定时刻 03:35 PHT 对账，不依赖完成信号）；出现漏发事故后再评估补做。
 2. 接入侧以 inbox / 投影消费进度确认批次就绪；批次迟到则推迟日切并告警，不得基于不完整投影产出阶段/停催事件（目标门控）。
 3. **06:00 PHT** 前未完成日切，按 Runbook 排查 Publisher、案件订阅、投影消费与 Redis 游标。
+
+> 🔄 **2026-09-02 修订（按日 Owner 路由）**：批次完成信号由原「待运维确认后接入」改为「Phase 1 明确不做」——对账固定 03:35 PHT，靠 03:00 发完 + 34 分钟缓冲与「当日零收则告警、不对账」兜底；本节与 §6 验收项 7 同步去除完成信号要求。依据：[按日 Owner 路由改造计划 §2](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
 
 ---
 
@@ -446,7 +452,7 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | 4 | 金额、提醒与状态 | `overdueAmount` 含罚息且不含未到期；`overduePenaltyAmount` 为其中罚息；三期提醒字段符合 D-3～D0 定义；接入正确派生 `SETTLED` / `CEASED` / `IN_COLLECTION` | 数仓 + 接入 |
 | 5 | 还款发布 | 仅成功正向还款；账务结清状态落库至少 360 秒后发布增量 `repaymentEvent` | 数仓 |
 | 6 | Publisher 可靠性 | 发布失败重试并告警；重试/重放复用 `eventId`；保留期内可按时间点重放 | 数仓 + 运维 |
-| 7 | 每日批次 | 当日快照在日切窗口前完成发布，并提供可审计的批次完成信号；已有周期只刷新投影、不重复建计划 | 数仓 + 运维 + 接入 |
+| 7 | 每日批次 | 当日快照在日切窗口前完成发布（Phase 1 不要求批次完成信号）；已有周期只刷新投影、不重复建计划 | 数仓 + 运维 + 接入 |
 | 8 | 数据库写入边界 | 数仓 SA 无业务库写权限；接入层为 `t_ai_collection` 唯一写入者 | 数仓 + 运维 + 接入 |
 | 9 | 日切分工与时限 | 阶段变化 / D+91 仅由 `dailyRoll` 产生；日切在 **06:00 PHT** 前完成，否则告警 | 接入 + 运维 |
 | 10 | Topic、DLQ 与 IAM | 案件 / 调度 Topic 物理分离；案件 Topic 已配置 retention 与 DLQ；Publisher / Consumer / Scheduler 权限按环境验收 | 运维 + 数仓 + 接入 |
@@ -468,7 +474,10 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | --- | --- | --- |
 | 正常处理完成 | `PUBLISHED` | 整条跳过 |
 | 投影已写入但事件未发出 | `PENDING` | 不重复写投影，只补发领域事件 |
-| `caseEvent` 指纹与投影相同，或 `repaymentEvent.occurredAt` 早于投影 | `SKIPPED` | 跳过 |
+| `caseEvent` 指纹与投影相同 | `SKIPPED`（`owner_date` 仍按 `date(occurredAt)` 刷新） | 业务快照跳过，owner 归属日刷新 |
+| `repaymentEvent.occurredAt` 早于投影 | `SKIPPED` | 跳过 |
+
+> 🔄 **2026-09-02 修订（按日 Owner 路由）**：原「`caseEvent` 指纹相同，或 `repaymentEvent.occurredAt` 早于投影 → SKIPPED」合并为一行；现拆为两行——`caseEvent` 指纹相同仍须刷新 `owner_date`（指纹相同不代表当天仍归属 NEW），`repaymentEvent` 陈旧增量维持纯跳过。依据：[按日 Owner 路由改造计划 §4.1](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
 
 原 `t_ai_collection_outbox` 已废弃。既有环境在确认数仓发布器下线、无待投递记录后删除。
 
@@ -481,3 +490,13 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 - 投影持久化：[AiCaseProjectionRepository.java](../collection-service/src/main/java/com/collection/service/repository/AiCaseProjectionRepository.java)
 - 运行态 CaseService：[AiCollectionCaseService.java](../collection-service/src/main/java/com/collection/service/impl/AiCollectionCaseService.java)
 - 开发索引（非字段 SSOT）：[contracts/README.md](./contracts/README.md)
+
+---
+
+## 变更记录
+
+| 日期 | 变更 | 影响面 |
+| --- | --- | --- |
+| 2026-09-02 | 按日 Owner 路由（第一批）：§5 批次完成信号由「待运维确认后接入」改为「Phase 1 明确不做」，§6 验收项 7 同步去除完成信号要求；附录 B `SKIPPED` 行拆分——`caseEvent` 指纹相同仍刷新 `owner_date`，`repaymentEvent` 陈旧增量纯跳过 | §5 / §6 / 附录 B |
+| 2026-09-03 | 按日 Owner 路由（第二批）：§1.1 Publisher 任务、§2.2 `caseEvent` 头部与字段表（新增 `owner` 必填行、`occurredAt` 补归属日语义）、§3.5 每日刷新、§4 场景矩阵均收紧为**仅当日 `owner=NEW` 案件发布**（原全量发布会使缺席对账失效）。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md) | §1.1 / §2.2 / §3.5 / §4 |
+

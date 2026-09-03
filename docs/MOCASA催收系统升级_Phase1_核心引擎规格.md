@@ -36,6 +36,7 @@
   - [7.2 派生事件可靠投递](#72-派生事件可靠投递)
   - [7.3 渠道调用后的部分成功](#73-渠道调用后的部分成功)
   - [7.4 停摆计划检测](#74-停摆计划检测)
+- [变更记录](#变更记录)
 
 ---
 
@@ -101,7 +102,7 @@ flowchart LR
 
 ### 2.1 事件路由表（SSOT）
 
-下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 10 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
+下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 11 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
 
 
 | 事件                     | 生命周期域       | 引擎侧处理动作                                     | 详见                                 |
@@ -116,6 +117,7 @@ flowchart LR
 | `STEP_COMPLETED`       | ② 步骤循环      | 推进决策：注册下一步 / 计划完成 / 发布穷尽                    | [§4.3.2](#432-step_completed)      |
 | `PLAN_EXHAUSTED`       | ③ 收尾        | 穷尽策略：续建新计划 / 升档 / 标记完成                      | [§4.5](#45-穷尽续建)                   |
 | `CASE_CEASED`          | ④ 中断        | D+91 完全停催：取消该案件活跃计划，**不再续建**（停催终态）          | [§4.4](#44-中断处理)                   |
+| `CASE_OWNER_RECONCILED` | ① 创建 + ④ 中断 | 按日 Owner 对账：迁出归属日非当日的活跃计划（`ROUTED_TO_LEGACY`，不续建）；归属日为当日且无活跃计划的案件按 §4.2 建计划（重入） | [§4.4](#44-中断处理)                   |
 
 
 所有事件经 Dispatcher 消费后遵循**统一的并发前置流程**（行锁 → 终态拦截 → 事务边界），该契约见 [§3.2](#32-并发与一致性模型)，本节不重复。事件的产生来源（外部上游 / 引擎链式 / 定时 Job）见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)（发布者列）；链式发布的触发条件以 [§4.3](#43-步骤执行循环) / [§4.5](#45-穷尽续建) / [§5](#5-步骤执行管线) 伪代码为 SSOT。
@@ -129,10 +131,10 @@ flowchart TB
     D["EventConsumerDispatcher · 唯一入口<br/>锁 → 检终态 → 事务内前置写"]
 
     subgraph plan["PlanLifecycleManager · 计划级 §4"]
-        P1["① 创建：CASE_INGESTED / STAGE_CHANGED"]
+        P1["① 创建：CASE_INGESTED / STAGE_CHANGED / CASE_OWNER_RECONCILED（重入）"]
         P3["② 运行中：PLAN_STEP_DUE / CHANNEL_CALLBACK / CALLBACK_TIMEOUT / STEP_COMPLETED / CASE_BALANCE_UPDATED"]
         P4["③ 收尾：PLAN_EXHAUSTED"]
-        P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED"]
+        P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED / CASE_OWNER_RECONCILED（迁出）"]
     end
 
     subgraph step["StepExecutionOrchestrator · 步骤级 §5（事务外）"]
@@ -182,7 +184,7 @@ Cron 扫表 ──XADD──→ Redis Stream ──XREADGROUP──→ Consumer 
 | ------------------------- | ------------------------ | ----------------------------------- |
 | `PLAN_STEP_DUE`           | **生产**（扫 `trigger_time`） | **消费**（分流 → `execute_step`）         |
 | `CALLBACK_TIMEOUT`        | **生产**（扫 `timeout_time`） | **消费**（标 FAILED → `STEP_COMPLETED`） |
-| 其余 8 种（`CASE_INGESTED` 等） | 不参与                      | 消费 + 执行                             |
+| 其余 9 种（`CASE_INGESTED` 等） | 不参与                      | 消费 + 执行                             |
 
 
 > 两池不共享线程；生产线程池、背压与 PEL 的实现参数以 [基础设施 §2.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#22-生产消费拓扑线程职责与背压) 为准。Consumer 并行消费正是 [§3.2](#32-并发与一致性模型) 的前提。
@@ -278,7 +280,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 | `PLAN_CANCELLED` | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因) |
 
 
-> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
+> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED` / `ROUTED_TO_LEGACY`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
 
 
 
@@ -309,7 +311,9 @@ def on_case_ingested(event):
         save(plan)                    # 持久化计划 + 步骤序列
 ```
 
-**幂等约束**：同一 `case_id + stage` 不得重复建计划，且任一时刻仅一个非终态计划（升档 [§4.4](#44-中断处理) / 续建 [§4.5](#45-穷尽续建) 时先终态旧计划）。
+**幂等约束**：任一时刻仅一个非终态计划。同一 `case_id + stage` 的历史终态计划不阻止再次建计划：升档 [§4.4](#44-中断处理) / 续建 [§4.5](#45-穷尽续建) / 迁出重入（`ROUTED_TO_LEGACY` 后重入）均先终态旧计划，再按首入建新计划。
+
+> 🔄 **2026-09-02 修订（按日 Owner 路由）**：原表述「同一 `case_id + stage` 不得重复建计划」会拦截 `ROUTED_TO_LEGACY` 迁出后同 Stage 重入的重建；现放宽为「任一时刻仅一个非终态计划」，历史终态计划不阻止再建。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
 
 **失败处理**：`PlanFactory` 抛错、超时或返回非法 `null` 时 NACK；`PlanFactory=null` 表示正常不建计划。`save(plan)` 失败时事务回滚并 NACK，事件重投后重新创建。
 
@@ -500,8 +504,8 @@ def on_callback_timeout(event):
 
 ### 4.4 中断处理
 
-**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划。
-**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
+**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划；`CASE_OWNER_RECONCILED` 将归属日非当日的案件活跃计划置 `PLAN_CANCELLED`（`ROUTED_TO_LEGACY`），并为归属日为当日且无活跃计划的案件新建 `PENDING` 计划（重入）。
+**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`）。
 
 `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4.4](./MOCASA催收系统升级_Phase1_数据接入规格.md#44-产出事件)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
@@ -542,7 +546,25 @@ def on_case_ceased(case_id):                        # D+91 完全停催：取消
         plan.cancel_reason = CEASED
         cancel_scheduled_jobs(plan)
     # 不调用 create_plan_for_stage —— 停催后主动催收终止（区别于 STAGE_CHANGED 的取消+重建）
+
+def on_case_owner_reconciled(reconciled_date):      # 按日 Owner 对账（全局事件，分页可重入；
+                                                    # 水位 owner_reconciled_date 保证当日仅执行一次）
+    # ── 迁出：归属日非当日 → 取消活跃计划，不续建 ──
+    for case_id in paged_cases(owner_date != reconciled_date, has_active_plan=True):
+        for plan in sorted(find_active_plans_by_case(case_id), key=lambda p: p.id):
+            lock(plan)
+            if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
+                continue                            # 终态不可逆：取锁后复检（§3.2）
+            plan.status = PLAN_CANCELLED
+            plan.cancel_reason = ROUTED_TO_LEGACY
+            cancel_scheduled_jobs(plan)
+        # 已提交供应商的请求不可撤回；回调仍审计，但不得推进或续建（与 §4.4 顶部边界一致）
+    # ── 重入：归属日为当日且无活跃计划 → 复用 §4.2 创建（晚进案不追溯补发）──
+    for case_id in paged_cases(owner_date == reconciled_date, has_active_plan=False):
+        create_plan_for_stage(case_id, current_stage(case_id))   # 复用 §4.2 创建流程
 ```
+
+> 🔄 **2026-09-03 修订（按日 Owner 路由）**：本节新增 `CASE_OWNER_RECONCILED` 处理路径——状态影响、触发事件、`on_case_owner_reconciled` 伪代码（迁出取消 + 重入建计划）均为新增；原三种中断事件行为不变。`ROUTED_TO_LEGACY` 与其余取消原因一样走事件总线写入。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md)。
 
 
 
@@ -1051,3 +1073,13 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 命中后递增 `collection.plan.stuck` 并记录 ERROR 日志；不重建步骤，不重发触达。触达是否已发出无法确定时，自动外部动作可能产生重复外呼和合规投诉。
 
 Reaper 不读取 Redis PEL。告警与 PEL 积压同时出现时，先按[基础设施 §3.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#33-异常恢复与死信)确认事件是否仍在重投。`REBUILD` / `ESCALATE` 的半成品与正常 `PLAN_COMPLETED` 不可区分，不纳入扫描，依赖事务回滚与 `PLAN_EXHAUSTED` 重投收敛。
+
+---
+
+## 变更记录
+
+| 日期 | 变更 | 影响面 |
+| --- | --- | --- |
+| 2026-09-02 | §4.2 幂等约束放宽：原「同一 `case_id + stage` 不得重复建计划」改为「任一时刻仅一个非终态计划；历史终态计划不阻止再次建计划」，为 `ROUTED_TO_LEGACY` 迁出后同 Stage 重入重建放行（按日 Owner 路由） | §4.2 |
+| 2026-09-03 | 按日 Owner 路由（SSOT 先行）：§2.1 路由表新增 `CASE_OWNER_RECONCILED` 行（10 → 11 行）；§2.2 生命周期图 P1/P2 补该事件；§3.1 事件分工「其余 8 种」改 9 种；§4.1 `cancel_reason` 清单补 `ROUTED_TO_LEGACY`；§4.4 新增迁出取消 / 重入建计划的状态影响、触发事件与 `on_case_owner_reconciled` 伪代码。依据：[按日 Owner 路由改造计划](./testing/MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md) | §2 / §3.1 / §4 |
+
