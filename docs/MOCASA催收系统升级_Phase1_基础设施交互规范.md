@@ -320,7 +320,7 @@ Phase 1 有 **3 个应用任务、4 条 Cloud Scheduler 规则**。时区统一 
 
 `planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影与当日 NEW 归属。
 
-> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 起先做 owner 对账；当日 inbox 空收则推迟并对账告警，见 [数仓契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) 与 [数据接入 §4.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#41-owner-对账)。
+> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 起先做 owner 对账；当日空收（无任何案件刷新归属日）则推迟并对账告警，见 [数仓契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) 与 [数据接入 §4.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#41-owner-对账)。
 
 生产 / Pilot 经 `PubSubScheduleConsumer → ScheduledJobRunner` 触发；`local`/`test` 的 `TriggerScanner` 只触发到期与超时扫描，本地日切通过 `POST /mock/daily-roll` 显式触发。`SchedulerEntrypointValidator` 强制生产入口与本地入口不同时启用。
 

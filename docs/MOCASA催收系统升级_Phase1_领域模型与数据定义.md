@@ -563,12 +563,14 @@ loan_id（上游）
 | REPAID        | 用户已还款                          |
 | STAGE_UPGRADE | 阶段变更：取消旧 stage 计划并新建（与模板是否相同无关，见 [核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 | CEASED        | Max DPD ≥91 完全停催（CASE_CEASED） |
+| CASE_NOT_FOUND | 实时 PreFlight 未找到案件，终结孤儿计划且不记录触达 |
+| NO_DUE_BALANCE | 当前无已到期应还余额；阻断零金额催收文案，后续日切可按新快照重建 |
 | ROUTED_TO_LEGACY | 当日 NEW 批次缺席，对账后迁出；案件仍可能在旧系统在催 |
 
 
-> Phase 1 由引擎写入的值为 `CancelReason.isEngineManaged()=true`（含 `ROUTED_TO_LEGACY`）。
+> Phase 1 上表六值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
 >
-> **Phase 2 预留**（枚举值保留，Phase 1 不使用）：`COMPLAINT`（投诉终态取消）、`MANUAL`（管理后台人工取消）、`PTP_EXPIRED`（PTP 到期未还款）。
+> **非引擎写入**：`COMPLAINT`（投诉终态取消，Phase 2 预留）、`MANUAL`（管理后台人工取消，Phase 2 预留）、`MANUAL_CLEANUP`（运维人工清理测试计划，不经事件总线）、`PTP_EXPIRED`（PTP 到期未还款，Phase 2 预留）。
 
 ### 2.8 Stage（催收阶段）
 
@@ -1328,6 +1330,7 @@ loan_id（上游）
 | 2026-07-12 | §4/§5 节首统一：`Java`+`落库`（§4 快照）、`Java`+`载体`（§5 SPI DTO）；修正 dto 包路径 | §4 / §5                     |
 | 2026-09-01 | 附录 A 不再复制 `CREATE TABLE`，权威 DDL 仅 `db/schema.sql`；附录 B.1 纠正「后台只读」与现行热更新口径 | 附录 A / 附录 B.1 |
 | 2026-09-03 | 按日 owner 路由：新增 `CASE_OWNER_RECONCILED`、`CancelReason.ROUTED_TO_LEGACY`；`CASE_INGESTED` 改为对账后发布；投影增加 `owner` / `owner_date`，水位表 `t_ai_owner_reconcile` | §2.6 / §2.7 / §6.2 / DDL |
+| 2026-09-03 | 零收检测口径：由 inbox payload 字符串日期扫描改为投影 `owner_date = 当日` 计数（走 `idx_ai_collection_owner_date`，时区口径与投影写入一致）；水位表计数列 `inbox_case_event_count` 更名 `owner_case_count`，含既有环境迁移 | DDL（schema.sql）/ 接入规格 §4.1 |
 
 
 ---

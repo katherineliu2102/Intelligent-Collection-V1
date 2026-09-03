@@ -26,6 +26,7 @@
 - [附录 A：历史编号占位](#附录-a历史编号占位)
 - [附录 B：inbox 只读说明](#附录-binbox-只读说明数仓无需实现)
 - [参考实现](#参考实现)
+- [变更记录](#变更记录)
 
 ---
 
@@ -459,14 +460,16 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | 时区 | `Asia/Manila` |
 | 数仓当日 NEW `caseEvent` 批次 | 约 **03:00 PHT** 发完 |
 | 新系统对账与日切窗口 | **03:35–05:55 PHT，每 5 分钟** |
-| 完成信号 | Phase 1 **不**要数仓完成信号。零 NEW 案与 Publisher 故障无法从消息流区分：当日 inbox 无任何 `date(occurredAt)=当日` 的 NEW `caseEvent` 则推迟对账并告警，不得把空收当成「今天零案」 |
+| 完成信号 | Phase 1 **不**要数仓完成信号。零 NEW 案与 Publisher 故障无法从消息流区分：当日无任何案件刷新归属日（投影 `owner_date = 当日` 计数为零）则推迟对账并告警，不得把空收当成「今天零案」 |
 | 扫描 | MySQL keyset 分页；Redis 存对账/日切游标与完成标记 |
 | 完成 | **06:00 PHT** 前跑完；未完成必须告警 |
 
 运维协同：
 
 1. 数仓只保证 03:00 前发完当天 NEW 批次；迟到则新系统推迟对账并告警。
-2. 接入侧以 inbox 中 `date(occurredAt)=当日 PHT` 的 NEW `caseEvent` 计数确认非空收，不以 inbox `created_at` 为准。
+2. 接入侧以投影 `owner_date = 当日 PHT` 的案件计数确认非空收（时区口径与投影写入一致，走索引），不以 inbox `created_at` 为准，也不对 inbox payload 做字符串日期解析。
+
+> 🔄 **2026-09-03 修订**：空收检测原表述为「以 inbox 中 `date(occurredAt)=当日 PHT` 的 NEW `caseEvent` 计数确认非空收」；现改为投影 `owner_date` 计数——每条 `caseEvent` 无论指纹是否相同都会刷新归属日，两种计数语义等价，但后者走 `idx_ai_collection_owner_date` 索引、且时区口径与投影写入一致（inbox 字符串前缀解析在 UTC 时间戳下会与 PHT 日历日分叉）。实现见 [数据接入规格 §4.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#41-owner-对账)。
 3. **06:00 PHT** 前未完成对账或日切，按 Runbook 排查 Publisher、案件订阅、投影消费与 Redis 游标。
 
 ---
@@ -518,3 +521,10 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 - 投影持久化：[AiCaseProjectionRepository.java](../collection-service/src/main/java/com/collection/service/repository/AiCaseProjectionRepository.java)
 - 运行态 CaseService：[AiCollectionCaseService.java](../collection-service/src/main/java/com/collection/service/impl/AiCollectionCaseService.java)
 - 开发索引（非字段 SSOT）：[contracts/README.md](./contracts/README.md)
+
+## 变更记录
+
+| 日期 | 变更 | 影响面 |
+| --- | --- | --- |
+| 2026-09-03 | 全文重写合并（原「对齐清单」+「Pub/Sub 交付说明」）：`owner` 字段必填、仅当日 NEW 发布范围、`occurredAt` 归属日语义、`isFullCleared` 结清派生、还款事件仅当日 NEW 名单内发布 | 全文 |
+| 2026-09-03 | 空收检测口径：§5 完成信号行与运维协同第 2 条改为投影 `owner_date = 当日` 计数（走索引、时区口径与投影写入一致），替代 inbox payload 字符串日期解析 | §5 / 运维协同 |

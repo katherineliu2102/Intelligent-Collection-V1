@@ -140,7 +140,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 项 | 行为 |
 | --- | --- |
 | 时间 | 03:35 PHT 起，与 `dailyRoll` 同窗口 |
-| 空收 | 生产全量扫描：inbox 中无 `date(occurredAt)=当日 PHT` 的 NEW `caseEvent` → **不对账、不写水位**、告警。不以 inbox `created_at` 为准。联调白名单模式跳过空收门控 |
+| 空收 | 生产全量扫描：`t_ai_collection` 中无 `owner_date = 当日` 的案件（即当日无任何案件被 caseEvent 刷新归属日，走 `idx_ai_collection_owner_date`）→ **不对账、不写水位**、告警。不以 inbox `created_at` 为准，也不对 inbox payload 做字符串日期解析（UTC 时间戳与 PHT 日历日会分叉）。联调白名单模式跳过空收门控 |
 | 迁出 | 活跃计划且 `owner_date ≠ 当日`（含空）→ 发布 `CASE_OWNER_RECONCILED`（`ownerAction=LEAVE`） |
 | 进入 / 再入 | `owner_date = 当日`、在催、非 `SETTLED`/`CEASED`、无活跃计划 → 发布 `CASE_INGESTED`（既有快照 payload） |
 | 连续 NEW | `owner_date = 当日` 且已有非终态计划 → 不发事件 |
@@ -194,6 +194,6 @@ Phase 1 当前由数仓直发 Pub/Sub 驱动入案；无论触达 owner 如何�
 | 消费健康 | Pub/Sub lag、ack / nack / poison / DLQ | Publisher 重试、Subscription 堆积、Consumer 日志 |
 | 投影与事件交接 | `t_ai_collection_inbox` 的 `PENDING`、投影 `synced_at` | 投影事务、内部 EventBus 发布、补发任务 |
 | 日切完成 | Redis 对账/日切游标、`owner_reconciled_date`、当日完成标记、`CASE_INGESTED` / `CASE_OWNER_RECONCILED` / `STAGE_CHANGED` / `CASE_CEASED` 数量 | 空收告警、扫描配置、调度 tick、活跃计划 |
-| 每日对账 | 数仓按 `dataType` 的发布量与接入 ack / nack / poison / dedup 对比 | inbox 当日计数、DLQ、投影写入失败 |
+| 每日对账 | 数仓按 `dataType` 的发布量与接入 ack / nack / poison / dedup 对比 | 水位表 `owner_case_count`、DLQ、投影写入失败 |
 
 运行阈值、告警级别、Dashboard 和 Runbook 由运维在上线单维护，不在本文重复定义。
