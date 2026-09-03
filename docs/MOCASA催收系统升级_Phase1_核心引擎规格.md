@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 核心引擎规格
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
-> **日期**: 2026-09-01  
+> **日期**: 2026-09-03  
 > **状态**: ✅ 已确定（事件路由、状态机、七步管线、SPI SSOT）  
 > **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型 §2.6 / §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)、[渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)
 
@@ -103,20 +103,21 @@ flowchart LR
 
 ### 2.1 事件路由表（SSOT）
 
-下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 10 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
+下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 11 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
 
 
 | 事件                     | 生命周期域       | 引擎侧处理动作                                     | 详见                                 |
 | ---------------------- | ----------- | ------------------------------------------- | ---------------------------------- |
-| `CASE_INGESTED`        | ① 创建        | 匹配模板 → 创建计划（PENDING）→ 注册首步 Job              | [§4.2](#42-计划创建)                   |
-| `STAGE_CHANGED`        | ① 创建 + ④ 中断 | 取消旧阶段活跃计划 → 为新阶段创建计划                        | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
+| `CASE_INGESTED`        | ① 创建        | 仅 owner 对账（或水位已是当日的迟到补建）后到达；`owner_date` 须为当日且非结清/停催 → 匹配模板创建计划 | [§4.2](#42-计划创建)                   |
+| `CASE_OWNER_RECONCILED`| ④ 中断        | `ownerAction=LEAVE`：取消该案件活跃计划，`cancel_reason=ROUTED_TO_LEGACY`，不再续建 | [§4.4](#44-中断处理)                   |
+| `STAGE_CHANGED`        | ① 创建 + ④ 中断 | 须当日 owner 水位已成功且该案 `owner_date=当日`；取消旧阶段活跃计划 → 为新阶段创建计划 | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
 | `REPAYMENT_RECEIVED`   | ④ 中断        | **整笔 loan 全额结清**：取消该案件活跃计划 + 清理已注册 Job      | [§4.4](#44-中断处理)                   |
 | `CASE_BALANCE_UPDATED` | ② 运行中更新     | **部分还款**：刷新该案件活跃计划快照的运行态金额与下一期提醒字段；不改 stage | [§4.6](#46-部分还款余额更新)               |
-| `PLAN_STEP_DUE`        | ② 步骤循环      | 按状态分流：到期执行 / 观察期结转 → 触达                     | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
+| `PLAN_STEP_DUE`        | ② 步骤循环      | 水位不是当日或 `owner_date≠当日` → **跳过、不取消计划**；否则按状态分流执行 | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
 | `CHANNEL_CALLBACK`     | ② 步骤循环      | 更新步骤结果 → 发布 `STEP_COMPLETED`                | [§4.3.3](#433-channel_callback)    |
-| `CALLBACK_TIMEOUT`     | ② 步骤循环      | 回调超时 → 标 `FAILED` → 发布 `STEP_COMPLETED`     | [§4.3.4](#434-callback_timeout)    |
+| `CALLBACK_TIMEOUT`     | ② 步骤循环      | 水位不是当日或 `owner_date≠当日` → **跳过**；否则回调超时 → 标 `FAILED` → 发布 `STEP_COMPLETED` | [§4.3.4](#434-callback_timeout)    |
 | `STEP_COMPLETED`       | ② 步骤循环      | 推进决策：注册下一步 / 计划完成 / 发布穷尽                    | [§4.3.2](#432-step_completed)      |
-| `PLAN_EXHAUSTED`       | ③ 收尾        | 穷尽策略：续建新计划 / 升档 / 标记完成                      | [§4.5](#45-穷尽续建)                   |
+| `PLAN_EXHAUSTED`       | ③ 收尾        | 须当日 owner 水位已成功且该案 `owner_date=当日`；否则跳过不续建 | [§4.5](#45-穷尽续建)                   |
 | `CASE_CEASED`          | ④ 中断        | D+91 完全停催：取消该案件活跃计划，**不再续建**（停催终态）          | [§4.4](#44-中断处理)                   |
 
 
@@ -134,7 +135,7 @@ flowchart TB
         P1["① 创建：CASE_INGESTED / STAGE_CHANGED"]
         P3["② 运行中：PLAN_STEP_DUE / CHANNEL_CALLBACK / CALLBACK_TIMEOUT / STEP_COMPLETED / CASE_BALANCE_UPDATED"]
         P4["③ 收尾：PLAN_EXHAUSTED"]
-        P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED"]
+        P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED / CASE_OWNER_RECONCILED"]
     end
 
     subgraph step["StepExecutionOrchestrator · 步骤级 §5（事务外）"]
@@ -280,7 +281,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 | `PLAN_CANCELLED` | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因) |
 
 
-> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
+> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED` / `ROUTED_TO_LEGACY`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
 
 
 
@@ -290,7 +291,7 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 **触发事件**：`CASE_INGESTED` / `STAGE_CHANGED`（链 [§2.1](#21-事件路由表ssot)）。
 **关联 SPI**：`PlanFactory`（链 [§6.1](#61-接口职责与调用位置)）。
 
-`CASE_INGESTED` 的准入、DPD/停催口径与 payload 组装见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-案件消息处理主链路)；`STAGE_CHANGED` 的来源与目标 Stage 口径见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。二者均复用下方创建逻辑。`collectionStatus` 由接入派生；引擎仍防御性拒绝 `CEASED` 快照的建计划请求，避免迟到/重放事件绕过停催边界。
+`CASE_INGESTED` 的准入、DPD/停催口径与 payload 组装见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-案件消息处理主链路)；本事件只在 owner 对账 ENTER（或水位已是当日的迟到补建）时发布，`caseEvent` 到达不建计划。`STAGE_CHANGED` 的来源与目标 Stage 口径见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。二者均复用下方创建逻辑。`collectionStatus` 由接入派生；引擎仍防御性拒绝 `CEASED` / `SETTLED` 快照的建计划请求。`owner_date` 不是当日则静默返回，不建计划。
 
 ```python
 def on_case_ingested(event):
@@ -510,11 +511,11 @@ def on_callback_timeout(event):
 
 ### 4.4 中断处理
 
-**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划。
-**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
+**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划。
+**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`）。
 
-`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
+`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界与 owner 对账迁出见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。`STAGE_CHANGED` / `PLAN_EXHAUSTED` 在 owner 水位不是当日或该案 `owner_date≠当日` 时跳过。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
 
 **失败处理**：计划读取或写入失败时 NACK，取消事务回滚；`PredictiveDialerService.filter_repaid_case` 失败时记录告警并继续，计划已处于 `PLAN_CANCELLED`。
 
@@ -552,6 +553,16 @@ def on_case_ceased(case_id):                        # D+91 完全停催：取消
         plan.cancel_reason = CEASED
         cancel_scheduled_jobs(plan)
     # 不调用 create_plan_for_stage —— 停催后主动催收终止（区别于 STAGE_CHANGED 的取消+重建）
+
+def on_case_owner_reconciled(case_id):              # 当日 NEW 缺席：迁出，不续建
+    old_plans = find_active_plans_by_case(case_id)
+    for plan in sorted(old_plans, key=lambda p: p.id):
+        lock(plan)
+        if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
+            continue
+        plan.status = PLAN_CANCELLED
+        plan.cancel_reason = ROUTED_TO_LEGACY
+        cancel_scheduled_jobs(plan)
 ```
 
 
@@ -685,6 +696,7 @@ flowchart TB
         INTR -.->|STAGE_CHANGED 日切| CS["PLAN_CANCELLED · STAGE_UPGRADE"]
         CS --> IN
         INTR -.->|CASE_CEASED| CC["PLAN_CANCELLED · CEASED"]
+        INTR -.->|CASE_OWNER_RECONCILED| CL["PLAN_CANCELLED · ROUTED_TO_LEGACY"]
     end
 ```
 
@@ -720,6 +732,7 @@ flowchart TD
     idempotency --> preflight
 
     preflight["② 系统守卫 PreFlightChecker<br/>只读 CaseService / t_ai_collection"]
+    preflight -->|owner 门控未过| gated_exit["退出 · 不取消计划、不触达"]
     preflight -->|案件不存在 / 已还款| cancel_plan["t_contact_plan → PLAN_CANCELLED"]
     cancel_plan --> preflight_exit["退出 · 不写 timeline"]
     preflight --> mark_executing["t_contact_plan_step · executed_at<br/>markStepExecuting"]
@@ -792,8 +805,10 @@ def execute_step(plan, step):
     # ⑤ 前异常：release(execution_lock_key) 后上抛 → NACK 重投；
     # ⑤ 已调用：不得释放，交由渠道幂等与 §7.3 收敛。
 
-    # ── ② 系统级守卫（实时查 DB；案件存在 / 还款） ──
+    # ── ② 系统级守卫（实时查 DB；owner 门控 / 案件存在 / 还款） ──
     preflight = PreFlightChecker.inspect(plan.case_id)   # 带出本次读到的 CaseInfo
+    if preflight.gated:                   # 水位不是当日或 owner_date ≠ 当日
+        return                            # 不取消计划、不写 timeline
     if not preflight.passed:
         plan.status = PLAN_CANCELLED
         return                                    # 不写 timeline、不投递 STEP_COMPLETED

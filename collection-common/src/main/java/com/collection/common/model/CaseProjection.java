@@ -47,4 +47,8 @@ public class CaseProjection {
     private String pushToken;
     /** 数仓事实发生时间（消息 occurredAt）；落库时间由 synced_at 记录。 */
     private LocalDateTime updatedAt;
+    /** 发给本系统的案件固定 NEW。 */
+    private String owner;
+    /** PHT 归属日，来自 date(occurredAt)；还款增量不得刷新。 */
+    private LocalDate ownerDate;
 }

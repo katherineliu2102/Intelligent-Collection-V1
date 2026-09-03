@@ -4,20 +4,30 @@ import com.collection.common.enums.*;
 import com.collection.common.model.ContactPlan;
 import com.collection.common.model.ContactPlanStep;
 import com.collection.common.repository.ContactPlanRepository;
+import com.collection.common.service.CaseService;
 import com.collection.service.mapper.ContactPlanMapper;
 import com.collection.service.mapper.ContactPlanStepMapper;
 import com.collection.service.support.ServiceClock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Collections;
 import java.util.List;
 import javax.annotation.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class ContactPlanRepositoryImpl implements ContactPlanRepository {
 
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
+
     @Resource private ContactPlanMapper planMapper;
     @Resource private ContactPlanStepMapper stepMapper;
+
+    @Autowired(required = false)
+    private CaseService caseService;
 
     @Override
     public ContactPlan findById(Long planId) {
@@ -186,13 +196,32 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     @Override
     public List<ContactPlanStep> findDueSteps(
             LocalDateTime now, int limit, List<Long> caseIdFilter) {
-        return stepMapper.selectDueSteps(now, limit, caseIdFilter);
+        if (ownerScanBlocked()) {
+            return Collections.emptyList();
+        }
+        return stepMapper.selectDueSteps(now, limit, caseIdFilter, ownerScanDate());
     }
 
     @Override
     public List<ContactPlanStep> findTimeoutSteps(
             LocalDateTime now, int limit, List<Long> caseIdFilter) {
-        return stepMapper.selectTimeoutSteps(now, limit, caseIdFilter);
+        if (ownerScanBlocked()) {
+            return Collections.emptyList();
+        }
+        return stepMapper.selectTimeoutSteps(now, limit, caseIdFilter, ownerScanDate());
+    }
+
+    private boolean ownerScanBlocked() {
+        return caseService != null
+                && caseService.requiresOwnerDate()
+                && !caseService.isOwnerReconciledToday();
+    }
+
+    private LocalDate ownerScanDate() {
+        if (caseService == null || !caseService.requiresOwnerDate()) {
+            return null;
+        }
+        return LocalDate.now(PHT);
     }
 
     @Override

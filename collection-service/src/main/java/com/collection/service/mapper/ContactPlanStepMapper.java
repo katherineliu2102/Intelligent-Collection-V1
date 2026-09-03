@@ -3,6 +3,7 @@ package com.collection.service.mapper;
 import com.collection.common.enums.ContactResult;
 import com.collection.common.enums.StepStatus;
 import com.collection.common.model.ContactPlanStep;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.apache.ibatis.annotations.*;
@@ -151,11 +152,16 @@ public interface ContactPlanStepMapper {
                     + "<if test='caseIds != null and caseIds.size() > 0'>"
                     + "AND p.case_id IN <foreach collection='caseIds' item='c' open='(' separator=',' close=')'>#{c}</foreach>"
                     + "</if> "
+                    + "<if test='ownerDate != null'>"
+                    + "AND EXISTS (SELECT 1 FROM t_ai_owner_reconcile r WHERE r.reconcile_date = #{ownerDate}) "
+                    + "AND EXISTS (SELECT 1 FROM t_ai_collection c WHERE c.case_id = p.case_id AND c.owner_date = #{ownerDate}) "
+                    + "</if> "
                     + "ORDER BY s.trigger_time ASC LIMIT #{limit}</script>")
     List<ContactPlanStep> selectDueSteps(
             @Param("now") LocalDateTime now,
             @Param("limit") int limit,
-            @Param("caseIds") List<Long> caseIds);
+            @Param("caseIds") List<Long> caseIds,
+            @Param("ownerDate") LocalDate ownerDate);
 
     /** Cron：回调超时步骤。{@code caseIds} 语义同 {@link #selectDueSteps}。 */
     @Select(
@@ -167,9 +173,14 @@ public interface ContactPlanStepMapper {
                     + "<if test='caseIds != null and caseIds.size() > 0'>"
                     + "AND p.case_id IN <foreach collection='caseIds' item='c' open='(' separator=',' close=')'>#{c}</foreach>"
                     + "</if> "
+                    + "<if test='ownerDate != null'>"
+                    + "AND EXISTS (SELECT 1 FROM t_ai_owner_reconcile r WHERE r.reconcile_date = #{ownerDate}) "
+                    + "AND EXISTS (SELECT 1 FROM t_ai_collection c WHERE c.case_id = p.case_id AND c.owner_date = #{ownerDate}) "
+                    + "</if> "
                     + "ORDER BY s.timeout_time ASC LIMIT #{limit}</script>")
     List<ContactPlanStep> selectTimeoutSteps(
             @Param("now") LocalDateTime now,
             @Param("limit") int limit,
-            @Param("caseIds") List<Long> caseIds);
+            @Param("caseIds") List<Long> caseIds,
+            @Param("ownerDate") LocalDate ownerDate);
 }

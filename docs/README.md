@@ -54,7 +54,7 @@
 |------|:--:|------|
 | [领域模型与数据定义](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) | ✅ | 字段 / 枚举 / EventPayload / DDL（`collection-common` 数据契约） |
 | [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) | ✅ | Redis / **定时调度（Cloud Scheduler → Pub/Sub → 应用订阅，SSOT §5）** / Repository、**运行配置附录 A**、可观测性 |
-| [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) | ✅ | 数仓对外唯一 SSOT：计算口径、两类事件、可靠性、日切门控、验收 |
+| [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md) | ✅ | 数仓对外唯一 SSOT：计算口径、[完整字段清单 §2.2](./数仓_PubSub交付契约.md#完整字段清单)、两类事件、可靠性、日切门控、验收 |
 
 ### collection-common 契约查阅
 

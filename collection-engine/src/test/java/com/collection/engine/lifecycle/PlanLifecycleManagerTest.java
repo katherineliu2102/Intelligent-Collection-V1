@@ -316,6 +316,26 @@ class PlanLifecycleManagerTest {
     }
 
     @Test
+    @DisplayName("owner_date 不是当日 → 跳过建计划")
+    void onCaseIngested_ownerDateNotToday_skips() {
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(CASE_ID);
+        info.setOwnerDate(LocalDate.now(java.time.ZoneId.of("Asia/Manila")).minusDays(1));
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(info);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S1");
+
+        manager.onCaseIngested(event);
+
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
     @DisplayName("#21 同 case+stage 已有活跃计划 → 幂等跳过，不建计划")
     void onCaseIngested_idempotentSkip() {
         when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S1)).thenReturn(plan);
@@ -1275,6 +1295,25 @@ class PlanLifecycleManagerTest {
                 .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.CEASED);
         verify(planFactory, never()).create(any(), any(), any());
         verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("CASE_OWNER_RECONCILED LEAVE → 取消活跃计划 ROUTED_TO_LEGACY")
+    void onCaseOwnerReconciled_cancelsRoutedToLegacy() {
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_OWNER_RECONCILED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.OWNER_ACTION, "LEAVE");
+        manager.onCaseOwnerReconciled(event);
+
+        verify(planRepository)
+                .updatePlanStatus(
+                        PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.ROUTED_TO_LEGACY);
+        verify(planFactory, never()).create(any(), any(), any());
     }
 
     // ───────────────────────── 决策 B：payload 自带快照（不读旧库） ─────────────────────────

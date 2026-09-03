@@ -6,19 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.alibaba.fastjson.JSON;
 import com.collection.common.enums.Stage;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
 import com.collection.common.repository.CaseProjectionRepository;
 import com.collection.common.repository.MissingCaseBaselineException;
+import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
 import com.collection.ingestion.metrics.IngestionMetrics;
@@ -59,6 +60,8 @@ class AiCaseIngestionProcessorTest {
         ReflectionTestUtils.setField(processor, "assembler", new CaseProjectionAssembler());
         ReflectionTestUtils.setField(processor, "projectionRepository", repository);
         ReflectionTestUtils.setField(processor, "ingestionService", ingestionService);
+        ReflectionTestUtils.setField(
+                processor, "caseService", mock(com.collection.common.service.CaseService.class));
         ReflectionTestUtils.setField(processor, "dedup", dedup);
         ReflectionTestUtils.setField(processor, "faultInjector", faultInjector);
         ReflectionTestUtils.setField(
@@ -77,62 +80,92 @@ class AiCaseIngestionProcessorTest {
         assertEquals("IN_COLLECTION", projection.getCollectionStatus());
         assertEquals(0, new BigDecimal("3000.00").compareTo(projection.getTotalOutstanding()));
         assertEquals("+639563093217", projection.getBorrowerPhone());
-        assertTrue(repository.published.contains("evt-1"));
-        verify(ingestionService)
-                .ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
+        assertEquals("NEW", projection.getOwner());
+        assertEquals(false, repository.applied.get(0).isPublishRequired());
+        verify(ingestionService, never()).ingestCase(anyLong(), anyLong(), any(), any());
     }
 
     @Test
-    void caseIngested_publishFailure_leavesInboxPendingForRedelivery() {
+    void caseEvent_pendingPublish_confirmsWithoutIngest() {
         String body = caseIngestedBody("fingerprint-12");
-        doThrow(new IllegalStateException("bus down"))
-                .when(ingestionService)
-                .ingestCase(anyLong(), anyLong(), any(), any());
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> processor.handleCaseEvent(JSON.parseObject(body), body));
-        assertTrue(repository.published.isEmpty());
-
-        // 重投：投影不再重复写入，只补发领域事件
         repository.nextOutcome = CaseProjectionRepository.Outcome.PENDING_PUBLISH;
-        ingestionService = mock(IngestionService.class);
-        ReflectionTestUtils.setField(processor, "ingestionService", ingestionService);
 
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
-        verify(ingestionService)
-                .ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
+        verify(ingestionService, never()).ingestCase(anyLong(), anyLong(), any(), any());
         assertTrue(repository.published.contains("evt-1"));
     }
 
-    /**
-     * L4b-11 注入点自身的守护：投影后注入必须落在「投影已写、事件未发」这个窗口内。 注入点前移一行就会让 L4b-11 退化成 L4b-7（重投走 APPLIED 而非
-     * PENDING_PUBLISH），本测试是唯一能挡住这种回归的地方。
-     */
     @Test
-    void postProjectionFault_writesProjectionButNotEvent() {
+    void lateSameDayNew_afterWatermark_catchUpIngest() {
+        CaseService caseService = mock(CaseService.class);
+        ReflectionTestUtils.setField(processor, "caseService", caseService);
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        when(caseService.isOwnerReconciledToday()).thenReturn(true);
+        CaseInfo info = new CaseInfo();
+        info.setRepaid(false);
+        info.setCaseStatus("IN_COLLECTION");
+        info.setOwnerDate(LocalDate.of(2026, 8, 12));
+        when(caseService.getCaseInfo(525441L)).thenReturn(info);
+
+        String body = caseIngestedBody("fingerprint-12");
+        processor.handleCaseEvent(JSON.parseObject(body), body);
+
+        verify(ingestionService).ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any());
+        assertTrue(dedup.isIngested(525441L));
+    }
+
+    @Test
+    void lateSameDayNew_skipsCatchUpWhenActivePlanExists() {
+        CaseService caseService = mock(CaseService.class);
+        ReflectionTestUtils.setField(processor, "caseService", caseService);
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        when(caseService.isOwnerReconciledToday()).thenReturn(true);
+        CaseInfo info = new CaseInfo();
+        info.setRepaid(false);
+        info.setCaseStatus("IN_COLLECTION");
+        info.setOwnerDate(LocalDate.of(2026, 8, 12));
+        when(caseService.getCaseInfo(525441L)).thenReturn(info);
+        com.collection.common.repository.ContactPlanRepository plans =
+                mock(com.collection.common.repository.ContactPlanRepository.class);
+        when(plans.findActivePlansByCase(525441L))
+                .thenReturn(
+                        java.util.Collections.singletonList(
+                                new com.collection.common.model.ContactPlan()));
+        ReflectionTestUtils.setField(processor, "planRepository", plans);
+
+        String body = caseIngestedBody("fingerprint-12");
+        processor.handleCaseEvent(JSON.parseObject(body), body);
+
+        verify(ingestionService, never()).ingestCase(anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void nonNewOwner_isPoison() {
+        String body =
+                caseIngestedBody("fingerprint-12")
+                        .replace("\"product\":\"3\"", "\"owner\":\"LEGACY\",\"product\":\"3\"");
+
+        PoisonMessageException error =
+                assertThrows(
+                        PoisonMessageException.class,
+                        () -> processor.handleCaseEvent(JSON.parseObject(body), body));
+
+        assertTrue(error.getMessage().contains("NEW"));
+        verifyNoInteractions(ingestionService);
+    }
+
+    /** caseEvent 到达不再发布 CASE_INGESTED，投影后注入点不再有领域事件窗口。 */
+    @Test
+    void postProjectionFault_doesNotBlockCaseEventProjection() {
         props.setFaultInjectionEnabled(true);
         assertEquals(1, faultInjector.armPostProjection(1));
         String body = caseIngestedBody("fingerprint-12");
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> processor.handleCaseEvent(JSON.parseObject(body), body));
-
-        assertEquals(1, repository.applied.size(), "投影必须已经写过一次");
-        assertTrue(repository.published.isEmpty(), "领域事件不得发出，收件箱应留在待发布态");
-        verifyNoInteractions(ingestionService);
-        assertEquals(0, faultInjector.remainingPostProjection());
-
-        // 重投：命中 PENDING_PUBLISH，只补发事件
-        repository.nextOutcome = CaseProjectionRepository.Outcome.PENDING_PUBLISH;
-
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
-        verify(ingestionService, times(1))
-                .ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
-        assertTrue(repository.published.contains("evt-1"));
+        assertEquals(1, repository.applied.size(), "投影必须已经写过一次");
+        verifyNoInteractions(ingestionService);
     }
 
     /** 未启用 fault-injection 时 arm 无效，避免开关误配把注入带到 Pilot。 */
@@ -143,7 +176,7 @@ class AiCaseIngestionProcessorTest {
 
         processor.handleCaseEvent(JSON.parseObject(body), body);
 
-        assertTrue(repository.published.contains("evt-1"));
+        verify(ingestionService, never()).ingestCase(anyLong(), anyLong(), any(), any());
     }
 
     @Test
@@ -186,9 +219,7 @@ class AiCaseIngestionProcessorTest {
         CaseProjectionCommand command = repository.applied.get(1);
         assertEquals("caseEvent", command.getMessageType());
         assertEquals(false, command.isPublishRequired());
-        verify(ingestionService, times(1))
-                .ingestCase(eq(525441L), eq(2145521L), eq(Stage.S1), any(Map.class));
-        assertTrue(repository.published.contains("evt-1"));
+        verify(ingestionService, never()).ingestCase(anyLong(), anyLong(), any(), any());
     }
 
     @Test
@@ -215,7 +246,7 @@ class AiCaseIngestionProcessorTest {
     void repayment_partial_publishesBalanceUpdatedAndKeepsIngestedMark() {
         String caseBody = caseIngestedBody("fingerprint-12");
         processor.handleCaseEvent(JSON.parseObject(caseBody), caseBody);
-        assertTrue(dedup.isIngested(525441L));
+        assertTrue(!dedup.isIngested(525441L), "caseEvent 到达不建计划，入催标记仍为空");
         String body = partialRepaymentBody();
 
         processor.handleRepaymentEvent(JSON.parseObject(body), body);
@@ -232,7 +263,7 @@ class AiCaseIngestionProcessorTest {
                         eq(LocalDate.of(2026, 9, 5)),
                         eq("IN_COLLECTION"));
         verify(ingestionService, never()).repayment(anyLong(), anyLong());
-        assertTrue(dedup.isIngested(525441L), "部分还款不结束催收周期，入催标记必须保留");
+        assertTrue(!dedup.isIngested(525441L), "部分还款不建计划，入催标记保持为空");
         assertTrue(repository.published.contains("pay-2"));
     }
 
@@ -355,9 +386,22 @@ class AiCaseIngestionProcessorTest {
                 return nextOutcome;
             }
             CaseProjection projection = command.getProjection();
+            CaseProjection stored = projections.get(projection.getCaseId());
+            if (stored != null
+                    && projection.getOwnerDate() != null
+                    && stored.getOwnerDate() != null
+                    && projection.getOwnerDate().isBefore(stored.getOwnerDate())) {
+                return Outcome.STALE_VERSION;
+            }
             String current = versions.get(projection.getCaseId());
             if (current != null && current.equals(projection.getCaseVersion())) {
-                return Outcome.STALE_VERSION;
+                if (stored != null) {
+                    stored.setOwner(projection.getOwner());
+                    stored.setOwnerDate(projection.getOwnerDate());
+                }
+                return command.isPublishRequired()
+                        ? Outcome.APPLIED
+                        : Outcome.APPLIED_WITHOUT_EVENT;
             }
             versions.put(projection.getCaseId(), projection.getCaseVersion());
             projections.put(projection.getCaseId(), projection);

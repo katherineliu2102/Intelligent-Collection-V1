@@ -396,10 +396,13 @@ CREATE TABLE IF NOT EXISTS t_ai_collection (
     borrower_email          VARCHAR(256)    NULL,
     borrower_language       VARCHAR(16)     NOT NULL DEFAULT 'en',
     push_token              VARCHAR(512)    NULL,
+    owner                   VARCHAR(16)     NOT NULL DEFAULT 'NEW' COMMENT '发给本系统的案件固定 NEW',
+    owner_date              DATE            NULL COMMENT 'PHT 归属日，date(occurredAt)；还款不得刷新',
     updated_at              DATETIME        NOT NULL COMMENT '数仓快照业务更新时间',
     synced_at               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '接入层投影落库时间',
     INDEX idx_ai_collection_active (collection_status, dpd, case_id),
-    INDEX idx_ai_collection_updated (updated_at, case_id)
+    INDEX idx_ai_collection_updated (updated_at, case_id),
+    INDEX idx_ai_collection_owner_date (owner_date, collection_status, case_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='新系统 AI 催收案件当前态';
 
 -- 7.2.5b 入催消息收件箱。event_id 为数仓生成的业务幂等键，重试/重发/重放必须复用同一值。
@@ -472,6 +475,45 @@ END //
 DELIMITER ;
 CALL sp_schema_add_ai_collection_repayment_fields();
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_repayment_fields;
+
+-- 既有环境迁移：按日 owner 路由。
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_owner_fields;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_collection_owner_fields()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'owner'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN owner VARCHAR(16) NOT NULL DEFAULT 'NEW' COMMENT '发给本系统的案件固定 NEW'
+            AFTER push_token;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'owner_date'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN owner_date DATE NULL COMMENT 'PHT 归属日，date(occurredAt)；还款不得刷新'
+            AFTER owner;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND INDEX_NAME = 'idx_ai_collection_owner_date'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD INDEX idx_ai_collection_owner_date (owner_date, collection_status, case_id);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_collection_owner_fields();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_owner_fields;
+
+CREATE TABLE IF NOT EXISTS t_ai_owner_reconcile (
+    reconcile_date          DATE            NOT NULL PRIMARY KEY COMMENT 'PHT 日历日',
+    completed_at            DATETIME        NOT NULL,
+    inbox_case_event_count  INT             NOT NULL DEFAULT 0 COMMENT '写入水位时当日 inbox NEW caseEvent 计数'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当日 owner 对账水位；引擎与扫描只读';
 
 -- 既有环境迁移：数仓不再写业务库，t_ai_collection_outbox 无发布器也无消费者。
 -- 归档需求由 t_ai_collection_inbox.payload 承接；确认数仓侧发布器已下线、无 PENDING 记录后再执行下一行。

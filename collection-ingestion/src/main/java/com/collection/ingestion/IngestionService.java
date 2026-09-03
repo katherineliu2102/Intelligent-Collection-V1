@@ -1,5 +1,6 @@
 package com.collection.ingestion;
 
+import com.collection.common.enums.CancelReason;
 import com.collection.common.enums.EventType;
 import com.collection.common.enums.Stage;
 import com.collection.common.event.CollectionEvent;
@@ -233,6 +234,17 @@ public class IngestionService {
                         .with(CollectionEvent.CASE_ID, caseId)
                         .with(CollectionEvent.MAX_DPD, maxDpd == null ? 91 : maxDpd));
         log.info("[Ingestion] publish CASE_CEASED case={} maxDpd={}", caseId, maxDpd);
+    }
+
+    /** 当日 NEW 缺席迁出 → 发布 CASE_OWNER_RECONCILED。 */
+    public void routedToLegacy(Long caseId, Long userId) {
+        eventBus.publish(
+                CollectionEvent.of(EventType.CASE_OWNER_RECONCILED)
+                        .with(CollectionEvent.CASE_ID, caseId)
+                        .with(CollectionEvent.USER_ID, userId == null ? caseId : userId)
+                        .with(CollectionEvent.OWNER_ACTION, "LEAVE")
+                        .with(CollectionEvent.CANCEL_REASON, CancelReason.ROUTED_TO_LEGACY.name()));
+        log.info("[Ingestion] publish CASE_OWNER_RECONCILED LEAVE case={}", caseId);
     }
 
     /** PTP 到期 → 发布 PTP_EXPIRED。Phase 2 预留：Phase 1 引擎不消费此事件（核心引擎规格 §2.6）。 */

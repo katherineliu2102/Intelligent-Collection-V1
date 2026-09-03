@@ -313,14 +313,14 @@ Phase 1 有 **3 个应用任务、4 条 Cloud Scheduler 规则**。时区统一 
 
 | `job` 属性 | Scheduler 规则（PHT） | 扫描表与条件 | 发布事件 |
 |---|---|---|---|
-| `planStepDue` | `* * * * *` | `t_contact_plan_step.trigger_time <= NOW`，步骤待触发，关联计划非终态 | `PLAN_STEP_DUE` |
-| `callbackTimeout` | `* * * * *` | `t_contact_plan_step.timeout_time <= NOW`，步骤为 `EXECUTING`，关联计划非终态 | `CALLBACK_TIMEOUT` |
-| `dailyRoll` | `35,40,45,50,55 3 * * *` | `t_ai_collection` 按 `case_id` keyset 分页，只读 DPD、stage、`collection_status` | `STAGE_CHANGED`、`CASE_CEASED` |
-| `dailyRoll`（续跑） | `*/5 4-5 * * *` | 同上；Redis 游标记录已处理页，当日完成后跳过 | 同上 |
+| `planStepDue` | `* * * * *` | `t_contact_plan_step.trigger_time <= NOW`，步骤待触发，关联计划非终态；且当日 owner 水位已成功、该案 `owner_date=当日` | `PLAN_STEP_DUE` |
+| `callbackTimeout` | `* * * * *` | `t_contact_plan_step.timeout_time <= NOW`，步骤为 `EXECUTING`，关联计划非终态；同样受 owner 门控 | `CALLBACK_TIMEOUT` |
+| `dailyRoll` | `35,40,45,50,55 3 * * *` | 先 owner 对账（迁出/进入分页），水位写成当日后再扫 DPD/stage | `CASE_OWNER_RECONCILED`、`CASE_INGESTED`，随后 `STAGE_CHANGED`、`CASE_CEASED` |
+| `dailyRoll`（续跑） | `*/5 4-5 * * *` | 同上；Redis 游标记录对账页与日切页，当日完成后跳过 | 同上 |
 
-`planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影。
+`planStepDue` / `callbackTimeout` 的触达精度为 ±1 分钟；`dailyRoll` 每 5 分钟推进一页，不适用该 SLA。`dailyRoll` 不重算 DPD、不轮询还款；还款由案件 Pub/Sub 驱动，触达前仍由 `PreFlightChecker` 核验投影与当日 NEW 归属。
 
-> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 固定窗口只是当前数仓 03:00 批次的消费缓冲；真实门控仍是该批案件消息已消费完毕，迟到则推迟并告警（[数仓契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控)）。
+> **为什么日切是两条规则**：窗口为 03:35–05:55 PHT、每 5 分钟一次。五段 cron 无法用单条表达式精确表示该跨小时窗口；两条规则都发布 `job=dailyRoll`，应用侧视为同一个任务。03:35 起先做 owner 对账；当日 inbox 空收则推迟并对账告警，见 [数仓契约 §5](./数仓_PubSub交付契约.md#5-日切窗口与批次门控) 与 [数据接入 §4.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#41-owner-对账)。
 
 生产 / Pilot 经 `PubSubScheduleConsumer → ScheduledJobRunner` 触发；`local`/`test` 的 `TriggerScanner` 只触发到期与超时扫描，本地日切通过 `POST /mock/daily-roll` 显式触发。`SchedulerEntrypointValidator` 强制生产入口与本地入口不同时启用。
 
@@ -399,7 +399,8 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 
 | 触发 | Repository 访问 |
 |---|---|
-| `CASE_INGESTED` | 读 payload 组装 snapshot；写 `savePlan` |
+| `CASE_INGESTED` | 读 payload 组装 snapshot；写 `savePlan`；须 `owner_date=当日` |
+| `CASE_OWNER_RECONCILED` | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED(ROUTED_TO_LEGACY)` |
 | `STAGE_CHANGED` | 读 `findActivePlansByCase`；锁定并取消旧计划；写 `savePlan` |
 | `PLAN_STEP_DUE` | **prepareStepDue**（事务）：读并锁计划/步骤，写计划→EXECUTING、`markStarted`、清 `trigger_time`；**executeStep**：`PreFlightChecker` 经 `CaseService.getCaseInfo` 实时查还款状态，读 `getContactHistory`，写步骤状态、timeline、`timeout_time` |
 | `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` | 引擎写 `updateStepStatus` + `writeTimeline`；admin/Cron 仅发布事件（见 [引擎 §4.3.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#433-channel_callback)） |
@@ -409,7 +410,7 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 | `CASE_CEASED` / 升档取消 | 读 `findActivePlansByCase`；逐计划加锁并写 `updatePlanStatus`→`CANCELLED` |
 | `PLAN_EXHAUSTED` | 读 `plan.context_snapshot` / 写 `savePlan` |
 | `planStepDueHandler` / `callbackTimeoutHandler` | 分页读 `findDueSteps` / `findTimeoutSteps`，只发布事件 |
-| `dailyRoll` | keyset 分页读 `CaseService.findActiveCaseIdsAfter`，逐笔读 `getCaseInfo` 与 `findActivePlansByCase`；Redis 记录日切游标和完成状态 |
+| `dailyRoll` | 先 owner 对账分页（活跃计划 `owner_date≠当日` 迁出；`owner_date=当日` 且无计划则建）；水位写入 `t_ai_owner_reconcile` 后，keyset 分页读 `CaseService.findActiveCaseIdsAfter` 做 DPD 日切；Redis 记录对账/日切游标 |
 
 > `repaymentEvent` 的结清判定（`isFullCleared`）与事件分流以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本表只定义事件到达后的 Repository 访问。`PTP_EXPIRED` 为 Phase 2。
 

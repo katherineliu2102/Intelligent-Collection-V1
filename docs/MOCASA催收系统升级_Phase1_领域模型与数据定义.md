@@ -169,6 +169,8 @@ flowchart LR
 | `t_user_profile_ext`  | **NEW（Phase 2 押后）** | service        | ProfileService, 坐席后台                | 决策引擎(画像输入)                                 | 附录 A A.2.2（Phase 1 不建表） |
 | `t_event_dlq`         | NEW                 | 主架构 / common   | collection-engine（事件总线）             | 运维重放接口 `/ops/dlq/redrive`                  | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
 | `t_event_outbox`      | NEW                 | 主架构 / common   | collection-engine（状态迁移所在事务）         | `OutboxPublisher` 兜底重发（[引擎 §7.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)） | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
+| `t_ai_collection`     | NEW                 | ingestion      | collection-ingestion                 | 引擎守卫、日切、管理查询；含 `owner` / `owner_date`     | [`db/schema.sql`](../db/schema.sql) |
+| `t_ai_owner_reconcile`| NEW                 | ingestion      | collection-ingestion                 | 当日 owner 对账水位；引擎/扫描只读                     | [`db/schema.sql`](../db/schema.sql) |
 | `t_channel_callback_audit` | NEW            | 主架构 / common   | collection-admin（渠道 Webhook 入口）      | 排障与渠道分析；**不计入 timeline 触达次数**（§3.4 注 4）      | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
 
 
@@ -225,7 +227,7 @@ flowchart TB
 
 | 形态         | 对象                                         | 定义节       | 落库                                | 触发事件 / 阶段                                                                                        | 职责                                            |
 | ---------- | ------------------------------------------ | --------- | --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
+| **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
 | **持久实体**   | ContactPlanStep                            | §3.2      | `t_contact_plan_step`             | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进                                      | 计划内单步；含 trigger/timeout 调度字段                  |
 | **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记          | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
 | **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
@@ -537,7 +539,8 @@ loan_id（上游）
 
 | 枚举值 | Phase 1 状态 | 说明 |
 | --- | --- | --- |
-| CASE_INGESTED | 活跃 | 接入首次入催 |
+| CASE_INGESTED | 活跃 | 03:35 owner 对账后的首次进入 NEW 或再入建计划；`caseEvent` 到达时不发 |
+| CASE_OWNER_RECONCILED | 活跃 | 缺席迁出：payload `ownerAction=LEAVE`，引擎取消计划 |
 | STAGE_CHANGED | 活跃 | 日切变更或引擎升档 |
 | REPAYMENT_RECEIVED | 活跃 | 整笔 loan 全额结清：取消该案件活跃计划 |
 | CASE_BALANCE_UPDATED | 活跃 | 部分还款：只刷新活跃计划快照余额，不改状态与模板 |
@@ -560,9 +563,10 @@ loan_id（上游）
 | REPAID        | 用户已还款                          |
 | STAGE_UPGRADE | 阶段变更：取消旧 stage 计划并新建（与模板是否相同无关，见 [核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 | CEASED        | Max DPD ≥91 完全停催（CASE_CEASED） |
+| ROUTED_TO_LEGACY | 当日 NEW 批次缺席，对账后迁出；案件仍可能在旧系统在催 |
 
 
-> Phase 1 三值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
+> Phase 1 由引擎写入的值为 `CancelReason.isEngineManaged()=true`（含 `ROUTED_TO_LEGACY`）。
 >
 > **Phase 2 预留**（枚举值保留，Phase 1 不使用）：`COMPLAINT`（投诉终态取消）、`MANUAL`（管理后台人工取消）、`PTP_EXPIRED`（PTP 到期未还款）。
 
@@ -1165,7 +1169,8 @@ loan_id（上游）
 
 | EventType                   | 发布者                                                  | payload 字段（key）                                                                                                                                   | 必填 / 缺省                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount` 必填；`dueDate` 不再由新契约全面必填。`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS |
+| CASE_INGESTED               | ingestion（owner 对账 ENTER，或水位已是当日的迟到补建） | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount` 必填；`dueDate` 不再由新契约全面必填。`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS。`caseEvent` 到达时**不**发本事件 |
+| CASE_OWNER_RECONCILED       | ingestion（owner 对账 LEAVE）                        | `caseId`、`userId`、`ownerAction=LEAVE`、`cancelReason=ROUTED_TO_LEGACY`                                                                 | `caseId` 必填；`ownerAction` 固定 `LEAVE`。引擎取消该案活跃计划，不得续建。KEEP / ENTER 不发本事件（KEEP 无事件；ENTER 发 `CASE_INGESTED`） |
 | STAGE_CHANGED               | ingestion / engine（ESCALATE 续建）                      | `caseId`、`stage`（=**目标阶段**）、`dpd`、`totalOutstanding`                                                                                             | `caseId`、`stage` 必填；`dpd`、`totalOutstanding` 可选，仅日切发布时携带（值取自 `t_ai_collection` 当日投影），非空则 carry-forward 时刷新新计划快照的同名字段，缺省保持旧值                                                                                                                                                              |
 | REPAYMENT_RECEIVED          | ingestion                                            | `caseId`、`userId`、`cancelReason=REPAID`、`cancelScope=CASE`                                                                                  | `caseId`、`userId` 必填；仅 `repaymentEvent.isFullCleared=true` 时发布，取消该案件活跃计划                                                                                                                                                                                                                     |
 | CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`isFullCleared`                                                                            | 部分还款事件必须有 `caseId`、非负 `totalOutstanding`；其余运行态字段按消息合并。该事件不携带或驱动 stage，阶段变化仍由 dailyRoll 产生 `STAGE_CHANGED`；金额缺失或为负事件进入 poison                                                                                                                                                                                                                                                                          |
@@ -1322,7 +1327,7 @@ loan_id（上游）
 | 2026-07-11 | §2/§3 节首统一：`Java`+`落库`/`载体`（§2）、`Java`+`表`+DDL+`用途`（§3） | §2 / §3                     |
 | 2026-07-12 | §4/§5 节首统一：`Java`+`落库`（§4 快照）、`Java`+`载体`（§5 SPI DTO）；修正 dto 包路径 | §4 / §5                     |
 | 2026-09-01 | 附录 A 不再复制 `CREATE TABLE`，权威 DDL 仅 `db/schema.sql`；附录 B.1 纠正「后台只读」与现行热更新口径 | 附录 A / 附录 B.1 |
-| 2026-08-31 | §2.3 / §5.6：`PLAN_COMPLETED` 不再表示「步骤走完即停催」；末步仍在催由引擎改写穷尽 | §2.3 / §5.6 / 引擎 §4.3.2 |
+| 2026-09-03 | 按日 owner 路由：新增 `CASE_OWNER_RECONCILED`、`CancelReason.ROUTED_TO_LEGACY`；`CASE_INGESTED` 改为对账后发布；投影增加 `owner` / `owner_date`，水位表 `t_ai_owner_reconcile` | §2.6 / §2.7 / §6.2 / DDL |
 
 
 ---

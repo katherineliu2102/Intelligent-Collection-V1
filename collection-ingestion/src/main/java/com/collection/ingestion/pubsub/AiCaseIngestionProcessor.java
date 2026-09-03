@@ -2,16 +2,22 @@ package com.collection.ingestion.pubsub;
 
 import com.alibaba.fastjson.JSONObject;
 import com.collection.common.event.CollectionEvent;
+import com.collection.common.model.CaseInfo;
 import com.collection.common.model.CaseProjection;
 import com.collection.common.model.CaseProjectionCommand;
+import com.collection.common.model.ContactPlan;
 import com.collection.common.repository.CaseProjectionRepository;
 import com.collection.common.repository.CaseProjectionRepository.Outcome;
+import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.MissingCaseBaselineException;
+import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.metrics.IngestionMetrics;
+import java.util.List;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -42,9 +48,13 @@ public class AiCaseIngestionProcessor {
     @Resource private CaseProjectionAssembler assembler;
     @Resource private CaseProjectionRepository projectionRepository;
     @Resource private IngestionService ingestionService;
+    @Resource private CaseService caseService;
     @Resource private IngestionDedupStore dedup;
     @Resource private IngestionFaultInjector faultInjector;
     @Resource private IngestionMetrics metrics;
+
+    @Autowired(required = false)
+    private ContactPlanRepository planRepository;
 
     public void handleCaseEvent(JSONObject json, String rawPayload) {
         String eventId = requireEventId(json, MESSAGE_TYPE_CASE);
@@ -63,7 +73,6 @@ public class AiCaseIngestionProcessor {
         // L4b-7：在投影落库之前注入瞬态失败，使重投走完整的收件箱补发路径（默认关闭，仅白名单案可命中）
         faultInjector.failIfArmed(snapshot.caseId);
         CaseProjection projection = assembler.assemble(json, snapshot);
-        boolean firstInCycle = !dedup.isIngested(snapshot.caseId);
         Outcome outcome =
                 projectionRepository.apply(
                         command(
@@ -71,21 +80,55 @@ public class AiCaseIngestionProcessor {
                                 MESSAGE_TYPE_CASE,
                                 eventType,
                                 rawPayload,
-                                firstInCycle,
+                                false,
                                 projection));
-        if (outcome == Outcome.APPLIED_WITHOUT_EVENT) {
+        if (outcome == Outcome.PENDING_PUBLISH) {
+            confirmPublished(eventId);
+            return;
+        }
+        if (outcome == Outcome.APPLIED_WITHOUT_EVENT
+                || outcome == Outcome.APPLIED
+                || outcome == Outcome.ALREADY_PROCESSED) {
+            if (shouldCatchUpIngest(projection)) {
+                ingestionService.ingestCase(
+                        snapshot.caseId, snapshot.userId, snapshot.stage, snapshot.snapshotFields);
+                dedup.markIngested(snapshot.caseId);
+            }
             dedup.markMessageProcessed(eventId);
             return;
         }
         if (!shouldPublish(outcome, eventId, snapshot.caseId)) {
             return;
         }
-        // L4b-11：投影已提交、领域事件未发出时注入失败，使重投命中 PENDING_PUBLISH 只补发事件的路径
-        faultInjector.failAfterProjectionIfArmed(snapshot.caseId);
-        ingestionService.ingestCase(
-                snapshot.caseId, snapshot.userId, snapshot.stage, snapshot.snapshotFields);
-        dedup.markIngested(snapshot.caseId);
         confirmPublished(eventId);
+    }
+
+    private boolean shouldCatchUpIngest(CaseProjection projection) {
+        if (projection.getOwnerDate() == null) {
+            return false;
+        }
+        try {
+            if (!caseService.isOwnerReconciledToday() || !caseService.requiresOwnerDate()) {
+                return false;
+            }
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+        CaseInfo info = caseService.getCaseInfo(projection.getCaseId());
+        return info != null
+                && !info.isRepaid()
+                && info.getOwnerDate() != null
+                && info.getOwnerDate().equals(projection.getOwnerDate())
+                && "IN_COLLECTION".equalsIgnoreCase(info.getCaseStatus())
+                && !hasActivePlan(projection.getCaseId());
+    }
+
+    private boolean hasActivePlan(Long caseId) {
+        if (planRepository == null) {
+            return false;
+        }
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
+        return plans != null && !plans.isEmpty();
     }
 
     public void handleRepaymentEvent(JSONObject json, String rawPayload) {

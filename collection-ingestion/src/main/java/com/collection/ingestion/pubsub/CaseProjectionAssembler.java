@@ -43,6 +43,15 @@ public class CaseProjectionAssembler {
         projection.setBorrowerLanguage(language(fields.get(CollectionEvent.LANGUAGE)));
         projection.setPushToken((String) fields.get(CollectionEvent.JPUSH_TOKEN));
         projection.setUpdatedAt(occurredAt(json, snapshot.caseId));
+        String owner = json.getString("owner");
+        if (owner != null && !"NEW".equalsIgnoreCase(owner.trim())) {
+            throw new PoisonMessageException(
+                    "caseEvent.owner 发给本系统时必须为 NEW，收到=" + owner + " caseId=" + snapshot.caseId);
+        }
+        projection.setOwner("NEW");
+        if (projection.getUpdatedAt() != null) {
+            projection.setOwnerDate(projection.getUpdatedAt().toLocalDate());
+        }
         return projection;
     }
 

@@ -76,21 +76,24 @@ public class AiCaseProjectionRepository implements CaseProjectionRepository {
     }
 
     /**
-     * 行锁下比较内容指纹与事实时间：不存在则插入，指纹相同或快照更旧都不覆盖。
+     * 行锁下比较归属日、内容指纹与事实时间。
      *
-     * <p>时间比较不是为了防上游乱序（数仓按批次顺序发布），而是为了防 Pub/Sub at-least-once 造成的**重投乱序**： 先发的旧快照处理失败被
-     * nack、后发的新快照先落库，旧消息重试回来时 `eventId` 去重帮不上忙（它从未成功处理过）， 只比指纹就会把旧数据盖回去。只拒绝**严格更早**的 {@code
-     * updatedAt}，因此等时刻的每日快照刷新不受影响； {@code updatedAt} 来自 payload 的 {@code occurredAt}，缺失即在接入侧
-     * poison，故此处可信。
+     * <p>{@code date(occurredAt)} 早于已落库 {@code owner_date} 则拒绝。指纹相同仍刷新归属日。
      */
     private boolean upsert(CaseProjection projection) {
         CaseProjection current = projectionMapper.selectProjectionForUpdate(projection.getCaseId());
         if (current == null) {
             return projectionMapper.insert(projection) == 1;
         }
+        if (projection.getOwnerDate() != null
+                && current.getOwnerDate() != null
+                && projection.getOwnerDate().isBefore(current.getOwnerDate())) {
+            return false;
+        }
         if (current.getCaseVersion() != null
                 && current.getCaseVersion().equals(projection.getCaseVersion())) {
-            return false;
+            return projectionMapper.updateOwnerDate(projection) == 1
+                    || ownerDateUnchanged(current, projection);
         }
         if (projection.getUpdatedAt() != null
                 && current.getUpdatedAt() != null
@@ -98,6 +101,11 @@ public class AiCaseProjectionRepository implements CaseProjectionRepository {
             return false;
         }
         return projectionMapper.updateIfChanged(projection) == 1;
+    }
+
+    private static boolean ownerDateUnchanged(CaseProjection current, CaseProjection incoming) {
+        return current.getOwnerDate() != null
+                && current.getOwnerDate().equals(incoming.getOwnerDate());
     }
 
     private AiCollectionInboxRow row(

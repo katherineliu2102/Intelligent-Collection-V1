@@ -59,11 +59,11 @@
 │                          数据接入层 (collection-ingestion)                        │
 │                                                                                  │
 │  ┌─ 案件 PubSub ────────────────────────────────────────────────────────────┐   │
-│  │  caseEvent      → 写投影 → CASE_INGESTED（仅首次入催；后续周期不发事件）   │   │
+│  │  caseEvent      → 写投影与 owner_date（不建计划）                          │   │
 │  │  repaymentEvent → 写投影 → REPAYMENT_RECEIVED / CASE_BALANCE_UPDATED    │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
-│  ┌─ DPD 日切（只读 t_ai_collection）─────────────────────────────────────────┐   │
-│  │  STAGE_CHANGED / CASE_CEASED                                              │   │
+│  ┌─ dailyRoll：① owner 对账 ② DPD 日切（只读 t_ai_collection）─────────────┐   │
+│  │  CASE_OWNER_RECONCILED / CASE_INGESTED；STAGE_CHANGED / CASE_CEASED     │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  接入发布上述 5 类领域事件。context_snapshot 由引擎建计划时冻结。                  │
 └───────────────────┬──────────────────────────────────────────────────────────────┘

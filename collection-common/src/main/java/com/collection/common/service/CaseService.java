@@ -33,4 +33,17 @@ public interface CaseService {
     default List<Long> findActiveCaseIdsAfter(Long lastCaseId, int limit) {
         return Collections.emptyList();
     }
+
+    /** 当日 PHT owner 对账水位是否已写入。Mock 默认 true，避免既有单测被门控打断。 */
+    default boolean isOwnerReconciledToday() {
+        return true;
+    }
+
+    /**
+     * 是否强制校验 {@link com.collection.common.model.CaseInfo#getOwnerDate()}。生产 AI 投影为 true；Mock 为
+     * false（ownerDate 为空仍可执行）。
+     */
+    default boolean requiresOwnerDate() {
+        return false;
+    }
 }

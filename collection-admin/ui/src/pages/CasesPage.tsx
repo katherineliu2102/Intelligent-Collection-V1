@@ -1,4 +1,4 @@
-import { Button, Card, Form, Input, Space, Spin, Table, Tag, Typography, message } from "antd";
+import { Button, Card, Descriptions, Form, Input, Space, Spin, Table, Tag, Typography, message } from "antd";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 
@@ -61,16 +61,21 @@ function PlanSteps({ planId }: { planId: number }) {
 
 function CaseDetail({ caseId, userId }: { caseId: number; userId?: number }) {
   const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState<any>(null);
   const [plans, setPlans] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<any[]>([]);
 
   useEffect(() => {
     let alive = true;
-    const tasks: Promise<any>[] = [api.planHistoryByCase(caseId, 10)];
-    tasks.push(userId != null ? api.timelineByUser(userId, 50) : Promise.resolve([]));
+    const tasks: Promise<any>[] = [
+      api.getCase(caseId),
+      api.planHistoryByCase(caseId, 10),
+      userId != null ? api.timelineByUser(userId, 50) : Promise.resolve([])
+    ];
     Promise.all(tasks)
-      .then(([p, t]) => {
+      .then(([s, p, t]) => {
         if (!alive) return;
+        setSummary(s?.data || null);
         setPlans((p as any[]) || []);
         setTimeline((t as any[]) || []);
       })
@@ -89,6 +94,28 @@ function CaseDetail({ caseId, userId }: { caseId: number; userId?: number }) {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size={12}>
+      <Typography.Text strong>Case summary</Typography.Text>
+      <Descriptions size="small" bordered column={3}>
+        <Descriptions.Item label="Stage">{summary?.stage ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="DPD">{summary?.dpd ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Product">{summary?.product ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Collection Status">
+          {summary?.collectionStatus ?? "—"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Owner Date">{summary?.ownerDate ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Last Cancel">
+          {summary?.lastCancelReason ?? "—"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Due Date">{summary?.dueDate ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Overdue">{summary?.overdueAmount ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Upcoming">{summary?.upcomingAmount ?? "—"}</Descriptions.Item>
+        <Descriptions.Item label="Outstanding">
+          {summary?.totalOutstanding ?? "—"}
+        </Descriptions.Item>
+        <Descriptions.Item label="Frozen">{summary?.frozen ? "Y" : "N"}</Descriptions.Item>
+        <Descriptions.Item label="Plan Status">{summary?.planStatus ?? "—"}</Descriptions.Item>
+      </Descriptions>
+
       <Typography.Text strong>Plans (incl. completed) — expand for steps</Typography.Text>
       <Table
         rowKey="id"
@@ -195,7 +222,9 @@ export function CasesPage() {
             { title: "DPD", dataIndex: "dpd" },
             { title: "Collection Status", dataIndex: "collectionStatus" },
             { title: "Product", dataIndex: "product" },
+            { title: "Owner Date", dataIndex: "ownerDate", width: 120 },
             { title: "Plan Status", dataIndex: "planStatus" },
+            { title: "Last Cancel", dataIndex: "lastCancelReason", width: 160 },
             { title: "Frozen", dataIndex: "frozen", render: (v) => (v ? "Y" : "N") },
             { title: "Phone", dataIndex: "phone" },
             { title: "Email", dataIndex: "email" }

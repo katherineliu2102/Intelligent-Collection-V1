@@ -43,6 +43,9 @@ export const api = {
     });
     return request(`/cases/search?${query.toString()}`);
   },
+  getCase(caseId: string | number) {
+    return request(`/cases/${caseId}`);
+  },
   listOps(params: Record<string, string | number>) {
     const query = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => query.set(k, String(v)));

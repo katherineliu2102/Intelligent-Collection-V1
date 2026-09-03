@@ -10,6 +10,7 @@ import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.service.CaseService;
 import com.collection.ingestion.IngestionService;
 import com.collection.ingestion.config.IngestionProperties;
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 import javax.annotation.Resource;
@@ -58,12 +59,18 @@ public class DpdStageRollHandler {
     @Autowired(required = false)
     private RedisDailyRollDeduplicator dailyRollDeduplicator;
 
+    @Autowired(required = false)
+    private OwnerReconcileHandler ownerReconcileHandler;
+
     /**
      * 供调度入口（生产：Cloud Scheduler → Pub/Sub 调度订阅；本地：{@code POST /mock/daily-roll}）调用。
      *
      * @return 本次处理的 loan_id 条数（供调度指标记录）；跳过时为 0
      */
     public int dailyRoll() {
+        if (ownerReconcileHandler != null && !ownerReconcileHandler.completedToday()) {
+            return ownerReconcileHandler.advance();
+        }
         List<Long> whitelist = props.getLoanIdWhitelist();
         if (whitelist == null || whitelist.isEmpty()) {
             return dailyRollFullScan();
@@ -123,6 +130,12 @@ public class DpdStageRollHandler {
         CaseInfo info = caseService.getCaseInfo(loanId);
         if (info == null || info.isRepaid()) {
             return; // 无案 / 已结清：不在催，跳过（结清由还款事件取消计划）
+        }
+        if (caseService.requiresOwnerDate()) {
+            LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Manila"));
+            if (info.getOwnerDate() == null || !today.equals(info.getOwnerDate())) {
+                return;
+            }
         }
         int dpd = info.getDpd();
         Stage newStage = info.getStage(); // 投影 stage 列（数仓口径），仅在该列为空时才退回 Stage.fromDpd

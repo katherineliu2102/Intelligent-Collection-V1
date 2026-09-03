@@ -1,6 +1,6 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.4  
+> **版本**: v1.4.3  
 > **日期**: 2026-09-01  
 > **状态**: ✅ 已确定（设计基线）；未开工项见正文 ⏳ / ❓。实现进度见 HANDOFF 与测试文档。  
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
@@ -52,7 +52,7 @@ Intelligent-Collection-V1 将催收系统重构为事件驱动、SPI 解耦的�
 
 当前 Phase 1 策略配置主路径仍是 **Nacos + Git 文档 + 代码发布**（详见 [策略迭代手册 §1](./channel/MOCASA催收系统升级_Phase1_策略迭代与测试操作手册.md#1-phase-1-策略配置在哪里)），后台已有 React SPA（`collection-admin/ui`，菜单：看板 / 策略 / 模板 / 案件监控 / 异常队列 / 合规 / 系统）与对应 REST。`catalog.html`、`orchestration.html` 仅作开发观测页，不再是唯一入口。
 
-案件检索读源已切到 `t_ai_collection`，与入案主路径一致。仍未闭合的是单案视图：不展示投影摘要与 AI Call 回调细节（`GET /cases/{caseId}` 待建）。该缺口列为 Phase 1 必补，而不是另起一套后台。AI Call 观测（看板分区、360 外呼、钉钉 CRITICAL、`t_ai_call_session`）以本文为唯一设计 SSOT，实现落地后同步回写操作手册。小团队以超级管理员日常运营，审计留痕优先于权限管制；Pilot 主链路距可运营系统的缺口见 [§13](#13-差距地图离成熟稳定完整的催收作业系统还差什么)。版本编年见文末修订记录。
+案件检索读源已切到 `t_ai_collection`，与入案主路径一致。单案摘要已由 `GET /cases/{caseId}` 提供投影字段（含 `ownerDate` 与最近取消原因）；仍未闭合的是 AI Call 回调细节与录音/转写代理。AI Call 观测（看板分区、360 外呼、钉钉 CRITICAL、`t_ai_call_session`）以本文为唯一设计 SSOT，实现落地后同步回写操作手册。小团队以超级管理员日常运营，审计留痕优先于权限管制；Pilot 主链路距可运营系统的缺口见 [§13](#13-差距地图离成熟稳定完整的催收作业系统还差什么)。版本编年见文末修订记录。
 
 PRD 场景 B 定义了策略配置员的核心闭环：
 
@@ -451,7 +451,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | Email | **脱敏** | 默认脱敏 | `borrower_email` |
 | 姓名 | **不展示** | 默认不展示；客诉排查可按角色点开展示 | `borrower_name` 仅存投影，不进列表 |
 
-现码已按上表实现：读 `t_ai_collection`，电话/邮箱脱敏，`borrower_name` 不进查询。检索条件支持 `caseId`/`userId`/`stage`/`collectionStatus`/`planStatus`/`frozen`；`stage` 与 `collectionStatus` 取自投影表，`planStatus` 取自该案**最新一条** `t_contact_plan`（一案多条历史计划时列表状态才稳定）。
+现码已按上表实现：读 `t_ai_collection`，电话/邮箱脱敏，`borrower_name` 不进查询。检索条件支持 `caseId`/`userId`/`stage`/`collectionStatus`/`planStatus`/`frozen`；`stage` 与 `collectionStatus` 取自投影表，`planStatus` 取自该案**最新一条** `t_contact_plan`（一案多条历史计划时列表状态才稳定）。单案摘要见 [§5.3.2](#532-单案-360-视图) `GET /cases/{caseId}`。
 
 #### 5.3.2 单案 360° 视图
 
@@ -459,7 +459,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 | 区块 | 内容 | API |
 |------|------|-----|
-| 案件摘要 | Stage、DPD、产品、`collectionStatus`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（v1.3 本批补建，读 `t_ai_collection`） |
+| 案件摘要 | Stage、DPD、产品、`collectionStatus`、`ownerDate`、最近 `cancel_reason`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（读 `t_ai_collection`；迁出为 `ROUTED_TO_LEGACY`） |
 | 计划（含终态） | plan 状态、步骤序列、各 step 状态 | `/plans/by-case/{caseId}/history`、`/plans/{planId}/steps` |
 | 触达时间线 | 全渠道：channel、result、`providerMsgId`、scriptSlot、时间 | `/plans/timeline/{userId}` |
 | AI Call 会话明细 | 三层布尔、SIP、`line_reason`、`result`、`wave_key`、`caller_cli`、stage/dpd 快照、`needs_review`、synthetic、时长占位 | `t_ai_call_session`（v1.3，按 `case_id` 读） |
@@ -772,13 +772,13 @@ Phase 1 为**单实例部署**（部署拓扑见 [架构文档 §3](./MOCASA催�
 |------------|------|------|
 | `CatalogController` | 策略/模板只读目录 | ✅ 已有 |
 | `PlanQueryController` | 计划/时间线查询 | ✅ 已有 |
-| `CaseQueryController` | 案件检索 | ✅ 已切读 `t_ai_collection`（2026-08-25，§5.3.1） |
+| `CaseQueryController` | 案件检索 + 单案摘要 `GET /cases/{caseId}` | ✅ 检索读 `t_ai_collection`；摘要含 `ownerDate` / 最近 `cancel_reason` |
 | `MockTriggerController` | 测试触发 | ✅ 已有（dev） |
 | `ConfigController` | 配置 CRUD + 热加载 | ✅ 已有 |
 | `OpsQueueController` | 异常队列查询与处理 | ✅ 已有 |
 | `DashboardController` | 看板聚合 API | ✅ 已有（热层 timeline）；v1.3 增 `/dashboard/aicall/realtime` |
 | `ComplianceOpsController` | 冻结/解冻/升级 | ✅ 已有 |
-| `CaseDetailController` | 单案摘要 `GET /cases/{caseId}` | ⚠️ v1.3 本批补建（读 `t_ai_collection`） |
+| `CaseDetailController` | 单案摘要 `GET /cases/{caseId}` | ✅ 并入 `CaseQueryController`（2026-09-03） |
 | `AiCallMediaController` | 录音/转写代理 | ⚠️ v1.3 本批补建（`/ops/ai-calls/{sessionId}/transcript|recording`） |
 | `FacadeWebhookService` | Facade 回调入站 | ✅ 已有；v1.3 起**双写** `t_ai_call_session` 并经其接入案件 360 |
 
@@ -1035,7 +1035,7 @@ gantt
 | 资产 | 路径 | 说明 |
 |------|------|------|
 | React SPA | `collection-admin/ui` | 现行门户（5173） |
-| CaseQueryController | `collection-admin/.../CaseQueryController.java` | 案件检索；v1.2 须改投影表 |
+| CaseQueryController | `collection-admin/.../CaseQueryController.java` | 案件检索与单案摘要；读 `t_ai_collection` |
 | PlanQueryController | `collection-admin/.../PlanQueryController.java` | 计划/时间线查询 |
 | DashboardController | `collection-admin/.../DashboardController.java` | 热层触达看板 |
 | FacadeWebhookService | `collection-admin/.../web/facade/` | AI Call 回调入站 |
@@ -1045,6 +1045,7 @@ gantt
 ---
 
 > **修订历史**  
+> - v1.4.3 · 2026-09-03 · 单案摘要 `GET /cases/{caseId}` 并入 `CaseQueryController`；展示 `ownerDate` 与最近 `cancel_reason`  
 > - v1.4.2 · 2026-09-01 · 单篇标准：文首状态与 PRD §9 锚点；§1.1 编年移入本记录；§12 只留开放项。已关闭：Q3 钉钉 CRITICAL；Q6 React + Ant Design；Q8 案件检索切 `t_ai_collection`；Q9 触达窗与 PRD §7.2 一致（08:00–21:00 PHT）  
 > - v1.4.1 · 2026-09-01 · 对齐系统层口径：架构补 §1.7；成功标准与 §13 区分「已写入设计」与「已上线」；配置免发版改为与操作手册一致（话术/计划模板已热更新，策略/合规/渠道仍 Nacos）  
 > - v1.4 · 2026-08-31 · 小团队角色模式与差距地图：§3 新增超级管理员（日常以超管为主，审计留痕优先于权限管制，超管为配置零开发）；新增 §13 三层差距地图（主链路稳定性可见性 / 可运营载体 / Phase 2+ 设计位）；核对 PRD §7.2 后修正 v1.2 触达窗误引（引擎与 PRD 一致，Q9 关闭）；§7.2 API 表刷新（CaseQuery 已切投影、FacadeWebhook 双写、v1.3 待建 Controller 显式列出）  

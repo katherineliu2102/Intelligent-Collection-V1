@@ -31,4 +31,14 @@ class IngestionServiceTest {
         assertDoesNotThrow(() -> service.ingestCase(525441L, 2145521L, Stage.S1, fields));
         verify(eventBus).publish(org.mockito.ArgumentMatchers.any());
     }
+
+    @Test
+    void routedToLegacy_publishesOwnerReconciledLeave() {
+        IngestionService service = new IngestionService();
+        CollectionEventBus eventBus = mock(CollectionEventBus.class);
+        ReflectionTestUtils.setField(service, "eventBus", eventBus);
+
+        assertDoesNotThrow(() -> service.routedToLegacy(525441L, 2145521L));
+        verify(eventBus).publish(org.mockito.ArgumentMatchers.any());
+    }
 }

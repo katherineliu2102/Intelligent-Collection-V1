@@ -26,21 +26,39 @@ public class InMemoryCaseProjectionRepository implements CaseProjectionRepositor
             return pendingPublish ? Outcome.PENDING_PUBLISH : Outcome.ALREADY_PROCESSED;
         }
         CaseProjection projection = command.getProjection();
-        String current = versions.get(projection.getCaseId());
-        boolean applied =
-                current == null
-                        || (!current.equals(projection.getCaseVersion())
-                                && !isOlderThanStored(projection));
-        if (applied) {
-            versions.put(projection.getCaseId(), projection.getCaseVersion());
-            projections.put(projection.getCaseId(), projection);
-        }
+        CaseProjection stored = projections.get(projection.getCaseId());
+        boolean applied = applySnapshot(stored, projection);
         boolean awaitingPublish = applied && command.isPublishRequired();
         inbox.put(command.getEventId(), awaitingPublish);
         if (!applied) {
             return Outcome.STALE_VERSION;
         }
         return command.isPublishRequired() ? Outcome.APPLIED : Outcome.APPLIED_WITHOUT_EVENT;
+    }
+
+    private boolean applySnapshot(CaseProjection stored, CaseProjection projection) {
+        if (stored == null) {
+            versions.put(projection.getCaseId(), projection.getCaseVersion());
+            projections.put(projection.getCaseId(), projection);
+            return true;
+        }
+        if (projection.getOwnerDate() != null
+                && stored.getOwnerDate() != null
+                && projection.getOwnerDate().isBefore(stored.getOwnerDate())) {
+            return false;
+        }
+        if (stored.getCaseVersion() != null
+                && stored.getCaseVersion().equals(projection.getCaseVersion())) {
+            stored.setOwner(projection.getOwner());
+            stored.setOwnerDate(projection.getOwnerDate());
+            return true;
+        }
+        if (isOlderThanStored(projection)) {
+            return false;
+        }
+        versions.put(projection.getCaseId(), projection.getCaseVersion());
+        projections.put(projection.getCaseId(), projection);
+        return true;
     }
 
     @Override

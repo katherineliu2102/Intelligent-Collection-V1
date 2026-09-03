@@ -18,6 +18,7 @@ import com.collection.service.mapper.AiCollectionInboxMapper;
 import com.collection.service.mapper.AiCollectionInboxRow;
 import com.collection.service.mapper.AiCollectionProjectionMapper;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -210,20 +211,44 @@ class AiCaseProjectionRepositoryTest {
     }
 
     @Test
-    @DisplayName("caseEvent 指纹相同 → 静默跳过，不覆盖也不发事件")
-    void identicalFingerprintIsSkipped() {
+    @DisplayName("caseEvent 指纹相同 → 仍刷新归属日，不覆盖业务列")
+    void identicalFingerprintStillRefreshesOwnerDate() {
+        CaseProjection stored = baseline(LocalDateTime.of(2026, 8, 13, 3, 0));
+        stored.setOwner("NEW");
+        stored.setOwnerDate(LocalDate.of(2026, 8, 13));
         when(inboxMapper.selectPublishStatus(anyString())).thenReturn(null);
-        when(projectionMapper.selectProjectionForUpdate(CASE_ID))
-                .thenReturn(baseline(LocalDateTime.of(2026, 8, 13, 3, 0)));
+        when(projectionMapper.selectProjectionForUpdate(CASE_ID)).thenReturn(stored);
+        when(projectionMapper.updateOwnerDate(any())).thenReturn(1);
 
-        Outcome outcome =
-                repository.apply(
-                        caseCommand(
-                                "case-same",
-                                snapshot("fingerprint-12", LocalDateTime.of(2026, 8, 14, 3, 0))));
+        CaseProjection incoming = snapshot("fingerprint-12", LocalDateTime.of(2026, 8, 14, 3, 0));
+        incoming.setOwner("NEW");
+        incoming.setOwnerDate(LocalDate.of(2026, 8, 14));
+        CaseProjectionCommand command = caseCommand("case-same", incoming);
+        command.setPublishRequired(false);
+
+        Outcome outcome = repository.apply(command);
+
+        assertThat(outcome).isEqualTo(Outcome.APPLIED_WITHOUT_EVENT);
+        verify(projectionMapper).updateOwnerDate(any());
+        verify(projectionMapper, never()).updateIfChanged(any());
+    }
+
+    @Test
+    @DisplayName("caseEvent 归属日早于已落库 → 拒绝，不覆盖")
+    void olderOwnerDateIsRejected() {
+        CaseProjection stored = baseline(LocalDateTime.of(2026, 8, 14, 3, 0));
+        stored.setOwnerDate(LocalDate.of(2026, 8, 14));
+        when(inboxMapper.selectPublishStatus(anyString())).thenReturn(null);
+        when(projectionMapper.selectProjectionForUpdate(CASE_ID)).thenReturn(stored);
+
+        CaseProjection incoming = snapshot("fingerprint-13", LocalDateTime.of(2026, 8, 13, 3, 0));
+        incoming.setOwnerDate(LocalDate.of(2026, 8, 13));
+
+        Outcome outcome = repository.apply(caseCommand("case-older-owner", incoming));
 
         assertThat(outcome).isEqualTo(Outcome.STALE_VERSION);
         verify(projectionMapper, never()).updateIfChanged(any());
+        verify(projectionMapper, never()).updateOwnerDate(any());
     }
 
     @Test

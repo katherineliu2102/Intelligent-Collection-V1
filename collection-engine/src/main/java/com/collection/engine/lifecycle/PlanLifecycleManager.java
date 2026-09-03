@@ -83,6 +83,10 @@ public class PlanLifecycleManager {
             CaseInfo info = caseInfo != null ? caseInfo : caseService.getCaseInfo(caseId);
             stage = info != null ? info.getStage() : null;
         }
+        if (ownerDateBlocksCreate(caseId, caseInfo)) {
+            log.info("[ingest] caseId={} owner_date 不是当日，跳过建计划", caseId);
+            return noEvents();
+        }
         createPlanForStage(caseId, stage, caseInfo, snapshot, null);
         return noEvents();
     }
@@ -90,6 +94,10 @@ public class PlanLifecycleManager {
     @Transactional
     public List<CollectionEvent> onStageChanged(CollectionEvent event) {
         Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        if (ownerGateBlocksMutation(caseId)) {
+            log.info("[stageChanged] caseId={} owner 门控未过，跳过", caseId);
+            return noEvents();
+        }
         Stage newStage = parseStage(event.getString(CollectionEvent.STAGE));
 
         List<ContactPlan> oldPlans = planRepository.findActivePlansByCase(caseId);
@@ -145,6 +153,22 @@ public class PlanLifecycleManager {
             }
             cancelPlan(locked, CancelReason.CEASED);
             log.info("[caseCeased] cancelled plan {} (CEASED)", locked.getId());
+        }
+        return noEvents();
+    }
+
+    @Transactional
+    public List<CollectionEvent> onCaseOwnerReconciled(CollectionEvent event) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
+        plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
+        for (ContactPlan p : plans) {
+            ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+            if (locked == null || locked.isTerminal()) {
+                continue;
+            }
+            cancelPlan(locked, CancelReason.ROUTED_TO_LEGACY);
+            log.info("[ownerReconciled] cancelled plan {} (ROUTED_TO_LEGACY)", locked.getId());
         }
         return noEvents();
     }
@@ -248,6 +272,12 @@ public class PlanLifecycleManager {
                     "[stepDue] duplicate due for terminal step {} ({}), skip",
                     stepId,
                     step.getStatus());
+            return StepDuePreparation.noop();
+        }
+        if (ownerGateBlocksMutation(plan.getCaseId())
+                && (plan.getStatus() == PlanStatus.PENDING
+                        || plan.getStatus() == PlanStatus.STEP_SCHEDULED)) {
+            log.info("[stepDue] plan {} owner 门控未过，跳过到期执行", planId);
             return StepDuePreparation.noop();
         }
 
@@ -410,6 +440,10 @@ public class PlanLifecycleManager {
         if (plan == null || step == null) {
             return noEvents();
         }
+        if (ownerGateBlocksMutation(plan.getCaseId())) {
+            log.info("[callbackTimeout] plan {} owner 门控未过，跳过超时收敛", planId);
+            return noEvents();
+        }
         if (!stepOutcomeRecorder.recordTerminal(
                 plan,
                 step,
@@ -440,6 +474,10 @@ public class PlanLifecycleManager {
         Long planId = event.getLong(CollectionEvent.PLAN_ID);
         ContactPlan plan = planRepository.findPlanWithLock(planId);
         if (plan == null || plan.isTerminal()) {
+            return noEvents();
+        }
+        if (ownerGateBlocksMutation(plan.getCaseId())) {
+            log.info("[exhausted] plan {} owner 门控未过，跳过续建", planId);
             return noEvents();
         }
         // 续建沿用旧计划已冻结快照（非外部案件事件，无新 payload）；
@@ -655,6 +693,34 @@ public class PlanLifecycleManager {
         return true;
     }
 
+    private boolean ownerDateBlocksCreate(Long caseId, CaseInfo payloadInfo) {
+        if (!caseService.requiresOwnerDate()) {
+            return false;
+        }
+        CaseInfo info = payloadInfo;
+        if (info == null || info.getOwnerDate() == null) {
+            info = caseService.getCaseInfo(caseId);
+        }
+        return !ownerDateIsToday(info);
+    }
+
+    private boolean ownerGateBlocksMutation(Long caseId) {
+        if (!caseService.requiresOwnerDate()) {
+            return false;
+        }
+        if (!caseService.isOwnerReconciledToday()) {
+            return true;
+        }
+        return !ownerDateIsToday(caseService.getCaseInfo(caseId));
+    }
+
+    private boolean ownerDateIsToday(CaseInfo info) {
+        if (info == null || info.getOwnerDate() == null) {
+            return false;
+        }
+        return LocalDate.now(PHT).equals(info.getOwnerDate());
+    }
+
     private void cancelPlan(ContactPlan locked, CancelReason reason) {
         planRepository.updatePlanStatus(locked.getId(), PlanStatus.PLAN_CANCELLED, reason);
         int closed = planRepository.skipOpenSteps(locked.getId(), ContactResult.SKIPPED);
@@ -781,9 +847,7 @@ public class PlanLifecycleManager {
         return "CEASED".equalsIgnoreCase(caseInfo.getCaseStatus());
     }
 
-    /**
-     * 仍在催收窗口：缺快照时偏向穷尽（避免安静停催）。仅 CEASED / SETTLED / 结清视为已离开催收。
-     */
+    /** 仍在催收窗口：缺快照时偏向穷尽（避免安静停催）。仅 CEASED / SETTLED / 结清视为已离开催收。 */
     private boolean stillInCollection(ContactPlan plan) {
         ContextSnapshot snap = snapshotFromPlan(plan);
         if (snap != null && snap.getCaseContext() != null) {
@@ -799,7 +863,8 @@ public class PlanLifecycleManager {
 
     /** REBUILD 首步不得早于次日 08:00 PHT；Factory 已排更晚则保留。 */
     private void clampFirstStepToNextPhtMorning(ContactPlanStep first) {
-        LocalDateTime floor = LocalDate.now(PHT).plusDays(1).atTime(COLLECTION_WINDOW_START_HOUR, 0);
+        LocalDateTime floor =
+                LocalDate.now(PHT).plusDays(1).atTime(COLLECTION_WINDOW_START_HOUR, 0);
         if (first.getTriggerTime() == null || first.getTriggerTime().isBefore(floor)) {
             first.setTriggerTime(floor);
         }

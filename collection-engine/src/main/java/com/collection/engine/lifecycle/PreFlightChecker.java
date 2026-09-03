@@ -35,6 +35,19 @@ public class PreFlightChecker {
             log.info("[PreFlight] caseId={} not found, skip", caseId);
             return PreFlightResult.blocked(CancelReason.CASE_NOT_FOUND, null);
         }
+        if (caseService.requiresOwnerDate()) {
+            java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Manila"));
+            if (!caseService.isOwnerReconciledToday()
+                    || info.getOwnerDate() == null
+                    || !today.equals(info.getOwnerDate())) {
+                log.info(
+                        "[PreFlight] caseId={} owner gated reconciled={} ownerDate={}",
+                        caseId,
+                        caseService.isOwnerReconciledToday(),
+                        info.getOwnerDate());
+                return PreFlightResult.gated(info);
+            }
+        }
         if (info.isRepaid()) {
             log.info("[PreFlight] caseId={} already repaid, skip", caseId);
             return PreFlightResult.blocked(CancelReason.REPAID, info);

@@ -1,6 +1,6 @@
 # Phase 1 数仓 Pub/Sub 交付契约
 
-> **版本**: Phase 1 · 菲律宾市场 · 2026-09-01  
+> **版本**: Phase 1 · 菲律宾市场 · 2026-09-03  
 > **状态**: ✅ 已确定（数仓对外消息 SSOT）  
 > **读者**: 数仓 / Publisher 开发、运维、新催收接入  
 > **本文是数仓对外唯一 SSOT**（由原「对齐清单」与「Pub/Sub 交付说明」合并）。接入消费、ACK、日切实现 → [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)；调度 Topic 部署 → [基础设施 §5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#5-定时调度cloud-scheduler--pubsub--应用订阅)。
@@ -15,6 +15,7 @@
 - [2. 计算口径与事件契约](#2-计算口径与事件契约)
   - [2.1 两类事实事件](#21-两类事实事件)
   - [2.2 消息字段](#22-消息字段)
+    - [完整字段清单](#完整字段清单)
   - [2.3 消息样例](#23-消息样例)
 - [3. 发布可靠性](#3-发布可靠性)
   - [3.1 eventId](#31-eventid)
@@ -41,10 +42,10 @@
 | 环节 | 功能 |
 | --- | --- |
 | 数仓加工 | 计算案件完整快照和还款增量 |
-| 数仓 Publisher | 每日发布完整 `caseEvent`；成功还款发布增量 `repaymentEvent`；不发布阶段变更或停催事件 |
-| 接入校验与去重 | 校验字段；隔离毒丸；跳过重复 `eventId` 或相同 `caseVersion` 快照 |
-| 接入投影写入 | 同事务写 `t_ai_collection_inbox`，并更新 `t_ai_collection` |
-| 内部事件驱动 | 事务提交后发布内部事件；首次入催建计划，已有周期仅刷新投影 |
+| 数仓 Publisher | 每日只向新系统发布当天 `owner=NEW` 的完整 `caseEvent`；成功还款只对当日 NEW 名单发增量 `repaymentEvent`；不发布阶段变更或停催事件 |
+| 接入校验与去重 | 校验字段；隔离毒丸；跳过重复 `eventId`；相同 `caseVersion` 仍须刷新归属日 |
+| 接入投影写入 | 同事务写 `t_ai_collection_inbox`，并更新 `t_ai_collection`（含 `owner` / `owner_date`） |
+| 内部事件驱动 | 事务提交后：还款增量可发内部事件；`caseEvent` **不**在到达时建计划，等 03:35 owner 对账 |
 
 数仓**不得直连**业务库写 `t_ai_collection`。
 
@@ -52,8 +53,8 @@
 
 | 任务 | 时区 | 频率 | 输出 | 关键约束 |
 | --- | --- | --- | --- | --- |
-| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 每案一条 `caseEvent/CASE_INGESTED` | `dpd >= -3` 逐条完整快照；`caseVersion` 为内容指纹（[§3.2](#32-caseversion)）；走 [§1.2](#12-gcp-资源) 案件 Topic；已有周期由接入层按指纹决定刷新或略过 |
-| 还款扫描 | `Asia/Manila` | 每 15 分钟 | 每案一条 `repaymentEvent/REPAYMENT` | 仅成功正向还款的**增量**；账务结清状态落库后至少等待 **360 秒**；同样走案件 Topic |
+| 每日案件快照 | `Asia/Manila` | 每日，**03:00 PHT 前发完** | 当天 `owner=NEW` 的每案**一条**完整 `caseEvent` | 同一 `caseId` 每个 PHT 自然日只发一条（重试/重放复用原 `eventId`）；只发新系统负责的在催案；`owner` 固定 `NEW`；`occurredAt` 的 PHT 日历日 = 本次归属日；`caseVersion` 为内容指纹且**不含** `owner`（[§3.2](#32-caseversion)）；指纹未变也必须再发，供接入刷新归属日 |
+| 还款扫描 | `Asia/Manila` | 每 15 分钟 | 当日 NEW 名单内每案一条 `repaymentEvent/REPAYMENT` | 仅成功正向还款的**增量**；账务结清状态落库后至少等待 **360 秒**；案件不在当日 NEW 名单则**不发**；同样走案件 Topic |
 
 每条消息独立 publish。消息体使用单案 `{dataType, data}` envelope；`data` 只承载一个案件或还款事实，不得包装多案。Publisher 可在单次任务中连续/并发发多条。
 
@@ -147,8 +148,8 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 
 | body `dataType` | `data.eventType` | 发布条件 |
 | --- | --- | --- |
-| `caseEvent` | 可省略；有值时仅允许 `CASE_INGESTED` | 每日完整快照（`dpd >= -3` 逐案） |
-| `repaymentEvent` | `REPAYMENT` | 成功正向还款增量，延迟 360 秒 |
+| `caseEvent` | 可省略；有值时仅允许 `CASE_INGESTED` | 当天 `owner=NEW` 的完整快照 |
+| `repaymentEvent` | `REPAYMENT` | 当日 NEW 名单内的成功正向还款增量，延迟 360 秒 |
 
 `caseEvent` 是完整案件快照，含身份、产品、DPD、stage、金额、下一期提醒和联系人设备信息。`repaymentEvent` 是增量：**不得**携带 `caseVersion`、`product`、`borrower`、`device` 或 `collectionStatus`；它必须携带还款后的 `dpd`、金额和下一期提醒字段，可兼容携带 `stage`。接入在已有投影上合并允许更新的运行态字段；`repaymentEvent.stage` 不解析、不校验、不持久化，也不触发阶段变更。阶段事件仍由日切独占产生。
 
@@ -157,6 +158,8 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 
 两类事件都有 body envelope。`caseEvent` 的 `data` 带完整快照；`repaymentEvent` 的 `data` 只带本次还款和可更新运行态的增量字段。`eventId` / `caseVersion` 见 [§3](#3-发布可靠性)。`t_ai_collection` 由接入层按消息写入，数仓不写该表。
 
+**现行字段集以本节「完整字段清单」+ 对照表为准**；冻结样例见 [§2.3](#23-消息样例) 与 [`contracts/caseEvent.sample.json`](./contracts/caseEvent.sample.json)。附录 A 不再另开字段表。
+
 #### Body envelope
 
 | 字段 | 必填 | 取值 |
@@ -164,53 +167,76 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `dataType` | 是 | `caseEvent` 或 `repaymentEvent`；用于路由 |
 | `data` | 是 | 单案业务 payload object；不得含多案数组 |
 
-#### `caseEvent` 字段
-`dataType=caseEvent`。每日对 `dpd >= -3` 逐案发一条；以下字段均位于 `data`。
+#### 完整字段清单
+<a id="完整字段清单"></a>
+<a id="22-完整字段清单"></a>
 
-| 消息字段 | `t_ai_collection` 列名 | 口径 |
+Publisher 组 `data` 只使用下表字段名。口径、列映射与别名见后续对照表。
+
+**`caseEvent.data`（2026-09-03）**
+
+| 必填 | 可选 | 禁止 |
 | --- | --- | --- |
-| `eventId` | — | publish 前 UUID；复用见 [§3.1](#31-eventid) |
-| `eventType` | — | 可省略；有值时固定 `CASE_INGESTED` |
-| `occurredAt` | `updated_at` | `yyyy-MM-dd HH:mm:ss`，按 `Asia/Manila` 解释 |
-| `caseId` | `case_id` | `loan_id`，可转 `Long`；非法进隔离/告警，不得静默跳过 |
-| `userId` | `user_id` | 用户标识 |
-| `caseVersion` | `case_version` | 内容指纹（hex 字符串）；公式见 [§3.2](#32-caseversion) |
-| `product` | `product` | `t_loan.product_id` 的数字字符串；`3`、`4` 表示 3 期产品 |
-| `dpd` | `dpd` | 见下方 [DPD 与 stage](#21-dpd-与阶段映射) |
-| `stage` | `stage` | 由 `dpd` 映射；`dpd >= 91` 可空 |
-| `collectionStatus` | — | 数仓展示字段；接入不依赖它，仍按 `dpd` / `isFullCleared` 派生落库状态 |
-| `overduePrincipal` | — | 已到期未结清本金；金额拆分对账字段 |
-| `overdueInterest` | — | 已到期未结清利息；金额拆分对账字段 |
-| `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，**已含罚息**；映射为对客 `totalOutstanding` |
-| `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息；映射为 `penaltyAmount` |
-| `upcomingAmount` | `upcoming_amount` | 仅三期产品、下一期 D-3～D0 的该期金额；只用于提醒 |
-| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 `yyyy-MM-dd`，不能替代历史 `dueDate` |
-| `borrower.name` | `borrower_name` | 借款人姓名 |
-| `borrower.phone` | `borrower_phone` | 可传菲律宾本地 10 位手机号；接入规范化为 E.164 |
-| `borrower.email` | `borrower_email` | 空不阻断案件，Email 渠道跳过 |
-| `borrower.language` | `borrower_language` | Phase 1 固定 `en` |
-| `device.pushToken` | `push_token` | 空则 Push→SMS |
-| — | `synced_at` | 接入层落库时间，数仓不写 |
+| `eventId`、`owner`（固定 `NEW`）、`occurredAt`、`caseId`、`userId`、`caseVersion`、`product`、`dpd`、`overdueAmount`、`overduePenaltyAmount`、`isFullCleared` | `eventType`、`stage`、`collectionStatus`、`overduePrincipal`、`overdueInterest`、`upcomingAmount`、`nextDueDate`、`dueDate`、`borrower.name` / `.phone` / `.email` / `.language`、`device.pushToken` | `repayTime`、`paidAmount`；不得发 `owner=LEGACY` |
+
+兼容别名（择一即可，不要当新字段重复语义）：`totalOutstanding` = `overdueAmount`；`penaltyAmount` = `overduePenaltyAmount`；`remainingAmount` 缺省等于 `overdueAmount`。缺 `owner` 时接入按 `NEW` 兼容；非 `NEW` 为毒丸。
+
+**`repaymentEvent.data`**
+
+| 必填 | 可选 | 禁止 |
+| --- | --- | --- |
+| `eventId`、`eventType`（`REPAYMENT`）、`occurredAt`、`caseId`、`userId`、`repayTime`、`paidAmount`、`dpd`、`overdueAmount`、`overduePenaltyAmount`、`isFullCleared` | `stage`（接入忽略）、`upcomingAmount`、`nextDueDate` | `caseVersion`、`product`、`borrower`、`device`、`collectionStatus`、`owner` |
+
+#### `caseEvent` 字段
+`dataType=caseEvent`。每日只对当天由新系统负责（`owner=NEW`）且 `dpd >= -3` 的案件逐发一条；未出现在该批次的在催案由旧系统负责，新系统不接收其 `caseEvent`。以下字段均位于 `data`。
+
+| 消息字段 | 必填 | `t_ai_collection` 列名 | 口径 |
+| --- | --- | --- | --- |
+| `eventId` | 是 | — | publish 前 UUID；复用见 [§3.1](#31-eventid) |
+| `eventType` | 否 | — | 可省略；有值时固定 `CASE_INGESTED` |
+| `owner` | 是 | `owner` | 发给新系统时固定 `NEW`。数仓是路由权威；新系统不重算、不覆盖。缺省接入按 `NEW`；非 `NEW` 毒丸 |
+| `occurredAt` | 是 | `updated_at`；`owner_date = date(occurredAt)` | `yyyy-MM-dd HH:mm:ss`，按 `Asia/Manila` 解释。**PHT 日历日 = 本次 NEW 归属日** |
+| `caseId` | 是 | `case_id` | `loan_id`，可转 `Long`；非法进隔离/告警，不得静默跳过 |
+| `userId` | 是 | `user_id` | 用户标识 |
+| `caseVersion` | 是 | `case_version` | 内容指纹（hex 字符串）；公式见 [§3.2](#32-caseversion)；**不纳入** `owner` |
+| `product` | 是 | `product` | `t_loan.product_id` 的数字字符串；`3`、`4` 表示 3 期产品 |
+| `dpd` | 是 | `dpd` | 见下方 [DPD 与 stage](#21-dpd-与阶段映射) |
+| `stage` | 否 | `stage` | 由 `dpd` 映射；`dpd >= 91` 可空 |
+| `collectionStatus` | 否 | — | 数仓展示字段；接入不依赖它，仍按 `dpd` / `isFullCleared` 派生落库状态 |
+| `overduePrincipal` | 否 | — | 已到期未结清本金；金额拆分对账字段 |
+| `overdueInterest` | 否 | — | 已到期未结清利息；金额拆分对账字段 |
+| `overdueAmount` | 是 | `overdue_amount`、`total_outstanding` | 已到期未结清金额，**已含罚息**；映射为对客 `totalOutstanding` |
+| `overduePenaltyAmount` | 是 | `penalty_amount` | 已到期未结清罚息；映射为 `penaltyAmount` |
+| `isFullCleared` | 是 | `collection_status`（派生） | loan 级全部结清为 `true`。缺省时接入按未结清派生（兼容旧消息），数仓仍须下发 |
+| `upcomingAmount` | 否 | `upcoming_amount` | 仅三期产品、下一期 D-3～D0 的该期金额；只用于提醒 |
+| `nextDueDate` | 否 | `next_due_date` | `0` 或 `null` 表示无下一期提醒；其他值为 `yyyy-MM-dd`，不能替代历史 `dueDate` |
+| `dueDate` | 否 | `due_date` | 历史到期日锚点，`yyyy-MM-dd`。缺则接入用 `occurredAt` 日历日减 `dpd` 反推排期；有则以上游为准 |
+| `borrower.name` | 否 | `borrower_name` | 借款人姓名 |
+| `borrower.phone` | 否 | `borrower_phone` | 可传菲律宾本地 10 位手机号；接入规范化为 E.164 |
+| `borrower.email` | 否 | `borrower_email` | 空不阻断案件，Email 渠道跳过 |
+| `borrower.language` | 否 | `borrower_language` | Phase 1 固定 `en` |
+| `device.pushToken` | 否 | `push_token` | 空则 Push→SMS |
+| — | — | `synced_at` | 接入层落库时间，数仓不写 |
 
 #### `repaymentEvent` 字段
-`dataType=repaymentEvent`，`data.eventType=REPAYMENT`。仅成功正向还款；这是**增量 payload**，不得复制 `caseEvent` 快照字段。
+`dataType=repaymentEvent`，`data.eventType=REPAYMENT`。仅成功正向还款；这是**增量 payload**，不得复制 `caseEvent` 快照字段。只对**当日 NEW 名单**内的案件发布；昨日 NEW、当日未再出现的案件停发，迁出后再入时由下一次完整 `caseEvent` 补齐金额与结清标志。`occurredAt` 是还款时刻，**不得**当作 owner 归属日。
 
-| 消息字段 | `t_ai_collection` 列名 | 口径 |
-| --- | --- | --- |
-| `eventId` | — | 本次还款事实的 UUID；重试/重投复用 |
-| `eventType` | — | 固定 `REPAYMENT` |
-| `occurredAt` | `updated_at` | ISO-8601，带 `+08:00`；兼容 `yyyy-MM-dd HH:mm:ss`（按 `Asia/Manila`）；接入拒绝较早增量覆盖新投影 |
-| `caseId` | `case_id` | 关联已存在的完整 `caseEvent` 投影 |
-| `userId` | `user_id` | 用户标识 |
-| `repayTime` | — | 还款发生时间，ISO-8601，带 `+08:00` |
-| `paidAmount` | — | 本笔成功还款金额 |
-| `dpd` | `dpd` | 还款后的最大逾期天数 |
-| `stage` | — | 可兼容携带的上游字段；接入忽略，不解析、校验或持久化，D+91 可空 |
-| `overdueAmount` | `overdue_amount`、`total_outstanding` | 已到期未结清金额，已含罚息 |
-| `overduePenaltyAmount` | `penalty_amount` | 已到期未结清罚息，包含在 `overdueAmount` 内 |
-| `upcomingAmount` | `upcoming_amount` | 三期产品下一期 D-3～D0 的该期金额；仅提醒 |
-| `nextDueDate` | `next_due_date` | `0` 或 `null` 表示无下一期提醒；仅提醒 |
-| `isFullCleared` | `collection_status`（派生） | loan 级全部结清为 `true` |
+| 消息字段 | 必填 | `t_ai_collection` 列名 | 口径 |
+| --- | --- | --- | --- |
+| `eventId` | 是 | — | 本次还款事实的 UUID；重试/重投复用 |
+| `eventType` | 是 | — | 固定 `REPAYMENT` |
+| `occurredAt` | 是 | `updated_at` | ISO-8601，带 `+08:00`；兼容 `yyyy-MM-dd HH:mm:ss`（按 `Asia/Manila`）；接入拒绝较早增量覆盖新投影 |
+| `caseId` | 是 | `case_id` | 关联已存在的完整 `caseEvent` 投影 |
+| `userId` | 是 | `user_id` | 用户标识 |
+| `repayTime` | 是 | — | 还款发生时间，ISO-8601，带 `+08:00` |
+| `paidAmount` | 是 | — | 本笔成功还款金额 |
+| `dpd` | 是 | `dpd` | 还款后的最大逾期天数 |
+| `stage` | 否 | — | 可兼容携带的上游字段；接入忽略，不解析、校验或持久化，D+91 可空 |
+| `overdueAmount` | 是 | `overdue_amount`、`total_outstanding` | 已到期未结清金额，已含罚息 |
+| `overduePenaltyAmount` | 是 | `penalty_amount` | 已到期未结清罚息，包含在 `overdueAmount` 内 |
+| `upcomingAmount` | 否 | `upcoming_amount` | 三期产品下一期 D-3～D0 的该期金额；仅提醒 |
+| `nextDueDate` | 否 | `next_due_date` | `0` 或 `null` 表示无下一期提醒；仅提醒 |
+| `isFullCleared` | 是 | `collection_status`（派生） | loan 级全部结清为 `true` |
 
 整笔结清时 `isFullCleared=true` 且 `overdueAmount=0`；接入派生 `SETTLED`。发布延迟见 [§3.3](#43-还款延迟)。
 
@@ -241,7 +267,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 | `overdueAmount` | 已到期未结清、含罚息；写入 `overdue_amount` 与 `total_outstanding`。不得包含未到期期数。 |
 | `overduePenaltyAmount` | 已到期未结清罚息，包含在 `overdueAmount` 内；写入 `penaltyAmount`。 |
 | `upcomingAmount` / `nextDueDate` | 仅三期产品下一期且该期处于 D-3～D0 时下发；`nextDueDate=0` / `null` 表示无提醒；写入对应提醒列，不替代历史 `dueDate`，不改变逾期金额。 |
-| `isFullCleared` | `repaymentEvent` 必填的 loan 级结清标志；用于派生 `collectionStatus`。 |
+| `isFullCleared` | `caseEvent` / `repaymentEvent` 均须下发的 loan 级结清标志；用于派生 `collectionStatus`。 |
 | `collectionStatus` | `caseEvent` 可带展示值；接入不使用它落库，仍自行派生状态。 |
 
 `caseEvent` 可下发 `collectionStatus` 供数仓展示；`repaymentEvent` 不下发。接入不依赖该字段，按写入后的事件状态自行派生并落 `t_ai_collection.collection_status`；判定自上而下，先命中为准：
@@ -272,6 +298,8 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
     "product": "3",
     "dpd": 70,
     "occurredAt": "2026-08-17 10:40:12",
+    "owner": "NEW",
+    "isFullCleared": false,
     "stage": "S4",
     "collectionStatus": "IN_COLLECTION",
     "overduePenaltyAmount": 390.5,
@@ -337,7 +365,7 @@ gcloud pubsub topics publish <SCHEDULE_TOPIC> \
 <a id="32-caseversion"></a>
 <a id="42-caseversion"></a><a id="31-caseversion"></a>
 
-`caseVersion` 是数仓为 `caseEvent` 按当日完整快照算出的**内容指纹**，不是单调整数，也不是 Pub/Sub `messageId`。`repaymentEvent` 是无版本增量，接入以 `eventId` 去重、以 `occurredAt` 拒绝旧增量覆盖新投影。
+`caseVersion` 是数仓为 `caseEvent` 按当日完整快照算出的**内容指纹**，不是单调整数，也不是 Pub/Sub `messageId`，也**不是**路由版本：`owner` 不参与哈希。`repaymentEvent` 是无版本增量，接入以 `eventId` 去重、以 `occurredAt` 拒绝旧增量覆盖新投影。
 
 数仓计算公式（SSOT）：
 
@@ -358,12 +386,13 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 | 项 | 强制规则 |
 | --- | --- |
-| 有变化 | 指纹与库中不同 → 覆盖投影 |
-| 无变化 | 指纹与库中相同 → 略过消息，不覆盖投影 |
-| 复用 | 同一事实的重试 / 重投 / 重放复用原 `eventId` 与原指纹 |
+| 有变化 | 指纹与库中不同 → 覆盖投影业务列，并以 `date(occurredAt)` 刷新 `owner_date` |
+| 无变化 | 指纹与库中相同 → **仍须刷新** `owner_date`；业务列不覆盖。不得因指纹相同而整条丢弃 |
+| 归属日乱序 | `date(occurredAt)` 早于已落库 `owner_date` → 拒绝该 `caseEvent`，不回拨归属日 |
+| 复用 | 同一事实的重试 / 重投 / 重放复用原 `eventId`、原指纹与原 `occurredAt` |
 | 乱序 | 当前不作为设计前提；`eventId` 仍吸收重试与重投 |
 
-未纳入哈希的字段（如联系人）单独变化时，指纹不变，接入层会略过该消息。需要这些字段生效时，须同时变化哈希输入，或由数仓纳入公式后另行通知。
+未纳入哈希的字段（如联系人、`owner`）单独变化时，指纹不变。`owner` 靠每日再发同一指纹的 NEW `caseEvent` 刷新归属日，不要求改哈希公式。联系人等仍须同时变化哈希输入，或由数仓纳入公式后另行通知。
 
 ### 3.3 还款延迟 360 秒
 <a id="43-还款延迟"></a>
@@ -383,21 +412,22 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 | --- | --- |
 | 契约错误（缺必填、非法 `eventType`） | poison 记录后 ack，不重投 |
 | 投影写入或内部事件发布失败 | nack，Pub/Sub 重投 |
-| 成功 / 重复 `eventId` / 相同 `caseVersion` 指纹 | ack |
+| 成功 / 重复 `eventId` | ack |
+| 成功 / 相同 `caseVersion` 但已刷新归属日 | ack |
 
 ### 3.5 每日 `caseEvent` 刷新
 <a id="45-每日刷新"></a><a id="33-每日-caseevent-投影刷新"></a>
 
-`repaymentEvent` 负责还款时效；每日 `caseEvent` 负责完整性（历史修正、漏发、上游回补）。
+`repaymentEvent` 负责还款时效；每日 NEW `caseEvent` 负责完整性（历史修正、漏发、上游回补）以及**当日归属刷新**。
 
 | 项 | 约定 |
 | --- | --- |
-| 内容 | 当日全部在催与当日发生过状态变化的案件的**完整快照** |
-| 语义 | 首次入催触发建计划；已有周期只刷新投影，**不**重复入催、不发阶段/停催 |
+| 内容 | 当天 `owner=NEW` 的在催案件**完整快照**；不发 LEGACY 变更 |
+| 语义 | 到达时只写投影与归属日，**不**建计划；03:35 owner 对账后才建/留/迁出，见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切) |
 | 覆盖 | 逐案发消息；禁止全表覆盖、清空重建或旁路 SQL |
-| 时间 | 日切窗口（[§5](#5-日切窗口与批次门控)）开始前完成发布 |
+| 时间 | **03:00 PHT** 前发完；应用 03:35 起对账。Phase 1 **不**要数仓完成信号 |
 
-稳定运行并连续对账无差异后，可将每日写入刷新降级为每日对账 + 按需修复；本期先保留写入刷新。完成信号见 [§5](#5-日切窗口与批次门控)。
+稳定运行并连续对账无差异后，可将每日写入刷新降级为每日对账 + 按需修复；本期先保留写入刷新。
 
 ---
 
@@ -406,36 +436,38 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 | 场景 | 数仓发布 | 投影 | 新系统后续 |
 | --- | --- | --- | --- |
-| 首次进入 D-3 范围 | `caseEvent / CASE_INGESTED` | upsert，接入派生 `IN_COLLECTION` | 内部 `CASE_INGESTED` → 创建触达计划 |
-| 成功部分还款 | 增量 `repaymentEvent`，延迟 360s | 合并运行态（`dpd`/`stage`/金额/下一期提醒）；接入派生 `IN_COLLECTION` | 内部 `CASE_BALANCE_UPDATED` → 刷新活跃计划运行态；不产生 `STAGE_CHANGED` |
-| 成功整笔结清 | 增量 `repaymentEvent`，`isFullCleared=true`，延迟 360s | 接入派生 `SETTLED`，余额归零 | 内部 `REPAYMENT_RECEIVED` → 取消全部活跃计划 |
-| 日切阶段升/降 | **不发布**阶段/停催事件 | 当日 `caseEvent` 已写入新 `dpd`/`stage`；日切只读比对 | 有变化 → 内部 `STAGE_CHANGED`，取消旧计划并建新计划 |
-| D+91 停催 | 仍发每日 `caseEvent`；**不发布**停催/阶段事件 | 接入派生 `CEASED`（`dpd>=91`） | 日切读投影，仍有活跃 plan → 内部 `CASE_CEASED` |
-| 历史修正 / 漏发补齐 | 每日 `caseEvent` | 指纹不同则刷新；已有周期不重复入催 | 下一次日切据新投影推进 |
-| D-4 及更早 | 不发布 | 不写入 | 不触达 |
+| 当日 NEW 首次进入 | `caseEvent`，`owner=NEW` | upsert，归属日 = `date(occurredAt)` | 03:35 对账后内部 `CASE_INGESTED` → 创建触达计划 |
+| 连续第 N 日仍为 NEW | 即使指纹不变也再发完整 `caseEvent` | 刷新 `owner_date`；指纹变化才改业务列 | 对账见归属日已是当日 → **保留**非终态计划 |
+| NEW → 当日未出现 | **不发**该案 `caseEvent` / `repaymentEvent` | 归属日停留在昨日 | 03:35 对账取消活跃计划，`ROUTED_TO_LEGACY` |
+| 迁出后再入 NEW | 再发完整 `caseEvent` | 刷新归属日与业务列 | 无活跃计划则对账后按首次入催再建 |
+| 成功部分还款（当日 NEW） | 增量 `repaymentEvent`，延迟 360s | 合并运行态；接入派生 `IN_COLLECTION` | 内部 `CASE_BALANCE_UPDATED`；不产生 `STAGE_CHANGED` |
+| 成功整笔结清（当日 NEW） | 增量 `repaymentEvent`，`isFullCleared=true`，延迟 360s | 接入派生 `SETTLED` | 内部 `REPAYMENT_RECEIVED` → 取消全部活跃计划 |
+| 日切阶段升/降 | **不发布**阶段/停催事件 | 当日 NEW `caseEvent` 已写入新 `dpd`/`stage` | owner 对账成功后，日切有变化 → 内部 `STAGE_CHANGED` |
+| D+91 停催（当日 NEW） | 仍发当日 NEW `caseEvent`；**不发布**停催/阶段事件 | 接入派生 `CEASED` | 对账成功后的日切：仍有活跃 plan → 内部 `CASE_CEASED` |
+| 历史修正 / 漏发补齐 | 每日 NEW `caseEvent` | 指纹不同则刷新业务列；归属日按 `occurredAt` | 对账与下一次日切据新投影推进 |
+| 非 NEW / D-4 及更早 | 不向新系统发布 | 不写入 | 不触达 |
 
 ---
 
 ## 5. 日切窗口与批次门控
 <a id="5-日切窗口与批次门控"></a><a id="6-日切门控"></a><a id="8-日切与数据可用时间"></a>
 
-应用侧 `dailyRoll` 经**独立调度 Topic**触发，03:35–05:55 PHT 每 5 分钟执行一页。日切只读 `t_ai_collection`，独占产出 `STAGE_CHANGED` / `CASE_CEASED`。
+应用侧 `dailyRoll` 经**独立调度 Topic**触发，03:35–05:55 PHT 每 5 分钟执行一页。**第一阶段**是 owner 对账（迁出 / 首次与再入建计划），水位写成当日后才进入既有 DPD 日切。日切只读 `t_ai_collection`，独占产出 `STAGE_CHANGED` / `CASE_CEASED`。
 
 | 项 | 约定 |
 | --- | --- |
 | 时区 | `Asia/Manila` |
-| 数仓当日 `caseEvent` 批次 | 约 **03:00 PHT** 发完 |
-| 新系统日切窗口 | **03:35–05:55 PHT，每 5 分钟** |
-| 扫描 | MySQL keyset 分页；Redis 存当日游标与完成标记 |
+| 数仓当日 NEW `caseEvent` 批次 | 约 **03:00 PHT** 发完 |
+| 新系统对账与日切窗口 | **03:35–05:55 PHT，每 5 分钟** |
+| 完成信号 | Phase 1 **不**要数仓完成信号。零 NEW 案与 Publisher 故障无法从消息流区分：当日 inbox 无任何 `date(occurredAt)=当日` 的 NEW `caseEvent` 则推迟对账并告警，不得把空收当成「今天零案」 |
+| 扫描 | MySQL keyset 分页；Redis 存对账/日切游标与完成标记 |
 | 完成 | **06:00 PHT** 前跑完；未完成必须告警 |
-
-「数据齐了」指当日 `caseEvent` 批次**已被接入消费完毕**，不是时钟到点。Phase 1 当前仍按固定时间窗触发日切（接入规格运行清单）；❓ 批次完成信号与显式门控待数仓/运维给出可审计形式后接入。⏳ 在信号落地前，默认以 inbox / 投影消费进度与固定窗口共同判断「齐了」，避免发明新的信号格式。
 
 运维协同：
 
-1. 数仓在每日案件快照 publish 完成后发出**可审计的批次完成信号**。❓ 待确认：形式由数仓给出（本文不发明格式）。
-2. 接入侧以 inbox / 投影消费进度确认批次就绪；批次迟到则推迟日切并告警，不得基于不完整投影产出阶段/停催事件（目标门控）。
-3. **06:00 PHT** 前未完成日切，按 Runbook 排查 Publisher、案件订阅、投影消费与 Redis 游标。
+1. 数仓只保证 03:00 前发完当天 NEW 批次；迟到则新系统推迟对账并告警。
+2. 接入侧以 inbox 中 `date(occurredAt)=当日 PHT` 的 NEW `caseEvent` 计数确认非空收，不以 inbox `created_at` 为准。
+3. **06:00 PHT** 前未完成对账或日切，按 Runbook 排查 Publisher、案件订阅、投影消费与 Redis 游标。
 
 ---
 
@@ -446,25 +478,25 @@ o_hex(md5(concat(a.loan_id, a.maxDpd, a.overdueAmount, a.upcomingAmount, coalesc
 
 | # | 验收项 | 通过标准 | 责任方 |
 | --- | --- | --- | --- |
-| 1 | 消息契约 | `dataType`、两类 body 字段、完整/增量边界、独立 message 及联系方式均与 [§2.2](#22-消息字段) 一致；正常与拒绝样例均通过接入校验 | 数仓 + 接入 |
-| 2 | 案件与 DPD | `caseId` 非空、唯一、规范数字；已结清期不参与 DPD；仅 `dpd >= -3` 发 `caseEvent`，stage 映射正确 | 数仓 |
-| 3 | 快照指纹 | `caseVersion` 按 [§3.2](#32-caseversion) 生成；输入变化则指纹变化、相同则略过；重试/重放复用原值 | 数仓 + 接入 |
+| 1 | 消息契约 | `dataType`、两类 body 字段（含 `owner`）、完整/增量边界、独立 message 及联系方式均与 [§2.2](#22-消息字段) 一致；正常与拒绝样例均通过接入校验 | 数仓 + 接入 |
+| 2 | 案件与 DPD | `caseId` 非空、唯一、规范数字；已结清期不参与 DPD；仅当天 NEW 且 `dpd >= -3` 发 `caseEvent`，`occurredAt` 日历日等于归属日，stage 映射正确 | 数仓 |
+| 3 | 快照指纹 | `caseVersion` 按 [§3.2](#32-caseversion) 生成且不含 `owner`；输入变化则指纹变化；指纹相同也须再发以刷新归属日；重试/重放复用原值 | 数仓 + 接入 |
 | 4 | 金额、提醒与状态 | `overdueAmount` 含罚息且不含未到期；`overduePenaltyAmount` 为其中罚息；三期提醒字段符合 D-3～D0 定义；接入正确派生 `SETTLED` / `CEASED` / `IN_COLLECTION` | 数仓 + 接入 |
-| 5 | 还款发布 | 仅成功正向还款；账务结清状态落库至少 360 秒后发布增量 `repaymentEvent` | 数仓 |
+| 5 | 还款发布 | 仅当日 NEW 名单内的成功正向还款；账务结清状态落库至少 360 秒后发布增量 `repaymentEvent` | 数仓 |
 | 6 | Publisher 可靠性 | 发布失败重试并告警；重试/重放复用 `eventId`；保留期内可按时间点重放 | 数仓 + 运维 |
-| 7 | 每日批次 | 当日快照在日切窗口前完成发布，并提供可审计的批次完成信号；已有周期只刷新投影、不重复建计划 | 数仓 + 运维 + 接入 |
+| 7 | 每日批次 | 当日 NEW 快照在 **03:00 PHT** 前发完；Phase 1 不要完成信号；空收由接入告警推迟对账 | 数仓 + 运维 + 接入 |
 | 8 | 数据库写入边界 | 数仓 SA 无业务库写权限；接入层为 `t_ai_collection` 唯一写入者 | 数仓 + 运维 + 接入 |
-| 9 | 日切分工与时限 | 阶段变化 / D+91 仅由 `dailyRoll` 产生；日切在 **06:00 PHT** 前完成，否则告警 | 接入 + 运维 |
+| 9 | 日切分工与时限 | owner 对账先于阶段/停催；阶段变化 / D+91 仅由 `dailyRoll` 第二阶段产生；对账与日切在 **06:00 PHT** 前完成，否则告警 | 接入 + 运维 |
 | 10 | Topic、DLQ 与 IAM | 案件 / 调度 Topic 物理分离；案件 Topic 已配置 retention 与 DLQ；Publisher / Consumer / Scheduler 权限按环境验收 | 运维 + 数仓 + 接入 |
 | 11 | 发布消费对账 | 按日、`dataType` 对账发布、ack / nack / poison / dedup 与 inbox；异常可定位到 Publisher、订阅、DLQ 或投影 | 数仓 + 接入 + 运维 |
-| 12 | 接入处置 | 契约错误记录 poison 后 ack；投影写入或内部事件发布失败 nack 重投；重复消息与未更新投影的消息 ack | 接入 |
+| 12 | 接入处置 | 契约错误记录 poison 后 ack；投影写入或内部事件发布失败 nack 重投；重复 `eventId` ack；相同指纹仍刷新归属日后 ack | 接入 |
 
 ---
 
 ## 附录 A：历史编号占位
 <a id="附录-a历史编号占位"></a>
 
-早期合并前曾用「附录 A」承载字段对照。现行字段与口径在 [§2](#2-计算口径与事件契约)，本节省略独立正文。旧锚点仍落在各节 `<a id>` 上。
+早期合并前曾用「附录 A」承载字段对照。**现行完整字段集**在 [§2.2 完整字段清单](#完整字段清单) 与对照表，本节省略独立正文。旧锚点仍落在各节 `<a id>` 上。
 
 ---
 

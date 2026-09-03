@@ -13,11 +13,19 @@ import lombok.Data;
 @Data
 public class PreFlightResult {
 
+    private boolean gated;
     private CancelReason blockingReason;
     private CaseInfo caseInfo;
 
     public static PreFlightResult passed(CaseInfo caseInfo) {
         PreFlightResult r = new PreFlightResult();
+        r.caseInfo = caseInfo;
+        return r;
+    }
+
+    public static PreFlightResult gated(CaseInfo caseInfo) {
+        PreFlightResult r = new PreFlightResult();
+        r.gated = true;
         r.caseInfo = caseInfo;
         return r;
     }
@@ -30,6 +38,10 @@ public class PreFlightResult {
     }
 
     public boolean isPassed() {
-        return blockingReason == null;
+        return blockingReason == null && !gated;
+    }
+
+    public boolean isGated() {
+        return gated;
     }
 }
