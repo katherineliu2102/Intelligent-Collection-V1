@@ -86,7 +86,21 @@ npm run dev -- --host 127.0.0.1 --port 5173
 powershell -ExecutionPolicy Bypass -File "scripts/dev/start-local.ps1"
 ```
 
-启动成功后健康检查 `http://localhost:8888/actuator/health` 返回 `{"status":"UP"}`。
+> **扫描白名单（`COLLECTION_SCAN_CASE_IDS`，2026-09 新增守卫）**：local 模式必须非空，否则 `ScanIsolationGuard` 拒绝启动——空名单等于对共享库全量案件发起触达、并与其他实例互抢步骤。该值从 `.env` 读取（`start-local.ps1` 会自动逐行注入）。仅「看后台」不跑扫描时用占位值（如 `999999999`）零触达；真实联调填入本轮批准的 case_id（逗号分隔）。确需全量扫描才置 `collection.scan.allow-full-scan=true`（勿在共享库使用）。
+>
+> 脚本会在启动日志打印两行，用来确认配置是否真的生效：
+> ```
+> [start-local] 已加载 .env 变量 8 个
+> [start-local] scan whitelist = 999999999
+> ```
+> 若 `scan whitelist` 为空，说明 `.env` 未被正确解析——不要直接改 `application-local.yml` 绕过，先按 §7 排查。
+
+> **端口被 Nacos 覆盖（2026-09 修复）**：Nacos `intelligent-collection-common.yml` 下发了 `server.port=56384`，且 Nacos ConfigData 优先级**高于** `application-local.yml`（后者写的 8888 会被静默覆盖）。56384 与 WorkBuddy / Cursor 等 IDE 的服务代理端口冲突，本机必然 `PortInUseException`。`start-local.ps1` / `start-local.sh` 已在命令行强制下发 `--server.port=8888`（命令行参数优先级最高）。换端口用环境变量 `LOCAL_ADMIN_PORT`，**不要复用 `APP_PORT`**（那是容器端口口径，值为 8080）。
+
+启动成功后健康检查 `http://localhost:8888/actuator/health`：
+
+- 返回 `{"status":"UP"}` 为正常；
+- 本机未装 Redis 时返回 `{"status":"DOWN"}`（HTTP 503）——这是 Redis 健康指标报警，**不影响后台登录与使用**（登录会话走 Tomcat 内存、事件总线走内存，不依赖 Redis）。
 
 ### 2.4 手动启动前端（Windows）
 
@@ -316,6 +330,9 @@ SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, 
 | 接口 401 | 未登录或会话过期，重新登录 |
 | Holdout 保存报 409 | 他人已修改，点 Refresh 后基于最新 version 重试 |
 | 后端起不来 / 端口占用 | 结束占用 8888 的 Java 进程后重启；jar 被占用无法 rebuild 同理 |
+| 启动报 `Port 56384 was already in use` | Nacos 下发的端口覆盖了本地配置。确认用的是修复后的 `start-local.ps1`（已强制 `--server.port=8888`）；手工启动时必须自己带上该参数 |
+| 启动报 `拒绝启动：profile=local 未配置 collection.scan.case-id-whitelist` | `.env` 缺 `COLLECTION_SCAN_CASE_IDS`。用占位值 `999999999` 即可零触达启动；见 §2.2 |
+| `.env` 明明配了却不生效 | Windows PowerShell 5.1 的 `Get-Content` 默认按 ANSI/GBK 解码，UTF-8 中文注释会导致其后的配置行被**合并进注释行而静默丢失**（实测 13 行读成 11 行）。三个 `.ps1` 脚本已统一改为 `-Encoding UTF8`；自查时看启动日志的「已加载 .env 变量 N 个」是否与 `.env` 里的键值数一致 |
 | 看板接口 500 | 看后端日志，确认 MySQL / Nacos 连通 |
 | Catalog 接口报错 | 确认 `catalog/catalog-metadata.json`、`script-drafts.json` 存在于 classpath |
 
