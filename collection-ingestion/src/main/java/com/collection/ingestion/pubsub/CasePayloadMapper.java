@@ -398,9 +398,7 @@ public class CasePayloadMapper {
         }
     }
 
-    /**
-     * 还款时间：优先取 {@code repayTime}（专门字段），缺省回退 {@code occurredAt}。 「当日回收金额」按还款发生日切桶，依赖此值。
-     */
+    /** 还款时间：优先取 {@code repayTime}（专门字段），缺省回退 {@code occurredAt}。 「当日回收金额」按还款发生日切桶，依赖此值。 */
     static LocalDateTime repayTimeOrFallback(JSONObject json, LocalDateTime fallback) {
         String raw = trimToNull(json.getString("repayTime"));
         if (raw == null) {

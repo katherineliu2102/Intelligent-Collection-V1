@@ -8,9 +8,13 @@ public interface OwnerReconcileRepository {
 
     boolean completedOn(LocalDate date);
 
-    int countCaseEventsOn(LocalDate date);
+    /**
+     * 零收检测：当日 {@code owner_date = date} 的案件数（即当日收到 caseEvent 的案件数，按案件去重）。 走 {@code
+     * idx_ai_collection_owner_date}，时区口径与投影写入一致。
+     */
+    int countOwnerDateCasesOn(LocalDate date);
 
-    void markCompleted(LocalDate date, int inboxCaseEventCount);
+    void markCompleted(LocalDate date, int ownerCaseCount);
 
     List<Long> findLeaveCaseIdsAfter(LocalDate today, long afterCaseId, int limit);
 

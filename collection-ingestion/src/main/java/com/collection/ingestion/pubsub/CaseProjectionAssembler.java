@@ -8,6 +8,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CaseProjectionAssembler {
+
+    private static final Logger log = LoggerFactory.getLogger(CaseProjectionAssembler.class);
 
     public CaseProjection assemble(JSONObject json, CasePayloadMapper.AiSnapshot snapshot) {
         Map<String, Object> fields = snapshot.snapshotFields;
@@ -47,6 +51,12 @@ public class CaseProjectionAssembler {
         if (owner != null && !"NEW".equalsIgnoreCase(owner.trim())) {
             throw new PoisonMessageException(
                     "caseEvent.owner 发给本系统时必须为 NEW，收到=" + owner + " caseId=" + snapshot.caseId);
+        }
+        if (owner == null) {
+            // 契约必填但缺失：保持宽容（按 NEW 处理），打 WARN 留痕供日志巡检发现数仓 Publisher 漏配。
+            log.warn(
+                    "[Assembler] caseEvent 缺 owner 字段，按 NEW 容忍处理 caseId={}（契约必填，请检查数仓 Publisher）",
+                    snapshot.caseId);
         }
         projection.setOwner("NEW");
         if (projection.getUpdatedAt() != null) {

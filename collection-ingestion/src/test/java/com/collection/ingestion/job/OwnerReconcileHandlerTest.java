@@ -57,9 +57,9 @@ class OwnerReconcileHandlerTest {
     }
 
     @Test
-    void emptyInbox_fullScan_doesNotMarkCompleted() {
+    void emptyProjection_zeroOwnerDateCases_doesNotMarkCompleted() {
         when(props.getLoanIdWhitelist()).thenReturn(Collections.emptyList());
-        when(ownerReconcileRepository.countCaseEventsOn(any())).thenReturn(0);
+        when(ownerReconcileRepository.countOwnerDateCasesOn(any())).thenReturn(0);
 
         int n = handler.advance();
 

@@ -47,8 +47,8 @@ public class OwnerReconcileHandler {
         }
         List<Long> whitelist = props.getLoanIdWhitelist();
         boolean isolated = whitelist != null && !whitelist.isEmpty();
-        if (!isolated && countTodayCaseEvents() == 0) {
-            log.error("[OwnerReconcile] 当日 inbox 无 NEW caseEvent，推迟对账，不得当作零案");
+        if (!isolated && countTodayOwnerDateCases() == 0) {
+            log.error("[OwnerReconcile] 当日无任何案件刷新过归属日（数仓未发 NEW caseEvent），推迟对账，不得当作零案");
             return 0;
         }
         int limit = Math.max(1, props.getDailyRollBatchSize());
@@ -65,7 +65,7 @@ public class OwnerReconcileHandler {
         if (enter >= limit) {
             return leave + enter;
         }
-        markCompleted(countTodayCaseEvents());
+        markCompleted(countTodayOwnerDateCases());
         return leave + enter;
     }
 
@@ -151,16 +151,20 @@ public class OwnerReconcileHandler {
         }
     }
 
-    private int countTodayCaseEvents() {
-        return ownerReconcileRepository.countCaseEventsOn(today());
+    /**
+     * 零收检测走投影而非 inbox：每条 caseEvent 无论指纹是否相同都刷新 owner_date（含 updateOwnerDate 路径）， 「owner_date =
+     * 当日」的行数即当日收到 caseEvent 的案件数；时区口径与投影写入一致，且走 idx_ai_collection_owner_date 避免 inbox 全表 JSON 扫描。
+     */
+    private int countTodayOwnerDateCases() {
+        return ownerReconcileRepository.countOwnerDateCasesOn(today());
     }
 
-    private void markCompleted(int inboxCount) {
-        ownerReconcileRepository.markCompleted(today(), inboxCount);
+    private void markCompleted(int ownerCaseCount) {
+        ownerReconcileRepository.markCompleted(today(), ownerCaseCount);
         if (dailyRollDeduplicator != null) {
             dailyRollDeduplicator.markOwnerReconCompletedToday();
         }
-        log.info("[OwnerReconcile] completed date={} inboxCaseEvents={}", today(), inboxCount);
+        log.info("[OwnerReconcile] completed date={} ownerDateCases={}", today(), ownerCaseCount);
     }
 
     private static long cursor(Long value) {

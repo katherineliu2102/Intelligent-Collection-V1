@@ -16,23 +16,25 @@ public interface OwnerReconcileMapper {
     int countByDate(@Param("date") LocalDate date);
 
     @Insert(
-            "INSERT INTO t_ai_owner_reconcile (reconcile_date, completed_at, inbox_case_event_count) "
-                    + "VALUES (#{date}, #{completedAt}, #{inboxCount}) "
+            "INSERT INTO t_ai_owner_reconcile (reconcile_date, completed_at, owner_case_count) "
+                    + "VALUES (#{date}, #{completedAt}, #{ownerCaseCount}) "
                     + "ON DUPLICATE KEY UPDATE completed_at = VALUES(completed_at), "
-                    + "inbox_case_event_count = VALUES(inbox_case_event_count)")
+                    + "owner_case_count = VALUES(owner_case_count)")
     int upsertCompleted(
             @Param("date") LocalDate date,
             @Param("completedAt") LocalDateTime completedAt,
-            @Param("inboxCount") int inboxCount);
+            @Param("ownerCaseCount") int ownerCaseCount);
 
-    @Select(
-            "SELECT COUNT(*) FROM t_ai_collection_inbox "
-                    + "WHERE message_type = 'caseEvent' "
-                    + "AND LEFT(COALESCE("
-                    + "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.occurredAt')), "
-                    + "JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.occurredAt'))"
-                    + "), 10) = #{today}")
-    int countCaseEventsOnOccurredAt(@Param("today") String today);
+    /**
+     * 零收检测：当日刷新过归属日的案件数，走 idx_ai_collection_owner_date。
+     *
+     * <p>不数 inbox：每条 caseEvent 无论指纹是否相同都会刷新 {@code owner_date}（含 updateOwnerDate 路径）， 因此「owner_date
+     * = 当日」的行数即「当日收到 caseEvent 的案件数」，且时区口径与投影写入一致 （都经 CasePayloadMapper 按 PHT 日历日转换）。对 inbox
+     * payload 做 LEFT(occurredAt,10) 的字符串取前缀， 在上游发 UTC 时间戳时会与 PHT 日历日分叉（UTC 16:00 后 = PHT
+     * 次日），导致每日误判零收。
+     */
+    @Select("SELECT COUNT(*) FROM t_ai_collection WHERE owner_date = #{date}")
+    int countOwnerDateCases(@Param("date") LocalDate date);
 
     @Select(
             "SELECT DISTINCT p.case_id FROM t_contact_plan p "

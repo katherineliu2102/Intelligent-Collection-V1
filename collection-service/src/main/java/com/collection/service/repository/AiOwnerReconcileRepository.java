@@ -24,13 +24,13 @@ public class AiOwnerReconcileRepository implements OwnerReconcileRepository {
     }
 
     @Override
-    public int countCaseEventsOn(LocalDate date) {
-        return mapper.countCaseEventsOnOccurredAt(date.toString());
+    public int countOwnerDateCasesOn(LocalDate date) {
+        return mapper.countOwnerDateCases(date);
     }
 
     @Override
-    public void markCompleted(LocalDate date, int inboxCaseEventCount) {
-        mapper.upsertCompleted(date, LocalDateTime.now(PHT), inboxCaseEventCount);
+    public void markCompleted(LocalDate date, int ownerCaseCount) {
+        mapper.upsertCompleted(date, LocalDateTime.now(PHT), ownerCaseCount);
     }
 
     @Override

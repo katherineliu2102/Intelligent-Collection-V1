@@ -556,8 +556,31 @@ DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_owner_fields;
 CREATE TABLE IF NOT EXISTS t_ai_owner_reconcile (
     reconcile_date          DATE            NOT NULL PRIMARY KEY COMMENT 'PHT 日历日',
     completed_at            DATETIME        NOT NULL,
-    inbox_case_event_count  INT             NOT NULL DEFAULT 0 COMMENT '写入水位时当日 inbox NEW caseEvent 计数'
+    owner_case_count        INT             NOT NULL DEFAULT 0 COMMENT '写入水位时当日 owner_date=当日的案件数（当日收到 caseEvent 的案件数，按案件去重）'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当日 owner 对账水位；引擎与扫描只读';
+
+-- 既有环境迁移：零收检测从 inbox JSON 扫描改为投影 owner_date 计数，水位计数列随之改名换义。
+DROP PROCEDURE IF EXISTS sp_schema_rename_owner_reconcile_count;
+DELIMITER //
+CREATE PROCEDURE sp_schema_rename_owner_reconcile_count()
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_owner_reconcile'
+          AND COLUMN_NAME = 'inbox_case_event_count'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_owner_reconcile'
+          AND COLUMN_NAME = 'owner_case_count'
+    ) THEN
+        ALTER TABLE t_ai_owner_reconcile
+            CHANGE COLUMN inbox_case_event_count owner_case_count
+            INT NOT NULL DEFAULT 0 COMMENT '写入水位时当日 owner_date=当日的案件数（当日收到 caseEvent 的案件数，按案件去重）';
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_rename_owner_reconcile_count();
+DROP PROCEDURE IF EXISTS sp_schema_rename_owner_reconcile_count;
 
 -- 既有环境迁移：还款金额与时间字段（「当日回收金额」热层数据底座）。
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_paid_fields;
