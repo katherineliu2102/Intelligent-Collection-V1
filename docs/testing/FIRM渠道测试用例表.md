@@ -2,7 +2,7 @@
 
 > **版本**：2026-09-01  
 > **前置条件**：[数仓难催字段需求](../数仓_caseEvent难催字段补充需求.md) 上线 + 催收 ingestion 接入 `strategyTone` + tone 硬化时 cancel/rebuild plan  
-> **关联**：[e2e200 抽样说明](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) · [渠道编排规格 §6/§7](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)
+> **关联**：[e2e200 抽样说明](./samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) · [渠道编排规格 §6/§7](../channel/MOCASA催收系统升级_Phase1_渠道编排规格.md)
 
 ---
 

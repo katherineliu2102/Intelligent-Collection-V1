@@ -1,7 +1,7 @@
 package com.collection.common.enums;
 
 /**
- * 内部领域事件类型。对应领域模型 §2.6、核心引擎规格 §2.1。
+ * 内部领域事件类型。对应领域模型 §2.6、核心引擎规格 §2。
  *
  * <p>Phase 1 引擎消费路由表 11 行（含 {@code CASE_OWNER_RECONCILED}）；{@code PTP_EXPIRED} 为 Phase 2
  * 预留，枚举值保留作前向兼容，Phase 1 不生产/不消费。

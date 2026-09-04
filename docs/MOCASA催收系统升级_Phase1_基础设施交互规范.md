@@ -15,7 +15,7 @@
 - [2. 事件消费与运行模型](#2-事件消费与运行模型)
   - [2.1 生产拓扑与组件职责](#21-生产拓扑与组件职责)
   - [2.2 生产消费拓扑、线程职责与背压](#22-生产消费拓扑线程职责与背压)
-  - [2.3 PEL 恢复边界](#23-pel-恢复边界)
+  - [2.3 可靠性守护任务](#23-可靠性守护任务)
 - [3. 事件总线：Redis Stream](#3-事件总线redis-stream)
   - [3.1 Stream、Consumer Group 与事件信封](#31-streamconsumer-group-与事件信封)
   - [3.2 核心消费协议](#32-核心消费协议)
@@ -134,7 +134,8 @@ Consumer、Cron 与 PEL Scanner 三组线程互不共享线程池；任一组阻
 WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pending=1832
 ```
 
-### 2.3 PEL 恢复边界
+<a id="23-pel-恢复边界"></a>
+### 2.3 可靠性守护任务
 
 | 守护任务 | 线程模型 | 执行频率 | 安全约束 |
 |---|---|---|---|
@@ -144,7 +145,37 @@ WARN [engine-consumer-loop] BackpressureTriggered — queue_depth=256, stream_pe
 
 > PEL Scanner 仅认领 idle 超过 `collection.redis.pel-min-idle-seconds`（初始值 120s）的消息。该值必须覆盖一次同步处理的最长时长（渠道 HTTP 重试、DB 写入和调度抖动）并保留安全裕量；恢复时间约为 `minIdle + 一个扫描周期`，而非固定秒数。
 
-> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务与扫描目标) 的调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。Outbox 与 Reaper 的语义见 [核心引擎规格 §7.2 / §7.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)。
+> 这三个都是**引擎内部可靠性守护进程**，不是业务 Cron：不经 Cloud Scheduler，调度链路自身故障时也能推进，因此不受 [§5.2](#52-任务与扫描目标) 的调度入口唯一性约束（`SchedulerEntrypointValidator` 只管业务扫描入口）。引擎的状态/事件原子性与渠道结果处置见[核心引擎规格 §7.2 / §7.3](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)。
+
+#### 发件箱投递协议
+
+1. **入箱**：状态迁移事务内写入 `PENDING`；宽限期后进入兜底扫描。
+2. **即时投递**：提交后立刻发布，成功即销账为 `PUBLISHED`；销账失败由消费幂等吸收一次多余重发。
+3. **兜底认领**：即时失败或进程中断后原子认领并重发；租约防止多实例重复发。
+4. **失败收敛**：退避重试；次数用尽或 payload 不可反序列化则 `FAILED`，转人工。
+
+`eventId` 的业务键与入箱事务约束见[核心引擎 §7.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)；参数见[附录 A.2](#a2-引擎与事件总线)。
+
+<a id="停摆计划检测"></a>
+#### 停摆计划检测
+
+**职责**：`collection-engine` 的 `StuckPlanReaper` 只读扫描；命中则递增 `collection.plan.stuck` 并记 ERROR。不改库、不重发。该查询无法证明触达是否已发出，故不自动修复。
+
+**判定**（四条件同时满足）：
+
+| 条件 | 排除 | 命中 |
+| --- | --- | --- |
+| 非终态且 `renewal_pending = 0` | 续建中 | 其余应有推进来源的计划 |
+| `updated_at` 静默超过 `idle-minutes`（默认 75 分钟，须大于 Outbox 约 65 分钟自愈窗口） | 处理中 / Outbox 自愈中 | 超时仍无推进 |
+| 没有步骤可被 `selectDueSteps` / `selectTimeoutSteps` 拾取 | 未来到期、退避重试、等待 AI 回调 | 无扫描入口（含无时钟 `STEP_EXECUTING`、步骤全终态但计划未收尾） |
+| 没有 `PENDING` / `PROCESSING` 的 Outbox | 派生事件仍会补发 | `FAILED` Outbox 或无在途事件 |
+
+**不覆盖**：
+
+- 不读 Redis PEL；告警后先按[§3.3](#33-异常恢复与死信)确认是否仍在重投
+- `renewal_pending = 1` 卡死；`REBUILD` / `ESCALATE` 半成品与正常 `PLAN_COMPLETED` 不可区分，靠事务回滚与 `PLAN_EXHAUSTED` 重投
+- 仍有 `trigger_time` 的 owner 门控等待
+- 调度静默（`collection.schedule.triggered`）
 
 ---
 
@@ -255,9 +286,9 @@ Redis 实例必须配置 `maxmemory-policy = noeviction`，并通过容量余量
 
 #### 合规计数器实现约束
 
-`ExecutionGuard` 的硬超时为 50ms（[核心引擎规格 §6.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#61-接口职责与调用位置)）。合规计数的读取 + 增加 + 设 TTL 必须在**单次 Redis 交互**内完成，使用 Lua 脚本或 Pipeline，目标 p99 < 10ms。
+`ExecutionGuard` 的硬超时为 50ms（[核心引擎规格 §6.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#62-实现约束)）。合规计数的读取 + 增加 + 设 TTL 必须在**单次 Redis 交互**内完成，使用 Lua 脚本或 Pipeline，目标 p99 < 10ms。
 
-延迟上界由 `SpiInvoker` 的 50ms 硬超时兜底，**不靠客户端命令超时收紧**：同一个 Lettuce 连接工厂也服务 `XREADGROUP BLOCK 1s`，命令超时若小于 BLOCK 时长会让消费轮询每次都抛 `RedisCommandTimeoutException`。Pilot 取 `timeout=2s`、`connect-timeout=200ms`（见 [T5 Pilot 手册 §4.1](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#41-连接信息落位与变更方式)）。
+延迟上界由 `SpiInvoker` 的 50ms 硬超时兜底，**不靠客户端命令超时收紧**：同一个 Lettuce 连接工厂也服务 `XREADGROUP BLOCK 1s`，命令超时若小于 BLOCK 时长会让消费轮询每次都抛 `RedisCommandTimeoutException`。Pilot 取 `timeout=2s`、`connect-timeout=200ms`（见 [T5 Pilot 手册 §4.1](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#41-连接信息落位与变更方式)）。
 
 ```lua
 local current = redis.call('INCR', KEYS[1])
@@ -368,7 +399,7 @@ Cloud Scheduler 与 Pub/Sub 是至少一次投递：停机后订阅会积累 tic
 
 ### 5.5 运维 / GCP 交付清单
 
-以下资源由运维在 GCP 创建；研发只交付应用代码、配置占位符和 T5 验收模板。推荐以 [T5 手册 §3.2](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 的 `gcloud` 模板执行并归档证据。
+以下资源由运维在 GCP 创建；研发只交付应用代码、配置占位符和 T5 验收模板。推荐以 [T5 手册 §3.2](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#32-调度交付清单o1o8) 的 `gcloud` 模板执行并归档证据。
 
 | 顺序 | 交付项 | 运维操作与验收 |
 |---|---|---|
@@ -509,7 +540,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 #### 调度指标的人工巡检口径
 
-迁出调度控制台后**没有执行记录页面**可查，Cloud Scheduler 只能证明消息已发出、不能证明扫描跑过。在 Prometheus / Alertmanager 接通前，代偿期内每日手工抓取 `/actuator/prometheus` 并按下表判读（与 [T5 手册 §5.2](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#52-启动预检) 的巡检清单同源）：
+迁出调度控制台后**没有执行记录页面**可查，Cloud Scheduler 只能证明消息已发出、不能证明扫描跑过。在 Prometheus / Alertmanager 接通前，代偿期内每日手工抓取 `/actuator/prometheus` 并按下表判读（与 [T5 手册 §5.2](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#52-启动预检) 的巡检清单同源）：
 
 | 指标（job tag） | 健康口径 | 异常含义 |
 |---|---|---|
@@ -742,7 +773,7 @@ Nacos 变更经 `@RefreshScope` 刷新；并非所有键均可热更。[附录 A
 
 ### B.2 生产切换门槛
 
-本清单对应**移除白名单、进入稳态运营（T6 准入）**的门槛，不是 T4 / T5 逐级放量的门槛；放量阶段的可后置项与代偿口径见 [T5 手册 §3.1](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#31-运维交付物与验收证据)。
+本清单对应**移除白名单、进入稳态运营（T6 准入）**的门槛，不是 T4 / T5 逐级放量的门槛；放量阶段的可后置项与代偿口径见 [T5 手册 §3.1](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#31-运维交付物与验收证据)。
 
 - Consumer Pool 已接入 Redis Stream 消费路径，具备有界队列、背压和 MDC 透传。
 - Redis SETNX + TTL 幂等已覆盖步骤执行；key 前缀与隔离策略已统一。

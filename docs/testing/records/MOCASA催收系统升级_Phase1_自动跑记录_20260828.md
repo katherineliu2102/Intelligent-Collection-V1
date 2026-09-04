@@ -4,7 +4,7 @@
 > **对比 8/27**：白名单 40、SETNX、邮件代码映射、穷尽 0 步升档均已在库上；今天看五槽是否按钟点发出。  
 > **环境**：Pilot `bdp01`，容器 `collection-admin` 自 8/27 **16:32 PHT** 起未再发版（Up ~22h），白名单 40，波次聚合开。  
 > **取数**：截止 **15:13 PHT**（五槽实绩）；**18:18** 补记数仓侧：`caseEvent` 进库改到 **03:00**、`repaymentEvent` 回看窗 **10h→2h**，8/29 验证。  
-> **关联**：[8/27 记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260827.md) · [8/29 二百案抽样](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) · [主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) · [数仓契约](../数仓_PubSub交付契约.md)
+> **关联**：[8/27 记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260827.md) · [8/29 二百案抽样](../samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) · [主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) · [数仓契约](../../数仓_PubSub交付契约.md)
 
 ## 目录
 
@@ -251,7 +251,7 @@ BQ 还款表 `clear_date` 与上表一致。`502131` 结清后被 15 分钟窗�
 | `caseEvent` 03:00 进库 | 当日 inbox `dataType=caseEvent` 的 `created_at` 在 **03:00 前**，且早于 03:35 日切；日切应用当天 stage，少出现今早那种 `rollbackSkipped` |
 | `repaymentEvent` 2 小时窗 | 同一结清 `repayTime` 不再从中午铺到晚上；重复条数相对 8/28 明显下降 |
 
-**200 案分流**（主场，不是原 40 案槽位表）：见 [8/29 二百案抽样说明](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)。白名单同时配 `COLLECTION_PILOT_LOAN_IDS` 与 `COLLECTION_SCAN_CASE_IDS`（200 个 `loan_id`）。与现行 40 案 **零交集**。周末并档：本轮能对上 Email 关键日的是 **D+1 / D+4 / D+75**；D0 / D+31 本周末无库存。
+**200 案分流**（主场，不是原 40 案槽位表）：见 [8/29 二百案抽样说明](../samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)。白名单同时配 `COLLECTION_PILOT_LOAN_IDS` 与 `COLLECTION_SCAN_CASE_IDS`（200 个 `loan_id`）。与现行 40 案 **零交集**。周末并档：本轮能对上 Email 关键日的是 **D+1 / D+4 / D+75**；D0 / D+31 本周末无库存。
 
 **原 40 案若仍留在名单里**（15:13 库内 PENDING，仅作对照，不是 8/29 主路径）：
 

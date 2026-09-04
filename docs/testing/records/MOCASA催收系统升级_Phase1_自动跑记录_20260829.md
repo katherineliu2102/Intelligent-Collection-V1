@@ -1,11 +1,11 @@
 # Phase 1 自动跑记录（2026-08-29）
 
 > **层级**：Pilot 自然日自动跑。计划切 **200 案分流**；实际仍是原 **40** 案白名单。  
-> **对比 8/28**：数仓改 03:00 进库、还款回看 10h→2h；200 案抽样见 [说明](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)。  
+> **对比 8/28**：数仓改 03:00 进库、还款回看 10h→2h；200 案抽样见 [说明](../samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)。  
 > **环境**：镜像仍是 8/27 **16:32** 那版（未重编 jar）。**23:12 PHT** 只改两份白名单并重启，StartedAt `2026-08-29T15:12:59Z`。  
 > **取数**：白天实绩 **22:10 PHT**；名单切换 **23:13 PHT**。  
 > **三天综述**：[8/29–8/31](./MOCASA催收系统升级_Phase1_自动跑综述_20260829-0831.md)  
-> **关联**：[8/28 记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260828.md) · [200 案抽样](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)
+> **关联**：[8/28 记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260828.md) · [200 案抽样](../samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md)
 
 ## 目录
 
@@ -58,7 +58,7 @@ Pilot env 取数 22:10：
 
 接入白名单不包含这 200，数仓即使发了他们的 `caseEvent` 也不会进催收投影；扫描白名单不含他们，也不会捞步骤。容器未重启、env 未改，所以今天不可能跑到 200 案。
 
-要进测：两份名单都换成 [e2e200_loan_ids_20260829.csv](./e2e200_loan_ids_20260829.csv)，重启 `collection-admin`，再看日切 `scanned` 和 inbox 是否出现这 200 的 `caseId`。
+要进测：两份名单都换成 [e2e200_loan_ids_20260829.csv](../samples/e2e200_loan_ids_20260829.csv)，重启 `collection-admin`，再看日切 `scanned` 和 inbox 是否出现这 200 的 `caseId`。
 
 ---
 
@@ -132,7 +132,7 @@ timeline 当日 OUT：SMS 32、PUSH 32、AI_CALL 56（09:15 的 32 + 14:30 的 2
 | 项 | 值 |
 |---|---|
 | 备份 | `/opt/app/pilot.env.bak.20260829151248` |
-| `COLLECTION_PILOT_LOAN_IDS` | **200**，与 [e2e200 CSV](./e2e200_loan_ids_20260829.csv) 一致，样例 `469165,468179,468279` |
+| `COLLECTION_PILOT_LOAN_IDS` | **200**，与 [e2e200 CSV](../samples/e2e200_loan_ids_20260829.csv) 一致，样例 `469165,468179,468279` |
 | `COLLECTION_SCAN_CASE_IDS` | **200**，与接入名单交集 **200** |
 | 容器 | `collection-admin` Up，StartedAt `2026-08-29T15:12:59Z`，loopback health **200** |
 | 启动 | 无 ERROR、无空名单拒启；`sms-test-mode=true` 警告仍在（与 8/27 相同，未改） |

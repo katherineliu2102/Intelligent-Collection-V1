@@ -1,7 +1,7 @@
 # Phase 1 主链路冒烟清单
 
 > **用途**：先测通「能建 plan，并对 SMS / PUSH / EMAIL / AI_CALL 四个渠道调用执行」。  
-> **不是** T0–T6 全量 SSOT，也**不是** T4 全量 Pilot 签核。完整矩阵仍以 [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) 为准。  
+> **不是** T0–T6 全量 SSOT，也**不是** T4 全量 Pilot 签核。完整矩阵仍以 [测试 SSOT](../MOCASA催收系统升级_Phase1_测试文档.md) 为准。  
 > **分支**：`test_branch`（底：`ca_branch`）。当前 Pilot 镜像：`intelligent-collection-admin:pilot`，代码 `a24356c`（回调按步骤收口 + AI 超时 30 分钟）。  
 > **日期**：2026-08-26 冒烟 + 加测；[8/27 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260827.md)（上午截止 09:51 PHT）
 

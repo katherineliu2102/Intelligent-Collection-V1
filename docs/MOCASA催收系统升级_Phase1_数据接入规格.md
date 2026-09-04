@@ -110,6 +110,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 已有周期且水位已是当日的迟到 NEW | 同上刷新归属日 | 该案当日首条在水位之后到达（不是同日二次发送）；在催、无活跃计划、非 `SETTLED`/`CEASED` → 补发 `CASE_INGESTED` |
 | 新的整笔结清 `repaymentEvent` | 行锁读取完整快照，合并增量并派生 `SETTLED`；**不**改 `owner_date` | `REPAYMENT_RECEIVED` |
 | 新的部分还款 `repaymentEvent` | 合并运行态字段并派生 `IN_COLLECTION`；**不**改 `owner_date` | `CASE_BALANCE_UPDATED` |
+| 已迁出（`owner_date ≠ 当日`）但仍有投影基线的 `repaymentEvent` | 与上行相同：合并增量、**不**改 `owner_date`、不复活计划 | 仍发 `REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED`；引擎无活跃计划则计划侧 no-op（结清仍调用预测外呼过滤） |
 | 无完整快照基线的 `repaymentEvent` | 视为异常；不从旧库回填产品、借款人或设备 | poison 后 ACK |
 | 早于投影的 `repaymentEvent` | 收件箱标记 `SKIPPED` | 无 |
 
@@ -166,7 +167,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 
 **阶段单调前进（与引擎 ESCALATE 的优先级）**：日切**不得**因投影 stage 低于计划 stage 而发布回退事件。引擎的穷尽升档（[核心引擎 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)）会把活跃计划的 stage 抬到高于 DPD 推导值，而引擎从不回写 `t_ai_collection`，因此"计划 stage > 投影 stage"是**升档后的正常稳态**，不是漂移。若日切按"不同即发"处理，就会把升档计划按 `STAGE_UPGRADE` 取消并重建回低阶段，下一轮穷尽再次升档，形成降档 ping-pong。DPD 真实下降（部分还款）已由 `CASE_BALANCE_UPDATED` 更新快照金额，Phase 1 不因此降低已在运行的催收强度。
 
-`CASE_CEASED` 只能由该 Job 产出。`STAGE_CHANGED` 有两个合法发布方——本 Job 与引擎穷尽升档（发布者列见[领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)）；两者语义不同：本 Job 走[引擎 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理) 取消旧计划再建，升档则旧计划已是终态。外部 Topic 投递的同名事件仍必须按 poison 处理。
+`CASE_CEASED` 只能由该 Job 产出。`STAGE_CHANGED` 有两个合法发布方——本 Job 与引擎穷尽升档（发布者列见[领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)）；两者语义不同：本 Job 走[引擎 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理) 取消旧计划再建；升档由[引擎 §4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建) 先终态旧计划再投递，消费时走 §4.2 建新阶段。外部 Topic 投递的同名事件仍必须按 poison 处理。
 
 ## 5. 迁移与 replay
 <a id="6-迁移与双写"></a><a id="61-联调隔离"></a>

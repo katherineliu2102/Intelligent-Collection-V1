@@ -1,6 +1,6 @@
 # MOCASA 催收系统升级 — Phase 1 T3o 执行取证手册
 
-把 T5-S、T5-R 与 T3o-O 逐条落成可照抄的注入与断言命令。判定口径以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) 为准，本手册只管「怎么做出来、证据在哪取」。执行顺序见测试 SSOT §7.1；环境准备与回滚见 [T5 Pilot 手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。
+把 T5-S、T5-R 与 T3o-O 逐条落成可照抄的注入与断言命令。判定口径以[测试 SSOT](../MOCASA催收系统升级_Phase1_测试文档.md) 为准，本手册只管「怎么做出来、证据在哪取」。执行顺序见测试 SSOT §7.1；环境准备与回滚见 [T5 Pilot 手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。
 
 真实主机名、账号与口令一律不入库，见 gitignore 的 `docs/ops/生产访问凭据.local.md`。
 
@@ -89,7 +89,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$BASE/actuator/prometheus"
 
 ## 1b. 触达隔离配置（T3o-4 前置）
 
-**开调度之前必须先配好，否则第一条到期步骤就会真实发给借款人。** 口径见[测试 SSOT §7.4](./MOCASA催收系统升级_Phase1_测试文档.md#74-t3o-4-触达隔离口径2026-08-25-修订)：四个渠道一律靠 Adapter 出口强制改投，不依赖上游数据。
+**开调度之前必须先配好，否则第一条到期步骤就会真实发给借款人。** 口径见[测试 SSOT §7.4](../MOCASA催收系统升级_Phase1_测试文档.md#74-t3o-4-触达隔离口径2026-08-25-修订)：四个渠道一律靠 Adapter 出口强制改投，不依赖上游数据。
 
 渠道开关在 Nacos 的 `channel:` 块下（**合并进已有的 `channel.notification` / `channel.sendgrid`，不要追加新的顶层 `channel:` 键**，会撞 `DuplicateKeyException` 导致启动失败）：
 

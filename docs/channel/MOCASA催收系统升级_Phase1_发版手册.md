@@ -155,4 +155,4 @@ docker build --no-cache -t intelligent-collection-admin:pilot .
 - 配置：`/opt/app/pilot.env` + Nacos（`NACOS_NAMESPACE` / `NACOS_GROUP` 见 `pilot.env`）
 - 库：`ai_collection_db`（与线上催收同一套）
 
-> 配置生效优先级：**环境变量 > `application-pilot.yml` > Nacos 导入配置**。写在 `application-pilot.yml` 里的键（含 `spring.redis.*`）无法由 Nacos 覆盖，改这些值要改 `pilot.env` 并重启容器。详见 [T5 Pilot 准备与演练手册 §4.1](../testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#41-连接信息落位与变更方式)。
+> 配置生效优先级：**环境变量 > `application-pilot.yml` > Nacos 导入配置**。写在 `application-pilot.yml` 里的键（含 `spring.redis.*`）无法由 Nacos 覆盖，改这些值要改 `pilot.env` 并重启容器。详见 [T5 Pilot 准备与演练手册 §4.1](../testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#41-连接信息落位与变更方式)。

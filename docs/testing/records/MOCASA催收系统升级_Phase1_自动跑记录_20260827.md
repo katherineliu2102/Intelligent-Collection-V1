@@ -4,7 +4,7 @@
 > **对比 8/26**：昨晚是挤压冒烟；今天不手调时间，看预写槽是否按钟点发出。  
 > **环境**：Pilot `bdp01`，容器 `collection-admin`。上午 `a24356c`；**11:22 PHT** 换成波次聚合（`6f0ff38`）；**16:32 PHT** 发版 `4ca65f5`（邮件映射进代码、SETNX、穷尽 0 步升档）+ 白名单 40 案。  
 > **时区**：PHT（UTC+8）。取数截止 **16:20 PHT**；DPD/金额与表盘点补记于当晚。  
-> **关联**：[主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) · [Facade 接入说明](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) · [发版手册](../channel/MOCASA催收系统升级_Phase1_发版手册.md) · [数仓契约](../数仓_PubSub交付契约.md)
+> **关联**：[主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) · [Facade 接入说明](../../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade接入说明.md) · [发版手册](../../channel/MOCASA催收系统升级_Phase1_发版手册.md) · [数仓契约](../../数仓_PubSub交付契约.md)
 
 ## 目录
 

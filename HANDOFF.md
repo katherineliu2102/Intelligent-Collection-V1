@@ -158,6 +158,6 @@ SPI 签名与约束 → [核心引擎规格 §6](./docs/MOCASA催收系统升级
 | 接入实现 | [`docs/MOCASA催收系统升级_Phase1_数据接入规格.md`](./docs/MOCASA催收系统升级_Phase1_数据接入规格.md) |
 | 引擎 / 基础设施 | 核心引擎规格 · 基础设施交互规范 |
 | 渠道 | [`docs/channel/README_渠道文档索引.md`](./docs/channel/README_渠道文档索引.md) |
-| Pilot / 运维交付 | [`docs/testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md`](./docs/testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) |
+| Pilot / 运维交付 | [`docs/testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md`](./docs/testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) |
 
 跨模块疑问先联系主架构再改代码。

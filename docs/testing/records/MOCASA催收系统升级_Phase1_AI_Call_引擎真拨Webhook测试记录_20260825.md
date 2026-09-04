@@ -1,11 +1,11 @@
 # Phase 1 AI Call 引擎真拨 + Webhook 测试记录（2026-08-25）
 
 > **层级**：引擎闭环（调度 `planStepDue` → `ChannelGateway(AI_CALL)` → Facade `create → cases → start` → `POST /webhook/facade-callback` → 步骤终态）。  
-> **对比 L1**：2026-08-19 的 L1 记录走 `/mock/send-ai-call`，**不经引擎、无 Webhook 入库**；本记录补上那两条缺口。（该 L1 记录尚未入仓，需向编排同事索取后补进 `docs/testing/`。）  
+> **对比 L1**：2026-08-19 的 L1 记录走 `/mock/send-ai-call`，**不经引擎、无 Webhook 入库**；本记录补上那两条缺口。（该 L1 记录尚未入仓，需向编排同事索取后补进 `docs/testing/records/`。）  
 > **环境**：Pilot 机 `bdp01`（登录地址见 `docs/ops/生产访问凭据.local.md`，不入库）；容器 `collection-admin-aicall`；镜像 `intelligent-collection-admin:aicall-e2e`；域名 `https://collection-admin.mocasa.com`。  
 > **时区**：业务时间为 **PHT（UTC+8）**。库内 `executed_at` / 回调 `received_at` 为 UTC。  
 > **PII**：手机号脱敏；只写 `loan_id` / `user_id`。  
-> **关联**：[Webhook 实现规格 v0.3](../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md) · [发版手册](../channel/MOCASA催收系统升级_Phase1_发版手册.md)
+> **关联**：[Webhook 实现规格 v0.3](../../channel/MOCASA催收系统升级_Phase1_AI_Call_Facade_Webhook实现规格.md) · [发版手册](../../channel/MOCASA催收系统升级_Phase1_发版手册.md)
 
 ---
 

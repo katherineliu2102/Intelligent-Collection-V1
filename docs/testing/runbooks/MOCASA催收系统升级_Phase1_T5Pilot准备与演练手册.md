@@ -3,8 +3,8 @@
 > **版本**: Phase 1 · 仅覆盖菲律宾市场 · 2026-08-19
 > **日期**: 2026-08-19
 > **用途**: 合并 Redis 资源申请、T3o 生产等价演练、T4 固定 50 案真实白名单 Pilot、渐进切量、证据归档与回滚操作。
-> **边界**: 生产基础设施契约与实现差集以[基础设施交互规范](../MOCASA催收系统升级_Phase1_基础设施交互规范.md)为准；T5 用例、状态与出口以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)为准。
-> **写作约定**: 本手册只写**怎么做、怎么验、失败怎么办**。逐次实测记录、缺口登记与裁定理由一律写进[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，此处只留结论与指针——手册被当作值班操作台使用，掺入过程叙述会让人在故障时读不到该做的动作。
+> **边界**: 生产基础设施契约与实现差集以[基础设施交互规范](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md)为准；T5 用例、状态与出口以[测试 SSOT](../MOCASA催收系统升级_Phase1_测试文档.md)为准。
+> **写作约定**: 本手册只写**怎么做、怎么验、失败怎么办**。逐次实测记录、缺口登记与裁定理由一律写进[测试 SSOT 附录 C](../MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，此处只留结论与指针——手册被当作值班操作台使用，掺入过程叙述会让人在故障时读不到该做的动作。
 
 ---
 
@@ -20,7 +20,7 @@
 **输入**
 
 - T3 与 T3o 已完成的证据包；
-- [交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)中所有“阻断”差集的闭合证明；
+- [交接板 D.1](../../../HANDOFF.md#d1-生产就绪差集登记)中所有“阻断”差集的闭合证明；
 - 经批准的 Pilot 白名单、渠道 sandbox 地址和变更窗口。
 
 **输出**
@@ -81,23 +81,23 @@
 | 项 | 要求 |
 |---|---|
 | 频率 | 每日至少一次；T4 三日循环与每次 T5 放量当日必须有记录 |
-| 内容 | 手工抓取 `/actuator/prometheus`，按[基础设施 §7.3 调度巡检口径](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#调度指标的人工巡检口径)判读调度指标，并记录 PEL 深度、Stream 长度、DLQ 入列与 `collection.step.skipped` 的跳过原因 |
-| 判据 | 异常口径复用[基础设施 §7.4 告警最低要求](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)：`collection.schedule.failed` 或 `skipped{reason=UNKNOWN_JOB}` 任意增长、`triggered` 停止增长、DLQ 持续入列、日切 06:00 PHT 未完成，均按该表处置并暂停下一批放量 |
+| 内容 | 手工抓取 `/actuator/prometheus`，按[基础设施 §7.3 调度巡检口径](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md#调度指标的人工巡检口径)判读调度指标，并记录 PEL 深度、Stream 长度、DLQ 入列与 `collection.step.skipped` 的跳过原因 |
+| 判据 | 异常口径复用[基础设施 §7.4 告警最低要求](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)：`collection.schedule.failed` 或 `skipped{reason=UNKNOWN_JOB}` 任意增长、`triggered` 停止增长、DLQ 持续入列、日切 06:00 PHT 未完成，均按该表处置并暂停下一批放量 |
 | 归档 | 巡检记录进入 [§8 证据包](#8-证据归档与阶段完成判定)，与当日对账同批留存 |
 | 责任人与时点 | **主架构**每日一次，固定在日切窗口收尾后（06:30 PHT 前）执行并归档（2026-08-21 确定）；主架构不可用时须提前指定代班人，不得跳过 |
-| 升级路径 | 命中判据即按[基础设施 §7.4](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)处置，并同步业务与运维值守人；涉及触达安全的（越窗、越限、非白名单、重复投递）立即暂停下一批放量 |
+| 升级路径 | 命中判据即按[基础设施 §7.4](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md#74-告警最低要求)处置，并同步业务与运维值守人；涉及触达安全的（越窗、越限、非白名单、重复投递）立即暂停下一批放量 |
 
 > 代偿只覆盖“人能定期看到”的部分，不覆盖实时告警。因此代偿期内**不得**取消值守、也不得把停止条件的判断推迟到次日巡检；Cloud Scheduler 侧的 O7 / O8 告警仍应尽早交付。
 
 ### 3.2 调度交付清单（O1–O8）
 
-调度入口已从 XXL-Job 迁为「Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅」。应用侧代码、配置样例、启动校验与单测均已就位。GCP 侧交付项与当前状态（口径 SSOT：[基础设施 §5.5](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#55-运维--gcp-交付清单)）：
+调度入口已从 XXL-Job 迁为「Cloud Scheduler → 调度专用 Pub/Sub 主题 → 应用侧专用订阅」。应用侧代码、配置样例、启动校验与单测均已就位。GCP 侧交付项与当前状态（口径 SSOT：[基础设施 §5.5](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md#55-运维--gcp-交付清单)）：
 
 | # | 交付项 | 状态 | 验收证据 |
 |---|---|---|---|
 | O1 | 调度专用 Pub/Sub 主题（`intelligent-collection-schedule-v1`） | ✅ 本就存在 | `provision-scheduler.py --verify` |
 | O2 | 我们专用的调度订阅（`intelligent-collection-schedule-v1-sub`），不复用案件订阅、不与他方共享 | ✅ 存在且已纠参数 | 同上：topic 指向 O1，无其他 subscriber |
-| — | **案件接入订阅** `intelligent-collection-cases-v1-sub`（非 O 系列，但同批发现同批修） | ✅ ack 已由 10s 纠为 60s | `--verify` 输出；[数据接入规格 §2.1](../MOCASA催收系统升级_Phase1_数据接入规格.md) 要求与 `collection.ingestion.ack-deadline-seconds=60` 一致 |
+| — | **案件接入订阅** `intelligent-collection-cases-v1-sub`（非 O 系列，但同批发现同批修） | ✅ ack 已由 10s 纠为 60s | `--verify` 输出；[数据接入规格 §2.1](../../MOCASA催收系统升级_Phase1_数据接入规格.md) 要求与 `collection.ingestion.ack-deadline-seconds=60` 一致 |
 | O3 | Scheduler 服务账号对 O1 的 `roles/pubsub.publisher` | ✅ 服务代理默认具备 | Job 成功发布即为证据（tick 已落订阅） |
 | O4 | 应用服务账号对 O2 的 `roles/pubsub.subscriber` | ⬜ 待应用侧凭证落位 | 应用日志出现 `[Scheduler] 调度订阅消费已启动` |
 | O5 | 订阅 ack deadline 60s、`message-retention-duration` 10m、不配死信主题 | ✅ 已 PATCH（原 10s / 7d） | `--verify` 输出 |
@@ -105,7 +105,7 @@
 | O7 | Scheduler Job 失败告警 | ⬜ 待运维 | 告警规则配置 + 一次测试告警到达记录 |
 | O8 | 日切 06:00 PHT 未完成告警 | ⬜ 待运维 | 告警规则配置 + 触发条件说明 |
 
-操作要点（实测记录、证据与裁定理由见[测试 SSOT 附录 C](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，本节不复述）：
+操作要点（实测记录、证据与裁定理由见[测试 SSOT 附录 C](../MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md#附录-c缺口登记)，本节不复述）：
 
 - **创建与复验一律用 `scripts/test/provision-scheduler.py`**（幂等，`--dry-run` / `--verify` / `--pause`），不要手敲 gcloud：漏 `--attributes="job=..."` 会让四条 Job 全部空转、触达链路静默停摆，而 Job 执行记录仍显示成功。
 - **location 必须与当前环境已验证的 Job 一致**。Cloud Scheduler 的 Job 可分布在多个 location；不得仅凭项目名假定唯一 location。
@@ -118,7 +118,7 @@
 T3o 开始前必须满足：
 
 1. T3 已通过，且未关闭项已明确不影响 T3o。
-2. [交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)的阻断项均已关闭；仅记录差集而未修复，不得宣告 Pilot 完成。
+2. [交接板 D.1](../../../HANDOFF.md#d1-生产就绪差集登记)的阻断项均已关闭；仅记录差集而未修复，不得宣告 Pilot 完成。
 3. T3o 测试白名单、sandbox 地址、回滚责任人和变更窗口均已审批。
 
 ## 4. Redis 资源申请与运行基线
@@ -160,7 +160,7 @@ T3o 开始前必须满足：
 
 > `spring.redis.timeout` 必须大于消费轮询的 `XREADGROUP BLOCK`（当前 1s），Pilot 取 2s；短命令（合规 Lua 等）的延迟上界由 `SpiInvoker` 的 50ms 硬超时兜底，不靠客户端超时收紧。
 
-容量规模与 Consumer 参数以[基础设施规范附录 B](../MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-b容量基线与生产技术准入)的回填结论为准，不使用旧“5,000 在催”口径定版。
+容量规模与 Consumer 参数以[基础设施规范附录 B](../../MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-b容量基线与生产技术准入)的回填结论为准，不使用旧“5,000 在催”口径定版。
 
 ## 5. 部署与配置预检
 
@@ -312,7 +312,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 
 本节定义操作顺序；具体断言、状态与证据格式以测试 SSOT 的 T5/T5-R 为准。
 
-> **2026-08-25 修订**：原顺序为“先打通生产渠道，再做可靠性演练，监控最后补”（2026-08-05 决定），在当前接线下有两处不成立，已按下列顺序调整。完整表述见[测试 SSOT §7.1](./MOCASA催收系统升级_Phase1_测试文档.md#71-执行顺序2026-08-25-修订)。
+> **2026-08-25 修订**：原顺序为“先打通生产渠道，再做可靠性演练，监控最后补”（2026-08-05 决定），在当前接线下有两处不成立，已按下列顺序调整。完整表述见[测试 SSOT §7.1](../MOCASA催收系统升级_Phase1_测试文档.md#71-执行顺序2026-08-25-修订)。
 >
 > - **渠道不能先于调度**：Pilot 下 `TriggerScanner` 是 `@Profile({"local","test"})` 不装配，步骤执行的唯一入口是调度订阅。调度未通时 [§6.1](#61-渠道生产连通验证清单) 的六项没有步骤可发。
 > - **“监控最后补”只适用于完整监控**：可后置到 T6 的是 Prometheus 抓取、Alertmanager 与 Dashboard；简版观测 MVP（T3o-O）是 T4 阻断项，且 T5-S 多条断言本身就是读指标，观测缺失时无法判定。§5.2 第 4、5 步已将其置于启动预检，以 §5.2 为准。
@@ -337,7 +337,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 | 1 | SMS | `channel.notification.app-key`、发送额度、菲律宾号段准入 | 对内部测试号发一条 S1 话术 | 供应商返回成功且拿到 `providerMsgId`；`t_contact_timeline` 落一条 SENT；真机收到且文案无占位符残留 |
 | 2 | PUSH | `case_push` 携带的极光 token（用户已注册时） | 有 token 与无 token 两种案件 | 有 token 走 PUSH；无 token 自动 fallback SMS 且只产生一次投递 |
 | 3 | EMAIL | `channel.sendgrid.api-key`、模板 ID、发件域名验证 | 对内部邮箱发一封 | SendGrid 202；模板渲染含正确金额与还款链接；脏邮箱（空/`0`）走 Guard SKIP 不发送 |
-| 4 | AI_CALL | 已完成 [测试 SSOT L2-CB 第 1–3 级](./MOCASA催收系统升级_Phase1_测试文档.md#l2-cbai_call-分级联调)；稳定 HTTPS 回调地址、HMAC secret、真实 Adapter 与批准测试号码就绪 | 一次呼叫 + 回调 | 步骤保持 `STEP_EXECUTING` 等回调；回调经签名校验后推进；不回调时哨兵按 `callback_timeout_minutes` 收敛为 FAILED |
+| 4 | AI_CALL | 已完成 [测试 SSOT L2-CB 第 1–3 级](../MOCASA催收系统升级_Phase1_测试文档.md#l2-cbai_call-分级联调)；稳定 HTTPS 回调地址、HMAC secret、真实 Adapter 与批准测试号码就绪 | 一次呼叫 + 回调 | 步骤保持 `STEP_EXECUTING` 等回调；回调经签名校验后推进；不回调时哨兵按 `callback_timeout_minutes` 收敛为 FAILED |
 | 5 | 回调与审计 | Webhook 公网可达、签名开启 | 重复回调与伪造签名 | 重复回调幂等不重复计次；签名错误被拒并留审计 |
 | 6 | 合规与停止 | 触达窗口、日上限、白名单 | 窗口外触达与超限触达 | 窗口外不发送（延后或 SKIP）；超限被 Guard 拦截并写 `COMPLIANCE_BLOCKED`；关闭开关后立即停止发送 |
 
@@ -347,7 +347,7 @@ gcloud scheduler jobs create pubsub collection-daily-roll-continue \
 
 ## 7. 待完成项与闭合口径
 
-以下项来自[交接板 D.1](../../HANDOFF.md#d1-生产就绪差集登记)；除标注“可后置”的项外，未关闭不得将 T3o 标记为完成。简版观测 MVP 是 T4 阻断项；完整抓取/告警/Dashboard 是 T6 阻断项（移除白名单前闭合），T3o–T5 期间以人工巡检代偿。
+以下项来自[交接板 D.1](../../../HANDOFF.md#d1-生产就绪差集登记)；除标注“可后置”的项外，未关闭不得将 T3o 标记为完成。简版观测 MVP 是 T4 阻断项；完整抓取/告警/Dashboard 是 T6 阻断项（移除白名单前闭合），T3o–T5 期间以人工巡检代偿。
 
 DLQ 状态机、窗口门控、Redis Lua 频控、事件消费去重和日切 keyset 游标已有代码/测试基础；简版观测指标、结构化证据和查询能力仍须按测试 SSOT T3o-O1…O4 实施并验证，不能假定已完成。
 
