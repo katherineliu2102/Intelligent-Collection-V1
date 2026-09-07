@@ -8,7 +8,7 @@
 |------|------|
 | [`dev/`](./dev/) | 本地启停、健康检查、Nacos 密钥发布、环境校验 |
 | [`pilot/`](./pilot/) | Pilot 灰度运维：触达槽巡检、日报、无 plan 审计、env 维护、手动日切 |
-| [`dev/archive/phase1-pilot/`](./dev/archive/phase1-pilot/) | Phase1 一次性取证 / MUTATING 归档；分级见 [Pilot 脚本整理台账](../docs/testing/MOCASA催收系统升级_Phase1_Pilot脚本整理台账.md) |
+| [`dev/archive/phase1-pilot/`](./dev/archive/phase1-pilot/) | Phase1 一次性取证 / MUTATING 归档；分级见 [Pilot 脚本整理台账](../docs/testing/records/MOCASA催收系统升级_Phase1_Pilot脚本整理台账.md) |
 | [`dev/_pilot*`](./dev/) | 少数 deprecated 别名（指向 `scripts/pilot/`）；勿新增 |
 | [`test/`](./test/) | L4 端到端、冒烟、Email E2E |
 

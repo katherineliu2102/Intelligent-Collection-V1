@@ -2,7 +2,7 @@
 
 > 一次性取证 / 改库脚本归档区。**不要**从这里直接 cron。  
 > 正式运维请用 [`scripts/pilot/`](../../pilot/)。  
-> 盘点见 [Pilot 脚本整理台账](../../../docs/testing/MOCASA催收系统升级_Phase1_Pilot脚本整理台账.md)。
+> 盘点见 [Pilot 脚本整理台账](../../../docs/testing/records/MOCASA催收系统升级_Phase1_Pilot脚本整理台账.md)。
 
 | 目录 | 内容 |
 |------|------|

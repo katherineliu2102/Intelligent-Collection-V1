@@ -19,7 +19,7 @@ client = bigquery.Client(
 )
 
 SRC = Path(
-    r"d:/AI/Intelligent-Collection-V1/docs/testing/owner_route_dpd30_loans_20260903.csv"
+    r"d:/AI/Intelligent-Collection-V1/docs/testing/records/owner_route_dpd30_loans_20260903.csv"
 )
 TABLE = f"{DATA}.risk_model.risk_intelligent_collection_blacklist_case"
 OPERATOR = "Intelligent Collection System"

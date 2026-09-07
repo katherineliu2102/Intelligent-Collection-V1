@@ -1,9 +1,9 @@
 # Phase 1 Owner 路由 E2E 手册（T1-7）
 
-> **用途**：隔离环境（L4b）用 mock owner feed 全量执行[改造计划 §7.1](../MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md#71-必测场景) 必测场景，作为 T4 影子验证前的开发侧出口。
+> **用途**：隔离环境（L4b）用 mock owner feed 跑 Owner 路由必测场景，作为 T4 影子验证前的开发侧出口。
 > **判定口径**：场景是否通过的裁决以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)为准；本手册只提供注入手法、命令与断言字段。
 > **环境**：L4b 隔离环境（测试 topic + 合成案 99000000–99000005，凭证与连接见[ L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)）。
-> **关联**：[按日 Owner 路由开发计划](./MOCASA催收系统升级_Phase1_按日Owner路由开发计划.md) T1-7 · [DPD30 样本](./MOCASA催收系统升级_Phase1_Owner路由DPD30样本_20260903.md)（Pilot/影子期用）
+> **关联**：[DPD30 样本](records/MOCASA催收系统升级_Phase1_Owner路由DPD30样本_20260903.md)（Pilot/影子期用）
 
 ---
 
@@ -76,7 +76,7 @@ scripts/test/l4b-pubsub/publish-test-messages.sh ownerfeed /tmp/new_list_day1.tx
 
 ### E2E-2 缺席迁出五状态（§7.1-2 核心）
 
-- **前置**：Day1 `ownerfeed` 全名单 → 触发 dailyRoll 建计划 → 推进步骤，使 5 案分别处于：`PENDING`（未开始）/ `STEP_SCHEDULED`（待执行）/ `STEP_EXECUTING`（执行中）/ `STEP_WAITING`（AI Call 等回调，手法见[引擎真拨 Webhook 测试记录](./MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)）/ `PLAN_COMPLETED`（穷尽）。
+- **前置**：Day1 `ownerfeed` 全名单 → 触发 dailyRoll 建计划 → 推进步骤，使 5 案分别处于：`PENDING`（未开始）/ `STEP_SCHEDULED`（待执行）/ `STEP_EXECUTING`（执行中）/ `STEP_WAITING`（AI Call 等回调，手法见[引擎真拨 Webhook 测试记录](records/MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)）/ `PLAN_COMPLETED`（穷尽）。
 - **注入**：Day2 名单仅保留 1 案保底（其余 5 案缺席）→ 触发 dailyRoll 直至写水位。
 - **断言**：5 案活跃计划（未终态者）全部 `PLAN_CANCELLED` + `cancel_reason=ROUTED_TO_LEGACY`；`t_contact_timeline` 出现 `CASE_OWNER_RECONCILED`；此后 tick 到期扫描，5 案无任何新触达/新步骤；水位 `owner_case_count = 1`（保底案）。
 - **通过**：五状态全覆盖且零新触达。

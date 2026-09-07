@@ -157,6 +157,20 @@ export const api = {
   dashboardAicallRealtime(days = 7) {
     return request(`/dashboard/aicall/realtime?days=${days}`);
   },
+  dashboardAging() {
+    return request("/dashboard/aging");
+  },
+  dashboardMatrix(days = 7) {
+    return request(`/dashboard/matrix?days=${days}`);
+  },
+  dashboardDaily(days = 7) {
+    return request(`/dashboard/daily?days=${days}`);
+  },
+  dashboardAicallDetail(page = 1, pageSize = 25, days = 7, includeSynthetic = false) {
+    return request(
+      `/dashboard/aicall/detail?page=${page}&pageSize=${pageSize}&days=${days}&includeSynthetic=${includeSynthetic}`
+    );
+  },
   dashboardRisk() {
     return request("/dashboard/risk");
   },

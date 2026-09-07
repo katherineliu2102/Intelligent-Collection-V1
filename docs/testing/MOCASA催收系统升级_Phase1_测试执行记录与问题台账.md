@@ -369,7 +369,7 @@ HMAC-SHA256 验签、白名单案 520049。调度扫到步骤 1414 → dispatch 
 （`batch_id=591838ae…`）→ 约 55s 后 `POST /webhook/facade-callback` 收到 `session.completed`
 → `signature_valid=1` → 写 `t_channel_callback_audit#7` 与 `t_contact_timeline#712`
 → 步骤结为 `NO_ANSWER`、计划 `PLAN_COMPLETED`。1/1 成功，明细见
-[真拨 Webhook 测试记录](./MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)。
+[真拨 Webhook 测试记录](records/MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)。
 
 回调路径是 `POST /webhook/facade-callback`（账户级 URL），**不是** L1 文档里的 `/webhook/facade/voice`。
 

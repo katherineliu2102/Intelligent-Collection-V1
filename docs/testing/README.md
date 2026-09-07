@@ -1,33 +1,41 @@
 # Phase 1 测试文档索引
 
-## 入口与边界
+## 怎么放
+
+| 位置 | 放什么 |
+|---|---|
+| **本目录** | 可复用手册 / SSOT / 验收清单（长期有效） |
+| **[`records/`](./records/)** | **一次性实测记录**：按日自动跑、样本说明、Pilot 脚本台账等 |
+
+之后更新自然日结果，请直接写到 `records/`（命名：`MOCASA催收系统升级_Phase1_自动跑记录_YYYYMMDD.md`），**不要**再散落到本目录或其它规格文档里。
+
+## 长期文档（本目录）
 
 | 文档 | 职责 |
 |---|---|
-| [主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) | **当前优先**：建 plan + SMS/PUSH/EMAIL/AI_CALL 执行；记录每次结果。不是 T4 |
-| [8/27 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260827.md) | 自然日五槽、DPD/金额对账、落库表盘点；傍晚 `4ca65f5` 发版与 8/28 预估 |
-| [8/28 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260828.md) | 发版次日完整自然日：五槽、SETNX、邮件映射、接通停呼；数仓 03:00 进库与还款 2h 窗 **8/29 复验** |
-| [8/29 二百案抽样](./MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) | 200 案分流开测：配额、周末并档、loan_id；开测日验进库时间与还款窗 |
-| [8/29–8/31 自动跑综述](./MOCASA催收系统升级_Phase1_自动跑综述_20260829-0831.md) | 三天结果 + 9/1：续档/S0/Email 通过；14:30 因连接池晚起批 |
-| [8/29 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260829.md) | **200 案未进测**（白名单仍 40）；原 40 案五槽；当晚 23:12 切 200 名单 |
-| [8/30 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260830.md) | 200 案首跑：**进 143**；接通 `513849`；S0 整桶未发；14:30 悬挂 2；17:39 空名单 |
-| [8/31 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260831.md) | 空名单全日：SMS 127 / Push 136 / Email 12（dpd=4）/ AI 两批；8 案补跑实发；S0 仍缺 |
-| [9/1 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260901.md) | 五槽全日；14:30 收口；原 40 止血；Hikari 池 25 |
-| [9/2 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260902.md) | **五槽全日收口**；S0→S1；AI 接通 5；14:30 准时；FAILED=Facade 媒体层 |
-| [9/3 自动跑记录](./MOCASA催收系统升级_Phase1_自动跑记录_20260903.md) | **五槽全日收口**；SMS/Push 130；Email 0；接通 1（`529588`）；日切无升档；无 plan 40 |
-| [Pilot 脚本整理台账](./MOCASA催收系统升级_Phase1_Pilot脚本整理台账.md) | `/tmp` 与 `scripts/dev/_pilot*` 分级、危险脚本、归档与升格计划（维护用） |
-| [e2e200 缺投影清单](./e2e200_缺投影清单_20260901.md) | S0 缺 24 + 非 S0 缺 13，发数仓补发 |
-| [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) | 测试准入、用例、出口的完整来源（T0–T6；含 T3o 简版观测门槛） |
-| [测试执行记录与问题台账](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md) | 历史实测过程、证据摘要、问题定位、环境偏差与裁定理由；不作为当前测试状态的裁决来源 |
-| [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | L4b 的 topic/订阅、Nacos、凭证、操作顺序、查库节奏与可重复性前置；不作测试裁决 |
-| [触达内容验收清单](./MOCASA催收系统升级_Phase1_触达内容验收清单.md) | 触达内容的人工验收判据，覆盖 T3 自持终端与 T4 Pilot 间接取证两种模式；不定义用例或环境 |
-| [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Redis / GCP 运维交付、50 案真实白名单 Pilot、渐进切量与回滚操作 |
-| [T3o 执行取证手册](./MOCASA催收系统升级_Phase1_T3o执行取证手册.md) | T5-S / T5-R / T3o-O 逐条的注入手法、命令与断言字段；判定口径仍以测试 SSOT 为准 |
-| [按日 Owner 路由改造计划](../MOCASA催收系统升级_Phase1_按日Owner路由改造计划.md) | 新旧系统按日分流轮换的机制设计（缺席对账 + 归属日 + 水位门控）；含修订记录 |
-| [按日 Owner 路由开发计划](./MOCASA催收系统升级_Phase1_按日Owner路由开发计划.md) | 四轨道分工、G1/G2 灰度闸门、已拍板决策与待拍板项；跨团队需求文档入口 |
-| [Owner 路由 E2E 手册 T1-7](./MOCASA催收系统升级_Phase1_Owner路由E2E手册_T1-7.md) | mock owner feed 注入手法、§7.1 八场景矩阵与断言 SQL；E2E-6 已拍板跳过 |
+| [主链路冒烟清单](./MOCASA催收系统升级_Phase1_主链路冒烟清单.md) | 建 plan + 四渠道执行的冒烟判据（不是 T4） |
+| [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) | T0–T6 准入 / 用例 / 出口 |
+| [测试执行记录与问题台账](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md) | 历史问题与裁定；不作当前状态裁决 |
+| [触达内容验收清单](./MOCASA催收系统升级_Phase1_触达内容验收清单.md) | 话术 / 触达内容人工验收 |
+| [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Pilot 运维、白名单、切量回滚 |
+| [T3o 执行取证手册](./MOCASA催收系统升级_Phase1_T3o执行取证手册.md) | T5-S / T5-R / T3o-O 注入与断言 |
+| [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | topic / Nacos / 查库节奏 |
+| [FIRM 渠道测试用例表](./FIRM渠道测试用例表.md) | FIRM 话术用例 |
+| [Owner 路由 E2E 手册 T1-7](./MOCASA催收系统升级_Phase1_Owner路由E2E手册_T1-7.md) | mock owner feed 与断言 SQL |
 
-渠道 `TC-*` 细节见[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)。渠道架构中的 L1/L3 不等于测试 SSOT 的 L1/L3。
+## 实测记录（[`records/`](./records/)）
+
+完整目录与摘要见 [records/README](./records/README.md)。
+
+| 最新 | 摘要 |
+|---|---|
+| [9/7 自动跑](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260907.md) | 上午收口；AI 0 接通；下午待补 |
+| [9/6 自动跑](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260906.md) | 五槽收口；S4 Email×12；接通 4 |
+| [9/5 自动跑](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260905.md) | 五槽收口；接通 4 |
+| [9/4 自动跑](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260904.md) | Owner 分流全日通过；Email 25；接通 6 |
+| [records 全目录](./records/README.md) | 按日索引 |
+
+渠道 `TC-*` 见[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)。
 
 ## 脚本索引
 
@@ -36,9 +44,9 @@
 | `scripts/test/l4a-official-test.sh` | L4a 官方用例及 Guard/REBUILD | 存在 |
 | `scripts/test/restart-and-l4a.sh` | 重启、构建、启动、执行 L4a | 存在 |
 | `scripts/test/l4b-preflight.sh` | L4b 环境预检 | 存在；不替代 L4b 测试 |
-| `scripts/test/l4b-pubsub/publish-test-messages.sh` | L4b 测试 topic 发布 case/repayment 消息 | 存在；不替代 L4b 测试 |
-| `scripts/test/l4b-official-test.sh` | L4b 官方闭环 | 存在；历史结果不替代当前契约下的重测证据 |
-| `scripts/test/smoke-level-a.sh` | 本地 Level A 冒烟 | 存在；不是 L4a 替代 |
-| `scripts/test/provision-scheduler.py` | 调度 Job / 订阅参数纠偏；`--fix-cases-dlq` 挂案件订阅死信（T3o-7 前置） | 存在；`--fix-cases-dlq` 改变接入失败行为，须显式执行并记录 |
+| `scripts/test/l4b-pubsub/publish-test-messages.sh` | L4b 测试 topic 发布 | 存在 |
+| `scripts/test/l4b-official-test.sh` | L4b 官方闭环 | 存在 |
+| `scripts/test/smoke-level-a.sh` | 本地 Level A 冒烟 | 存在 |
+| `scripts/test/provision-scheduler.py` | 调度 / DLQ 纠偏 | 存在 |
 
-完整命令索引见 [`scripts/README.md`](../../scripts/README.md)。不执行真实触达时，只可查看脚本和配置，不应运行 L4a/L4b 命令。
+完整命令见 [`scripts/README.md`](../../scripts/README.md)。

@@ -20,7 +20,7 @@ client = bigquery.Client(
 )
 
 OUT_DIR = Path(r"d:/AI/Intelligent-Collection-V1/docs/testing")
-E2E200 = OUT_DIR / "e2e200_loans_20260829.csv"
+E2E200 = OUT_DIR / "records" / "e2e200_loans_20260829.csv"
 E2E50 = OUT_DIR / "e2e50_loans_20260820.csv"
 
 L1_LOANS = {
@@ -402,9 +402,9 @@ for r in new_picked:
 combined.sort(key=lambda r: (r["source"], r["bucket"], r["loan_id"]))
 assert len({r["loan_id"] for r in combined}) == len(combined)
 
-OUT_IDS = OUT_DIR / "owner_route_dpd30_loan_ids_20260903.csv"
-OUT_FULL = OUT_DIR / "owner_route_dpd30_loans_20260903.csv"
-OUT_DROPPED = OUT_DIR / "owner_route_e2e200_dropped_gt30_20260903.csv"
+OUT_IDS = OUT_DIR / "records" / "owner_route_dpd30_loan_ids_20260903.csv"
+OUT_FULL = OUT_DIR / "records" / "owner_route_dpd30_loans_20260903.csv"
+OUT_DROPPED = OUT_DIR / "records" / "owner_route_e2e200_dropped_gt30_20260903.csv"
 
 with OUT_IDS.open("w", newline="", encoding="utf-8") as f:
     w = csv.writer(f)

@@ -70,7 +70,96 @@ public class DashboardController {
         data.put("byStage", queryPortfolioByStage());
         data.put("byStatus", queryPortfolioByStatus());
         data.put("touchConversion", queryTouchConversion());
+        data.put("todayInbox", queryTodayInbox());
         return ApiResponse.success(data);
+    }
+
+    /** Aging 分布（§5.1.2 队列迁徙：在催案件按 DPD 4 桶切分，时点型无窗口）。 */
+    @GetMapping("/aging")
+    public Map<String, Object> aging() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "HOT");
+        data.put("freshness", "snapshot");
+        data.put("asOf", LocalDateTime.now().format(TS_FMT));
+        data.put("buckets", queryAgingBuckets());
+        return ApiResponse.success(data);
+    }
+
+    /** 渠道 × Stage 交叉矩阵（§3.5 触达执行：行=渠道、列=Stage，格=Attempted；含 AI_CALL， 与渠道独立表正交，只做交叉视图不替代独立表）。 */
+    @GetMapping("/matrix")
+    public Map<String, Object> matrix(@RequestParam(defaultValue = "7") int days) {
+        int windowDays = Math.max(1, Math.min(90, days));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "HOT");
+        data.put("freshness", "realtime");
+        data.put("windowDays", windowDays);
+        data.put("rows", queryMatrix(windowDays));
+        return ApiResponse.success(data);
+    }
+
+    private List<Map<String, Object>> queryMatrix(int windowDays) {
+        return jdbcTemplate.query(
+                "SELECT t.channel AS channel, COALESCE(p.stage,'UNKNOWN') AS stage, "
+                        + "COUNT(*) AS records, "
+                        + "SUM(t.result IN "
+                        + ATTEMPTED_RESULTS
+                        + ") AS attempted, "
+                        + "SUM(t.result IN "
+                        + DELIVERED_RESULTS
+                        + ") AS delivered "
+                        + "FROM t_contact_timeline t "
+                        + "LEFT JOIN t_contact_plan p ON p.id = t.plan_id "
+                        + "WHERE t.direction = 'OUT' "
+                        + "AND t.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) "
+                        + "GROUP BY t.channel, COALESCE(p.stage,'UNKNOWN') "
+                        + "ORDER BY t.channel, stage",
+                new Object[] {windowDays},
+                this::portfolioRow);
+    }
+
+    /** 按日触达序列（设计原则 4「趋势 > 快照」：TrendSpark 迷你趋势的数据源）。 */
+    @GetMapping("/daily")
+    public Map<String, Object> daily(@RequestParam(defaultValue = "7") int days) {
+        int windowDays = Math.max(1, Math.min(90, days));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "HOT");
+        data.put("freshness", "realtime");
+        data.put("windowDays", windowDays);
+        data.put("series", queryDaily(windowDays));
+        return ApiResponse.success(data);
+    }
+
+    private List<Map<String, Object>> queryDaily(int windowDays) {
+        return jdbcTemplate.query(
+                "SELECT DATE(created_at) AS day, COUNT(*) AS records, "
+                        + "SUM(result IN "
+                        + ATTEMPTED_RESULTS
+                        + ") AS attempted, "
+                        + "SUM(result IN "
+                        + DELIVERED_RESULTS
+                        + ") AS delivered "
+                        + "FROM t_contact_timeline "
+                        + "WHERE direction = 'OUT' "
+                        + "AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) "
+                        + "GROUP BY DATE(created_at) ORDER BY day",
+                new Object[] {windowDays},
+                this::portfolioRow);
+    }
+
+    private List<Map<String, Object>> queryAgingBuckets() {
+        return jdbcTemplate.query(
+                "SELECT CASE "
+                        + "WHEN dpd <= 30 THEN '0-30' "
+                        + "WHEN dpd <= 60 THEN '31-60' "
+                        + "WHEN dpd <= 90 THEN '61-90' "
+                        + "ELSE '91+' END AS bucket, "
+                        + "COUNT(*) AS cases, "
+                        + "COALESCE(SUM(total_outstanding),0) AS outstanding "
+                        + "FROM t_ai_collection "
+                        + "WHERE collection_status = 'IN_COLLECTION' "
+                        + "GROUP BY bucket "
+                        + "ORDER BY FIELD(bucket,'0-30','31-60','61-90','91+')",
+                this::portfolioRow);
     }
 
     /** AI Call 分区（§5.1.4：业务结果首屏 + 渠道卫生层，读 t_ai_call_session）。 */
@@ -92,6 +181,69 @@ public class DashboardController {
         data.put("labelDistribution", queryAiCallLabels(windowDays, includeSynthetic));
         data.put("sipDistribution", queryAiCallSip(windowDays, includeSynthetic));
         return ApiResponse.success(data);
+    }
+
+    /** 接通明细（§5.1.4 业务结果下钻：was_answered=1 逐会话，时长由 ended_at-answered_at 派生）。 */
+    @GetMapping("/aicall/detail")
+    public Map<String, Object> aicallDetail(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "25") int pageSize,
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(defaultValue = "false") boolean includeSynthetic) {
+        int p = Math.max(1, page);
+        int size = Math.max(1, Math.min(100, pageSize));
+        int windowDays = Math.max(1, Math.min(90, days));
+        int offset = (p - 1) * size;
+        String synth = includeSynthetic ? "" : " AND is_synthetic = 0";
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "HOT");
+        data.put("freshness", "realtime");
+        data.put("windowDays", windowDays);
+        data.put("page", p);
+        data.put("pageSize", size);
+        data.put("total", countAiCallDetail(windowDays, synth));
+        data.put("items", queryAiCallDetail(windowDays, size, offset, synth));
+        return ApiResponse.success(data);
+    }
+
+    private long countAiCallDetail(int windowDays, String synth) {
+        Long n =
+                jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM t_ai_call_session "
+                                + "WHERE event='session.completed' AND was_answered = 1"
+                                + synth
+                                + " AND received_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                        Long.class,
+                        windowDays);
+        return n == null ? 0L : n;
+    }
+
+    private List<Map<String, Object>> queryAiCallDetail(
+            int windowDays, int limit, int offset, String synth) {
+        return jdbcTemplate.query(
+                "SELECT session_id, case_id, answered_at, ended_at, "
+                        + "TIMESTAMPDIFF(SECOND, answered_at, ended_at) AS durationSec, "
+                        + "result_label, summary, stage_snapshot, dpd_snapshot "
+                        + "FROM t_ai_call_session "
+                        + "WHERE event='session.completed' AND was_answered = 1"
+                        + synth
+                        + " AND received_at >= DATE_SUB(NOW(), INTERVAL ? DAY)"
+                        + " ORDER BY COALESCE(answered_at, received_at) DESC LIMIT ? OFFSET ?",
+                new Object[] {windowDays, limit, offset},
+                (rs, rowNum) -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("sessionId", rs.getString("session_id"));
+                    row.put("caseId", rs.getObject("case_id"));
+                    row.put("answeredAt", rs.getObject("answered_at"));
+                    row.put("endedAt", rs.getObject("ended_at"));
+                    row.put("durationSec", rs.getObject("durationSec"));
+                    row.put("resultLabel", rs.getString("result_label"));
+                    row.put("summary", rs.getString("summary"));
+                    row.put("stageSnapshot", rs.getString("stage_snapshot"));
+                    row.put("dpdSnapshot", rs.getObject("dpd_snapshot"));
+                    return row;
+                });
     }
 
     private Map<String, Object> queryAiCallFunnel(int windowDays, boolean includeSynthetic) {
@@ -239,10 +391,12 @@ public class DashboardController {
                                 + "COALESCE(SUM(collection_status='IN_COLLECTION'),0) AS inCollection, "
                                 + "COALESCE(SUM(collection_status='SETTLED'),0) AS settled, "
                                 + "COALESCE(SUM(collection_status='CEASED'),0) AS ceased, "
+                                + "COALESCE(SUM(CASE WHEN collection_status='IN_COLLECTION' THEN total_outstanding ELSE 0 END),0) AS inCollectionOutstanding, "
                                 + "COALESCE(SUM(total_outstanding),0) AS totalOutstanding, "
-                                + "COALESCE(SUM(CASE WHEN settled_at >= ? THEN last_paid_amount ELSE 0 END),0) AS todayRecovered "
+                                + "COALESCE(SUM(CASE WHEN settled_at >= ? THEN last_paid_amount ELSE 0 END),0) AS todayRecovered, "
+                                + "COALESCE(SUM(CASE WHEN settled_at >= ? THEN 1 ELSE 0 END),0) AS todaySettled "
                                 + "FROM t_ai_collection",
-                        new Object[] {todayStart},
+                        new Object[] {todayStart, todayStart},
                         this::portfolioRow);
         return rows.isEmpty() ? new LinkedHashMap<>() : rows.get(0);
     }
@@ -280,6 +434,19 @@ public class DashboardController {
                         + "COALESCE(SUM(total_outstanding),0) AS outstanding "
                         + "FROM t_ai_collection GROUP BY collection_status ORDER BY cases DESC",
                 this::portfolioRow);
+    }
+
+    /** 今日新增 inbox（caseEvent 消息，PHT 口径）。「在催案件」是存量，这是今日流量，两者不可对账。 */
+    private Map<String, Object> queryTodayInbox() {
+        LocalDateTime todayStart = LocalDate.now(ZoneId.of("Asia/Manila")).atStartOfDay();
+        List<Map<String, Object>> rows =
+                jdbcTemplate.query(
+                        "SELECT COUNT(*) AS todayInbox "
+                                + "FROM t_ai_collection_inbox "
+                                + "WHERE message_type = 'caseEvent' AND created_at >= ?",
+                        new Object[] {todayStart},
+                        this::portfolioRow);
+        return rows.isEmpty() ? new LinkedHashMap<>() : rows.get(0);
     }
 
     private Map<String, Object> portfolioRow(java.sql.ResultSet rs, int rowNum)
