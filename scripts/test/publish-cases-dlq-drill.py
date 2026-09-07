@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T3o-7 演练：向案件 topic 发一条「能被解析、但处理必然瞬态失败」的白名单消息。
 
-判定见[T3o 执行取证手册 §5](../../docs/testing/MOCASA催收系统升级_Phase1_T3o执行取证手册.md)：
+判定见[T3o 执行取证手册 §5](../../docs/testing/runbooks/MOCASA催收系统升级_Phase1_T3o执行取证手册.md)：
 该消息应连续 nack 超过 `maxDeliveryAttempts=5`，被转投 `intelligent-collection-cases-dlq`，
 且原始 payload 与 `eventId` 保留。
 

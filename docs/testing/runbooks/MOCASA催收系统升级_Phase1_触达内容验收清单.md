@@ -2,7 +2,7 @@
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
 > **日期**: 2026-08-19  
-> **关联文档**: [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)、[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)、[渠道模板清单与配置](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)
+> **关联文档**: [测试 SSOT](../MOCASA催收系统升级_Phase1_测试文档.md)、[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)、[渠道模板清单与配置](../../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)
 
 ---
 
@@ -21,7 +21,7 @@
 代价就是**内容正确性必须由本文承载**。
 
 **边界**：本文不定义用例、不定义环境、不作阶段放行裁决。文案本身的 SSOT 在
-[渠道模板清单与配置 §2 全渠道 scriptSlot 总表](../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#2-全渠道-scriptslot-总表)；
+[渠道模板清单与配置 §2 全渠道 scriptSlot 总表](../../channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md#2-全渠道-scriptslot-总表)；
 本文只维护"某场景的某一步应该出现哪个 slot、以及人工如何确认"。
 
 ## 2. 两种核对模式
@@ -86,11 +86,11 @@ Phase 1 的 Email **仅在精确 DPD 里程碑日**发出，Resolver 对非里�
 | `S4_EMAIL_PRE_CLOSE` | 75 |
 
 发件人 `collections@mocasa.com`；Subject 在 SendGrid 控制台配置，SSOT 见
-[`email-templates/subjects.md`](../email-templates/subjects.md)。
+[`email-templates/subjects.md`](../../email-templates/subjects.md)。
 
 测试案件的 dpd 通常不落在里程碑上，因此**收到 0 封邮件是预期结果，不是故障**。
 需单独验证 Email 渲染时走 L4a Email E2E，见
-[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) 的 `TC-EMAIL-*` 用例。
+[渠道功能测试指南](../../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md) 的 `TC-EMAIL-*` 用例。
 
 ---
 

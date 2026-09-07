@@ -56,7 +56,7 @@
 | `overdue_days` | `caseContext.dpd` | 发送前由实时 `CaseInfo` 覆盖内存快照 |
 | 罚息展示 | `caseContext.penaltyAmount` | Phase 1 模板不渲染；后续使用须接入同一刷新链路 |
 
-`stage` 决定模板与话术，发送前不覆盖。`work.*`、`contacts.*`、`behavior.*`、`risk.*`、Offer、投诉冻结和 Override 不是 Phase 1 `StepResolver` 输入。
+`stage` 决定模板与话术；发送前用当天投影覆盖内存副本（不回写计划 `stage` 列）。详见 [领域模型 §4 日变字段例外](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型) 与 [引擎 §5②½](../MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-执行骨架)。`work.*`、`contacts.*`、`behavior.*`、`risk.*`、Offer、投诉冻结和 Override 不是 Phase 1 `StepResolver` 输入。
 
 ## 约定
 

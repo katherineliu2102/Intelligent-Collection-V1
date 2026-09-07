@@ -2,7 +2,7 @@
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
 > **日期**: 2026-08-19  
-> **关联文档**: [数据接入规格](../MOCASA催收系统升级_Phase1_数据接入规格.md)、[数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md)、[T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)、[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
+> **关联文档**: [数据接入规格](../MOCASA催收系统升级_Phase1_数据接入规格.md)、[数仓 Pub/Sub 交付契约](../数仓_PubSub交付契约.md)、[T5 Pilot 准备与演练手册](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)、[L4b 环境交接清单](./runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
 > **文档分工**: 本文保存从测试 SSOT 迁出的执行过程、取证摘要、问题定位与裁定理由；当前测试范围、用例与完成状态以[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md)为准。
 > **待办（T3o 跑完后执行，2026-08-21 决定）**: 附录 C 已达 16 条超长条目，拆为独立《缺口台账》、正文只留状态矩阵与指针。**现在不拆**——该附录正处于高频改动期，拆分会引入两份文档不同步的风险。
 
@@ -79,8 +79,8 @@ T0 → T1 → T2 → T3 → T3o → T4 → T5 → T6
 | 领域、契约、数据接入语义 | 核心引擎规格、契约文档、数据接入规格 | 作为断言依据引用，不复制为第二份规格 |
 | 渠道 `TC-*` 细节与供应商参数 | 渠道功能测试指南 | 本文仅索引 TC-ID |
 | 测试命令、脚本入参与日志路径 | [`scripts/README.md`](../../scripts/README.md) | 本文不写命令 |
-| L4b topic、订阅、Nacos、凭证、操作顺序 | [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | Runbook，不承担测试裁决 |
-| Pilot 配置、50 案执行、切量与回滚操作 | [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Runbook，不承担测试裁决 |
+| L4b topic、订阅、Nacos、凭证、操作顺序 | [L4b 环境交接清单](./runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | Runbook，不承担测试裁决 |
+| Pilot 配置、50 案执行、切量与回滚操作 | [T5 Pilot 准备与演练手册](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | Runbook，不承担测试裁决 |
 | 指标口径与告警阈值 | 基础设施交互规范 | 引用，不在本文重复定义 |
 | 单次执行日志与历史报告 | 运行报告/日志 | 证据材料；历史结果不进入本文状态列 |
 
@@ -369,7 +369,7 @@ HMAC-SHA256 验签、白名单案 520049。调度扫到步骤 1414 → dispatch 
 （`batch_id=591838ae…`）→ 约 55s 后 `POST /webhook/facade-callback` 收到 `session.completed`
 → `signature_valid=1` → 写 `t_channel_callback_audit#7` 与 `t_contact_timeline#712`
 → 步骤结为 `NO_ANSWER`、计划 `PLAN_COMPLETED`。1/1 成功，明细见
-[真拨 Webhook 测试记录](records/MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)。
+[真拨 Webhook 测试记录](./records/MOCASA催收系统升级_Phase1_AI_Call_引擎真拨Webhook测试记录_20260825.md)。
 
 回调路径是 `POST /webhook/facade-callback`（账户级 URL），**不是** L1 文档里的 `/webhook/facade/voice`。
 
@@ -664,7 +664,7 @@ L4b-1 报「90s 内未落 t_contact_plan」——这一轮已因漏做烧掉一�
 - L4a 与 L4b 全部用例按当前契约取证；
 - 主证据为消息 payload、inbox、投影与 plan/step/timeline 的可追溯关联；
 - SPI 硬超时保持生产默认启用，且全程无 SPI 超时；
-- 环境准备、操作顺序、查库节奏与可重复性前置见 [L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)。
+- 环境准备、操作顺序、查库节奏与可重复性前置见 [L4b 环境交接清单](./runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md)。
 
 **T3 出口宣告（2026-08-21，含当晚补完的用例）：全部用例有脚本覆盖且全绿 —— L4a 29 项、L4b 69 项，FAIL=0。**
 两组均在本机 MySQL 8.0.46 上执行（迁库理由见 §5「执行约束」），SPI 硬超时全程按生产默认启用
@@ -690,7 +690,7 @@ L4b-1 报「90s 内未落 t_contact_plan」——这一轮已因漏做烧掉一�
 
 在不触达真实客户的隔离环境验证 Pilot 所需的 Redis、调度、回滚与最小观测能力。T3o 是 T4 的硬前置。
 
-> 环境申请、配置、演练顺序与回滚操作见 [T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。用例编号沿用 `T5-R` / `T5-S`，避免打断既有证据索引。
+> 环境申请、配置、演练顺序与回滚操作见 [T5 Pilot 准备与演练手册](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)。用例编号沿用 `T5-R` / `T5-S`，避免打断既有证据索引。
 
 > **2026-08-24 决定：pilot 暂不跑 AI_CALL。** 回调依赖的公网入口未就绪，硬跑会让每个 AI_CALL 步骤
 > 都走满 10 分钟超时收敛成 `FAILED`，在 pilot 数据里留下系统性噪声，把其余三个渠道的结论也一起污染。
@@ -1295,9 +1295,9 @@ T4 使用业务批准的**固定 50 个真实案件**，由数仓按正式契约
 ## 附录 B：外部测试资产索引
 
 - 测试命令与脚本：[`scripts/README.md`](../../scripts/README.md)
-- L4b 环境与操作：[L4b 环境交接清单](./MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
-- 触达内容验收判据（T3 / T4 通用）：[触达内容验收清单](./MOCASA催收系统升级_Phase1_触达内容验收清单.md)
-- Pilot 与切量操作：[T5 Pilot 准备与演练手册](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)
+- L4b 环境与操作：[L4b 环境交接清单](./runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md)
+- 触达内容验收判据（T3 / T4 通用）：[触达内容验收清单](./runbooks/MOCASA催收系统升级_Phase1_触达内容验收清单.md)
+- Pilot 与切量操作：[T5 Pilot 准备与演练手册](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)
 - 渠道测试细节：[渠道功能测试指南](../channel/MOCASA催收系统升级_Phase1_collection-channel功能测试指南.md)
 - 快照契约：[ContextSnapshot 契约对齐](../contracts/README_ContextSnapshot契约对齐.md)
 - 执行契约：[引擎渠道执行契约](../contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)
@@ -1333,12 +1333,12 @@ Pilot 一旦有第二个实例指向同一个库，双方就会互抢步骤并�
 | **真实源候选案件缺失**：`ai_collection_db.t_collection` 仅 694 行，其中 688 行 `overdue_days<=0` 且 `total_not_paid=0`（2026-06-08 一次性灌入、快照已过期两个月），实际可催案件只有人工种的 `99000000..99000005` 与 `92002`。业务侧提供的 `1025` / `1822` 在 `loan_id`/`user_id`/`loan_no`/`colleciton_no` 四列均查无此号，说明它们来自另一套库 | 缺环境 | 由业务/数仓给出「数仓确实会发布」的案件号及其所在库；或退一步用真实数据形态构造 caseEvent 发到自建 topic（覆盖字段映射与脏值，但不覆盖上游投递） | T3/L4b **真实源** | 业务 + 数仓 + 主架构 |
 | 共用 Nacos Data ID 的阶段切换会波及编排同事：`ChannelProperties` 带 `@RefreshScope`，置空密钥后他**正在运行**的进程数秒内跟着回落 Mock | 缺环境 | 已可自动切换（写权限账号经环境变量传入 `merge-nacos-config.py`）；每次切换前后知会编排同事，测试窗口结束按 `deploy/nacos/backup-*.yml` 恢复。长期解法是给联调单独开 Data ID | T3/L4a 与 L4b 阶段切换 | 主架构 + 编排同事 |
 | 联调 Redis 内网不可达（开发机连 6379 超时），且无 redis-cli / docker。**只卡 T3o/T5-R**：L3/L4a/L4b 全走内存总线与内存去重 | 缺环境 | 开通部署机/开发机到 Redis 的访问路径；**不采用本地 Redis 替代**（2026-08-21 决定），T5-R 全组证据必须来自该独立实例 | T3o-5 · T5-R 全组 | 运维 |
-| ~~Cloud Scheduler 四条 Job 未创建~~（**2026-08-21 已闭合 O1/O2/O3/O6**）：盘点发现 topic `intelligent-collection-schedule-v1` 与订阅 `intelligent-collection-schedule-v1-sub` 本就存在，但订阅参数不合规（`ackDeadlineSeconds=10`、保留 7 天，O5 要求 60s/10m），而 `asia-northeast1` 零条催收 Job（当时误判为「全 location 零条」，实际 `asia-southeast1` 有运维早前建的三条畸形 Job，见下条）；此前「已确认自有身份具备 `cloudscheduler.jobs.create`」的记录不成立——`keliu@indiacashgo.com` 当时在本项目上连 `pubsub.topics.list` / `cloudscheduler.jobs.list` 都 `IAM_PERMISSION_DENIED`（**运维已于 2026-08-21 补开 Scheduler 权限；Pub/Sub 只读仍缺**） | 缺环境 → **已交付** | 已用新增的幂等脚本 `scripts/test/provision-scheduler.py` 完成：订阅 PATCH 为 60s/600s；在 **`asia-northeast1`**（与项目既有 `telemarket_out_reach_push` 同区；**Job 可分布在多个 location**，排查发布者须逐 location 扫）建 4 条 `ENABLED` Job，cron / `Asia/Manila` / `job` attribute 逐字对齐 [T5 手册模板](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#调度配置模板可复制不含真值)。**端到端已验**：两条每分钟 Job 的 `lastAttemptTime` 正常推进，从调度订阅 pull 到 4 条 tick 且 `attributes` 为 `job=planStepDue` / `job=callbackTimeout`（取证 pull 不 ack；此后不得再挂第二个 subscriber，竞争消费会随机分走 tick）。用生产名而非 `-pilot`：重复创建会 `ALREADY_EXISTS` 显性失败，而 `-pilot` 与生产并存是静默双发。同批还修掉两条订阅的同类隐患：**案件接入订阅 `intelligent-collection-cases-v1-sub` 的 ack 由 10s 纠为 60s**（应用侧 `collection.ingestion.ack-deadline-seconds=60`，接入规格 §2.1 要求一致；10s 会让处理未完成即重投，幂等能保正确但把重复消费变成常态）；**两条订阅的 `expirationPolicy.ttl=31 天` 改为永不过期**——这是静默数据丢失的雷，Pilot 应用尚未部署即无 pull 活动，订阅被 GCP 自动删除后数仓继续发的消息会无处投递且不报错。**剩余仅 O7/O8 告警**与应用侧拉取凭证（`.env.pilot` 的 `GOOGLE_APPLICATION_CREDENTIALS` 在部署位不存在、`GCP_PUBSUB_PROJECT` 为空） | T3o-3 · T5-S1/S8 | 主架构（已建）+ 运维（O7/O8 与凭证） |
+| ~~Cloud Scheduler 四条 Job 未创建~~（**2026-08-21 已闭合 O1/O2/O3/O6**）：盘点发现 topic `intelligent-collection-schedule-v1` 与订阅 `intelligent-collection-schedule-v1-sub` 本就存在，但订阅参数不合规（`ackDeadlineSeconds=10`、保留 7 天，O5 要求 60s/10m），而 `asia-northeast1` 零条催收 Job（当时误判为「全 location 零条」，实际 `asia-southeast1` 有运维早前建的三条畸形 Job，见下条）；此前「已确认自有身份具备 `cloudscheduler.jobs.create`」的记录不成立——`keliu@indiacashgo.com` 当时在本项目上连 `pubsub.topics.list` / `cloudscheduler.jobs.list` 都 `IAM_PERMISSION_DENIED`（**运维已于 2026-08-21 补开 Scheduler 权限；Pub/Sub 只读仍缺**） | 缺环境 → **已交付** | 已用新增的幂等脚本 `scripts/test/provision-scheduler.py` 完成：订阅 PATCH 为 60s/600s；在 **`asia-northeast1`**（与项目既有 `telemarket_out_reach_push` 同区；**Job 可分布在多个 location**，排查发布者须逐 location 扫）建 4 条 `ENABLED` Job，cron / `Asia/Manila` / `job` attribute 逐字对齐 [T5 手册模板](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#调度配置模板可复制不含真值)。**端到端已验**：两条每分钟 Job 的 `lastAttemptTime` 正常推进，从调度订阅 pull 到 4 条 tick 且 `attributes` 为 `job=planStepDue` / `job=callbackTimeout`（取证 pull 不 ack；此后不得再挂第二个 subscriber，竞争消费会随机分走 tick）。用生产名而非 `-pilot`：重复创建会 `ALREADY_EXISTS` 显性失败，而 `-pilot` 与生产并存是静默双发。同批还修掉两条订阅的同类隐患：**案件接入订阅 `intelligent-collection-cases-v1-sub` 的 ack 由 10s 纠为 60s**（应用侧 `collection.ingestion.ack-deadline-seconds=60`，接入规格 §2.1 要求一致；10s 会让处理未完成即重投，幂等能保正确但把重复消费变成常态）；**两条订阅的 `expirationPolicy.ttl=31 天` 改为永不过期**——这是静默数据丢失的雷，Pilot 应用尚未部署即无 pull 活动，订阅被 GCP 自动删除后数仓继续发的消息会无处投递且不报错。**剩余仅 O7/O8 告警**与应用侧拉取凭证（`.env.pilot` 的 `GOOGLE_APPLICATION_CREDENTIALS` 在部署位不存在、`GCP_PUBSUB_PROJECT` 为空） | T3o-3 · T5-S1/S8 | 主架构（已建）+ 运维（O7/O8 与凭证） |
 | ~~**调度 Topic 上的畸形 tick 与重复发布者**~~（**2026-08-21 已闭合**）：每分钟 `:01` 前后有两条消息落入 `intelligent-collection-schedule-v1`，**attributes 为空**、body 是《数仓 PubSub 交付契约》旧版示意块的原文（`body: scheduled-tick\nattributes:\n  job: callbackTimeout`）——运维早前按我们的需求配置时，把文档里的「示意」当消息体逐字发出。应用只按 attribute `job` 路由，这些 tick 会被判 `UNKNOWN_JOB`、记 WARN 后 ack 丢弃，**一次扫描都不会触发**，而 Job 侧 `status: {}` 显示成功——两侧都「正常」、链路静默停摆。**定位曾走错一轮，两个坑叠加**：①误信「Scheduler location 在项目内唯一」，只扫 `asia-northeast1`；②补扫时又踩了分页——Cloud Scheduler 的 `jobs.list` 对 `asia-southeast1` 返回的**首页 0 条却带 `nextPageToken`**，不翻页就会得出「该 location 没有 Job」的错误结论。实际它们在 **`asia-southeast1`**（`intelligent-collection-schedule-{planStepDue,callbackTimeout,dailyRoll}`，与数仓 push 系列同区）。`provision-scheduler.py --verify` 已加「逐 location + 翻页」的发布者全扫，并对无权限的 location 显式报「结论不完整」而非静默跳过。第二处更隐蔽的问题：其 `dailyRoll` 用 `*/5 3-5 * * *` 即 **03:00 起跑**，早于规范的 03:35 缓冲——日切空页即写当日完成标记，若在数仓 03:00 批次消费完前扫完旧数据并标记完成，当天阶段升档与 D+91 停催**整天不发生且指标看起来正常**，故该条即便补上 attribute 也不能直接启用 | 文档冲突 + 缺环境 | ①改掉文档根因：契约里的示意块换成 `gcloud` 命令形式并附事故记录；②运维已给 `keliu` 开通 Scheduler 权限，**归属改为主架构持有**，正式入口为 `asia-northeast1` 四条 Job；③`asia-southeast1` 三条已 `PAUSED`（保留配置备查），待运维确认无其他用途、且无 IaC 会重建后删除，见[变更通知与确认请求](../../scripts/test/provision-scheduler.py)；④调度 Topic 现为单一发布者，T3o 首次消费**不应**再看到 `skipped{reason=UNKNOWN_JOB}` 增长——若仍增长说明还有第三个发布者 | T3o-3 · T5-S8 | 主架构（已处置）+ 运维（确认删除 / Pub/Sub 只读权限） |
-| **仓库根 `credentials.json` 是同事个人 OAuth ADC（长期 refresh token）**：`hanxiaoyan@indiacashgo.com`，`provision-l4-pubsub.py` / `provision-scheduler.py` / `observe-upstream-topics.py` 默认读它。**本轮调度资源（订阅 PATCH + 4 条 Job）即以该身份创建**，因此 GCP 审计记在他名下、与实际执行人不符；且他一旦轮换令牌，上述脚本同时失效 | 缺环境（凭证卫生） | 换成 Pilot 专用服务账号密钥并只授所需角色（`roles/pubsub.editor` 或更细、`roles/cloudscheduler.admin`），落位 `deploy/secrets/` 且不入仓；换好后用 `provision-scheduler.py --verify` 复验四条 Job 归属与参数未变。与[T5 手册 §7 凭证一次性轮换](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)合并处理，最迟 T4 前 | T4 阻断 | 主架构 + 运维 |
+| **仓库根 `credentials.json` 是同事个人 OAuth ADC（长期 refresh token）**：`hanxiaoyan@indiacashgo.com`，`provision-l4-pubsub.py` / `provision-scheduler.py` / `observe-upstream-topics.py` 默认读它。**本轮调度资源（订阅 PATCH + 4 条 Job）即以该身份创建**，因此 GCP 审计记在他名下、与实际执行人不符；且他一旦轮换令牌，上述脚本同时失效 | 缺环境（凭证卫生） | 换成 Pilot 专用服务账号密钥并只授所需角色（`roles/pubsub.editor` 或更细、`roles/cloudscheduler.admin`），落位 `deploy/secrets/` 且不入仓；换好后用 `provision-scheduler.py --verify` 复验四条 Job 归属与参数未变。与[T5 手册 §7 凭证一次性轮换](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md)合并处理，最迟 T4 前 | T4 阻断 | 主架构 + 运维 |
 | 正式案件订阅 `-v1-sub` 无死信策略、ack-deadline 10s；调度订阅保留期 7d（O5 要求 10m） | 缺环境 | Pilot 前按规范修订正式订阅参数（本轮自建测试订阅已合规，测试不依赖正式订阅） | T3o-3 · Pilot 准入 | 运维 |
 | Nacos 无 `intelligent-collection-pilot.yml`，`.env.pilot` 的 Nacos 地址、GCP 项目、Pilot 名单与回调密钥仍为空 | 缺环境 | 运维交付 | T3o-2 | 运维 + 主架构 |
-| **Pilot 部署位与凭证挂载未确认**：`.env.pilot` 落位的部署机、`GOOGLE_APPLICATION_CREDENTIALS` 挂载路径、`SPRING_PROFILES_ACTIVE=pilot` 的拉起方式，以及该部署网络到 Redis / MySQL / 两条订阅 / 渠道的连通与鉴权均无验证记录。`PilotReadinessValidator` 会在配置不全时拒绝启动，因此这是 T3o 的第一道硬门槛 | 缺环境 | 运维交付部署机与 Secret 注入，主架构按 [T5 手册 §5.2](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#52-启动预检) 做启动预检并留存脱敏快照 | T3o-2 · T3o-5 | 运维 + 主架构 |
+| **Pilot 部署位与凭证挂载未确认**：`.env.pilot` 落位的部署机、`GOOGLE_APPLICATION_CREDENTIALS` 挂载路径、`SPRING_PROFILES_ACTIVE=pilot` 的拉起方式，以及该部署网络到 Redis / MySQL / 两条订阅 / 渠道的连通与鉴权均无验证记录。`PilotReadinessValidator` 会在配置不全时拒绝启动，因此这是 T3o 的第一道硬门槛 | 缺环境 | 运维交付部署机与 Secret 注入，主架构按 [T5 手册 §5.2](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#52-启动预检) 做启动预检并留存脱敏快照 | T3o-2 · T3o-5 | 运维 + 主架构 |
 | **Pilot MySQL 访问未确认**：Pilot 使用的库实例、应用账号权限与网络授权尚未确认（L3 用的是联调账号），旧库只读账号范围也未按 Pilot 复核 | 缺环境 | 服务同事与运维确认库/账号/网络，并与时区口径修复一并验收 | T3o-2 | 服务同事 + 运维 |
-| **渠道 sandbox 与批准测试地址未确认**：sandbox 地址、供应商额度、测试号码/邮箱/Push token、限频与脱敏配置无交付证据。T3o 要求 `channel.fallback-to-mock=false`，缺配置会直接导致 Pilot 启动校验失败或零触达 | 缺环境 | 编排同事与运维交付地址、额度与 Secret 引用，并按 [T5 手册 §6.1](./MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#61-渠道生产连通验证清单) 留存受控投递与回调记录 | T3o-4 | 编排同事 + 运维 |
+| **渠道 sandbox 与批准测试地址未确认**：sandbox 地址、供应商额度、测试号码/邮箱/Push token、限频与脱敏配置无交付证据。T3o 要求 `channel.fallback-to-mock=false`，缺配置会直接导致 Pilot 启动校验失败或零触达 | 缺环境 | 编排同事与运维交付地址、额度与 Secret 引用，并按 [T5 手册 §6.1](./runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md#61-渠道生产连通验证清单) 留存受控投递与回调记录 | T3o-4 | 编排同事 + 运维 |
 | HTTPS 回调域名、证书与 HMAC secret | 缺环境 | 运维交付 | L2-CB 第 3/4 级 | 运维 |

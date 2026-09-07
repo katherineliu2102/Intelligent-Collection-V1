@@ -220,7 +220,7 @@ Publisher 组 `data` 只使用下表字段名。口径、列映射与别名见�
 | — | — | `synced_at` | 接入层落库时间，数仓不写 |
 
 #### `repaymentEvent` 字段
-`dataType=repaymentEvent`，`data.eventType=REPAYMENT`。仅成功正向还款；这是**增量 payload**，不得复制 `caseEvent` 快照字段。只对**当日 NEW 名单**内的案件发布；昨日 NEW、当日未再出现的案件停发，迁出后再入时由下一次完整 `caseEvent` 补齐金额与结清标志。`occurredAt` 是还款时刻，**不得**当作 owner 归属日。
+`dataType=repaymentEvent`，`data.eventType=REPAYMENT`。仅成功正向还款；这是**增量 payload**，不得复制 `caseEvent` 快照字段。只对**当日 NEW 名单**内的案件发布；昨日 NEW、当日未再出现的案件停发，迁出后再入时由下一次完整 `caseEvent` 补齐金额与结清标志。`occurredAt` 是还款时刻，**不得**当作 owner 归属日。若仍错发到已迁出或从未入 NEW 的案件，接入侧按 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 处理（有基线则合并且不回拨归属日；无基线则 poison），不把错发当成合法路由。
 
 | 消息字段 | 必填 | `t_ai_collection` 列名 | 口径 |
 | --- | --- | --- | --- |

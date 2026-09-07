@@ -276,7 +276,7 @@
 **要点**：模块间经 EventBus 异步协作。生产调度只有 Cloud Scheduler → 调度 Topic → 应用订阅，不与 `@Scheduled` 双入口。调度扫表并发布内部事件，业务决策与渠道 I/O 在 Consumer 侧由引擎与渠道完成。
 
 - 调度线程与 Consumer 线程隔离；所有业务事件经 Redis Stream 流转。`CollectionEventBus` 定义于 `collection-common`（生产 `RedisStreamEventBusImpl`，本地 CI `InMemoryEventBus`）；PEL 重投、DLQ 与 Consumer 背压见 [基础设施 §2.2 / §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#22-生产消费拓扑线程职责与背压)。
-- 事件路由以 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 为准。调度管道见 [§1.2](#12-系统边界北向入站)，订阅模块见 [§1.6](#16-应用层-collection-admin)。
+- 事件路由以 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 为准。调度管道见 [§1.2](#12-系统边界北向入站)，订阅模块见 [§1.6](#16-应用层-collection-admin)。
 
 ### 2.2 数据所有权与快照边界
 <a id="162-数据所有权与快照边界"></a>

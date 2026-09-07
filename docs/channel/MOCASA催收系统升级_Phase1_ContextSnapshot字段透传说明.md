@@ -38,7 +38,7 @@
 | caseContext | `caseId`, `userId`, `dpd`, `stage`, `product`, `dueDate` | 选槽、模板变量、Guard |
 | caseContext | `totalOutstanding` | 文案 `amount_due`（金额 SSOT） |
 
-> **`dpd` / `totalOutstanding` 为发送时刻值**：引擎在步骤② 已实时读到案件数据，④ 解析前用它覆盖内存中的快照副本（不回写快照列、不覆盖 `stage`）。编排侧照常从 `ExecutionContext` 读快照即可，无需自行查库或校正逾期天数。
+> **`dpd` / `totalOutstanding` / `stage` 为发送时刻值**：引擎在步骤② 已实时读到案件数据，④ 解析前覆盖**内存**快照副本（`dpd`、运行态金额、`stage`；不回写 `context_snapshot` 列，也不改计划 `stage` 列）。编排侧照常从 `ExecutionContext` 读快照即可。口径见 [领域模型 §4](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型) 与 [引擎 §5②½](../MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-执行骨架)。
 | caseContext | `repaymentUrl` | SMS 链接、Push `deep_link`、Email `payment_link` |
 | caseContext | `strategyTone`, `collectionStatus` | PlanFactory；Phase 1 固定 STANDARD，collectionStatus 仅审计 |
 | basic | `name`, `primaryPhone`, `email`, `language` | 文案、`targetAddress` |

@@ -553,7 +553,7 @@ strategyTone =
 
 ### 6.4 与 `context_snapshot` 不可变契约对齐
 
-架构约定：计划创建时由 **数据接入层** 将案件标签序列化写入 `t_contact_plan.context_snapshot`，运行时 SPI **只读快照、不实时查库**（见[架构设计 §1.7.2](../MOCASA催收系统升级_Phase1_架构设计文档.md#172-决策上下文快照化)）。
+架构约定：计划创建时由 **数据接入层** 将案件标签序列化写入 `t_contact_plan.context_snapshot`，运行时 SPI **只读 `ExecutionContext` 中的快照、不实时查库**（见[架构设计 §1.7.2](../MOCASA催收系统升级_Phase1_架构设计文档.md#172-决策上下文快照化)）。引擎在 Resolver 前已按 [引擎 §5②½](../MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-执行骨架) 覆盖内存日变字段（含 `stage`），不回写本列。
 
 | 场景 | 渠道编排侧行为 | 引擎/接入侧动作 |
 |------|----------------|-----------------|

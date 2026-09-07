@@ -85,7 +85,7 @@ export GCP_PUBSUB_TEST_TOPIC=intelligent-collection-cases-test1
 
 裁决口径：入口一律走真实 topic，断言一律查 `t_contact_plan` / `t_contact_plan_step` / `t_contact_timeline`，
 REST 预览不作为终态证据。可重复性前置与操作顺序见
-[L4b 环境交接清单](../docs/testing/MOCASA催收系统升级_Phase1_L4b环境交接清单.md)。
+[L4b 环境交接清单](../docs/testing/runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md)。
 
 ## 日志
 

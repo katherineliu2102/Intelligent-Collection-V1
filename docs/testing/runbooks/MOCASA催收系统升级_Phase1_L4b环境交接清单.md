@@ -1,7 +1,7 @@
 # L4b 环境交接清单（配置与操作 Runbook）
 
 > 本文只保留 L4b 隔离联调的**环境配置与操作**。
-> 测试准入、用例、当前状态、退出条件的唯一来源是[测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) §2 T0 / §6 T3。
+> 测试准入、用例、当前状态、退出条件的唯一来源是[测试 SSOT](../MOCASA催收系统升级_Phase1_测试文档.md) §2 T0 / §6 T3。
 > 一次运行结果写入测试报告，不得在本文作测试通过裁决。
 
 ## 1. 隔离拓扑与安全边界
@@ -191,7 +191,7 @@ curl -s -X POST "http://localhost:8888/mock/send-push?caseId=<loan_id>"
 | Email | SendGrid Activity | 收件人地址 |
 | Push | 极光控制台 | 目标 token |
 
-详见 [Notification 对接说明](../channel/MOCASA催收系统升级_Phase1_Notification对接说明.md)。
+详见 [Notification 对接说明](../../channel/MOCASA催收系统升级_Phase1_Notification对接说明.md)。
 
 ### 4.8 可重复性前置
 

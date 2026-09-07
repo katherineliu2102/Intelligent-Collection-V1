@@ -1,49 +1,43 @@
-# Phase 1 主链路冒烟清单
+﻿# Phase 1 涓婚摼璺啋鐑熸竻鍗?
+> **鐢ㄩ€?*锛氶獙璇併€岃兘寤?plan锛屽苟瀵?SMS / PUSH / EMAIL / AI_CALL 鍥涗釜娓犻亾鐪熷疄 dispatch 骞惰惤鍒版楠ょ粓鎬併€嶃€? 
+> **涓嶆槸** T0鈥揟6 鍏ㄩ噺 SSOT锛屼篃**涓嶆槸** T4 鍏ㄩ噺 Pilot 绛炬牳銆傚畬鏁寸煩闃典互 [娴嬭瘯 SSOT](./MOCASA鍌敹绯荤粺鍗囩骇_Phase1_娴嬭瘯鏂囨。.md) 涓哄噯銆? 
+> **涓€娆℃€у疄娴?*锛?/26 鍐掔儫绐楀彛涓?8/27 璧锋寜鏃ョ粨鏋滀竴寰嬫斁鍦?[`records/`](./records/README.md)锛屾湰鏂囦欢鍙繚鐣欏彲澶嶇敤鍒ゆ嵁锛屼笉鍐嶅爢鏃ヨ銆?
+## 閫氳繃鏍囧噯
 
-> **用途**：验证「能建 plan，并对 SMS / PUSH / EMAIL / AI_CALL 四个渠道真实 dispatch 并落到步骤终态」。  
-> **不是** T0–T6 全量 SSOT，也**不是** T4 全量 Pilot 签核。完整矩阵以 [测试 SSOT](./MOCASA催收系统升级_Phase1_测试文档.md) 为准。  
-> **一次性实测**：8/26 冒烟窗口与 8/27 起按日结果一律放在 [`records/`](./records/README.md)，本文件只保留可复用判据，不再堆日记。
-
-## 通过标准
-
-至少 1 个案件有 `t_contact_plan`；SMS / PUSH / EMAIL / AI_CALL 能真实 dispatch 并落到步骤终态（AI 须 webhook 收口，超时默认 30 分钟）。
-
-| ID | 步骤 | 通过标准 |
+鑷冲皯 1 涓浠舵湁 `t_contact_plan`锛汼MS / PUSH / EMAIL / AI_CALL 鑳界湡瀹?dispatch 骞惰惤鍒版楠ょ粓鎬侊紙AI 椤?webhook 鏀跺彛锛岃秴鏃堕粯璁?30 鍒嗛挓锛夈€?
+| ID | 姝ラ | 閫氳繃鏍囧噯 |
 |---|---|---|
-| M0 | 预检 | health 200；Nacos / Redis / 调度订阅 UP |
-| M1 | 进件 → plan | `t_contact_plan` 有行 |
-| M2 | SMS | dispatch + 步骤终态（`DELIVERED` / `FAILED` 均可，须关步） |
-| M3 | PUSH | 同上（注意日频控） |
-| M4 | EMAIL | 里程碑 DPD 才真发；非里程碑 `SKIPPED` 为设计行为 |
-| M5 | AI 出站 | Facade start 受理 |
-| M6 | AI 回调收口 | 步骤离开 `EXECUTING`；计划已离开本步时不二次推进 |
-| M7 | Case Monitor（可选） | UI 可见本轮 case / plan |
+| M0 | 棰勬 | health 200锛汵acos / Redis / 璋冨害璁㈤槄 UP |
+| M1 | 杩涗欢 鈫?plan | `t_contact_plan` 鏈夎 |
+| M2 | SMS | dispatch + 姝ラ缁堟€侊紙`DELIVERED` / `FAILED` 鍧囧彲锛岄』鍏虫锛?|
+| M3 | PUSH | 鍚屼笂锛堟敞鎰忔棩棰戞帶锛?|
+| M4 | EMAIL | 閲岀▼纰?DPD 鎵嶇湡鍙戯紱闈為噷绋嬬 `SKIPPED` 涓鸿璁¤涓?|
+| M5 | AI 鍑虹珯 | Facade start 鍙楃悊 |
+| M6 | AI 鍥炶皟鏀跺彛 | 姝ラ绂诲紑 `EXECUTING`锛涜鍒掑凡绂诲紑鏈鏃朵笉浜屾鎺ㄨ繘 |
+| M7 | Case Monitor锛堝彲閫夛級 | UI 鍙鏈疆 case / plan |
 
-## 本轮明确不做
+## 鏈疆鏄庣‘涓嶅仛
 
-- T4 全量签核、三完整日循环、非白名单零触达冻结专项  
-- T3o 毒丸 / PEL / DLQ / Redis 断连 / 压测  
-- 把次日全槽提前到当晚（易空掉正式日）
+- T4 鍏ㄩ噺绛炬牳銆佷笁瀹屾暣鏃ュ惊鐜€侀潪鐧藉悕鍗曢浂瑙﹁揪鍐荤粨涓撻」  
+- T3o 姣掍父 / PEL / DLQ / Redis 鏂繛 / 鍘嬫祴  
+- 鎶婃鏃ュ叏妲芥彁鍓嶅埌褰撴櫄锛堟槗绌烘帀姝ｅ紡鏃ワ級
 
-## 已知问题（判据仍有效；细节见台账 / records）
-
-| ID | 问题 | 处置口径 |
+## 宸茬煡闂锛堝垽鎹粛鏈夋晥锛涚粏鑺傝鍙拌处 / records锛?
+| ID | 闂 | 澶勭疆鍙ｅ緞 |
 |---|---|---|
-| F-回调吞掉 | 计划已离开本步时旧引擎按计划态吞回调 → AI 永久 `EXECUTING` | 已修：按步骤 `EXECUTING` 收口 |
-| F-计划预写 | 进案预写多日槽；改 `trigger_time` 易误伤「那天那一行」 | 先不改 PlanFactory；运维忌乱提前 |
-| F-EMAIL 非里程碑 | 非 DPD 0/1/4/31/75 → `SKIPPED` | Phase 1 设计如此 |
-| F-通道拒信/失败 | 短信拒信 / Facade `MEDIA_NEGOTIATION_FAILED` / `BUSY` | 步骤能终态即引擎过 |
-| F-取消残留 PENDING | `PLAN_CANCELLED` 后未终态步仍 PENDING | 扫描已排除终态计划，不是漏催 |
-| F-日切投影缺失 | 白名单命中 < 名单长度 | 先对 ID / caseId 口径 |
+| F-鍥炶皟鍚炴帀 | 璁″垝宸茬寮€鏈鏃舵棫寮曟搸鎸夎鍒掓€佸悶鍥炶皟 鈫?AI 姘镐箙 `EXECUTING` | 宸蹭慨锛氭寜姝ラ `EXECUTING` 鏀跺彛 |
+| F-璁″垝棰勫啓 | 杩涙棰勫啓澶氭棩妲斤紱鏀?`trigger_time` 鏄撹浼ゃ€岄偅澶╅偅涓€琛屻€?| 鍏堜笉鏀?PlanFactory锛涜繍缁村繉涔辨彁鍓?|
+| F-EMAIL 闈為噷绋嬬 | 闈?DPD 0/1/4/31/75 鈫?`SKIPPED` | Phase 1 璁捐濡傛 |
+| F-閫氶亾鎷掍俊/澶辫触 | 鐭俊鎷掍俊 / Facade `MEDIA_NEGOTIATION_FAILED` / `BUSY` | 姝ラ鑳界粓鎬佸嵆寮曟搸杩?|
+| F-鍙栨秷娈嬬暀 PENDING | `PLAN_CANCELLED` 鍚庢湭缁堟€佹浠?PENDING | 鎵弿宸叉帓闄ょ粓鎬佽鍒掞紝涓嶆槸婕忓偓 |
+| F-鏃ュ垏鎶曞奖缂哄け | 鐧藉悕鍗曞懡涓?< 鍚嶅崟闀垮害 | 鍏堝 ID / caseId 鍙ｅ緞 |
 
-## 阻碍项（出现再停）
+## 闃荤椤癸紙鍑虹幇鍐嶅仠锛?
+姝ラ澶ч潰绉仠鍦?`EXECUTING` 瓒呰繃 30 鍒嗛挓銆佺櫧鍚嶅崟澶栫湡鎵撱€佹垨鏀规姇琚噸鏂版墦寮€銆?
+## 瀹炴祴鍏ュ彛
 
-步骤大面积停在 `EXECUTING` 超过 30 分钟、白名单外真打、或改投被重新打开。
-
-## 实测入口
-
-| 类型 | 入口 |
+| 绫诲瀷 | 鍏ュ彛 |
 |---|---|
-| 最新自动跑 | [records/ 最新日](./records/README.md) |
-| 8/26～8/27 冒烟当日细节 | [8/27 自动跑记录](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260827.md) |
-| 问题台账 | [测试执行记录与问题台账](./MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md) |
+| 鏈€鏂拌嚜鍔ㄨ窇 | [records/ 鏈€鏂版棩](./records/README.md) |
+| 8/26锝?/27 鍐掔儫褰撴棩缁嗚妭 | [8/27 鑷姩璺戣褰昡(./records/MOCASA鍌敹绯荤粺鍗囩骇_Phase1_鑷姩璺戣褰昣20260827.md) |
+| 闂鍙拌处 | [娴嬭瘯鎵ц璁板綍涓庨棶棰樺彴璐(./MOCASA鍌敹绯荤粺鍗囩骇_Phase1_娴嬭瘯鎵ц璁板綍涓庨棶棰樺彴璐?md) |

@@ -59,7 +59,7 @@
 
 | 关切 | SSOT 文档 |
 |---|---|
-| 字段 / 枚举 / EventPayload / DDL | [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §2 / §3 / §6；DDL 权威 [`../db/schema.sql`](../db/schema.sql) |
+| 字段 / 枚举 / EventPayload / DDL | [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md) §1.2 表索引、§2 / §3 / §6；投影字段 §3.5；DDL 权威 [`../db/schema.sql`](../db/schema.sql) |
 | SPI / 共享 DTO / 调用语义 | [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约) |
 | EventBus / Redis 键 / Repository | [基础设施 §2/§3/§5](./MOCASA催收系统升级_Phase1_基础设施交互规范.md) |
 | 跨模块用法对齐（非字段 SSOT） | [contracts/](./contracts/README.md) |
@@ -71,7 +71,7 @@
 
 | 模块 | 规格（SSOT） | 状态 | owner | 说明 |
 |------|-------------|:--:|:--:|------|
-| `collection-engine` | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 🟦 | 事件路由、状态机、七步管线、SPI、容错 |
+| `collection-engine` | [核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md) | ✅ | 🟦 | 事件路由、状态机、七步管线、SPI、故障处置 |
 | `collection-ingestion` | [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) | 🟡 | 🟦 | 消费 / 投影 / 日切 / 迁移；外部字段与 Topic → [数仓契约](./数仓_PubSub交付契约.md) |
 | `collection-admin` | [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) | 🟡 | 🟦 | 信息架构、权限、页面闭环、配置热更新（v1.4）；操作见 [管理后台操作手册](./MOCASA催收系统升级_Phase1_管理后台操作手册.md) |
 | `collection-channel` | [渠道文档索引](./channel/README_渠道文档索引.md) | 🟡 | 🟧 | 编排 / Adapter / 模板；**改前须授权**，以 `main` 为协作基线 |
@@ -89,12 +89,18 @@
 
 ## 五、测试(🟦 主架构)
 
-入口见 [`testing/README.md`](./testing/README.md)。
+入口见 [`testing/README.md`](./testing/README.md)。目录按信息性质分：根目录规范、[`runbooks/`](./testing/runbooks/)、[`records/`](./testing/records/)、[`samples/`](./testing/samples/)。日记录不在本表逐条挂出。
 
 | 文档 | 状态 | 说明 |
 |------|:--:|------|
 | [测试主文档（SSOT）](./testing/MOCASA催收系统升级_Phase1_测试文档.md) | 🟡 | L0–L4b 测试层级、T0–T6 放行阶段、接入 v3 重测与 T3o 观测门槛 |
-| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | T3o 生产等价演练、50 案真实白名单 Pilot、渐进切量与回滚 |
+| [测试执行记录与问题台账](./testing/MOCASA催收系统升级_Phase1_测试执行记录与问题台账.md) | 🟡 | 证据摘要、裁定理由与缺口；不替代 SSOT 的当前灯 |
+| [L4b 环境交接清单](./testing/runbooks/MOCASA催收系统升级_Phase1_L4b环境交接清单.md) | 🟡 | T3 隔离联调的 topic / Nacos / 操作顺序 |
+| [T3o 执行取证手册](./testing/runbooks/MOCASA催收系统升级_Phase1_T3o执行取证手册.md) | 🟡 | T5-S / T5-R / T3o-O 注入与断言命令 |
+| [T5 Pilot 准备与演练手册](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | T3o 生产等价演练、50 案真实白名单 Pilot、渐进切量与回滚 |
+| [触达内容验收清单](./testing/runbooks/MOCASA催收系统升级_Phase1_触达内容验收清单.md) | 🟡 | 终端正文与 scriptSlot 人工核对；不定义用例 |
+| [8/29–8/31 自动跑综述](./testing/records/MOCASA催收系统升级_Phase1_自动跑综述_20260829-0831.md) | 📦 | Pilot 自然日阅读入口；分日原文在 `testing/records/` |
+| [200 案抽样说明](./testing/samples/MOCASA催收系统升级_Phase1_e2e200抽样说明_20260829.md) | 📦 | 配额与名单夹具；CSV 在 `testing/samples/` |
 
 > L2 渠道联调 C1–C7 骨架：`collection-engine/.../integration/ChannelContractL2Test`。
 
@@ -104,7 +110,7 @@
 |------|:--:|------|
 | [操作说明 Nacos 本地启动](./操作说明_Nacos本地启动.md) | ✅ | 本地 / Docker / Nacos；与根 `../README.md` 互补 |
 | [管理后台操作手册](./MOCASA催收系统升级_Phase1_管理后台操作手册.md) | ✅ | 后台 UI（5173）启动、登录、页面与排障；设计 SSOT 仍是 [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) |
-| [T5 Pilot 准备与演练手册](./testing/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 交付、50 案 Pilot、渐进切量、证据归档与回滚；测试用例 SSOT 仍是测试主文档 |
+| [T5 Pilot 准备与演练手册](./testing/runbooks/MOCASA催收系统升级_Phase1_T5Pilot准备与演练手册.md) | 🟡 | Redis/GCP 交付、50 案 Pilot、渐进切量、证据归档与回滚；操作在 `testing/runbooks/`，测试用例 SSOT 仍是测试主文档 |
 
 ## 七、渠道(🟧 编排同事维护 · 谨慎修改)
 

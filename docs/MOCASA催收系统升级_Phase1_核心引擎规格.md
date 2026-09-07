@@ -13,8 +13,6 @@
   - [1.1 核心组件与职责](#11-核心组件与职责)
   - [1.2 模块边界与调用全景](#12-模块边界与调用全景)
 - [2. 事件路由](#2-事件路由)
-  - [2.1 事件路由表（SSOT）](#21-事件路由表ssot)
-  - [2.2 生命周期派生总览](#22-生命周期派生总览)
 - [3. 运行时执行模型](#3-运行时执行模型)
   - [3.1 线程隔离（Trigger-to-Event）](#31-线程隔离trigger-to-event)
   - [3.2 并发与一致性模型](#32-并发与一致性模型)
@@ -28,16 +26,14 @@
   - [4.7 PTP 到期处理（Phase 2 预留）](#47-ptp-到期处理)
   - [4.8 状态转换](#48-状态转换)
 - [5. 步骤执行管线](#5-步骤执行管线)
-  - [5.1 execute_step 执行骨架](#51-execute_step-执行骨架)
 - [6. SPI 接口契约](#6-spi-接口契约)
   - [6.1 接口职责与调用位置](#61-接口职责与调用位置)
-  - [6.2 返回值与实现约束](#62-返回值与实现约束)
-  - [6.3 共享 DTO 定义](#63-共享-dto-定义)
-- [7. 容错与异常恢复](#7-容错与异常恢复)
-  - [7.1 统一处置规则](#71-统一处置规则)
+  - [6.2 实现约束](#62-实现约束)
+  - [6.3 入参与返回类型](#63-入参与返回类型)
+- [7. 故障处置与恢复边界](#7-故障处置与恢复边界)
+  - [7.1 引擎失败处置](#71-引擎失败处置)
   - [7.2 派生事件可靠投递](#72-派生事件可靠投递)
   - [7.3 渠道调用后的部分成功](#73-渠道调用后的部分成功)
-  - [7.4 停摆计划检测](#74-停摆计划检测)
 
 ---
 
@@ -66,7 +62,7 @@
 
 ### 1.2 模块边界与调用全景
 
-`StepExecutionOrchestrator` 按 [§5](#5-步骤执行管线) 七步顺序执行；③④⑤ 经 SPI / `ChannelGateway` 进入渠道编排，①②⑥⑦ 在引擎内完成（契约见 [§6](#6-spi-接口契约)）：
+`StepExecutionOrchestrator` 按 [§5](#5-步骤执行管线) 七步顺序执行；③④⑤ 经 SPI（可替换接口，契约见 [§6](#6-spi-接口契约)）/ `ChannelGateway` 进入渠道编排，①②⑥⑦ 在引擎内完成：
 
 ```mermaid
 flowchart LR
@@ -99,60 +95,40 @@ flowchart LR
 
 ## 2. 事件路由
 
-本节是事件的**声明性目录**：[§2.1](#21-事件路由表ssot) 路由表是 Dispatcher 消费的全部外部事件的唯一权威清单（SSOT），[§2.2](#22-生命周期派生总览) 给出由路由表派生的生命周期全景视图。事件如何被多线程承载与并发约束见 [§3](#3-运行时执行模型)。
-
-### 2.1 事件路由表（SSOT）
-
-下表是 Dispatcher 消费并路由的**事件唯一权威清单**（Phase 1 共 11 行）：处理动作与详见均以本表为准；「生命周期域」列与 [§2.2](#22-生命周期派生总览) 四块对齐（①创建 / ②运行中 / ③收尾 / ④中断）。
+本节是事件的**声明性目录**：下表是 Dispatcher 消费并路由的全部外部事件的唯一权威清单（Phase 1 共 11 行，SSOT），并说明各事件如何在 Dispatcher / Manager / Orchestrator 之间协作。处理动作与详见均以本表为准。「生命周期域」为 ①创建 / ②运行中 / ③收尾 / ④中断。`owner` 表示该案当日是否由本系统负责。事件如何被多线程承载与并发约束见 [§3](#3-运行时执行模型)。计划状态名与合法迁移见 [§4.8](#48-状态转换)。
 
 
-| 事件                     | 生命周期域       | 引擎侧处理动作                                     | 详见                                 |
-| ---------------------- | ----------- | ------------------------------------------- | ---------------------------------- |
-| `CASE_INGESTED`        | ① 创建        | 仅 owner 对账（或水位已是当日的迟到补建）后到达；`owner_date` 须为当日且非结清/停催 → 匹配模板创建计划 | [§4.2](#42-计划创建)                   |
-| `CASE_OWNER_RECONCILED`| ④ 中断        | `ownerAction=LEAVE`：取消该案件活跃计划，`cancel_reason=ROUTED_TO_LEGACY`，不再续建 | [§4.4](#44-中断处理)                   |
-| `STAGE_CHANGED`        | ① 创建 + ④ 中断 | 须当日 owner 水位已成功且该案 `owner_date=当日`；取消旧阶段活跃计划 → 为新阶段创建计划 | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
-| `REPAYMENT_RECEIVED`   | ④ 中断        | **整笔 loan 全额结清**：取消该案件活跃计划 + 清理已注册 Job      | [§4.4](#44-中断处理)                   |
-| `CASE_BALANCE_UPDATED` | ② 运行中更新     | **部分还款**：刷新该案件活跃计划快照的运行态金额与下一期提醒字段；不改 stage | [§4.6](#46-部分还款余额更新)               |
-| `PLAN_STEP_DUE`        | ② 步骤循环      | 水位不是当日或 `owner_date≠当日` → **跳过、不取消计划**；否则按状态分流执行 | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
-| `CHANNEL_CALLBACK`     | ② 步骤循环      | 更新步骤结果 → 发布 `STEP_COMPLETED`                | [§4.3.3](#433-channel_callback)    |
-| `CALLBACK_TIMEOUT`     | ② 步骤循环      | 水位不是当日或 `owner_date≠当日` → **跳过**；否则回调超时 → 标 `FAILED` → 发布 `STEP_COMPLETED` | [§4.3.4](#434-callback_timeout)    |
-| `STEP_COMPLETED`       | ② 步骤循环      | 推进决策：注册下一步 / 计划完成 / 发布穷尽                    | [§4.3.2](#432-step_completed)      |
-| `PLAN_EXHAUSTED`       | ③ 收尾        | 须当日 owner 水位已成功且该案 `owner_date=当日`；否则跳过不续建 | [§4.5](#45-穷尽续建)                   |
-| `CASE_CEASED`          | ④ 中断        | D+91 完全停催：取消该案件活跃计划，**不再续建**（停催终态）          | [§4.4](#44-中断处理)                   |
+| 事件                      | 生命周期域       | 引擎侧处理动作                                                         | 详见                                 |
+| ----------------------- | ----------- | --------------------------------------------------------------- | ---------------------------------- |
+| `CASE_INGESTED`         | ① 创建        | 创建计划（该案当日由本系统负责；拒绝结清/停催）                                        | [§4.2](#42-计划创建)                   |
+| `CASE_OWNER_RECONCILED` | ④ 中断        | 取消活跃计划并交回旧系统（该案当日不再由本系统负责），`cancel_reason=ROUTED_TO_LEGACY`，不续建 | [§4.4](#44-中断处理)                   |
+| `STAGE_CHANGED`         | ① 创建 + ④ 中断 | 取消旧阶段计划 → 创建新阶段计划（须该案当日由本系统负责）                                  | [§4.2](#42-计划创建)、[§4.4](#44-中断处理)  |
+| `REPAYMENT_RECEIVED`    | ④ 中断        | **整笔结清**：取消活跃计划 + 清理已注册 Job                                     | [§4.4](#44-中断处理)                   |
+| `CASE_BALANCE_UPDATED`  | ② 运行中更新     | **部分还款**：刷新快照运行态金额与下一期提醒字段；不改 stage                             | [§4.6](#46-部分还款余额更新)               |
+| `PLAN_STEP_DUE`         | ② 步骤循环      | 按状态分流执行；该案当日不由本系统负责则跳过、不取消计划                                    | [§4.3](#43-步骤执行循环)、[§5](#5-步骤执行管线) |
+| `CHANNEL_CALLBACK`      | ② 步骤循环      | 更新步骤结果 → 发布 `STEP_COMPLETED`                                    | [§4.3.3](#433-channel_callback)    |
+| `CALLBACK_TIMEOUT`      | ② 步骤循环      | 标 `FAILED` → 发布 `STEP_COMPLETED`；该案当日不由本系统负责则跳过                 | [§4.3.4](#434-callback_timeout)    |
+| `STEP_COMPLETED`        | ② 步骤循环      | 推进决策：注册下一步 / 计划完成 / 发布穷尽                                        | [§4.3.2](#432-step_completed)      |
+| `PLAN_EXHAUSTED`        | ③ 收尾        | 按 `ExhaustionPolicy` 续建 / 升档 / 收口；该案当日不由本系统负责则跳过不续建             | [§4.5](#45-穷尽续建)                   |
+| `CASE_CEASED`           | ④ 中断        | D+91 停催：取消活跃计划，**不再续建**                                         | [§4.4](#44-中断处理)                   |
 
 
-所有事件经 Dispatcher 消费后遵循**统一的并发前置流程**（行锁 → 终态拦截 → 事务边界），该契约见 [§3.2](#32-并发与一致性模型)，本节不重复。事件的产生来源（外部上游 / 引擎链式 / 定时 Job）见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)（发布者列）；链式发布的触发条件以 [§4.3](#43-步骤执行循环) / [§4.5](#45-穷尽续建) / [§5](#5-步骤执行管线) 伪代码为 SSOT。
+所有事件经 `EventConsumerDispatcher` 进入，按类型交给 `PlanLifecycleManager`。①创建、②运行中、③收尾、④中断都在 Manager 短事务内做计划级决策（行锁 → 终态拦截 → 前置写，契约见 [§3.2](#32-并发与一致性模型)）。正常推进：①建计划 → ②步骤循环 → ③穷尽续建。④中断可作用于任意非终态计划，不插入主循环。
 
-### 2.2 生命周期派生总览
-
-下图把路由表 10 行按其**生命周期域**压缩为四类协作关系，并用边表达正常推进顺序与横切关系，仅作全景导览（引擎侧视角，不涉及上游产生方式）；事件归属与处理动作以路由表为准，此处不展开单个事件语义。
+唯一跨出事务的交接：`PLAN_STEP_DUE` 在事务内把计划前置为可执行并提交后，才由 `StepExecutionOrchestrator` 跑 [§5](#5-步骤执行管线)（含 PreFlight）。其余事件不进 Orchestrator。
 
 ```mermaid
-flowchart TB
-    D["EventConsumerDispatcher · 唯一入口<br/>锁 → 检终态 → 事务内前置写"]
-
-    subgraph plan["PlanLifecycleManager · 计划级 §4"]
-        P1["① 创建：CASE_INGESTED / STAGE_CHANGED"]
-        P3["② 运行中：PLAN_STEP_DUE / CHANNEL_CALLBACK / CALLBACK_TIMEOUT / STEP_COMPLETED / CASE_BALANCE_UPDATED"]
-        P4["③ 收尾：PLAN_EXHAUSTED"]
-        P2["④ 中断：REPAYMENT_RECEIVED / STAGE_CHANGED / CASE_CEASED / CASE_OWNER_RECONCILED"]
-    end
-
-    subgraph step["StepExecutionOrchestrator · 步骤级 §5（事务外）"]
-        O["execute_step → PreFlightChecker"]
-    end
-
-    D --> P1
-    P1 -->|"建计划"| P3
-    P3 -->|"穷尽"| P4
-    P3 -->|"PLAN_STEP_DUE 提交后"| O
-    D -. "中断事件" .-> P2
-    P2 -. "取消任意非终态计划" .-> P3
+flowchart LR
+    D["Dispatcher"] --> M["Manager · 计划级短事务"]
+    M -->|"①建计划"| L["②步骤循环"]
+    L -->|"穷尽"| E["③收尾"]
+    D -.->|"④中断"| M
+    L -->|"PLAN_STEP_DUE 提交后"| O["Orchestrator · 事务外 §5"]
 ```
 
 
 
-> 读图：**实线**＝正常生命周期推进（入口 → ①创建 → ②循环 → ③收尾）与进入步骤管线；**虚线**＝横切中断（④可作用于任意非终态计划）。完整状态流转与竞态见 [§4.8](#48-状态转换)，本图不重复。
+事件的产生来源（外部上游 / 引擎链式 / 定时 Job）见 [领域模型 §6.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#62-逐事件-payload-字段)（发布者列）；链式发布的触发条件以 [§4.3](#43-步骤执行循环) / [§4.5](#45-穷尽续建) / [§5](#5-步骤执行管线) 伪代码为 SSOT。
 
 ---
 
@@ -164,7 +140,7 @@ flowchart TB
 
 ### 3.1 线程隔离（Trigger-to-Event）
 
-[§2.1](#21-事件路由表ssot) 路由表中的 `PLAN_STEP_DUE` 由调度线程**生产**，由 Consumer 线程池**消费**；其余业务事件仅由 Consumer 消费。两线程池严格隔离，杜绝调度与 I/O 密集操作耦合：
+[§2](#21-事件路由表ssot) 路由表中的 `PLAN_STEP_DUE` 由调度线程**生产**，由 Consumer 线程池**消费**；其余业务事件仅由 Consumer 消费。两线程池严格隔离，杜绝调度与 I/O 密集操作耦合：
 
 ```
 Cron 扫表 ──XADD──→ Redis Stream ──XREADGROUP──→ Consumer 执行业务
@@ -194,18 +170,18 @@ Cron 扫表 ──XADD──→ Redis Stream ──XREADGROUP──→ Consumer 
 
 ### 3.2 并发与一致性模型
 
-Consumer 并行消费时，同一计划可能同时收到「步骤到期触达」与「还款取消」等事件。典型事故是**还款已取消计划却仍发出触达**。下表归纳五类风险；**本节详述 ① 及其代价、②**；③ 见 [§4.4](#44-中断处理)，④ 见 [§5](#5-步骤执行管线) ②⑤½，⑤ 见 [§7.2](#72-派生事件可靠投递)。
+Consumer 并行消费时，同一计划可能同时收到「步骤到期触达」与「还款取消」等事件。典型事故是**还款已取消计划却仍发出触达**。下表是五类风险的总索引。前提都是 Consumer 并行；机制写在真正发生那次写入的章节——①②是消费/锁层（本节），③是计划终态规则（[§4.4](#44-中断处理)），④是锁外管线复检（[§5](#5-步骤执行管线) ②⑤½），⑤是发件箱（[§7.2](#72-派生事件可靠投递)）。不把后文伪代码搬进本节。
 
 #### 五类一致性风险（总览）
 
 
-| #   | 风险         | 应对                   | 详述                              |
-| --- | ---------- | -------------------- | ------------------------------- |
-| ①   | **并发写坏**   | 行锁串行 + 锁内禁 I/O       | **本节 ↓**                        |
-| ②   | **重复执行**   | `XACK` / DLQ + 步骤幂等键 | **本节 ↓**；步骤级见 [§5](#5-步骤执行管线) ① |
-| ③   | **乱序覆盖**   | 终态先写先赢               | [§4.4](#44-中断处理)                |
-| ④   | **迟到真相**   | I/O 前后复检             | [§5](#5-步骤执行管线) ②⑤½             |
-| ⑤   | **派生事件丢失** | 事件与状态迁移同事务落发件箱       | [§7.2](#72-派生事件可靠投递)            |
+| 风险与应对                           | 机制所在                            |
+| ------------------------------- | ------------------------------- |
+| ① **并发写坏**：行锁串行 + 锁内禁 I/O       | **本节 ↓**                        |
+| ② **重复执行**：`XACK` / DLQ + 步骤幂等键 | **本节 ↓**；步骤级见 [§5](#5-步骤执行管线) ① |
+| ③ **乱序覆盖**：终态先写先赢               | [§4.4](#44-中断处理)                |
+| ④ **迟到真相**：I/O 前后复检             | [§5](#5-步骤执行管线) ②⑤½             |
+| ⑤ **派生事件丢失**：事件与状态迁移同事务落发件箱     | [§7.2](#72-派生事件可靠投递)            |
 
 
 > **③ 要点**：`REPAID > CEASED > STAGE_UPGRADE > 非终态` 为语义/审计参考，非运行时覆盖规则。投诉/争议冻结为 Phase 2 能力，不属于本阶段状态机。
@@ -226,13 +202,13 @@ Consumer 并行消费时，同一计划可能同时收到「步骤到期触达�
 Redis Stream 的消费语义保证：
 
 
-| 场景             | 行为                                     | 典型原因                                                                                  |
-| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
-| 处理成功           | `XACK`，消息不再投递                          | —                                                                                     |
-| 处理失败（**可重试**）  | 不 ACK → pending list → 自动重投递           | DB 短暂不可用、锁等待超时、计划级 SPI 超时、进程崩溃于 ACK 前                                                 |
-| 处理失败（**不可重试**） | 跳过 ACK → 直接 DLQ + 告警                   | payload 反序列化失败（畸形消息，重投必败）                                                             |
+| 场景             | 行为                                     | 典型原因                                                                                   |
+| -------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
+| 处理成功           | `XACK`，消息不再投递                          | —                                                                                      |
+| 处理失败（**可重试**）  | 不 ACK → pending list → 自动重投递           | DB 短暂不可用、锁等待超时、计划级 SPI 超时、进程崩溃于 ACK 前                                                  |
+| 处理失败（**不可重试**） | 跳过 ACK → 直接 DLQ + 告警                   | payload 反序列化失败（畸形消息，重投必败）                                                              |
 | 可重试但达投递上限      | DLQ + 告警（毒消息）                          | 代码缺陷或数据异常导致持续失败（默认上限 5 次，见 [基础设施附录 A.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a2-引擎与事件总线)） |
-| 重复投递到达         | 步骤 `idempotency_key` SETNX 吸收；终态计划直接退出 | Stream 重投或并发重复消费                                                                      |
+| 重复投递到达         | 步骤 `idempotency_key` SETNX 吸收；终态计划直接退出 | Stream 重投或并发重复消费                                                                       |
 
 
 消费 ACK 语义属于路由/线程层；`idempotency_key` 的具体实现见 [§5](#5-步骤执行管线) ①，DLQ 配置见 [基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)。
@@ -260,38 +236,32 @@ Consumer-A (PLAN_STEP_DUE)           Consumer-B (REPAYMENT_RECEIVED)
 
 ## 4. 计划生命周期与状态机
 
-本节按计划生命周期展开：先定义状态词汇表，再按时间顺序列出从创建到终态的流转，最后以状态转换总表和转换图固化规则。步骤级横向协作见 [§5](#5-步骤执行管线)，即 §4.3「执行步骤」的内部展开；部分还款的余额快照更新不构成状态迁移，见 [§4.6](#46-部分还款余额更新)。
-
-> **边界**：上游消息到领域事件的归属、`caseId=loanId`、结清/部分还款判定、DPD/停催准入与 payload 校验，以 [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) 为 SSOT；本节只定义引擎收到事件后的计划状态机行为，并保留必要的防御性校验。
-
-
+本节按计划生命周期展开：先定义状态词汇表，再按时间顺序列出从创建到终态的流转，最后以状态转换总表和转换图固化规则。§4.2–§4.6 各节「写入」只记本处理器落盘的计划态；下一跳与合法迁移见各节伪代码与 [§4.8](#48-状态转换)。步骤级横向协作见 [§5](#5-步骤执行管线)，即 §4.3「执行步骤」的内部展开；部分还款不改计划态，见 [§4.6](#46-部分还款余额更新)。
 
 ### 4.1 状态定义
 
 计划级状态机共 **6 态**（4 非终态 + 2 终态），已覆盖引擎管辖的完整生命周期；步骤级状态（`SCHEDULED` / `EXECUTING` / `COMPLETED` 等）见 [领域模型](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md)，不在此表重复。
 
 
-| 状态               | 类型     | 语义                                                                                              |
-| ---------------- | ------ | ----------------------------------------------------------------------------------------------- |
-| `PENDING`        | 非终态    | 计划刚创建，尚未执行任何步骤，等待首步 `trigger_time`                                                              |
-| `STEP_SCHEDULED` | 非终态    | 上一步已结束，下一步 Job 已注册，等待到期                                                                         |
-| `STEP_EXECUTING` | 非终态    | 当前步骤执行中（渠道发送 / 等待异步回调）                                                                          |
-| `STEP_WAITING`   | 非终态    | 消息类渠道已发出，观察期内等待用户响应                                                                             |
-| `PLAN_COMPLETED` | **终态** | 本计划收口。仍在催、未结清、未停催时，步骤走完须经 [§4.5](#45-穷尽续建)，不得在此直接停催；仅穷尽 `COMPLETE`、或引擎判定已不在催时由推进路径落入本态。还款/停催取消走 `PLAN_CANCELLED`（[§4.4](#44-中断处理)）。 |
-| `PLAN_CANCELLED` | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因) |
+| 状态               | 类型     | 语义                                                                                                                           |
+| ---------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `PENDING`        | 非终态    | 计划刚创建，尚未执行任何步骤，等待首步 `trigger_time`                                                                                           |
+| `STEP_SCHEDULED` | 非终态    | 上一步已结束，下一步 Job 已注册，等待到期                                                                                                      |
+| `STEP_EXECUTING` | 非终态    | 当前步骤执行中。Phase 1 的 AI_CALL 在此态等 Webhook（[§4.3.3](#433-channel_callback) / [§4.3.4](#434-callback_timeout)），不是 `STEP_WAITING`  |
+| `STEP_WAITING`   | 非终态    | 消息已发出、观察期内等用户响应。Phase 1 不进入；Phase 2 消息渠道（如 Viber / WhatsApp）才使用                                                              |
+| `PLAN_COMPLETED` | **终态** | 本计划正常收口；落入条件见 [§4.3.2](#432-step_completed) / [§4.5](#45-穷尽续建)                                                               |
+| `PLAN_CANCELLED` | **终态** | 被中断取消；`cancel_reason` 枚举见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)，Phase 1 写入见 [§4.4](#44-中断处理) |
 
-
-> Phase 1 引擎经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED` / `ROUTED_TO_LEGACY`（见 [§4.4](#44-中断处理)）。`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
 
 
 
 ### 4.2 计划创建
 
-**状态影响**：创建新计划为 `PENDING`；首步已预排或回退写入 `trigger_time` 后由扫描器进入 `STEP_SCHEDULED`。
-**触发事件**：`CASE_INGESTED` / `STAGE_CHANGED`（链 [§2.1](#21-事件路由表ssot)）。
+**写入**：新计划 → `PENDING`；同时写入首步 `trigger_time`。
+**触发事件**：`CASE_INGESTED` / `STAGE_CHANGED`（链 [§2](#21-事件路由表ssot)）。
 **关联 SPI**：`PlanFactory`（链 [§6.1](#61-接口职责与调用位置)）。
 
-`CASE_INGESTED` 的准入、DPD/停催口径与 payload 组装见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-案件消息处理主链路)；本事件只在 owner 对账 ENTER（或水位已是当日的迟到补建）时发布，`caseEvent` 到达不建计划。`STAGE_CHANGED` 的来源与目标 Stage 口径见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。二者均复用下方创建逻辑。`collectionStatus` 由接入派生；引擎仍防御性拒绝 `CEASED` / `SETTLED` 快照的建计划请求。`owner_date` 不是当日则静默返回，不建计划。
+从 payload 组装快照后落盘（不读 `t_ai_collection`）。首步到期由 [§4.3.1](#431-plan_step_due) 进入 `STEP_EXECUTING`。发布条件见 [数据接入 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#3-案件消息处理主链路) 与 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。引擎拒绝 `CEASED` / `SETTLED` 快照；`owner_date` 不是当日则静默返回。
 
 ```python
 def on_case_ingested(event):
@@ -318,14 +288,15 @@ def on_case_ingested(event):
 
 ### 4.3 步骤执行循环
 
-**状态影响**：`PENDING` / `STEP_SCHEDULED`（重试时 `STEP_EXECUTING`）→ `STEP_EXECUTING` → 消息类同步完成或 AI_CALL 挂起；`STEP_WAITING`（Phase 2）结转 `STEP_COMPLETED`（不触达）。推进下一步为 `STEP_SCHEDULED`；回调/超时经 `STEP_COMPLETED` 再分流。
-**触发事件**：`PLAN_STEP_DUE` / `CHANNEL_CALLBACK` / `STEP_COMPLETED`（及 Cron 产生的 `CALLBACK_TIMEOUT` 哨兵；事件名均非计划状态，链 [§2.1](#21-事件路由表ssot)）。
+**触发事件**：`PLAN_STEP_DUE` / `CHANNEL_CALLBACK` / `STEP_COMPLETED`（及 Cron 产生的 `CALLBACK_TIMEOUT` 哨兵；事件名均非计划状态，链 [§2](#21-事件路由表ssot)）。
 **关联 SPI**：`ExecutionGuard` / `StepResolver` / `ChannelGateway` / `AdvancementPolicy`（链 [§6.1](#61-接口职责与调用位置)）。
+
+计划态写入见各小节「写入」。Phase 1 的 AI_CALL 挂起保持 `STEP_EXECUTING`（下图虚线），与场景 B 的 `STEP_WAITING` 观察期不是同一条路径。
 
 
 | 小节                              | 触发事件               | 职责                                     |
 | ------------------------------- | ------------------ | -------------------------------------- |
-| [§4.3.1](#431-plan_step_due)    | `PLAN_STEP_DUE`    | 锁内按计划态分流（场景 A/B）                       |
+| [§4.3.1](#431-plan_step_due)    | `PLAN_STEP_DUE`    | 锁内分流：A 到期执行 / B 观察期结转（Phase 2）         |
 | [§4.3.2](#432-step_completed)   | `STEP_COMPLETED`   | 推进下一步 / 计划完成 / 发布穷尽                    |
 | [§4.3.3](#433-channel_callback) | `CHANNEL_CALLBACK` | 供应商 Webhook → 写结果 → 发 `STEP_COMPLETED` |
 | [§4.3.4](#434-callback_timeout) | `CALLBACK_TIMEOUT` | 回调超时 → 标 `FAILED` → 发 `STEP_COMPLETED` |
@@ -345,7 +316,7 @@ flowchart TB
         S1["锁内分流 · 终态/重复步吸收"]
         EX["execute_step（§5）"]
         S1 -->|"A · PENDING / SCHEDULED / EXECUTING（重试）"| EX
-        S1 -->|"B · STEP_WAITING 观察期满"| HUB
+        S1 -->|"B · STEP_WAITING 观察期满（Phase 2）"| HUB
     end
 
     subgraph s5out["§5 出口（节选）"]
@@ -364,7 +335,7 @@ flowchart TB
 
     EX --> LOOP
     EX --> SYNC
-    EX -.->|"AI_CALL 挂起"| ASYNC["等回调 / 超时"]
+    EX -.->|"AI_CALL 挂起 · 保持 EXECUTING"| ASYNC["等回调 / 超时"]
     LOOP -.->|"到期再扫"| C1
     SYNC --> HUB
     ASYNC --> CB
@@ -383,15 +354,17 @@ flowchart TB
 
 
 
-> **读图**：实线＝步骤终态汇入 `STEP_COMPLETED`；虚线＝不经汇聚的回环（defer/重试重排 `trigger_time`，或 AI_CALL 异步回调/超时）。场景 B（`STEP_WAITING`）为 Phase 2 预留，Phase 1 SMS/PUSH/EMAIL 不进 WAITING。横切中断（还款/升档/停催）见 [§4.4](#44-中断处理)，未在本图展开。
+> **读图**：实线＝步骤终态汇入 `STEP_COMPLETED`；虚线＝不经汇聚的回环（defer/重试重排 `trigger_time`，或 AI_CALL 保持 `STEP_EXECUTING` 等回调/超时）。场景 B 的 `STEP_WAITING` 是消息观察期满结转、不再触达，Phase 2 才进入；Phase 1 的 SMS/PUSH/EMAIL 同步完成，不进 WAITING。横切中断见 [§4.4](#44-中断处理)，未在本图展开。
 
 
 
 #### 4.3.1 PLAN_STEP_DUE
 
-锁内按计划态分流（场景 A/B）：**A 到期执行**（`PENDING` / `STEP_SCHEDULED` / 退避重试时的 `STEP_EXECUTING` → 置或保持 `STEP_EXECUTING`，COMMIT 后锁外 `execute_step`）/ **B 观察期结转**（`STEP_WAITING` → 标记步骤完成；事务提交后由 Dispatcher 投递 `STEP_COMPLETED`，不触达）。
+**写入**：场景 A → `STEP_EXECUTING`（COMMIT 后锁外 `execute_step`）；场景 B（Phase 2 观察期满）步骤标完成并投递 `STEP_COMPLETED`，不触达、不进入执行态。
+**触发事件**：`PLAN_STEP_DUE`（链 [§2](#21-事件路由表ssot)）。
+**关联 SPI**：—（锁外见 [§5](#5-步骤执行管线)）。
 
-**Guard defer**（§5 ③）：若落在 PHT 静默窗（默认 21:00–08:00，`TIME_WINDOW`），将当前步 `trigger_time` 重排至 `deferUntil`（通常次日 08:00），计划回 `STEP_SCHEDULED` 后直接返回——不触达、不写 timeline、不经 `STEP_COMPLETED`；到期 Cron 重入场景 A。区别于 Guard block（跳过并推进）与渠道退避重试（保持 `EXECUTING`），见 [§5 ③](#5-步骤执行管线)。
+场景 A 覆盖 `PENDING` / `STEP_SCHEDULED` / 退避重试时的 `STEP_EXECUTING`。锁外管线见 [§5](#5-步骤执行管线)；Guard defer 见其中 ③。
 
 ```python
 def on_plan_step_due(event):
@@ -424,11 +397,13 @@ def on_plan_step_due(event):
 
 #### 4.3.2 STEP_COMPLETED
 
-**失败处理**：`AdvancementPolicy` 抛错、超时或返回非法 `null` 时 NACK；步骤推进状态未提交，事件重投后重新决策。
+**写入**：有下一步 → `STEP_SCHEDULED`；策略收口且已不在催 → `PLAN_COMPLETED`；仍在催或策略穷尽 → 发布 `PLAN_EXHAUSTED`（本节不终态化，见 [§4.5](#45-穷尽续建)）。
+**触发事件**：`STEP_COMPLETED`（链 [§2](#21-事件路由表ssot)）。
+**关联 SPI**：`AdvancementPolicy`（链 [§6.1](#61-接口职责与调用位置)）。
 
-**闸门（计划存在性）**：`AdvancementPolicy` 的 `PLAN_COMPLETED` 只表示「策略认为本计划可收口」，不是整案停催令。引擎在末步仍处于催收（快照 `collectionStatus` 非 `CEASED` / `SETTLED`、非结清）时**改写为** `PLAN_EXHAUSTED`，由 [§4.5](#45-穷尽续建) 决定 REBUILD / ESCALATE / COMPLETE。`ANSWERED` 只触发同计划内 CONNECT_AND_STOP（跳过同日未执行 `AI_CALL`），不得把整案停在当前阶段。此闸门在引擎，不依赖渠道默认策略实现。
+**闸门**：`AdvancementPolicy` 的 `PLAN_COMPLETED` 表示策略认为本计划可收口。引擎在仍在催（快照 `collectionStatus` 非 `CEASED` / `SETTLED`、非结清）时改写为 `PLAN_EXHAUSTED`，由 [§4.5](#45-穷尽续建) 决定 `REBUILD` / `ESCALATE` / `COMPLETE`。此闸门在引擎。
 
-不变量：仍在催 ∧ 未结清 ∧ 未停催 ∧ 投影有 stage ⇒ 必须有活跃计划，或穷尽已 `COMPLETE`（已达 S4 / 无法再升）。日切跨天补洞见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。
+不变量：仍在催 ∧ 未结清 ∧ 未停催 ∧ 投影有 stage ⇒ 必须有活跃计划，或穷尽已 `COMPLETE`（已达 S4 / 无法再升）。
 
 ```python
 def on_step_completed(plan, completed_step):
@@ -455,11 +430,14 @@ def on_step_completed(plan, completed_step):
         publish(PLAN_EXHAUSTED)                    # → §4.5
 ```
 
-
+**失败处理**：`AdvancementPolicy` 抛错、超时或返回非法 `null` 时 NACK；步骤推进状态未提交，事件重投后重新决策。
 
 #### 4.3.3 CHANNEL_CALLBACK
 
-Webhook 经 `collection-admin` 鉴权后发布为本事件。Phase 1 **仅 AI_CALL** 在 `STEP_EXECUTING` 等 disposition；**SMS/PUSH/EMAIL** `dispatch` 成功即同步完成，**不进** `STEP_WAITING`、不用本事件结转（与 [架构 §2.5](./MOCASA催收系统升级_Phase1_架构设计文档.md#165-外部交互安全)、[渠道编排 §3.5](./channel/MOCASA催收系统升级_Phase1_渠道编排规格.md) 一致）。
+**写入**：不改计划态。Phase 1 须为 `STEP_EXECUTING`（AI_CALL 等回调）；步骤 → `COMPLETED`，发 `STEP_COMPLETED`。Phase 2 亦接受 `STEP_WAITING`。
+**触发事件**：`CHANNEL_CALLBACK`（链 [§2](#21-事件路由表ssot)）。
+
+Webhook 经 `collection-admin` 鉴权后发布。Phase 1 **仅 AI_CALL** 走本事件；SMS/PUSH/EMAIL `dispatch` 成功即同步完成，不进 `STEP_WAITING`。
 
 > **Timeline 落库**：admin Webhook 仅鉴权、规范化并发布事件；引擎在本事务中更新 step，并经 `TimelineRepository` 写回调结果 timeline 后发布 `STEP_COMPLETED`。channel 不直接写 timeline。
 
@@ -483,7 +461,10 @@ def on_channel_callback(event):
 
 #### 4.3.4 CALLBACK_TIMEOUT
 
-AI_CALL 停在 `STEP_EXECUTING` 等 Webhook 时，若回调不到达会卡死。Phase 1 **仅靠引擎超时哨兵**：进入异步执行时注册超时 Job（[§5 ⑦](#5-步骤执行管线)）；Cron 扫到 `timeout_time` 仍无回调 → 标 `FAILED` → 发布 `STEP_COMPLETED`。
+**写入**：不改计划态（须为 `STEP_EXECUTING`）；步骤 → `FAILED`，发 `STEP_COMPLETED`。
+**触发事件**：`CALLBACK_TIMEOUT`（链 [§2](#21-事件路由表ssot)）。
+
+AI_CALL 停在 `STEP_EXECUTING` 等 Webhook 时，若回调不到达会卡死。Phase 1 由引擎超时哨兵收敛：进入异步执行时注册超时 Job（[§5 ⑦](#5-步骤执行管线)）；默认 **10 分钟**（`engine.step.callback_timeout_minutes`，见 [基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-a生产配置键索引)）。Cron 扫到 `timeout_time` 仍无回调 → 标 `FAILED` → 发布 `STEP_COMPLETED`。等待不占 Consumer；防重复拾取靠计划/步骤状态。
 
 > **Timeline**：超时由引擎经 `TimelineRepository` 写入 FAILED 记录；admin/Cron 只发布 `CALLBACK_TIMEOUT`。
 
@@ -503,19 +484,17 @@ def on_callback_timeout(event):
     return events                                  # 已随本事务入发件箱；提交后投递，由 AdvancementPolicy 决定下一步
 ```
 
-**默认 10 分钟**（`engine.step.callback_timeout_minutes`，见 [基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-a生产配置键索引)）。等待不占 Consumer——Cron 扫表触发本事件；防重复拾取靠计划/步骤状态。
-
-> **Phase 2 对账（AI_CALL）**：仅当独立 AI Call 合作方提供按其任务标识（`call_task_id` / `request_id`）查询终态的 API 时，才能以查询结果纠正 `CALLBACK_TIMEOUT` 造成的假 `FAILED` 并补齐 timeline。故 dispatch 成功必须把该标识落入 `t_contact_timeline.provider_msg_id`，回调原始证据落 `t_channel_callback_audit.provider_msg_id`。没有查询 API 时，只能保留「超时置失败 + 回调审计 + 告警」，不得自行重拨或推测改写结果；合作方底层线路（LTH / SIP / 其他）对该契约不可见。
+> **标识落库**：dispatch 成功须把任务标识落入 `t_contact_timeline.provider_msg_id`，回调原始证据落 `t_channel_callback_audit.provider_msg_id`（[§5 ⑦](#5-步骤执行管线)）。⏳ 合作方查询 API 到位前，超时假失败只靠审计，不得自行重拨。
 
 
 
 ### 4.4 中断处理
 
-**状态影响**：`REPAYMENT_RECEIVED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED` 将该案件活跃计划置 `PLAN_CANCELLED`；`STAGE_CHANGED` 取消旧计划后，为目标 Stage 新建 `PENDING` 计划。
-**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED`（链 [§2.1](#21-事件路由表ssot)）。`COMPLAINT` / `MANUAL` 带外取消为 **Phase 2**，见 [§4.1](#41-状态定义)。
+**写入**：活跃计划 → `PLAN_CANCELLED`；`STAGE_CHANGED` 另建 `PENDING`。
+**触发事件**：`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED`（链 [§2](#21-事件路由表ssot)）。Phase 1 经事件总线写入的 `cancel_reason` 仅 `REPAID` / `STAGE_UPGRADE` / `CEASED` / `ROUTED_TO_LEGACY`；`COMPLAINT` / `MANUAL` 为 Phase 2 预留，不经事件总线。
 **关联 SPI**：—（纯引擎状态机；还款路径另调 `PredictiveDialerService`）。
 
-`REPAYMENT_RECEIVED` / `CASE_BALANCE_UPDATED` 的结清判定（`isFullCleared`）及发布来源，以 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵) 为 SSOT；本节前者取消计划，后者仅走 §4.6 更新余额。`CASE_CEASED` 的 DPD≥91 产出边界与 owner 对账迁出见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。`STAGE_CHANGED` / `PLAN_EXHAUSTED` 在 owner 水位不是当日或该案 `owner_date≠当日` 时跳过。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。中断流程见下方伪代码 + [§4.8 状态图](#48-状态转换)。
+整笔结清走本节取消；部分还款见 [§4.6](#46-部分还款余额更新)。结清判定见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵)。无活跃计划时（含已 `ROUTED_TO_LEGACY`）还款事件对计划无写。`CASE_CEASED` 产出边界见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)。`STAGE_CHANGED` 在 owner 水位不是当日或该案 `owner_date≠当日` 时跳过。并发：`plan_id` 升序加锁 + 终态单调（[§3.2](#32-并发与一致性模型)）。
 
 **失败处理**：计划读取或写入失败时 NACK，取消事务回滚；`PredictiveDialerService.filter_repaid_case` 失败时记录告警并继续，计划已处于 `PLAN_CANCELLED`。
 
@@ -569,20 +548,20 @@ def on_case_owner_reconciled(case_id):              # 当日 NEW 缺席：迁出
 
 ### 4.5 穷尽续建
 
-**状态影响**：当前非终态计划恒转 `PLAN_COMPLETED`；`REBUILD` / `ESCALATE` 另建 `PENDING` 新计划（首步靠 Cron，非 case Pub/Sub）。`REBUILD` 新计划首步 `trigger_time` 不得早于**次日 08:00 PHT**（Factory 已排更晚则保留）；避免末步接通后同日再触达（CONNECT_AND_STOP 只管同一张计划）。`ESCALATE` / 日切新建不在此钳制，沿用 Factory 预排。
-**触发事件**：`PLAN_EXHAUSTED`（所有步骤执行完毕但用户未还款；链 [§2.1](#21-事件路由表ssot)）。
+**写入**：旧计划 → `PLAN_COMPLETED`；`REBUILD` 另建同 stage `PENDING`；`ESCALATE` 本事务不建新计划；`COMPLETE` 只终态。
+**触发事件**：`PLAN_EXHAUSTED`（链 [§2](#21-事件路由表ssot)）。该案当日不由本系统负责则跳过不续建。
 **关联 SPI**：`ExhaustionPolicy` / `PlanFactory`（链 [§6.1](#61-接口职责与调用位置)）。
 
-穷尽**不等于结束**。当一个计划的所有步骤都已执行完毕但用户仍未还款时，`ExhaustionPolicy`（渠道编排 SPI）返回三值之一，引擎按 [§4.5 伪代码](#45-穷尽续建) 落地。末步如何进入本事件见 [§4.3.2](#432-step_completed)。
+`ExhaustionPolicy` 返回三值之一，按下表落地。本事件由 [§4.3.2](#432-step_completed) 在末步仍在催时发布。`REBUILD` 新计划首步 `trigger_time` 不得早于次日 08:00 PHT（已更晚则保留），避免末步接通后同日再触达；`ESCALATE` / 日切新建不在此钳制。`ESCALATE` 发件箱投递 `STAGE_CHANGED` 后由 [§4.2](#42-计划创建) 建新阶段。
 
-**失败处理**：`ExhaustionPolicy` 或 `REBUILD` 内的 `PlanFactory` 抛错、超时或返回非法 `null` 时 NACK；当前事务回滚，`PLAN_EXHAUSTED` 重投后重新处理。
+**失败处理**：`ExhaustionPolicy` 或 `REBUILD` 内的 `PlanFactory` 抛错、超时或返回非法 `null` 时 NACK；当前事务回滚，`PLAN_EXHAUSTED` 重投后重新处理。owner 门控未过（水位不是当日，或该案 `owner_date ≠ 当日`）时**静默 ACK、不改终态、不续建**；迁出走 [§4.4](#44-中断处理) `CASE_OWNER_RECONCILED`。水位未到当日时本事件不再重投，仍属 NEW 的计划由 [§7.4](#74-停摆计划检测) 暴露。
 
 
-| 返回值        | 场景                                            | 引擎动作                                          | Phase 1 策略实现                                                 |
-| ---------- | --------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------ |
-| `REBUILD`  | **同阶段续建**：本轮步骤已跑完仍未还款，同 Stage 内再建一轮计划（换模板/策略） | `PlanFactory.create()` 同阶段新建 + 注册首步 Job       | ✅ `DefaultExhaustionPolicy`：续建次数 < `max_rebuild_count`（默认 2） |
-| `ESCALATE` | **策略升档**：同 Stage 续建次数已用尽，提升催收强度               | 发布 `STAGE_CHANGED` → §4.4 取消旧计划 + §4.2 建新阶段计划 | ✅ 续建超限且 Stage 可升（S1→S2→…→S4）                                 |
-| `COMPLETE` | **停止主动触达**：续建与升档均无可行路径                        | 标记 `PLAN_COMPLETED`                           | ✅ 已达 S4 或无法升档；Mock 恒返回 COMPLETE                              |
+| 返回值        | 场景                                            | 引擎动作                                                                           | Phase 1 策略实现                                                 |
+| ---------- | --------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `REBUILD`  | **同阶段续建**：本轮步骤已跑完仍未还款，同 Stage 内再建一轮计划（换模板/策略） | `PlanFactory.create()` 同阶段新建 + 注册首步 Job                                        | ✅ `DefaultExhaustionPolicy`：续建次数 < `max_rebuild_count`（默认 2） |
+| `ESCALATE` | **策略升档**：同 Stage 续建次数已用尽，提升催收强度               | 旧计划 → `PLAN_COMPLETED`，发件箱投递 `STAGE_CHANGED`；消费时旧计划已终态，走 [§4.2](#42-计划创建) 建新阶段 | ✅ 续建超限且 Stage 可升（S1→S2→…→S4）                                 |
+| `COMPLETE` | **停止主动触达**：续建与升档均无可行路径                        | 标记 `PLAN_COMPLETED`                                                            | ✅ 已达 S4 或无法升档；Mock 恒返回 COMPLETE                              |
 
 
 > `REBUILD` 有续建次数上限（`engine.plan.max_rebuild_count`），达到上限后策略层应返回 `ESCALATE` 或 `COMPLETE`。
@@ -592,9 +571,11 @@ def on_plan_exhausted(event):
     plan = get_plan_with_lock(event.plan_id)
     if plan.status in (PLAN_COMPLETED, PLAN_CANCELLED):
         return
+    if owner_gate_blocks(plan.case_id):           # 水位不是当日，或该案 owner_date ≠ 当日
+        return                                    # 不续建、不改终态；迁出走 §4.4
 
     # 续建复用旧计划快照，不回读 t_ai_collection；后续步骤发送前仍会按 §5②½
-    # 覆盖内存中的 dpd / totalOutstanding，保证用户可见文案取发送时刻值。
+    # 覆盖内存中的 dpd / 运行态金额 / stage，保证用户可见文案取发送时刻值。
     snapshot = deserialize(plan.context_snapshot)
     case_info = case_info_from_snapshot(snapshot)
 
@@ -620,8 +601,9 @@ def on_plan_exhausted(event):
 
 ### 4.6 部分还款余额更新
 
-**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵)；链 [§2.1](#21-事件路由表ssot)）。
-**状态影响**：无。该事件只更新活跃计划的快照金额，不属于计划状态迁移。
+**写入**：不改计划态；只更新活跃计划快照金额。
+**触发事件**：`CASE_BALANCE_UPDATED`（发布判定与 payload 口径见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-按消息类型的处理矩阵)；链 [§2](#21-事件路由表ssot)）。
+**关联 SPI**：—（不调策略 SPI）。
 
 ```python
 def on_case_balance_updated(event):
@@ -655,12 +637,11 @@ def on_case_balance_updated(event):
 | `collectionStatus`                                   | 可选  | 由接入派生（`SETTLED` / `IN_COLLECTION`），引擎只透传 |
 
 
-**边界**：`stage` **不在可写集内**——阶段变化只能由 `STAGE_CHANGED` 驱动（[§4.4](#44-中断处理)）。不修改计划/步骤状态、模板、渠道决策字段或已注册 Job，**不调用** `PlanFactory.create()`、`ExhaustionPolicy` 或 `create_plan_for_stage()`；后续步骤沿用原计划与话术，仅在渲染时读取更新后的金额。可选字段采用「事件携带才覆盖」语义，避免部分字段的还款消息把快照里的其他金额清成 null。
+本事件只改活跃计划快照的运行态金额；后续步骤沿用原计划与话术，渲染时读更新后的金额。`stage` 由 `STAGE_CHANGED` 驱动（[§4.4](#44-中断处理)）。可选字段采用「事件携带才覆盖」，缺省保持旧值。
 
 ### 4.7 PTP 到期处理（Phase 2 预留）
-<a id="47-ptp-到期处理"></a>
 
-**⏳ Phase 2 预留**：Phase 1 不做 PTP，不生产/不消费 `PTP_EXPIRED`（枚举仅前向兼容，见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)）。实时还款仍走 [§5 ②](#5-步骤执行管线) / [§4.4](#44-中断处理)。需要产品确认到期信号源与 keep/break 规则后再实现。
+**Phase 2 预留**：Phase 1 不做 PTP，不生产/不消费 `PTP_EXPIRED`（枚举仅前向兼容，见 [领域模型 §2.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#27-cancelreason计划取消原因)）。实时还款仍走 [§5 ②](#5-步骤执行管线) / [§4.4](#44-中断处理)。需要产品确认到期信号源与 keep/break 规则后再实现。
 
 ### 4.8 状态转换
 
@@ -702,11 +683,9 @@ flowchart TB
 
 
 
-> 读图：**实线**＝主循环与创建；**虚线**＝中断横切。`STEP_EXECUTING` 异步完成经 `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` → `STEP_COMPLETED`（见 [§4.3](#43-步骤执行循环)），未单独画边。Phase 1 消息类渠道不进 `STEP_WAITING`。
+> **读图**：实线＝主循环与创建；**虚线**＝中断横切。`STEP_EXECUTING` 上的 AI_CALL 经 `CHANNEL_CALLBACK` / `CALLBACK_TIMEOUT` → `STEP_COMPLETED`（见 [§4.3](#43-步骤执行循环)），未单独画边。Phase 1 消息类渠道同步完成，不进 `STEP_WAITING`；`STEP_WAITING` 仅 Phase 2 消息观察期。
 >
-> **穷尽 vs 日切**：`REBUILD` / `ESCALATE` / `COMPLETE` 均将**旧 plan** 置 `PLAN_COMPLETED`；`REBUILD` 另建同 stage **新 plan**（`renewal_pending` 过渡，首步钳到次日 08:00 PHT）。`ESCALATE` 经发件箱投递 `STAGE_CHANGED` 触发 §4.2 建新 stage plan（旧 plan 已是终态，不经 `STAGE_UPGRADE` 取消）。日切 `STAGE_CHANGED` 走 §4.4：有活跃计划则 `CANCELLED · STAGE_UPGRADE` 再建；无活跃且投影高于最近完成计划时补建（[数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)）。
->
-> **阶段权威与单调前进**：`STAGE_CHANGED` 有两个合法发布方——日切（投影 DPD 推导）与本节 `ESCALATE`（催收强度策略）。引擎**从不回写** `t_ai_collection`，所以 `ESCALATE` 之后「活跃计划 stage > 投影 stage」是正常稳态。因此日切只在投影 stage **严重度更高**时发布 `STAGE_CHANGED`，**不得**发布回退事件（[数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)）；否则升档计划会被打回低阶段、穷尽后再次升档，形成降档 ping-pong。计划 stage 在案件催收生命周期内单调不减，降级只能经 `CASE_CEASED` 或还款取消收敛。
+> 日切 `STAGE_CHANGED` 与穷尽 `ESCALATE` 的分工见 [数据接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)：日切只在投影 stage 更严重时发布；`ESCALATE` 先终态旧计划再投递，消费时走 [§4.2](#42-计划创建) 建新阶段。
 
 ---
 
@@ -714,173 +693,156 @@ flowchart TB
 
 ## 5. 步骤执行管线
 
-**场景 A（到期执行）**：`PLAN_STEP_DUE` 在短事务内确认计划仍可执行，并将计划前置为 `STEP_EXECUTING`；提交、释放行锁后，才调用本节完成当前步骤的守卫、解析与渠道 I/O。架构文档仅保留跨模块边界，本节定义执行骨架。
-
-### 5.1 execute_step 执行骨架（①–⑦，含 ⑤½）
-<a id="51-execute_step-执行骨架"></a>
-
-**入口**：[§4.3.1](#431-plan_step_due) 事务外调用（行锁已释放，plan=`STEP_EXECUTING`）。
-**出口**：同步路径 → `STEP_COMPLETED`（经发件箱 §7.2）；AI_CALL → 保持 `STEP_EXECUTING` 等 [§4.3.3/§4.3.4](#433-channel_callback)。
-**关联 SPI**：③ `ExecutionGuard` / ④ `StepResolver` / ⑤ `ChannelGateway`（[§6.1](#61-接口职责与调用位置)）。
+本节是 [§4.3.1](#431-plan_step_due) 提交并释放行锁之后的 `execute_step`：计划已为 `STEP_EXECUTING`。同步渠道走完发布 `STEP_COMPLETED` 回 [§4.3.2](#432-step_completed)；AI_CALL 保持 `STEP_EXECUTING`，等 [§4.3.3](#433-channel_callback) / [§4.3.4](#434-callback_timeout)。③④⑤ 经 SPI（[§6.1](#61-接口职责与调用位置)）。下图只画控制流与出口；横切失败见下表（引擎级汇总见 [§7.1](#71-统一处置规则)）；伪代码为业务路径写入权威。
 
 ```mermaid
 flowchart TD
-    entry(["§4.3.1 场景 A<br/>释放行锁后"]) --> idempotency
-
-    idempotency["① 获取步骤幂等锁<br/>Redis collection:lock:plan:{idempotencyKey}"]
-    idempotency -->|重复| duplicate_exit["退出 · 无写库"]
-    idempotency --> preflight
-
-    preflight["② 系统守卫 PreFlightChecker<br/>只读 CaseService / t_ai_collection"]
-    preflight -->|owner 门控未过| gated_exit["退出 · 不取消计划、不触达"]
-    preflight -->|案件不存在 / 已还款| cancel_plan["t_contact_plan → PLAN_CANCELLED"]
-    cancel_plan --> preflight_exit["退出 · 不写 timeline"]
-    preflight --> mark_executing["t_contact_plan_step · executed_at<br/>markStepExecuting"]
-    mark_executing --> refresh["②½ 用 ② 的 CaseInfo 刷新<br/>快照副本 dpd / 余额（仅内存）"]
-    refresh --> guard
-
-    guard["③ 合规守卫 ExecutionGuard · SPI"]
-    guard -->|deferUntil| reschedule_defer["t_contact_plan_step · trigger_time/status<br/>t_contact_plan → STEP_SCHEDULED"]
-    reschedule_defer --> rescan_exit["退出 · 不经 STEP_COMPLETED<br/>Cron 到期重入 §4.3.1"]
-    guard -->|拦截| record_block["t_contact_plan(_step) · SKIPPED<br/>t_contact_timeline · COMPLIANCE_BLOCKED<br/>t_event_outbox · STEP_COMPLETED"]
-    record_block --> advance["→ §4.3.2"]
-    guard --> resolve
-
-    resolve["④ 步骤解析 StepResolver · SPI"]
-    resolve -->|null 策略跳过| record_strategy_skip["t_contact_plan(_step) · SKIPPED<br/>t_event_outbox · STEP_COMPLETED<br/>（不写 timeline）"]
-    record_strategy_skip --> advance
-    resolve -->|异常| record_resolver_failure["t_contact_plan(_step) · FAILED<br/>t_contact_timeline + outbox · STEP_COMPLETED"]
-    record_resolver_failure --> advance
-    resolve --> decision_log["t_decision_log · CHANNEL_SELECT<br/>（fail-open，失败仅告警）"]
-    decision_log --> dispatch
-
-    dispatch["⑤ 渠道调度 ChannelGateway.dispatch<br/>（无引擎写库；供应商 I/O）"]
-    dispatch --> reload_status
-
-    reload_status["⑤½ 回写前复检计划终态"]
-    reload_status -->|已取消| record_cancelled_dispatch["t_contact_timeline · 补偿记录<br/>（不推进状态机）"]
-    record_cancelled_dispatch --> cancelled_exit["退出"]
-    reload_status --> dispatch_result
-
-    dispatch_result{"⑥ 处理 dispatch 结果"}
-    dispatch_result -->|可重试失败| schedule_retry["t_contact_plan_step · retry_count/trigger_time<br/>plan 保持 STEP_EXECUTING"]
-    schedule_retry --> rescan_exit
-    dispatch_result -->|不可重试失败| record_channel_failure["t_contact_plan(_step) · FAILED<br/>t_contact_timeline + outbox"]
-    record_channel_failure --> advance
-    dispatch_result -->|成功| mark_dispatched["t_contact_plan_step · dispatched_at"]
-    mark_dispatched --> channel_split
-
-    channel_split{"⑦ 按渠道完成方式分流"}
-    channel_split -->|SMS/PUSH/EMAIL| record_sync_result["t_contact_timeline · 触达结果<br/>t_contact_plan(_step) · COMPLETED<br/>outbox · STEP_COMPLETED"]
-    record_sync_result --> advance
-    channel_split -->|AI_CALL| await_callback["t_contact_timeline · 受理结果 / provider_msg_id<br/>t_contact_plan_step · timeout_time<br/>plan 保持 STEP_EXECUTING"]
-    await_callback --> async_exit["等 §4.3.3 回调 / §4.3.4 超时"]
+    entry(["§4.3.1 释放行锁后"]) --> s1["① 幂等"]
+    s1 -->|重复| silent["静默退出"]
+    s1 --> s2["② PreFlight"]
+    s2 -->|owner 门控| silent
+    s2 -->|案件不在 / 已还 / 无可催余额| cancel["取消计划后退出"]
+    s2 --> s25["②½ 刷新日变字段"]
+    s25 --> s3["③ Guard"]
+    s3 -->|defer| cron["回 Cron"]
+    s3 -->|拦截| done["发 STEP_COMPLETED → §4.3.2"]
+    s3 --> s4["④ Resolver"]
+    s4 -->|跳过 / 失败| done
+    s4 --> s5["⑤ dispatch"]
+    s5 --> s55["⑤½ 终态复检"]
+    s55 -->|已取消| compensate["补偿后退出"]
+    s55 --> s6["⑥ 降级"]
+    s6 -->|可重试| cron
+    s6 -->|不可重试| done
+    s6 -->|成功| s7["⑦ 分流"]
+    s7 -->|SMS / PUSH / EMAIL| done
+    s7 -->|AI_CALL| async["保持 EXECUTING · 等回调"]
 ```
 
 
 
-**失败处理**：
+> **读图**：四类出口——静默退出、取消计划后退出、回 Cron（不经 `STEP_COMPLETED`）、发 `STEP_COMPLETED` 或保持 `STEP_EXECUTING` 等回调。PreFlight 通过后须 `markStepExecuting`；抢不到则静默退出。Phase 2 观察期（`STEP_WAITING`）见伪代码 ⑦。
+
+**失败处理**（业务旁路已在图与伪代码中；本表只列基础设施 / SPI 非法 / 锁 / 渠道后写失败）：
 
 
-| 位置   | 条件                                                | 处置                                                                       |
-| ---- | ------------------------------------------------- | ------------------------------------------------------------------------ |
-| ①–②  | 执行锁 Redis 或 PreFlight MySQL 不可用                   | 释放已获取的锁后 NACK；事件重投                                                       |
-| ③    | `ExecutionGuard` 抛错、超时、非法 `null` 或合规计数器 Redis 不可用 | `SKIPPED` + `GUARD_ERROR` 告警 + `STEP_COMPLETED`；不触达                      |
-| ④    | `StepResolver` 抛错或超时                              | `FAILED` + `STEP_COMPLETED`                                              |
-| ④    | `StepResolver=null`                               | 正常策略跳过：`SKIPPED` + `STEP_COMPLETED`，不写 timeline                          |
-| ④ 后  | `decision_log` 写入失败                               | 仅告警；继续渠道调用                                                               |
-| ⑤    | `retryable=true` 且未达重试上限                          | 退避重排当前步骤，保持 `STEP_EXECUTING`                                             |
-| ⑤    | `retryable=false`、重试耗尽或 `dispatch` 抛异常            | `FAILED` + `STEP_COMPLETED`；`dispatch` 异常记 `CHANNEL_OUTCOME_UNKNOWN`，不重试 |
-| ⑤½–⑦ | 已调用渠道后读取计划、写状态或登记 Job 失败                          | 不重试，按 [§7.3](#73-渠道调用后的部分成功) 记录和检测                                       |
+| 位置   | 条件                                 | 处置                                               |
+| ---- | ---------------------------------- | ------------------------------------------------ |
+| ①–②  | 执行锁 Redis 或 PreFlight MySQL 不可用    | 释放已获锁后 NACK                                      |
+| ③    | Guard 抛错、超时、非法 `null`、合规 Redis 不可用 | `SKIPPED` + `GUARD_ERROR` + `STEP_COMPLETED`；不触达 |
+| ④    | Resolver 抛错或超时                     | `FAILED` + `STEP_COMPLETED`                      |
+| ④ 后  | `decision_log` 失败                  | 仅告警，继续 dispatch                                  |
+| ⑤    | `dispatch` **前**可重试异常              | 释放执行锁后 NACK                                      |
+| ⑤    | `dispatch` **已调用**后抛异常             | 保留锁；`FAILED` + `CHANNEL_OUTCOME_UNKNOWN`，不重试     |
+| ⑤½–⑦ | 已调用渠道后读计划 / 写状态 / 登记 Job 失败        | 不重试，按 [§7.3](#73-渠道调用后的部分成功)                     |
 
 
-⑤ `dispatch` 前的可重试异常释放执行锁后 NACK；调用开始后保留锁，避免重投重复触达。`STEP_COMPLETED` 与步骤状态迁移同事务入发件箱，提交后投递（[§7.2](#72-派生事件可靠投递)）。
+`STEP_COMPLETED` 与步骤状态迁移同事务入发件箱，提交后投递（[§7.2](#72-派生事件可靠投递)）。幂等 TTL：`max(engine.step.idempotency_ttl_minutes, callback_timeout_minutes)`。
 
 ```python
 def execute_step(plan, step):
     # ── ① 执行锁 ──
-    # effective_idempotency_ttl = max(engine.step.idempotency_ttl_minutes, callback_timeout_minutes)
     if not IdempotencyService.acquire(execution_lock_key, ttl_minutes=effective_idempotency_ttl):
         return
-    # ⑤ 前异常：release(execution_lock_key) 后上抛 → NACK 重投；
-    # ⑤ 已调用：不得释放，交由渠道幂等与 §7.3 收敛。
-
-    # ── ② 系统级守卫（实时查 DB；owner 门控 / 案件存在 / 还款） ──
-    preflight = PreFlightChecker.inspect(plan.case_id)   # 带出本次读到的 CaseInfo
-    if preflight.gated:                   # 水位不是当日或 owner_date ≠ 当日
-        return                            # 不取消计划、不写 timeline
-    if not preflight.passed:
-        plan.status = PLAN_CANCELLED
-        return                                    # 不写 timeline、不投递 STEP_COMPLETED
-
-    # ── ②½ 渲染前刷新日变字段（复用 ② 的实时读，零新增 I/O） ──
-    context = ContextAssembler.assemble(plan, step)
-    context.snapshot.case_context.dpd = preflight.case_info.dpd
-    context.snapshot.case_context.total_outstanding = preflight.case_info.total_outstanding
-    # 仅内存覆盖：不回写 context_snapshot 列，不覆盖 stage（阶段决定模板与话术，须与计划一致）。
-    # 理由：快照 dpd 冻结于建计划时刻，单阶段最长跨 60 天（S4 = DPD 31–90），
-    # 不刷新会连续数十天向用户播报错误逾期天数；余额同理，CASE_BALANCE_UPDATED 只覆盖还款场景。
-
-    # ── ③ 业务级守卫（Phase 1 内存计数器：每日渠道频率 / 时段 / 地址可用性） ──
-    verdict = ExecutionGuard.evaluate(context)     # → SPI §6.1
-    if not verdict.allowed:
-        if verdict.defer_until:
-            step.trigger_time = verdict.defer_until
-            step.status = PENDING
-            plan.status = STEP_SCHEDULED
-            release(execution_lock_key)            # 同一 retryCount 未来可再次执行
+    dispatch_started = False
+    try:
+        # ── ② 系统级守卫（实时查 DB；owner 门控 / 案件存在 / 还款 / 无可催余额） ──
+        preflight = PreFlightChecker.inspect(plan.case_id)
+        if preflight.gated:                   # 水位不是当日或 owner_date ≠ 当日
+            return                            # 不取消计划、不写 timeline
+        if not preflight.passed:
+            plan.status = PLAN_CANCELLED      # 含 CASE_NOT_FOUND / REPAID / NO_DUE_BALANCE
+            skip_open_steps(plan)             # 否则消息渠道无 timeout，步骤会悬挂
             return
-        step.status = SKIPPED
-        write_timeline(COMPLIANCE_BLOCKED, violation=verdict.blocked_reason)
-        publish(STEP_COMPLETED)
-        return
 
-    # ── ④ 步骤解析（SPI 零 DB I/O，读 context_snapshot） ──
-    command = StepResolver.resolve(context)        # → SPI §6.1
-    if command is None:
-        step.status = SKIPPED
-        publish(STEP_COMPLETED)
-        return
-    write_decision_log(context, command)           # → t_decision_log（fail-open，领域 §3.3）
+        # prepareStepDue 提交后，回调/超时可能已把步骤写成终态；抢不到则放弃，避免重复触达
+        if not markStepExecuting(step.id):
+            return
 
-    # ── ⑤ 渠道调度（渠道层内部熔断/fallback 对引擎透明） ──
-    step.status = STEP_EXECUTING                    # 标记执行中：移出 planStepDueHandler「待触发」扫描，
-                                                    # 防渠道 I/O / 异步等待期被 Cron 重拾二次发送（异步期由 timeout_time 守护，非 trigger_time）
-    # dispatch 抛异常 → 结果未知，记 FAILED 后推进；仅渠道明确未受理时才 retryable
-    result = ChannelGateway.dispatch(command)
+        # ── ②½ 渲染前刷新日变字段（复用 ② 的实时读，零新增 I/O） ──
+        context = ContextAssembler.assemble(plan, step)
+        overlay_from(preflight.case_info)     # 内存：dpd / 运行态金额 / stage（跟当天投影）
+        # 不回写 context_snapshot 列。计划 stage 列仍只由 STAGE_CHANGED 改。
 
-    # ── ⑤½ 回写前取消检测（应对渠道 I/O 期间计划被取消的场景） ──
-    if reload_plan_status(plan.id) in (PLAN_COMPLETED, PLAN_CANCELLED):
-        write_timeline(result, note="plan_cancelled_during_dispatch")
-        return                                    # 记录已发出的触达，但不推进状态机
+        # ── ③ 业务级守卫 ──
+        try:
+            verdict = ExecutionGuard.evaluate(context)   # → SPI §6.1
+        except:
+            skip_and_complete(GUARD_ERROR)      # 见失败表
+            return
+        if verdict is None:
+            skip_and_complete(GUARD_ERROR)
+            return
+        if not verdict.allowed:
+            if verdict.defer_until:
+                step.trigger_time = verdict.defer_until
+                step.status = PENDING
+                plan.status = STEP_SCHEDULED
+                release(execution_lock_key)
+                return
+            step.status = SKIPPED
+            write_timeline(COMPLIANCE_BLOCKED, violation=verdict.blocked_reason)
+            publish(STEP_COMPLETED)
+            return
 
-    # ── ⑥ 故障降级 ──
-    if not result.success:
-        if result.retryable and step.retry_count < MAX_RETRY:
-            step.retry_count += 1
-            delay = min(RETRY_BASE * (RETRY_FACTOR ** step.retry_count), RETRY_MAX)
-            register_job(PLAN_STEP_DUE, delay_seconds=delay)  # 非阻塞：注册短延迟 Job
-            return                                             # plan 保持 STEP_EXECUTING
-        step.status = FAILED
-        write_timeline(CHANNEL_ERROR, error_code=result.error_code)
-        publish(STEP_COMPLETED)                   # 失败也推进，不卡死
-        return
+        # ── ④ 步骤解析 ──
+        try:
+            command = StepResolver.resolve(context)        # → SPI §6.1
+        except:
+            fail_and_complete(RESOLVER_ERROR)
+            return
+        if command is None:
+            step.status = SKIPPED
+            publish(STEP_COMPLETED)           # 不写 timeline
+            return
+        write_decision_log(context, command)  # fail-open，领域 §3.3
 
-    # ── ⑦ 渠道分流 ──
-    if command.channel_type in (SMS, PUSH, EMAIL):
-        write_timeline(result)
-        publish(STEP_COMPLETED)                   # Phase 1 同步完成，不进 WAITING
-    elif command.channel_type in (VIBER, WHATSAPP) and step.observation_minutes > 0:
-        write_timeline(result)
-        register_job(PLAN_STEP_DUE, step.observation_minutes)  # Phase 2 预留
-        plan.status = STEP_WAITING
-    elif command.channel_type in (VIBER, WHATSAPP):
-        write_timeline(result)
-        publish(STEP_COMPLETED)
-    else:  # AI_CALL（HUMAN_CALL Phase 2 预留）
-        write_timeline(result, provider_msg_id=result.provider_msg_id)  # 先持久化合作方任务标识
-        register_job(CALLBACK_TIMEOUT, callback_timeout_minutes)  # 超时哨兵 → §4.3.4
-        plan.status = STEP_EXECUTING              # 保持执行态，释放线程，等待异步回调
+        # ── ⑤ 渠道调度 ──
+        dispatch_started = True
+        try:
+            result = ChannelGateway.dispatch(command)
+        except:
+            result = unknown_failure(CHANNEL_OUTCOME_UNKNOWN)  # 不重试；锁保留到 TTL
+
+        # ── ⑤½ 回写前取消检测 ──
+        reloaded = reload_plan(plan.id)
+        if reloaded is None or reloaded.status in (PLAN_COMPLETED, PLAN_CANCELLED):
+            write_timeline(result, note="plan_cancelled_during_dispatch")
+            return
+
+        # ── ⑥ 故障降级 ──
+        if not result.success:
+            if result.retryable and step.retry_count < MAX_RETRY:
+                step.retry_count += 1
+                step.status = PENDING
+                step.trigger_time = now(PHT) + backoff(step.retry_count)
+                return                         # plan 保持 STEP_EXECUTING，回 Cron
+            step.status = FAILED
+            write_timeline(CHANNEL_ERROR, error_code=result.error_code)
+            publish(STEP_COMPLETED)
+            return
+
+        mark_dispatched(step)                  # dispatched_at
+
+        # ── ⑦ 渠道分流 ──
+        if command.channel_type in (SMS, PUSH, EMAIL):
+            write_timeline(result)
+            publish(STEP_COMPLETED)           # Phase 1 同步完成，忽略 observationMinutes
+        elif command.channel_type in (VIBER, WHATSAPP) and step.observation_minutes > 0:
+            write_timeline(result)
+            step.trigger_time = now(PHT) + observation_minutes   # Phase 2 预留
+            plan.status = STEP_WAITING
+        elif command.channel_type in (VIBER, WHATSAPP):
+            write_timeline(result)
+            publish(STEP_COMPLETED)
+        else:  # AI_CALL（HUMAN_CALL Phase 2 预留）
+            write_timeline(result, provider_msg_id=result.provider_msg_id)
+            step.timeout_time = now(PHT) + callback_timeout_minutes
+            # plan 保持 STEP_EXECUTING，等 §4.3.3 / §4.3.4
+    except:
+        if not dispatch_started:
+            release(execution_lock_key)
+        raise                                 # NACK 重投
 ```
 
 ---
@@ -889,42 +851,52 @@ def execute_step(plan, step):
 
 ## 6. SPI 接口契约
 
-5 个策略 SPI（`common.spi`，渠道编排实现）+ 技术管道 `ChannelGateway`（`common.channel`）；均发布于 `collection-common`。模块边界见 [§1.2](#12-模块边界与调用全景)；DTO 字段 SSOT 见 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。
+SPI（Service Provider Interface）是引擎向渠道编排调用的可替换接口：五个策略接口由编排**策略子层**实现，`ChannelGateway` 是**执行子层**的技术管道。模块边界见 [§1.2](#12-模块边界与调用全景)。
+
+谁调用、返回值引擎怎么解释见 [§6.1](#61-接口职责与调用位置)；实现必须遵守的调用约定见 [§6.2](#62-实现约束)；入参/出参的字段定义在 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)，本节 [§6.3](#63-入参与返回类型) 只做对照。状态如何落盘见 [§4](#4-计划生命周期与状态机) / [§5](#5-步骤执行管线)。
 
 ### 6.1 接口职责与调用位置
 
-接口源码（`collection-common`）为签名权威；本节只界定职责与调用位置。返回值与超时约束见 [§6.2](#62-返回值与实现约束)；调用失败处置见 [§4.2](#42-计划创建)、[§4.3.2](#432-step_completed)、[§4.5](#45-穷尽续建) 与 [§5](#5-步骤执行管线)。
+接口源码（`collection-common`）为签名权威。本节只回答：哪个组件在哪一节调用、产出什么、引擎如何解释合法特殊返回。超时、无副作用、锁内时限见 [§6.2](#62-实现约束)。
 
 
-| 接口                  | 调用组件 / 时机                                     | 产出                    |
-| ------------------- | --------------------------------------------- | --------------------- |
-| `PlanFactory`       | `PlanLifecycleManager`：§4.2 创建、§4.5 `REBUILD` | `ContactPlan`         |
-| `ExecutionGuard`    | `StepExecutionOrchestrator`：§5 ③              | `GuardVerdict`        |
-| `StepResolver`      | `StepExecutionOrchestrator`：§5 ④              | `StepCommand`         |
-| `ChannelGateway`    | `StepExecutionOrchestrator`：§5 ⑤              | `StepResult`          |
-| `AdvancementPolicy` | `PlanLifecycleManager`：§4.3.2                 | `AdvancementDecision` |
-| `ExhaustionPolicy`  | `PlanLifecycleManager`：§4.5                   | `ExhaustionResult`    |
+| 接口                  | 调用组件 / 时机                                     | 产出                    | 合法特殊返回（引擎语义）                                                     |
+| ------------------- | --------------------------------------------- | --------------------- | ---------------------------------------------------------------- |
+| `PlanFactory`       | `PlanLifecycleManager`：§4.2 创建、§4.5 `REBUILD` | `ContactPlan`         | `null`：新入案或阶段变更时正常不建计划。`REBUILD` 路径不能生成后继则回滚并重投 `PLAN_EXHAUSTED` |
+| `ExecutionGuard`    | `StepExecutionOrchestrator`：§5 ③              | `GuardVerdict`        | 不允许 `null`；`null` 视为非法，按 §5 记 `SKIPPED` + `GUARD_ERROR`          |
+| `StepResolver`      | `StepExecutionOrchestrator`：§5 ④              | `StepCommand`         | `null`：策略主动跳过，步骤 `SKIPPED` 后投递 `STEP_COMPLETED`                  |
+| `ChannelGateway`    | `StepExecutionOrchestrator`：§5 ⑤              | `StepResult`          | `success=false`：按 `retryable` 退避重试，或记 `FAILED` 后推进               |
+| `AdvancementPolicy` | `PlanLifecycleManager`：§4.3.2                 | `AdvancementDecision` | 不允许 `null`；`null` → NACK                                         |
+| `ExhaustionPolicy`  | `PlanLifecycleManager`：§4.5                   | `ExhaustionResult`    | 不允许 `null`；`null` → NACK                                         |
 
 
-下图按调用时序展示主链；回环表示后续事件再次进入同一处理链。
+圆角节点是事件，方框是 SPI。Orchestrator 只承担中间 ③④⑤；创建、推进、穷尽都在 Manager 短事务里。中断事件不经 SPI，见 [§4.4](#44-中断处理)。
 
 ```mermaid
-flowchart LR
-    A(["CASE_INGESTED / STAGE_CHANGED"]) --> PF["PlanFactory.create()"]
+flowchart TB
+    IN(["CASE_INGESTED / STAGE_CHANGED"]) --> PF["PlanFactory.create"]
     PF --> DUE(["PLAN_STEP_DUE"])
-    DUE --> EG["ExecutionGuard.evaluate()"]
-    EG --> SR["StepResolver.resolve()"]
-    SR --> CG["ChannelGateway.dispatch()"]
+
+    DUE --> EG["ExecutionGuard.evaluate"]
+    EG --> SR["StepResolver.resolve"]
+    SR --> CG["ChannelGateway.dispatch"]
     CG --> DONE(["STEP_COMPLETED"])
-    DONE --> AP["AdvancementPolicy.decide()"]
+
+    DONE --> AP["AdvancementPolicy.decide"]
     AP -->|ADVANCE_NEXT| DUE
-    AP -->|PLAN_EXHAUSTED / 仍在催的 PLAN_COMPLETED| EP["ExhaustionPolicy.handle()"]
+    AP -->|仍在催| EXH(["PLAN_EXHAUSTED"])
+    AP -->|已停催 / 结清| END((PLAN_COMPLETED))
+
+    EXH --> EP["ExhaustionPolicy.handle"]
     EP -->|REBUILD| PF
-    AP -->|PLAN_COMPLETED · 已停催/结清| END((终态))
-    EP -->|ESCALATE / COMPLETE| END
+    EP -->|ESCALATE| SC(["STAGE_CHANGED"])
+    SC --> PF
+    EP -->|COMPLETE| END
 ```
 
 
+
+> **读图**：三条回环——`ADVANCE_NEXT` 回到到期扫描；`REBUILD` 同阶段再走 `PlanFactory`；`ESCALATE` 经 `STAGE_CHANGED` 进 §4.2 建新阶段（不是终态）。`COMPLETE` 与已停催/结清才落入 `PLAN_COMPLETED`。Guard / Resolver 跳过仍发 `STEP_COMPLETED`，图上不单独画。
 
 
 
@@ -941,72 +913,54 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 
 
 
-### 6.2 返回值与实现约束
+### 6.2 实现约束
+
+本节约束渠道编排的**策略子层**。特殊返回见 [§6.1](#61-接口职责与调用位置)。
 
 
-
-#### 正常特殊值
-
-
-| 接口 / 返回值                         | 引擎语义                                                                             |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| `PlanFactory = null`             | 正常不建计划。仅适用于新入案或阶段变更；`REBUILD` 路径不能生成后继则回滚并重投 `PLAN_EXHAUSTED`。                   |
-| `StepResolver = null`            | 正常主动跳过：步骤记 `SKIPPED`，再投递 `STEP_COMPLETED`。                                       |
-| `ChannelGateway.success = false` | 渠道失败：按 `retryable` 退避重试或记 `FAILED` 后推进。                                          |
-| 其他 SPI 返回 `null`                 | 非法结果：`ExecutionGuard` 记 `SKIPPED`；`AdvancementPolicy` / `ExhaustionPolicy` NACK。 |
-
-
-
-
-#### SPI 实现约束
-
-编排方实现 5 个 SPI 时须遵守（引擎调用方式决定，非业务策略）：
-
-
-| 维度           | 约束                                                                                                                                                                                                                                    |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **无副作用**     | **须** 只读计算 · **禁** 写 DB / 发事件 / 调外部服务 · **例外** `ExecutionGuard` 可读 Redis 合规计数器；`ESCALATE` 的 `STAGE_CHANGED` 由引擎 [§4.5](#45-穷尽续建) 发布                                                                                                   |
-| **null 返回值** | `PlanFactory`：null → 不建计划（正常） · `StepResolver`：null → 主动跳过 → `SKIPPED` · **其余 SPI**：不可 null，按其调用位置执行失败处理                                                                                                                              |
-| **硬超时**      | `SpiInvoker` 统一 `Future.get(timeout_ms)`；超时或池满 → `SpiTimeoutException`；处置见调用位置，配置键与默认值见 [基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-a生产配置键索引)                                                                                 |
-| **I/O**      | 含 I/O 的 SPI（Guard）：**client 命令超时 < 执行器阈值**（client 第一道防线，执行器仅兜底线程池）                                                                                                                                                                    |
-| **锁内 SPI**   | `AdvancementPolicy` / `ExhaustionPolicy` 在行锁事务内调用：**纯内存、≤10ms**                                                                                                                                                                       |
-| **快照与历史**    | 策略字段在计划存活期保持不变；`CASE_BALANCE_UPDATED` 可更新持久化的 `totalOutstanding`，步骤②½ 再在内存覆盖 `dpd` / `totalOutstanding`。还款/存在性走 [§5②](#5-步骤执行管线)。Guard/Resolver 可读最多 50 条 `recentTimeline`（行为上下文，非精确计数）；AdvancementPolicy 锁内轻量上下文，`recentTimeline` 为空 |
+| 适用接口                                        | 约束                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 五个策略 SPI                                    | 只读；禁止写库、发事件、调外部服务。`SpiInvoker` 硬超时，阈值见 [基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-a生产配置键索引) |
+| Guard / Resolver（事务外）                       | 只读传入上下文，不查库；最多 50 条 `recentTimeline`。Guard 可 Redis，且 client 超时须短于执行器                             |
+| PlanFactory / Advancement / Exhaustion（事务内） | 行锁内纯内存。`STAGE_CHANGED` 由引擎 [§4.5](#45-穷尽续建) 发布。Advancement 无 `recentTimeline`                    |
+| ChannelGateway（执行子层）                        | 上表不适用；供应商 I/O 见 [§5](#5-步骤执行管线) 与 [执行契约](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)            |
 
 
 > ⏳ 待深入讨论：Phase 1 超时阈值为联调前工程默认，由主架构在联调后按 SPI p99 回采，再改 [基础设施附录 A](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#附录-a生产配置键索引)。
 
 
 
-### 6.3 共享 DTO 定义
+### 6.3 入参与返回类型
 
-字段定义 SSOT 在 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)。本节只对照「哪个 SPI 用哪个 DTO」；运行时 `StepResult` 语义见 [执行契约](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)。
+DTO（Data Transfer Object，数据传输对象）是 SPI 方法的入参和返回值：内存中传递，不落表。Java 类在 `collection-common` 的 `dto` / `model` 包。字段定义只在 [领域模型 §5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#5-spi-契约-dto)；本表只对照「哪个接口用哪一类」。运行时 `StepResult` 语义见 [执行契约](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)。
 
-| DTO | 关联接口 | 字段定义 |
-|---|---|---|
-| `CaseInfo` | PlanFactory / ExhaustionPolicy / PreFlightChecker | [领域模型 §5.1](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#51-caseinfo案件基本信息--spi-入参) |
-| `ExecutionContext` | ExecutionGuard / StepResolver / AdvancementPolicy | [领域模型 §5.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#52-executioncontext执行上下文) |
-| `GuardVerdict` | ExecutionGuard | [领域模型 §5.3](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#53-guardverdict守卫裁定) |
-| `StepCommand` | StepResolver / ChannelGateway | [领域模型 §5.4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#54-stepcommand步骤命令) |
-| `StepResult` | ChannelGateway / AdvancementPolicy | [领域模型 §5.5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#55-stepresult步骤结果) |
-| `AdvancementDecision` | AdvancementPolicy | [领域模型 §5.6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#56-advancementdecision推进决策) |
-| `ExhaustionResult` | ExhaustionPolicy | [领域模型 §5.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#57-exhaustionresult穷尽结果) |
+
+| DTO（类型）               | 关联接口                                              | 字段定义                                                                       |
+| --------------------- | ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `CaseInfo`            | PlanFactory / ExhaustionPolicy / PreFlightChecker | [领域模型 §5.1](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#51-caseinfo案件基本信息--spi-入参)  |
+| `ExecutionContext`    | ExecutionGuard / StepResolver / AdvancementPolicy | [领域模型 §5.2](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#52-executioncontext执行上下文)   |
+| `GuardVerdict`        | ExecutionGuard                                    | [领域模型 §5.3](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#53-guardverdict守卫裁定)        |
+| `StepCommand`         | StepResolver / ChannelGateway                     | [领域模型 §5.4](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#54-stepcommand步骤命令)         |
+| `StepResult`          | ChannelGateway / AdvancementPolicy                | [领域模型 §5.5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#55-stepresult步骤结果)          |
+| `AdvancementDecision` | AdvancementPolicy                                 | [领域模型 §5.6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#56-advancementdecision推进决策) |
+| `ExhaustionResult`    | ExhaustionPolicy                                  | [领域模型 §5.7](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#57-exhaustionresult穷尽结果)    |
+
 
 ---
 
 
 
-## 7. 容错与异常恢复
+<a id="7-容错与异常恢复"></a>
+## 7. 故障处置与恢复边界
 
-局部失败规则位于对应调用章节：计划创建、推进与穷尽见 [§4](#4-计划生命周期与状态机)，步骤执行见 [§5](#5-步骤执行管线)，SPI 返回值与超时见 [§6.2](#62-返回值与实现约束)。本节定义全局处置结果、派生事件投递和不可自动恢复的边界。
+局部失败规则位于对应调用章节：计划创建、推进与穷尽见 [§4](#4-计划生命周期与状态机)，步骤执行见 [§5](#5-步骤执行管线)，SPI 特殊返回见 [§6.1](#61-接口职责与调用位置)，超时与实现约束见 [§6.2](#62-实现约束)。本节只定义引擎对失败结果的处置与不可自动恢复边界；PEL、DLQ、Outbox、Reaper 的运行机制与告警见[基础设施规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#23-可靠性守护任务)。
 
-### 7.1 统一处置规则
-
-
+<a id="71-统一处置规则"></a>
+### 7.1 引擎失败处置
 
 
 | 条件                                                       | 处置                                                  |
 | -------------------------------------------------------- | --------------------------------------------------- |
-| Redis Stream 读取失败                                        | 下一轮轮询重连，不启动独立看门狗                                    |
 | 计划创建、推进、穷尽或取消事务失败                                        | NACK；事件重投后重新执行                                      |
 | 渠道调用前的 Redis / MySQL 失败                                  | NACK；释放已获取的执行锁                                      |
 | 合规判定失败                                                   | `SKIPPED` + `GUARD_ERROR` 告警 + `STEP_COMPLETED`；不触达 |
@@ -1014,14 +968,11 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 | 渠道明确未受理，且 `retryable=true`                               | 退避重排当前步骤                                            |
 | 渠道结果未知、渠道已受理或渠道调用后持久化失败                                  | 不重试；记录可见状态并等待人工处理                                   |
 | 旁路写入失败（决策日志、预测外呼过滤）                                      | 记录告警；主链继续                                           |
-| payload 畸形或可重试事件达到 `collection.redis.max-delivery-count` | DLQ + 告警                                            |
 
 
-`NACK` 表示消息保留在 PEL 中等待重投；`SKIPPED` 表示合规限制或守卫失败导致不触达；`FAILED` 表示本步骤终止并推进计划。
+`NACK` 表示消息交回事件总线重投；PEL、DLQ 与最大投递次数见[基础设施 §3.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#33-异常恢复与死信)。`SKIPPED` 表示合规限制或守卫失败导致不触达；`FAILED` 表示本步骤终止并推进计划。
 
 ### 7.2 派生事件可靠投递
-
-
 
 状态迁移提交而派生事件未投递时，原事件重投会因状态已终结而 no-op，无法再次生成后继事件。以下位置必须将状态迁移和派生事件写入同一事务：
 
@@ -1036,42 +987,24 @@ StepResult           ChannelGateway.dispatch(StepCommand command);
 | [§5](#5-步骤执行管线) 同步完成、Guard 拦截、策略跳过 | step → `COMPLETED` / `SKIPPED` / `FAILED` | `STEP_COMPLETED` |
 
 
-投递协议：
-
-1. 状态迁移事务内插入 `t_event_outbox` 的 `PENDING` 记录；入箱仓储使用 `Propagation.MANDATORY`，事务外调用立即失败。`next_retry_at = now + grace-seconds`。
-2. 事务提交后，Dispatcher 或 Orchestrator 立即发布；成功后将同一 `eventId` 的记录置 `PUBLISHED`。
-3. `OutboxPublisher` 每 `poll-interval-ms` 扫描已到期的 `PENDING` 记录和租约到期的 `PROCESSING` 记录，原子认领为 `PROCESSING` 并写入 `lease-seconds` 租约。认领实例崩溃后，租约到期才允许其他实例重发。
-4. 重发失败回写 `PENDING`，`next_retry_at = now + min(grace-seconds × backoff-factor^retry-count, max-backoff-seconds)`；达到 `max-retry-count` 后置 `FAILED`，递增 `collection.outbox.failed` 并转人工。
-
-`eventId` 使用确定性业务键：`STEP_COMPLETED:{planId}:{stepOrder}:{retryCount}`、`PLAN_EXHAUSTED:{planId}`、`STAGE_CHANGED:{planId}:{targetStage}`。入箱记录与即时发布必须使用同一 `eventId`；payload 带 `caseId`、`planId`，步骤事件另带 `stepId`。默认值与部署参数见[基础设施附录 A.2](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#a2-引擎与事件总线)。
+`eventId` 用确定性业务键，公式见 [领域模型 §1.5](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#15-计划生命周期关联键)。入箱与即时发布必须同一键。Outbox 的投递状态、认领、退避与失败收敛见[基础设施 §2.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#23-可靠性守护任务)。
 
 ### 7.3 渠道调用后的部分成功
 
+⑤ `dispatch` 一旦开始，渠道可能已受理，而 ⑥⑦ 的状态或 timeline 可能尚未提交。此时不得靠 NACK 或到期扫描自动再发。Phase 1 的保护如下。
 
+| 措施 | 作用 |
+| --- | --- |
+| 执行锁 | dispatch 后不释放；TTL = `max(engine.step.idempotency_ttl_minutes, engine.step.callback_timeout_minutes)`。同键重投静默退出 |
+| 禁止自动重投 | dispatch 已开始则不 NACK；未知结果 `retryable=false`（[§5](#5-步骤执行管线)、[执行契约](./contracts/MOCASA催收系统升级_Phase1_引擎渠道执行契约.md)） |
+| 到期扫描 | `prepareStepDue` 已清空 `trigger_time`，Cron 不会再拾该步 |
+| 日配额 | 未知结果不归还预占；锁过期后 Guard 仍可能因额度已耗尽而拦截再发 |
+| ⑤½ 已终态 | 计划已取消则只写 timeline，不推进状态机 |
+| timeline | 已提交则可查本次触达；状态机仍可能未推进 |
+| 停摆告警 | [基础设施 §2.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#停摆计划检测) 只告警，不自动补发 |
+| 供应商去重 | `providerIdempotencyKey` 已预留；Phase 1 未验证，不作为正确性保证 |
 
-⑤ `dispatch` 调用开始后，渠道可能已接收触达，而 ⑥⑦ 的状态或 timeline 事务尚未提交。事务回滚后没有记录可证明触达已发生，因此不得自动重试。
+消息渠道没有 `timeout_time`，⑥⑦ 失败后可能滞留 `STEP_EXECUTING`。`AI_CALL` 仅在 ⑦ 已写下 `timeout_time` 后才由 [§4.3.4](#434-callback_timeout) 收敛。Phase 2 增加渠道对账。⏳ 对账扫描与供应商回补不在 Phase 1 交付。
 
-
-| 保护措施     | 边界                                                                                             |
-| -------- | ---------------------------------------------------------------------------------------------- |
-| 执行锁      | 调用渠道后的路径不释放锁；TTL 取 `max(idempotency-ttl-minutes, callback-timeout-minutes)`，默认 15 分钟。锁内重投直接退出。 |
-| 供应商去重    | 锁失效后的重投依赖供应商去重。`providerIdempotencyKey` 已预留，供应商去重能力待编排接入确认，不作为正确性保证。                           |
-| timeline | 若 `t_contact_timeline` 已提交，触达结果可查询；状态机仍可能未推进。                                                  |
-
-
-消息渠道 step 在 `prepare_step_due` 后会清空 `trigger_time`，且没有 `timeout_time`；⑥⑦ 失败后可能滞留 `STEP_EXECUTING`。`AI_CALL` 由 [§4.3.4](#434-callback_timeout) 超时哨兵收敛。Phase 2 增加渠道对账，补齐 `t_contact_timeline`。⏳ 对账扫描与供应商回补不在 Phase 1 交付。
-
-### 7.4 停摆计划检测
-
-
-
-`StuckPlanReaper` 每 `interval-ms` 扫描一次；同时满足以下条件的计划判定为停摆：
-
-- 非终态且 `renewal_pending = 0`
-- `updated_at` 静默超过 `idle-minutes`（默认 75 分钟，必须大于 Outbox 默认约 65 分钟的自愈窗口）
-- 没有步骤可被 `selectDueSteps` 或 `selectTimeoutSteps` 扫描
-- 没有 `PENDING` 或 `PROCESSING` 的 Outbox 记录
-
-命中后递增 `collection.plan.stuck` 并记录 ERROR 日志；不重建步骤，不重发触达。触达是否已发出无法确定时，自动外部动作可能产生重复外呼和合规投诉。
-
-Reaper 不读取 Redis PEL。告警与 PEL 积压同时出现时，先按[基础设施 §3.3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#33-异常恢复与死信)确认事件是否仍在重投。`REBUILD` / `ESCALATE` 的半成品与正常 `PLAN_COMPLETED` 不可区分，不纳入扫描，依赖事务回滚与 `PLAN_EXHAUSTED` 重投收敛。
+<a id="74-停摆计划检测"></a>
+**恢复边界**：无法自动恢复的非终态计划由[基础设施 §2.3 停摆计划检测](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#停摆计划检测)告警，人工决定重建步骤、终结计划或受控重放；不得自动补发触达。
