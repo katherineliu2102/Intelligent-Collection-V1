@@ -29,6 +29,7 @@ collection:
   # 两者不得同时生效，SchedulerEntrypointValidator 会在启动时拒绝双入口。
   scheduler:
     enabled: ${COLLECTION_SCHEDULER_ENABLED:false}
+  # 钉钉 webhook 真值只放 Nacos / 环境变量，此处不下发空默认值，避免把 Nacos 冲成空串。
   idempotency: memory
   eventbus: memory
   # 案件来源与投影写入者：mock = 内存（L4a 用，不需要任何真实数据）；

@@ -151,6 +151,12 @@ export const api = {
   dashboardOutreachRealtime(days = 30) {
     return request(`/dashboard/outreach/realtime?days=${days}`);
   },
+  dashboardToday() {
+    return request("/dashboard/today");
+  },
+  dashboardDailyByChannel(days = 7) {
+    return request(`/dashboard/daily-by-channel?days=${days}`);
+  },
   dashboardPortfolio() {
     return request("/dashboard/portfolio");
   },
@@ -162,9 +168,6 @@ export const api = {
   },
   dashboardMatrix(days = 7) {
     return request(`/dashboard/matrix?days=${days}`);
-  },
-  dashboardDaily(days = 7) {
-    return request(`/dashboard/daily?days=${days}`);
   },
   dashboardAicallDetail(page = 1, pageSize = 25, days = 7, includeSynthetic = false) {
     return request(

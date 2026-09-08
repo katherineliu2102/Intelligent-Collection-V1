@@ -155,17 +155,25 @@ export function StrategyPage() {
       </Card>
 
       <Card title="Stage Plan" loading={loadingCatalog}>
+        <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+          引擎 Stage 为 S0–S4；S4 桶内 D+61~90 降为每日 1 通 AI。D+91 停催见上方 Cease Rule。
+        </Typography.Text>
         <Table
           rowKey="id"
           size="small"
           pagination={false}
           dataSource={catalog?.stages || []}
           columns={[
-            { title: "Stage", dataIndex: "id", width: 80 },
-            { title: "Name", dataIndex: "name", width: 180 },
-            { title: "DPD Range", dataIndex: "dpdRange", width: 140 },
-            { title: "Positioning", dataIndex: "positioning" }
+            { title: "Stage", dataIndex: "id", width: 70 },
+            { title: "DPD", dataIndex: "dpdRange", width: 110 },
+            { title: "SMS", dataIndex: "sms", width: 160, render: (v: string) => v || "—" },
+            { title: "Push", dataIndex: "push", width: 140, render: (v: string) => v || "—" },
+            { title: "Email (14:00)", dataIndex: "email", width: 150, render: (v: string) => v || "—" },
+            { title: "AI 外呼", dataIndex: "aiCall", width: 200, render: (v: string) => v || "—" },
+            { title: "Tone", dataIndex: "tone", width: 130, render: (v: string) => v || "—" },
+            { title: "话术重点", dataIndex: "messaging", render: (v: string, r: { positioning?: string }) => v || r.positioning || "—" }
           ]}
+          scroll={{ x: 1100 }}
         />
       </Card>
 

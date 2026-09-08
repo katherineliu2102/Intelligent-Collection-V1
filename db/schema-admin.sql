@@ -201,6 +201,19 @@ CREATE TABLE IF NOT EXISTS t_ops_exception (
     INDEX idx_plan_step (plan_id, step_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='运维异常队列';
 
+CREATE TABLE IF NOT EXISTS t_alert_dedup (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    alert_id            VARCHAR(16)     NOT NULL COMMENT 'A1/A2/A3',
+    object_key          VARCHAR(64)     NOT NULL COMMENT '槽位 HHMM 或 hanging',
+    calendar_day        DATE            NOT NULL COMMENT 'PHT 日历日',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'SENT' COMMENT 'SENT/SUPPRESSED/RECOVERED',
+    consecutive_days    INT             NOT NULL DEFAULT 1 COMMENT '连续告警日历日；恢复后清零',
+    last_sent_at        DATETIME        NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_alert_object_day (alert_id, object_key, calendar_day),
+    INDEX idx_alert_object (alert_id, object_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警去重与 3 日抑制（§5.5.4）';
+
 -- ---------------------------------------------------------------------
 -- C. 运行表扩展（历史快照，§6.5）
 -- 注：MySQL 8.0 不支持 ADD COLUMN IF NOT EXISTS，用存储过程安全追加

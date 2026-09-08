@@ -112,6 +112,28 @@ class RepaymentConsistencyGuardTest {
     }
 
     @Test
+    @DisplayName("仍有逾期却报负 dpd（锚在下一期）：必须拒绝，535728 类错口径")
+    void rejectsNegativeDpdWhileOverdueRemains() {
+        CaseProjection baseline =
+                projection(1, new BigDecimal("240.77"), LocalDateTime.of(2026, 9, 8, 2, 0));
+        CaseProjection delta =
+                projection(-29, new BigDecimal("240.77"), LocalDateTime.of(2026, 9, 8, 11, 0));
+
+        assertThat(RepaymentConsistencyGuard.acceptsDpdAndStage(baseline, delta)).isFalse();
+    }
+
+    @Test
+    @DisplayName("当期还清、仅剩未到期尾款：逾期归零且 dpd 为负，合法放行")
+    void acceptsNegativeDpdWhenOverdueClearedToUpcomingOnly() {
+        CaseProjection baseline =
+                projection(1, new BigDecimal("240.77"), LocalDateTime.of(2026, 9, 8, 2, 0));
+        CaseProjection delta =
+                projection(-29, BigDecimal.ZERO, LocalDateTime.of(2026, 9, 8, 11, 0));
+
+        assertThat(RepaymentConsistencyGuard.acceptsDpdAndStage(baseline, delta)).isTrue();
+    }
+
+    @Test
     @DisplayName("增量无 dpd：没有可同步的值，保持基线")
     void rejectsWhenDeltaHasNoDpd() {
         CaseProjection baseline =

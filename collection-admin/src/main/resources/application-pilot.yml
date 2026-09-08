@@ -63,6 +63,7 @@ collection:
     stale-threshold-seconds: 60
     daily-roll-stale-threshold-seconds: 300
     max-concurrency: 1
+  # 钉钉 webhook 真值只放 Nacos / 环境变量，此处不下发空默认值，避免把 Nacos 冲成空串。
   redis:
     stream: ${COLLECTION_REDIS_STREAM:collection:events}
     consumer-group: ${COLLECTION_REDIS_CONSUMER_GROUP:collection-engine-pilot}

@@ -1,11 +1,11 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
-> **版本**: Phase 1 / Phase 1.5 切片（配置治理基础）  
-> **日期**: 2026-09-01  
-> **状态**: ✅ 操作说明（测试库）；设计 SSOT 见设计文档  
+> **版本**: Phase 1 / 看板 v1.6  
+> **日期**: 2026-09-07  
+> **状态**: ✅ 操作说明（测试库 `ai_collection_db`）；设计 SSOT 见设计文档  
 > **读者**: 运营、测试、策略、研发联调同事  
 > **数据源**: 当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。  
-> **关联文档**: [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md) · Nacos / 进程启动见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)
+> **关联文档**: [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [开发进度](./MOCASA催收系统升级_Phase1_管理后台开发进度.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md) · Nacos / 进程启动见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)
 
 ---
 
@@ -13,6 +13,7 @@
 
 - [1. 系统概览](#1-系统概览)
 - [2. 启动与登录](#2-启动与登录)
+  - [2.7 本机测通管理后台](#27-本机测通管理后台当前步骤)
 - [3. 各页面操作](#3-各页面操作)
   - [3.1 Data Analysis](#31-data-analysis触达看板)
   - [3.2 Strategy Config](#32-strategy-config策略配置)
@@ -24,6 +25,7 @@
 - [6. 数据链路自查（REST / SQL）](#6-数据链路自查rest--sql)
 - [7. 故障排查](#7-故障排查)
 - [8. 附录：默认账号与测试地址](#8-附录默认账号与测试地址)
+- [9. 钉钉告警（A1/A2/A3）](#9-钉钉告警a1a2a3)
 
 ---
 
@@ -42,7 +44,7 @@
 
 | 菜单 | 路由 | 说明 | 数据来源 |
 |------|------|------|----------|
-| Data Analysis | `/dashboard` | **触达效果看板**：按渠道 / Stage / 模板看送达率与 result 分布 | `GET /dashboard/outreach/realtime` ← `t_contact_timeline` |
+| Data Analysis | `/dashboard` | **今日执行 / 复盘** 两视图。默认「今日执行」：五槽收口、分渠道触达、AI 波次、日切断言、风险。复盘：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。打开即查 + 手动刷新，无自动刷。 | `GET /dashboard/today`、`/dashboard/daily-by-channel`、`/dashboard/outreach/realtime` 等 |
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
 | Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（读 `t_ai_collection` 投影，见 §3.4）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
@@ -65,6 +67,31 @@ powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
 ```
 
 关掉这两个 PowerShell 窗口（或 Ctrl+C）即停服务。仓库目前没有 `start-admin.sh`。
+
+**本次改了代码之后，只点一键启动可能仍是旧程序。** 脚本逻辑是：8888 已经在听 → **不重启后端**；`collection-admin.jar` 已经存在 → **不重新编译**；5173 已经在听 → **不重启前端**。正确顺序：
+
+1. 关掉旧的后端 / 前端两个窗口（或结束占用 8888、5173 的进程）。
+2. 删掉或覆盖旧包后再启动（在项目根目录）：
+
+```powershell
+$env:JAVA_HOME = "C:\Users\voghion\java\jdk8u502-b07"
+$env:Path = "$env:JAVA_HOME\bin;C:\Users\voghion\apache-maven-3.9.11\bin;" + $env:Path
+mvn -pl collection-admin -am package -DskipTests
+powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
+```
+
+3. 浏览器打开 `http://127.0.0.1:5173`，登录后左侧 **Data Analysis**。默认应是「今日执行」，没有「经营 / 催收 / 策略」三个 Tab。
+
+**和「等 30 分钟才会触达」无关。** 后台页面在登录后立刻可用。催收引擎和后台 API 是**同一个 Java 进程**（8888）。会不会对外发短信/外呼，只取决于白名单，不取决于等半小时：
+
+| `.env` 的 `COLLECTION_SCAN_CASE_IDS` | 一键启动后会发生什么 |
+|---|---|
+| `999999999`（只看后台） | 引擎在跑，但扫描名单是假 id → **零触达**。看板仍显示测试库里已有的历史/Pilot 数据 |
+| 本轮批准的真实 case_id | 到期步骤会按 **PHT 槽点**（08:00 / 09:15 / 12:00 / 14:00 / 14:30）触发，不是启动后 30 分钟。已经过点的到期步骤会在扫描周期内很快补打 |
+
+local 与共享测试库上的 Pilot **不要同时用真实白名单扫库**，会互抢步骤。只看新看板时用占位白名单。
+
+钉钉告警：local 默认 **不发送**（见 §9）。看新看板不需要先配机器人。
 
 ### 2.2 macOS / Linux（两步）
 
@@ -128,28 +155,58 @@ curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:5173/dashboard
 
 Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vite 把整段 `/dashboard` 代理到了后端——只应代理 `/dashboard/outreach` 等 API 子路径。
 
+### 2.7 本机测通管理后台（当前步骤）
+
+目标：在 **local + 零触达** 下把看板和各页走一遍。**不要**为了测钉钉打开 `collection.scheduler.enabled`（会在共享库上跑扫描，且可能往群里打告警）。钉钉 Pilot 写入是上线闸门，见开发进度「上线闸门 G1」。
+
+1. `.env` 保持 `SPRING_PROFILES_ACTIVE=local`、`COLLECTION_SCAN_CASE_IDS=999999999`。
+2. 若刚改过 Nacos：关掉旧的 8888 窗口再 `start-admin.ps1`（已占用端口时脚本**不会**重启，Nacos 新键进不了进程）。
+3. 打开 `http://127.0.0.1:5173` 登录。
+4. 按下面清单点一遍（详细口径见 §3）：
+
+| 页 | 过关标准 |
+|---|---|
+| Data Analysis → 今日执行 | 默认就是这一页；**没有**「经营 / 催收 / 策略」三 Tab。五槽、分渠道、AI 接通、日切、风险能出数或合理空态（分母 0 为 `—`，接通时间空为「未回传」） |
+| Data Analysis → 复盘 | 能切过去；存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。矩阵格是单渠道×Stage |
+| 右上角刷新 | 整页重拉，没有自动刷 |
+| Case Monitor | 能搜到测试库案件；点进计划/时间线不 500 |
+| Ops Queue | 能打开；A3 悬挂若有会在此，本机无扫描器时可能为空 |
+| Strategy / Templates / Compliance / System | 能打开、不白屏即可（本期看板为主，这些页本期未改） |
+
+本机看板读的是测试库里**已有**的历史/Pilot 写入，不是等触达。群里暂时不应出现 A1/A2/A3（local 扫描器未装配）。
+
 ---
 
 ## 3. 各页面操作
 
 ### 3.1 Data Analysis（触达看板）
 
-**入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。
+**入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。默认打开 **今日执行**（PHT 当日）；可切到 **复盘**（近 7 日 / 存量）。点右上角 **刷新** 会重拉当前页全部接口，**没有**定时自动刷或 WebSocket。
 
-**指标口径**（分母只算真正发出去的）：
+日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1/A2/A3 是叫醒通道，不替代看板。
 
-| 指标 | 含义 | 是否计入送达率分母 |
+**今日执行**
+
+| 模块 | 看什么 | 注意 |
+|------|--------|------|
+| 五槽收口 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI | Email 发送=0 显示「正常零发送」，不标红。AI 用会话底座，不用 timeline 送达率 |
+| 分渠道触达 | SMS / PUSH / EMAIL 各一张卡 | **禁止**把多渠道合成一条送达率 |
+| AI 接通 | 实拨 / BUSY / FAILED / NO_ANSWER / SNR；**真人接通明细不含 SNR** | BUSY/NO_ANSWER **不计** FAILED。时长 = `ended_at − answered_at`，缺一则 `—`，禁止显示 0 |
+| 日切断言 | 迁出后再 DELIVERED、升档、inbox、新建 plan | 迁出后再打必须为 0，>0 标红 |
+| 风险 | 悬挂、Guard、到期仍 PENDING | 悬挂 >0 去 Ops Queue / Case Monitor |
+
+**复盘**：资产组合（在催 S1–S4，不含 Aging / S0 / stage 空 / 停催存量）、渠道×Stage 矩阵、分渠道趋势、AI 近 7 日漏斗。矩阵格是「单渠道 × Stage」，没有跨渠道「按 Stage」触达表。
+
+**口径（SMS/PUSH/EMAIL）**（分母只算真正发出去的）：
+
+| 指标 | 含义 | 是否计入发送率分母 |
 |------|------|-------------------|
 | **Records** | timeline 全部 OUT 行 | — |
-| **Attempted** | 实际发起发送（DELIVERED + FAILED 等） | ✅ 分母 |
-| **Delivered** | 供应商受理 / 送达 | 分子 |
-| **Skipped** | **未发送**（Guard 拦截、非里程碑 Email 等） | ❌ 归入 Other |
-| **Other** | 其他未归类 result | ❌ |
-| **送达率** | Delivered ÷ Attempted | Skipped **不进**分母 |
-
-**时间窗口**：默认近 30 天。测试数据若超过 7 天没跑批，选 7 天会看起来是空的——这是正常现象，改 30 / 90 天即可。
-
-**维度**：按渠道、Stage、scriptSlot 下钻；右侧为 result 分布与计划状态（全量，不受时间窗限制）。
+| **Attempted** | 实际发起发送（SENT/DELIVERED/FAILED 等） | ✅ 分母 |
+| **Sent** | 催收系统成功发出（SENT / DELIVERED / ACCEPTED），**不是**供应商「已送达用户」回执 | 分子 |
+| **Skipped** | **未发送**（Guard 拦截、非里程碑 Email 等） | ❌ |
+| **未归类** | `result` 不在标准枚举（渠道质量表）；矩阵里「未归类」= Stage 仍 UNKNOWN | — |
+| **发送率** | Sent ÷ Attempted；分母为 0 显示 `—` | Skipped **不进**分母 |
 
 ### 3.2 Strategy Config（策略配置）
 
@@ -278,7 +335,9 @@ curl -s "http://localhost:8888/plans/141/steps"                            # 某
 curl -s "http://localhost:8888/plans/timeline/99000002?limit=50"           # 按 userId 时间线
 curl -s "http://localhost:8888/catalog/overview"                           # 策略/模板目录
 curl -s -b cookies.txt \
-  "http://localhost:8888/dashboard/outreach/realtime?days=30"              # 触达看板聚合
+  "http://localhost:8888/dashboard/today"                                  # 今日执行（五槽 / 日切 / AI 波次）
+curl -s -b cookies.txt \
+  "http://localhost:8888/dashboard/outreach/realtime?days=30"              # 触达复盘（分渠道，无跨渠道合并率）
 ```
 
 ### 6.2 SQL
@@ -311,6 +370,9 @@ SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, 
   FROM t_channel_callback_audit
  WHERE case_id = @caseId
  ORDER BY received_at;
+
+-- 告警去重表（2026-09-07 已在测试库创建；没有此表时 A1/A2/A3 扫描会 SQL 失败）
+SHOW TABLES LIKE 't_alert_dedup';
 ```
 
 | result | 含义 | 看板归类 |
@@ -333,7 +395,9 @@ SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, 
 | 启动报 `Port 56384 was already in use` | Nacos 下发的端口覆盖了本地配置。确认用的是修复后的 `start-local.ps1`（已强制 `--server.port=8888`）；手工启动时必须自己带上该参数 |
 | 启动报 `拒绝启动：profile=local 未配置 collection.scan.case-id-whitelist` | `.env` 缺 `COLLECTION_SCAN_CASE_IDS`。用占位值 `999999999` 即可零触达启动；见 §2.2 |
 | `.env` 明明配了却不生效 | Windows PowerShell 5.1 的 `Get-Content` 默认按 ANSI/GBK 解码，UTF-8 中文注释会导致其后的配置行被**合并进注释行而静默丢失**（实测 13 行读成 11 行）。三个 `.ps1` 脚本已统一改为 `-Encoding UTF8`；自查时看启动日志的「已加载 .env 变量 N 个」是否与 `.env` 里的键值数一致 |
-| 看板接口 500 | 看后端日志，确认 MySQL / Nacos 连通 |
+| 看板仍是「经营 / 催收 / 策略」三 Tab | 前端还是旧代码：关掉 5173 窗口后重新 `start-admin.ps1`；改过 `vite.config.ts` 必须重启 Vite |
+| 今日执行接口 404 | 后端还是旧 jar：按 §2.1 先 `mvn package` 再启动；确认 Vite 代理含 `/dashboard/today`（勿代理整段 `/dashboard`） |
+| 一键启动后没有发短信 | 先看 `.env` 白名单是不是 `999999999`（零触达是故意的）；真触达还要等 **PHT 槽点**，不是等 30 分钟 |
 | Catalog 接口报错 | 确认 `catalog/catalog-metadata.json`、`script-drafts.json` 存在于 classpath |
 
 **为什么经常"打不开"**：前后端是两个进程、必须同时跑，关窗口即停；`8888` 是 API 不是页面，容易被误存书签；`npm run dev` 不开机自启。日常直接用 §2.1 的一键脚本。页面与权限设计见 [管理后台设计文档 §4 / §5](./MOCASA催收系统升级_Phase1_管理后台设计文档.md#4-信息架构总览)。
@@ -349,3 +413,40 @@ SELECT plan_id, step_id, result, disposition, provider_msg_id, signature_valid, 
 - 后端：`http://localhost:8888`
 - L4b 统一触达地址：手机 `+639451374358` / 邮箱 `wzynju@126.com` / Push token `1a0018970bf0c19de04`
 - L4b 主流程案件：`99000000`（S0）～ `99000005`（S4）
+
+---
+
+## 9. 钉钉告警（A1/A2/A3）
+
+本批只做 AI Call 三类 CRITICAL：FAILED 率过高（A1）、到期步骤漏打（A2）、EXECUTING 悬挂（A3）。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。
+
+**2026-09-07 现状**：测试库已有 `t_alert_dedup`；本机 Nacos `intelligent-collection-local.yml` 已有 webhook，机器人通道已用关键词消息验过。**local 默认不发 A1/A2/A3**（扫描器未装配）。**Pilot / 正式上线前必须另写** `intelligent-collection-pilot.yml` 或 Pilot 机环境变量（开发进度「上线闸门 G1」），否则线上扫描器只打日志、群里收不到。
+
+### 9.1 小白版：以后要怎么配
+
+目标：给催收群加一个「只会收系统消息、不会聊天」的机器人，系统出大事时群里多一条字。
+
+1. 打开要用的钉钉群 → 群设置 → **智能群助手**（或「机器人」）→ 添加机器人 → **自定义**。
+2. 起名例如「催收看板告警」。安全设置选 **自定义关键词**，关键词填 **`催收告警`**（必须这四个字，和程序发出去的前缀一致）。  
+   **不要选「加签」**：当前程序还不会算钉钉签名，选了加签会发送失败。
+3. 完成后复制那一长串网址（以 `https://oapi.dingtalk.com/robot/send?access_token=` 开头）。这就是 webhook。**当密码看**：不要发到群里、不要提交 git、不要贴进聊天记录。
+4. **正式上线前**把这串写进 Pilot：Nacos Data ID **`intelligent-collection-pilot.yml`** 的 `collection.alert.dingtalk.webhook`，或 Pilot 机 `/opt/app/pilot.env` 的 `COLLECTION_ALERT_DINGTALK_WEBHOOK`。不要写 `*-common.yml`。本机 `.env.example` 里有注释占位，**不要把真值写进会入库的文件**。
+5. 写完**重启 Pilot 容器**。local 一键启动默认 `collection.scheduler.enabled=false`，即使本机 Nacos 有 webhook 也不会每分钟扫描。Pilot 默认会扫。
+6. 自检：看日志里出现 `[alert]`；真告警时群里应有 `【催收告警】 A1 ...`。连续三天同一条会改成只打日志、不再刷屏。
+
+只看本地后台、不配机器人：完全没问题，看板照常。
+
+### 9.2 专业版：注入、生效条件、运维边界
+
+| 项 | 约定 |
+|---|---|
+| 配置键 | 环境变量 `COLLECTION_ALERT_DINGTALK_WEBHOOK` → `collection.alert.dingtalk.webhook` |
+| 通道 | 自定义机器人 `POST` JSON，`msgtype=text`；失败只打日志，不抛、不断触达 |
+| 扫描器 | `AiCallAlertScanner`，`@Scheduled(cron = 每分钟)`，`@ConditionalOnProperty(collection.scheduler.enabled=true)` |
+| local | `scheduler.enabled` 默认 false（到期扫描走 `TriggerScanner`，与 Cloud Scheduler 互斥）→ **不装配扫描器** |
+| Pilot | `scheduler.enabled` 默认 true → 装配扫描器；webhook 为空则 log-only |
+| 去重表 | `t_alert_dedup`（alert_id + object_key + PHT 日历日）；连续 3 个日历日 SENT 后改 SUPPRESSED |
+| 安全 | webhook URL = 密钥。机器人侧用自定义关键词 `催收告警`。客户端**未实现**钉钉 HMAC 加签 |
+| 文案 | 固定前缀 `【催收告警】`；含波次/分子分母/SIP Top/stepId；禁止手机号 |
+
+换群或轮换机器人：只换环境变量并重启 Pilot，不必发版。删表行可解除当日抑制（一般不需要）。

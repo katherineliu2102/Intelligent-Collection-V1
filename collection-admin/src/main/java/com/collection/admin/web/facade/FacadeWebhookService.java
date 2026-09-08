@@ -27,6 +27,7 @@ import javax.crypto.spec.SecretKeySpec;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -150,7 +151,7 @@ public class FacadeWebhookService {
                 signature,
                 true);
 
-        writeAiCallSession(root, identity);
+        writeAiCallSession(root, identity, planId, stepId);
 
         if (mapped == ContactResult.FAILED) {
             log.warn(
@@ -271,7 +272,8 @@ public class FacadeWebhookService {
     }
 
     /** AI Call 会话底座写入：结构化提取 session.completed 回调原生词，落 t_ai_call_session（§5.1.4 看板聚合用）。 */
-    private void writeAiCallSession(JsonNode root, FacadeCallbackMapper.Identity identity) {
+    private void writeAiCallSession(
+            JsonNode root, FacadeCallbackMapper.Identity identity, Long planId, Long stepId) {
         if (identity.sessionId == null) {
             return;
         }
@@ -280,26 +282,68 @@ public class FacadeWebhookService {
         JsonNode parties = root.path("parties");
         JsonNode dial = root.path("dial_timeline");
         JsonNode promises = aiResult.path("promises");
+        Long resolvedPlanId = planId != null ? planId : identity.planId;
+        Long resolvedStepId = stepId != null ? stepId : identity.stepId;
+        Long caseId = identity.caseId;
+        String stageSnapshot = null;
+        Integer dpdSnapshot = null;
+        if (resolvedPlanId != null) {
+            try {
+                ContactPlan plan = planRepository.findById(resolvedPlanId);
+                if (plan != null) {
+                    if (plan.getStage() != null) {
+                        stageSnapshot = plan.getStage().name();
+                    }
+                    if (caseId == null) {
+                        caseId = plan.getCaseId();
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn(
+                        "[facade-callback] stage snapshot lookup failed plan={}",
+                        resolvedPlanId,
+                        e);
+            }
+        }
+        if (caseId != null) {
+            try {
+                Map<String, Object> projection =
+                        jdbcTemplate.queryForMap(
+                                "SELECT stage, dpd FROM t_ai_collection WHERE case_id = ?", caseId);
+                if (stageSnapshot == null && projection.get("stage") != null) {
+                    stageSnapshot = String.valueOf(projection.get("stage"));
+                }
+                if (projection.get("dpd") instanceof Number) {
+                    dpdSnapshot = ((Number) projection.get("dpd")).intValue();
+                }
+            } catch (EmptyResultDataAccessException ignored) {
+                // 投影尚未落库时快照留空，禁止用别的时点回填
+            } catch (RuntimeException e) {
+                log.warn("[facade-callback] stage/dpd snapshot lookup failed caseId={}", caseId, e);
+            }
+        }
         try {
             jdbcTemplate.update(
                     "INSERT INTO t_ai_call_session "
                             + "(session_id, batch_id, case_id, plan_id, step_id, event, "
                             + "was_ringing, was_answered, was_ai_connected, line_reason, sip_code, "
                             + "final_failure_reason, result_label, summary, promises_json, caller_cli, "
-                            + "dialed_at, answered_at, ended_at, received_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW()) "
+                            + "dialed_at, answered_at, ended_at, stage_snapshot, dpd_snapshot, received_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW()) "
                             + "ON DUPLICATE KEY UPDATE "
                             + "was_ringing=VALUES(was_ringing), was_answered=VALUES(was_answered), "
                             + "was_ai_connected=VALUES(was_ai_connected), line_reason=VALUES(line_reason), "
                             + "sip_code=VALUES(sip_code), final_failure_reason=VALUES(final_failure_reason), "
                             + "result_label=VALUES(result_label), summary=VALUES(summary), "
                             + "promises_json=VALUES(promises_json), caller_cli=VALUES(caller_cli), "
-                            + "dialed_at=VALUES(dialed_at), answered_at=VALUES(answered_at), ended_at=VALUES(ended_at)",
+                            + "dialed_at=VALUES(dialed_at), answered_at=VALUES(answered_at), ended_at=VALUES(ended_at), "
+                            + "stage_snapshot=COALESCE(stage_snapshot, VALUES(stage_snapshot)), "
+                            + "dpd_snapshot=COALESCE(dpd_snapshot, VALUES(dpd_snapshot))",
                     identity.sessionId,
                     identity.batchId,
-                    identity.caseId,
-                    identity.planId,
-                    identity.stepId,
+                    caseId,
+                    resolvedPlanId,
+                    resolvedStepId,
                     textOf(root, "event"),
                     boolOf(line, "was_ringing"),
                     boolOf(line, "was_answered"),
@@ -307,19 +351,33 @@ public class FacadeWebhookService {
                     textOf(line, "reason"),
                     textOf(line, "sip_code"),
                     textOf(root, "final_failure_reason"),
-                    textOf(aiResult, "result_label"),
-                    textOf(aiResult, "summary"),
+                    firstNonBlank(textOf(aiResult, "result_label")),
+                    firstNonBlank(textOf(aiResult, "summary"), textOf(root, "summary")),
                     promises.isArray() ? promises.toString() : null,
                     textOf(parties, "caller_cli"),
                     tsOf(textOf(dial, "dialed_at")),
                     tsOf(textOf(dial, "answered_at")),
-                    tsOf(textOf(dial, "ended_at")));
+                    tsOf(textOf(dial, "ended_at")),
+                    stageSnapshot,
+                    dpdSnapshot);
         } catch (RuntimeException e) {
             log.warn(
                     "[facade-callback] ai_call_session upsert failed session={}",
                     identity.sessionId,
                     e);
         }
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (int i = 0; i < values.length; i++) {
+            if (StringUtils.isNotBlank(values[i])) {
+                return values[i].trim();
+            }
+        }
+        return null;
     }
 
     private static String textOf(JsonNode node, String field) {

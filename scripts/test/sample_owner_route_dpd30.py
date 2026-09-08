@@ -131,8 +131,6 @@ bills AS (
   FROM `{DATA}.detail.t_loan_repayment_plan` p
   WHERE p.clear_time IS NULL
     AND (COALESCE(p.amount, 0) - COALESCE(p.paid_amount, 0)) > 0
-    AND DATE(p.due_date) BETWEEN DATE_SUB((SELECT d FROM asof), INTERVAL 45 DAY)
-                             AND DATE_ADD((SELECT d FROM asof), INTERVAL 10 DAY)
     AND p.loan_id NOT IN UNNEST({exclude})
 ),
 loan AS (

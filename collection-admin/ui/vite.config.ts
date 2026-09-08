@@ -20,6 +20,8 @@ export default defineConfig({
       "/dashboard/aging": "http://localhost:8888",
       "/dashboard/matrix": "http://localhost:8888",
       "/dashboard/daily": "http://localhost:8888",
+      "/dashboard/today": "http://localhost:8888",
+      "/dashboard/daily-by-channel": "http://localhost:8888",
       "/dashboard/recovery": "http://localhost:8888",
       "/dashboard/evaluation": "http://localhost:8888",
       "/catalog": "http://localhost:8888",

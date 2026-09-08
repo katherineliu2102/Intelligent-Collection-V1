@@ -680,6 +680,19 @@ CREATE TABLE IF NOT EXISTS t_email_suppression (
     UNIQUE KEY uk_email_suppression_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Email 抑制名单（退信/投诉/退订）';
 
+CREATE TABLE IF NOT EXISTS t_alert_dedup (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    alert_id            VARCHAR(16)     NOT NULL COMMENT 'A1/A2/A3',
+    object_key          VARCHAR(64)     NOT NULL COMMENT '槽位 HHMM 或 hanging',
+    calendar_day        DATE            NOT NULL COMMENT 'PHT 日历日',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'SENT' COMMENT 'SENT/SUPPRESSED/RECOVERED',
+    consecutive_days    INT             NOT NULL DEFAULT 1 COMMENT '连续告警日历日；恢复后清零',
+    last_sent_at        DATETIME        NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_alert_object_day (alert_id, object_key, calendar_day),
+    INDEX idx_alert_object (alert_id, object_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警去重与 3 日抑制（管理后台设计 §5.5.4）';
+
 -- 7.2.2 用户画像扩展表 t_user_profile_ext：Phase 1 不建表，押后 Phase 2
 --   原因：Phase 1 无代码消费 / 无 mapper（MockProfileService 仅填 basic + device.jpushToken）。
 --   待数仓/号码检测供应商就绪或坐席标记上线再建，届时同步领域模型 §7.2.2。

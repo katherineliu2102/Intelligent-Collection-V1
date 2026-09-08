@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
  *
  * <ol>
  *   <li>逾期金额归零时不存在「已到期未还」的项，dpd 必须是零或负数；此时报正 dpd 属自相矛盾。
+ *   <li>仍有逾期金额时 dpd 必须 ≥ 0；报负数等于把下一期未到期日当成了 max DPD。
  *   <li>还款只会移除未还项，因此<b>正</b> dpd 相对基线的增长上限，就是两次事件之间流逝的天数。
  * </ol>
  *
@@ -51,6 +52,15 @@ final class RepaymentConsistencyGuard {
                     "[Repayment] caseId={} 逾期金额已归零却报 dpd={}（正数意味着仍有到期未还），"
                             + "判定该值口径有误，本次不同步 dpd/stage，金额照常入账",
                     delta.getCaseId(),
+                    incoming);
+            return false;
+        }
+        if (overdue != null && overdue.signum() > 0 && incoming < 0) {
+            log.warn(
+                    "[Repayment] caseId={} 仍有逾期金额 {} 却报 dpd={}（负数是下一期未到期口径），"
+                            + "判定该值口径有误，本次不同步 dpd/stage，金额照常入账",
+                    delta.getCaseId(),
+                    overdue,
                     incoming);
             return false;
         }

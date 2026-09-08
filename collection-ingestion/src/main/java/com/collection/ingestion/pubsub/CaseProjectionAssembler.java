@@ -62,6 +62,15 @@ public class CaseProjectionAssembler {
         if (projection.getUpdatedAt() != null) {
             projection.setOwnerDate(projection.getUpdatedAt().toLocalDate());
         }
+        projection.setDpd(
+                coerceOverdueDpd(
+                        projection.getDpd(),
+                        projection.getOverdueAmount(),
+                        projection.getDueDate(),
+                        projection.getUpdatedAt() == null
+                                ? null
+                                : projection.getUpdatedAt().toLocalDate(),
+                        snapshot.caseId));
         return projection;
     }
 
@@ -87,6 +96,34 @@ public class CaseProjectionAssembler {
         projection.setSettledAt(fields.repayTime);
         projection.setUpdatedAt(fields.occurredAt);
         return projection;
+    }
+
+    /**
+     * 仍有逾期时 dpd 必须是已到期期的 max DPD，不能写成下一期未到期的负数。 dueDate 已过则可按 occurredAt 纠正；否则只打日志。
+     */
+    static Integer coerceOverdueDpd(
+            Integer dpd, BigDecimal overdue, LocalDate dueDate, LocalDate asOf, Long caseId) {
+        if (dpd == null || overdue == null || overdue.signum() <= 0 || dpd >= 0) {
+            return dpd;
+        }
+        if (dueDate != null && asOf != null && !dueDate.isAfter(asOf)) {
+            int corrected = (int) java.time.temporal.ChronoUnit.DAYS.between(dueDate, asOf);
+            log.warn(
+                    "[Assembler] caseId={} overdue={} 却报 dpd={}，按 dueDate={} 纠正为 {}",
+                    caseId,
+                    overdue,
+                    dpd,
+                    dueDate,
+                    corrected);
+            return corrected;
+        }
+        log.warn(
+                "[Assembler] caseId={} overdue={} 却报 dpd={}，dueDate={} 无法纠正，原样落入",
+                caseId,
+                overdue,
+                dpd,
+                dueDate);
+        return dpd;
     }
 
     private String deriveStatus(JSONObject json, Object dpdRaw) {

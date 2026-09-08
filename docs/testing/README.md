@@ -45,7 +45,7 @@
 
 | 最新 | 摘要 |
 |---|---|
-| [9/7](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260907.md) | 上午收口；AI 0 接通；下午待补 |
+| [9/7](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260907.md) | 五槽收口；Email 18；全日接通 0 |
 | [9/6](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260906.md) | 五槽收口；S4 Email×12 |
 | [9/5](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260905.md) | 五槽收口；接通 4 |
 | [9/4](./records/MOCASA催收系统升级_Phase1_自动跑记录_20260904.md) | Owner 分流全日通过 |
