@@ -71,15 +71,22 @@ collection:
   webhook:
     signature-required: true
     hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET}
-  # 管理面账号只经环境变量注入，哈希不入仓。无默认值：缺失时启动闸门直接拒绝，
-  # 而不是退化成一个人人可登录（此前的行为）或无人可登录的实例。
+  # 管理面账号只经环境变量注入，哈希不入仓。首批支持三个独立账号，均为 SYSTEM_ADMIN；
+  # 0 号账号兼容旧的 COLLECTION_ADMIN_USER / COLLECTION_ADMIN_PASSWORD_HASH。
+  # 所有账号均为空时启动闸门会拒绝无人可登录的实例；空的 1/2 号条目不会被认证器接受。
   # 写进 pilot.env 时哈希必须单引号包裹，否则 $2y$10$ 会被 shell 展开成空串。
   admin:
     auth:
       accounts:
-        - username: ${COLLECTION_ADMIN_USER}
-          password-hash: ${COLLECTION_ADMIN_PASSWORD_HASH}
-          role: SYSTEM_ADMIN
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_USERNAME:${COLLECTION_ADMIN_USER:}}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_PASSWORD_HASH:${COLLECTION_ADMIN_PASSWORD_HASH:}}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_ROLE:SYSTEM_ADMIN}
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_USERNAME:}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_PASSWORD_HASH:}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_ROLE:SYSTEM_ADMIN}
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_USERNAME:}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_PASSWORD_HASH:}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_ROLE:SYSTEM_ADMIN}
   ingestion:
     enabled: true
     # 案件接入订阅，与上面的调度订阅各走各的；缺值时 PubSubCaseConsumer 启动即失败。

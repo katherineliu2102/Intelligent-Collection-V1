@@ -20,7 +20,10 @@
 - 不要 `docker logs -f` 挂着不管（窗口像死机；看完 **Ctrl+C**，容器还在）。
 - `deploy/Dockerfile` 的 `COPY` 路径是**仓库根相对**的，构建上下文必须同时具备 `collection-admin/target/collection-admin.jar` 与 `deploy/certs/`。
 - **CI 与本机必须是 JDK 8**。GitHub Actions 跑 Temurin 8 + Spotless `google-java-format 1.7`（AOSP，相对 `origin/main` 增量）。本机用 11/17/21 编过不代表 CI 能过：`List.of` / `var` 会 `cannot find symbol`；在 Java 21 上跑 `spotless:apply` 会因 GJF 1.7 的 `removeUnusedImports` 直接失败。
-- **触达开关：GitHub 入库缺省必须等于 Pilot 正在跑的口径。** 禁止只改 `/opt/app/pilot.env`、不改仓库。2026-09-09 事故：当时仓库仍写 `sms-test-mode=true`、Pilot 只靠 env 切生产，版本对不上；`true` 走 `/v1/sms/testSend`，通知中心测试账号会路由到 **QHSms**（正式 `mocasa` 账号没有这条供应商），08:00 一次失败 157 条。yml 缺省现已改为 `false`，发版仍须确认 **env 不是 `true`**（环境变量优先于 yml，env 残留 `true` 会盖掉新包）。
+- **§1 的 JDK/Maven 路径是这台 Windows 工作站的约定**（`C:\Users\voghion\...`）。别人照抄会失败；换成自己机器上的 **JDK 8 + Maven 3.9.x** 即可，版本要求不变。
+- **`$PILOT_HOST`、登录账号、密码不写进本手册。** 真值只在 gitignore 的 `docs/ops/生产访问凭据.local.md`。
+- **触达是否已切生产，以容器 `printenv` + `[PilotReadiness]` 为准，不要只看 Git 里的 yml。** `pilot-run.sh` 读的是机上 `/opt/app/pilot.env`：新 jar 里即使 `sms-test-mode: false`，env 残留 `true` 仍走 `/v1/sms/testSend`。
+- **触达开关：GitHub 入库缺省必须等于 Pilot 正在跑的口径。** 禁止只改 `/opt/app/pilot.env`、不改仓库。2026-09-09 事故：当时仓库仍写 `sms-test-mode=true`、Pilot 只靠 env 切生产，版本对不上；`true` 走 `/v1/sms/testSend`，通知中心测试账号会路由到 **QHSms**（正式 `mocasa` 账号没有这条供应商），08:00 一次失败 157 条。yml 缺省现已改为 `false`，发版仍须确认 **env 不是 `true`**（环境变量优先于 yml）。
 
 ---
 
@@ -46,6 +49,8 @@ docker logs --since 3m collection-admin 2>&1 | grep -E 'PilotReadiness|sms-test-
 
 `printenv` 空着也可以（键未写入 env 时走 yml `false`）。**不能是 `true`。** 08:00 槽不应再出现 `[NotificationSmsAdapter] TEST mode → /v1/sms/testSend`。
 
+只看仓库 yml 不够：镜像里的缺省可以被 `/opt/app/pilot.env` 盖掉。发版检查顺序是 **容器 `printenv` → 启动日志 `[PilotReadiness]` → 再对一次 Git 缺省**，三处同向才算切到生产。
+
 ---
 
 ## 1. 本机
@@ -57,6 +62,8 @@ docker logs --since 3m collection-admin 2>&1 | grep -E 'PilotReadiness|sms-test-
 | JDK | Temurin **8u502** `C:\Users\voghion\java\jdk8u502-b07`（`JAVA_HOME`） |
 | Maven | **3.9.11** `C:\Users\voghion\apache-maven-3.9.11`（`MAVEN_HOME`） |
 | PATH | 上述两个 `bin` |
+
+上表路径只适用于当前这台本机。换机器时把 `JAVA_HOME` / `MAVEN_HOME` 改成该机的 JDK 8 与 Maven 3.9.x，**不要**把别人的 `C:\Users\...` 原样贴进脚本。
 
 推 GitHub / 发 Pilot **之前**先过门禁（不要 `--no-verify`，不要只在 Pilot 上编）。yml / 开关改动必须先 **commit** 再 `package`：打进镜像的是 jar 内嵌的 `application-*.yml`，未提交的本机修改 scp 过去也不会在 Git 上留下对应版本。
 
@@ -90,7 +97,7 @@ scp deploy/certs/valubo-voice-test.crt ubuntu@$PILOT_HOST:/tmp/valubo-voice-test
 
 Windows 上 jar 被本机 Java 占用导致 `clean` 失败时，先 `taskkill //IM java.exe //F`。
 
-> 证书那一份是新增的必带项：镜像会把 Valubo 测试 Facade 的自签名证书导入 TrustStore，漏传则 `docker build` 直接在 `COPY deploy/certs/...` 这一层失败。上线换正规域名证书后，`deploy/Dockerfile` 里的 `keytool` 段和这一步一起删。
+> 证书那一份是新增的必带项：镜像会把 Valubo **测试** Facade 的自签名证书（`valubo-voice-test.crt`）导入 TrustStore，漏传则 `docker build` 直接在 `COPY deploy/certs/...` 这一层失败。这与**现网 Pilot 镜像**一致，不是笔误。上线换正规域名证书后，`deploy/Dockerfile` 里的 `keytool` 段、本步 `scp`、以及服务器上 `deploy/certs/` 里的测试证一起删。
 
 ---
 
@@ -145,8 +152,11 @@ curl -s -o /dev/null -w "https:%{http_code}\n" https://collection-admin.mocasa.c
 
 ## 3. 回滚
 
+`YYYYMMDDHHMM` 是**占位符**，不要原样粘贴。先 `ls /opt/app/build/collection-admin.jar.bak.*`，换成真实备份文件名。
+
 ```bash
 cd /opt/app/build
+ls -lh /opt/app/build/collection-admin.jar.bak.*
 cp /opt/app/build/collection-admin.jar.bak.YYYYMMDDHHMM \
    collection-admin/target/collection-admin.jar
 docker build --no-cache -t intelligent-collection-admin:pilot .

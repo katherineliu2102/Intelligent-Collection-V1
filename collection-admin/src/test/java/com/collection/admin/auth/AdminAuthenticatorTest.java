@@ -41,6 +41,20 @@ class AdminAuthenticatorTest {
     }
 
     @Test
+    void acceptsEachIndependentlyConfiguredAccount() {
+        AdminAuthenticator auth =
+                authenticator(
+                        account("admin-01", "password-01", "SYSTEM_ADMIN"),
+                        account("admin-02", "password-02", "SYSTEM_ADMIN"),
+                        account("admin-03", "password-03", "SYSTEM_ADMIN"));
+
+        assertThat(auth.authenticate("admin-01", "password-01")).isPresent();
+        assertThat(auth.authenticate("admin-02", "password-02")).isPresent();
+        assertThat(auth.authenticate("admin-03", "password-03")).isPresent();
+        assertThat(auth.authenticate("admin-01", "password-02")).isEmpty();
+    }
+
+    @Test
     void rejectsWrongPassword() {
         AdminAuthenticator auth = authenticator(account("ops", "s3cret", "SYSTEM_ADMIN"));
 

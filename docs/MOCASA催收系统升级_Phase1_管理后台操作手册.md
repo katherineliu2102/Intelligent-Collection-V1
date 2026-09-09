@@ -148,6 +148,14 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 浏览器打开 `http://127.0.0.1:5173`。本地账号只存在于 **local profile**（不连生产库、不对外暴露端口）；用户名/口令见 `.env.example` 与登录页提示，pilot/生产账号只经环境变量注入，`PilotReadinessValidator` 会强制至少配一个可用账号，否则拒绝启动。会话基于 Cookie，前端所有请求带 `credentials: include`。
 
+**Pilot 账号与权限口径（上线方案 v1.3）**：
+
+- 首次开放使用 `mocasa-admin-01` / `02` / `03` 三个独立测试账号，暂时统一 `SYSTEM_ADMIN`；禁止多人共享一个账号。明文和 Pilot env 片段见已 gitignore 的 `docs/ops/管理后台测试账号_20260909.local.md`。
+- 上线稳定后实施 `VIEWER` / `OPERATOR` / `SYSTEM_ADMIN` 三角色。当前代码尚未按角色执行后端授权，不要把前端菜单隐藏当成权限已经生效。
+- DLQ 重放、配置版本回滚、故障注入、紧急停催目标态仅 `SYSTEM_ADMIN` 可执行，并要求二次确认、必填原因和操作审计。
+- 第一版账号由 Pilot 环境文件维护，不在本页面创建或重置账号；账号和口令见本地凭据文件，不入仓库。
+- 催收系统已有钉钉业务告警，本轮不新建管理后台专属钉钉告警。
+
 ### 2.6 30 秒自检
 
 ```bash

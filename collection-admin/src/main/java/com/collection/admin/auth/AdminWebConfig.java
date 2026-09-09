@@ -23,7 +23,9 @@ public class AdminWebConfig implements WebMvcConfigurer {
                         "/ops/**",
                         "/admin/**",
                         "/config/**",
-                        "/dashboard/**")
+                        "/dashboard/**",
+                        "/plans/**",
+                        "/catalog/**")
                 .excludePathPatterns("/auth/**");
     }
 }

@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台开发进度
 
-> **日期**: 2026-09-07（原文 2026-09-01，按日追加）  
-> **设计基线**: 管理后台设计文档 **v1.6**  
+> **日期**: 2026-09-09（原文 2026-09-01，按日追加）
+> **设计基线**: 管理后台设计文档 **v1.7**
 > **跟踪方式**: 本文件是管理后台开发进度的跟踪入口（testing 目录无副本）。完成任务后更新状态列并追加进度日志。
 
 ---
@@ -33,6 +33,35 @@
 | G2 | Pilot 扫描器 | ✅ | 2026-09-09 发版：A1>**35%**；A7 SMS / A8 PUSH / A9 EMAIL 各自 >**15%**（正好等于不告）。profile=pilot、scheduler=true。公网 `/` 仍 403 |
 
 单测：`collection-admin` 及依赖模块 `mvn test` 通过（2026-09-07）。
+
+### 管理后台前端首次开放闸门（2026-09-09 新增）
+
+催收系统已有钉钉业务告警；**本轮不新建管理后台专属钉钉告警**。前端上线另开窗口，以[前端上线方案](./channel/MOCASA催收系统升级_Phase1_管理后台前端上线方案.md)为 SSOT。
+
+| # | 项 | 状态 | 验收 |
+|---|---|---|---|
+| G3 | 前端生产 `/api` 前缀 | ✅ 本地 | `.env.development` / `.env.production` + dev/preview `/api` 代理；production build 通过 |
+| G4 | 管理 API 登录拦截闭合 | ✅ 本地 | `/plans/**`、`/catalog/**` 已补；13 条定向认证测试及全 reactor 测试通过 |
+| G5 | Pilot 独立账号 | 🟡 待部署 | 三个独立测试账号已生成，首批统一 SYSTEM_ADMIN；凭据文件已 gitignore，尚未写 Pilot env |
+| G6 | 原子静态发布 | ⬜ | `releases/<id>` + `current` 软链；新旧两版可瞬时切换 |
+| G7 | nginx 目标配置 | 🟡 仓库已完成 | 四条 ACL、HTTP/HTTPS 分离、mock deny、ACME、Cookie 已入仓；本机无 Nginx/Docker，待 Pilot 实机 `nginx -t` |
+| G8 | Webhook 与三层回滚 | ⬜ | jar / nginx 变更前后 POST 对照；jar / nginx / 静态资源可分别回滚 |
+| G9 | 紧急停催 runbook | ⬜ | 至少演练一次全局停催、恢复、状态确认与责任人记录 |
+
+**不上线阻断**：G3–G8。G9 最迟在管理后台投入真实运营前闭合。
+
+### 上线稳定后的权限与运营任务
+
+| # | 任务 | 状态 | 约定 |
+|---|---|---|---|
+| P1-1 | 三角色 RBAC | ⬜ | VIEWER / OPERATOR / SYSTEM_ADMIN；必须后端授权，前端菜单不是安全边界 |
+| P1-2 | 高危操作保护 | ⬜ | DLQ 重放、配置回滚、故障注入、紧急停催仅 SYSTEM_ADMIN |
+| P1-3 | 二次确认与审计 | ⬜ | 高危操作必填原因，记录操作者、前后状态和结果；不做双人审批 |
+| P1-4 | 主链路对账 | ⬜ | 应入案 → 实际入案 → 应触达 → 实际触达/回调 |
+| P1-5 | 配置安全 | ⬜ | diff、静态校验、乐观锁、版本和回滚 |
+| P1-6 | 告警处理闭环 | ⬜ | 复用催收系统既有告警，做认领、备注、解决、关闭；不建独立机器人 |
+| P2-1 | 渠道运维台 | ⬜ | 渠道状态、失败率、暂停/恢复、备用渠道 |
+| P2-2 | 案件 360 增强 | ⬜ | 还款、录音、转写和完整事件时间轴 |
 
 ---
 
@@ -151,3 +180,5 @@
 - 2026-09-08（钉钉）：A1 FAILED 阈值 15%→30%→**35%**。Pilot 已换 jar；未改 nginx、未传 dist。公网 `/` 仍 403。
 - 2026-09-09（渠道 FAILED）：扫描器加 A7 SMS / A8 PUSH / A9 EMAIL，FAILED 率 **>15%** 且 attempted ≥20（SKIPPED 不计分母；PUSH 分 0800/1200）。A1 仍 35%。Pilot 已换 jar；未改 nginx、未传 dist。公网 `/` 仍 403。
 - 2026-09-09（看板）：「五槽收口」改为「今日触达时间线」（不固定条数）；列改为时段/结果；未到点显示「尚未到时间」；AI 只看实拨、下钻接通标签；接通明细标签/Stage/波次可筛选。
+- 2026-09-09（前端上线评审）：新增 G3–G9。首次开放要求 `/api`、登录拦截闭合、每人独立账号（先统一 SYSTEM_ADMIN）、release + current 原子发布、nginx 实机验收、Webhook 对照与三层回滚；稳定后做 VIEWER / OPERATOR / SYSTEM_ADMIN 三角色 RBAC，高危操作仅 SYSTEM_ADMIN。催收系统已有钉钉告警，本轮不建管理后台专属钉钉告警。
+- 2026-09-09（前端上线开发）：方案 B。完成 G3/G4 本地代码：Vite dev/preview/production 统一 `/api`；补 `/plans/**`、`/catalog/**` 登录拦截及纯单元测试；Pilot 配置与 `pilot-run.sh` 支持三个 indexed 账号并兼容旧单账号。生成三个独立 SYSTEM_ADMIN 测试账号（明文仅 gitignore 本地文件）。Nginx 目标配置及四条 ACL 已入仓。13 条定向认证测试、全 reactor 测试、前端 production build、Git Bash `bash -n deploy/pilot-run.sh` 均通过；本机无 Nginx/Docker，G7 仍待 Pilot 实机 `nginx -t`。维护窗口批准 15:00–00:00，30 分钟；现网未动。
