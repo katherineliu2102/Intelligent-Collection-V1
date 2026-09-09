@@ -94,6 +94,14 @@ collection:
 
 channel:
   fallback-to-mock: false
+  notification:
+    # 与 GitHub 入库缺省、Pilot env 必须同为生产口径。sms-test-mode=true 会走免签 /testSend，
+    # 通知中心测试账号含 QHSms，正式 mocasa 账号没有这条线（2026-09-09 157 条失败）。
+    # 改这些值：先改本文件（或 CHANNEL_NOTIFICATION_*），再发版；禁止只改 Pilot 机 env。
+    sms-test-mode: ${CHANNEL_NOTIFICATION_SMS_TEST_MODE:false}
+    sms-test-recipient: ${CHANNEL_NOTIFICATION_SMS_TEST_RECIPIENT:}
+    push-sync-mode: ${CHANNEL_NOTIFICATION_PUSH_SYNC_MODE:false}
+    push-test-token: ${CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN:}
   # facade.api-key 与 facade.callback-secret 均由 Nacos / 部署 Secret 下发，此处**不写占位符**：
   # 写成 ${CHANNEL_FACADE_CALLBACK_SECRET:} 会在环境变量为空时把 Nacos 的值冲成空串，
   # 表现为每条真实回调都验签失败回 401。紧急覆盖直接设同名环境变量（松散绑定优先级更高）。

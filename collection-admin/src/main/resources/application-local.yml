@@ -92,9 +92,14 @@ channel:
     app-code: mocasa
     # app-key 由 Nacos channel.notification.app-key 下发（intelligent-collection-local.yml）
     sms-content-type: collection
-    sms-test-mode: true   # Level A 冒烟：走 /v1/sms/testSend 免 appKey；生产联调改 false + 配 NOTIFICATION_APP_KEY
-    push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
-    push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
+    # 缺省即生产口径，须与 Pilot `/opt/app/pilot.env` 及 application-pilot.yml 一致，禁止把联调值提交入库。
+    # true → /v1/sms/testSend 免签，且仍走真实运营商（QHSms 等），不是沙箱。L4a 才用环境变量临时打开。
+    sms-test-mode: ${CHANNEL_NOTIFICATION_SMS_TEST_MODE:false}
+    sms-test-recipient: ${CHANNEL_NOTIFICATION_SMS_TEST_RECIPIENT:}
+    # false → 生产异步 /v1/app_notification/send；true 仅联调看极光同步回执。
+    push-sync-mode: ${CHANNEL_NOTIFICATION_PUSH_SYNC_MODE:false}
+    # 非空则全部 Push 改投该 token。生产必须空；L4a 用 CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN 覆盖。
+    push-test-token: ${CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN:}
   debug:
     legacy-three-step: false
     single-step: ""
