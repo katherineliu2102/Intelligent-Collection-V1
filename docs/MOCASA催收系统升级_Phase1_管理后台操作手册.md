@@ -5,7 +5,7 @@
 > **状态**: ✅ 操作说明（测试库 `ai_collection_db`）；设计 SSOT 见设计文档  
 > **读者**: 运营、测试、策略、研发联调同事  
 > **数据源**: 当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。  
-> **关联文档**: [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [开发进度](./MOCASA催收系统升级_Phase1_管理后台开发进度.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md) · Nacos / 进程启动见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)
+> **关联文档**: [管理后台设计文档](./MOCASA催收系统升级_Phase1_管理后台设计文档.md) · [开发进度](./MOCASA催收系统升级_Phase1_管理后台开发进度.md) · [Pilot 前端上线方案](./channel/MOCASA催收系统升级_Phase1_管理后台前端上线方案.md) · [测试 SSOT](./testing/MOCASA催收系统升级_Phase1_测试文档.md) · Nacos / 进程启动见 [操作说明_Nacos本地启动](./操作说明_Nacos本地启动.md)
 
 ---
 
@@ -25,7 +25,7 @@
 - [6. 数据链路自查（REST / SQL）](#6-数据链路自查rest--sql)
 - [7. 故障排查](#7-故障排查)
 - [8. 附录：默认账号与测试地址](#8-附录默认账号与测试地址)
-- [9. 钉钉告警（A1/A2/A3）](#9-钉钉告警a1a2a3)
+- [9. 钉钉告警（A1–A3 / A7–A9）](#9-钉钉告警a1a3--a7a9)
 
 ---
 
@@ -40,11 +40,13 @@
 
 把 `8888` 存成书签是最常见的"打不开"原因——它是 API 不是页面。
 
+**Pilot 域名** `https://collection-admin.mocasa.com` 的打开方式、白名单和上线步骤见 [前端上线方案](./channel/MOCASA催收系统升级_Phase1_管理后台前端上线方案.md)。在那份方案落地之前，公网除 `/webhook/` 外仍是 403；本文 §2 只讲本机 `5173`。
+
 ### 1.1 功能菜单
 
 | 菜单 | 路由 | 说明 | 数据来源 |
 |------|------|------|----------|
-| Data Analysis | `/dashboard` | **今日执行 / 复盘** 两视图。默认「今日执行」：五槽收口、分渠道触达、AI 波次、日切断言、风险。复盘：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。打开即查 + 手动刷新，无自动刷。 | `GET /dashboard/today`、`/dashboard/daily-by-channel`、`/dashboard/outreach/realtime` 等 |
+| Data Analysis | `/dashboard` | **今日执行 / 复盘** 两视图。默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险。复盘：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。打开即查 + 手动刷新，无自动刷。 | `GET /dashboard/today`、`/dashboard/daily-by-channel`、`/dashboard/outreach/realtime` 等 |
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
 | Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（读 `t_ai_collection` 投影，见 §3.4）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
@@ -166,7 +168,7 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 | 页 | 过关标准 |
 |---|---|
-| Data Analysis → 今日执行 | 默认就是这一页；**没有**「经营 / 催收 / 策略」三 Tab。五槽、分渠道、AI 接通、日切、风险能出数或合理空态（分母 0 为 `—`，接通时间空为「未回传」） |
+| Data Analysis → 今日执行 | 默认就是这一页；**没有**「经营 / 催收 / 策略」三 Tab。触达时间线、分渠道、AI 接通、日切、风险能出数或合理空态（分母 0 为 `—`，接通时间空为「未回传」，未到点为「尚未到时间」） |
 | Data Analysis → 复盘 | 能切过去；存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。矩阵格是单渠道×Stage |
 | 右上角刷新 | 整页重拉，没有自动刷 |
 | Case Monitor | 能搜到测试库案件；点进计划/时间线不 500 |
@@ -183,15 +185,15 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 **入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。默认打开 **今日执行**（PHT 当日）；可切到 **复盘**（近 7 日 / 存量）。点右上角 **刷新** 会重拉当前页全部接口，**没有**定时自动刷或 WebSocket。
 
-日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1/A2/A3 是叫醒通道，不替代看板。
+日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1–A3 / A7–A9 是叫醒通道，不替代看板。
 
 **今日执行**
 
 | 模块 | 看什么 | 注意 |
 |------|--------|------|
-| 五槽收口 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI | Email 发送=0 显示「正常零发送」，不标红。AI 用会话底座，不用 timeline 送达率 |
+| 今日触达时间线 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI（条数不固定） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 只看实拨，不下钻失败原因，下钻为接通标签。 |
 | 分渠道触达 | SMS / PUSH / EMAIL 各一张卡 | **禁止**把多渠道合成一条送达率 |
-| AI 接通 | 实拨 / BUSY / FAILED / NO_ANSWER / SNR；**真人接通明细不含 SNR** | BUSY/NO_ANSWER **不计** FAILED。时长 = `ended_at − answered_at`，缺一则 `—`，禁止显示 0 |
+| AI 接通 | 实拨 / BUSY / FAILED / NO_ANSWER / SNR；**真人接通明细不含 SNR**；标签 / Stage / 波次可筛选 | BUSY/NO_ANSWER **不计** FAILED。时长 = `ended_at − answered_at`，缺一则 `—`，禁止显示 0 |
 | 日切断言 | 迁出后再 DELIVERED、升档、inbox、新建 plan | 迁出后再打必须为 0，>0 标红 |
 | 风险 | 悬挂、Guard、到期仍 PENDING | 悬挂 >0 去 Ops Queue / Case Monitor |
 
@@ -411,16 +413,19 @@ SHOW TABLES LIKE 't_alert_dedup';
 - 登录：`admin` / `local-dev`（角色 `SYSTEM_ADMIN`，仅 local profile；与 `.env.example` 一致）
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://localhost:8888`
+- Pilot（上线方案落地后）：`https://collection-admin.mocasa.com`，仅白名单出口（办公室 / VPN / 已登记补充 IP，清单见上线方案）；账号见 `docs/ops/生产访问凭据.local.md`，不要把生产口令写进本手册
 - L4b 统一触达地址：手机 `+639451374358` / 邮箱 `wzynju@126.com` / Push token `1a0018970bf0c19de04`
 - L4b 主流程案件：`99000000`（S0）～ `99000005`（S4）
 
 ---
 
-## 9. 钉钉告警（A1/A2/A3）
+## 9. 钉钉告警（A1–A3 / A7–A9）
 
-本批只做 AI Call 三类 CRITICAL：FAILED 率过高（A1）、到期步骤漏打（A2）、EXECUTING 悬挂（A3）。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。
+本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
 
-**2026-09-07 现状**：测试库已有 `t_alert_dedup`；本机 Nacos `intelligent-collection-local.yml` 已有 webhook，机器人通道已用关键词消息验过。**local 默认不发 A1/A2/A3**（扫描器未装配）。**Pilot / 正式上线前必须另写** `intelligent-collection-pilot.yml` 或 Pilot 机环境变量（开发进度「上线闸门 G1」），否则线上扫描器只打日志、群里收不到。
+渠道 FAILED 口径与看板「今日执行」一致：分子 = `FAILED`/`REJECTED`/`BOUNCED`，分母 = ATTEMPTED（`DELIVERED`/`SENT`/`ACCEPTED` + 失败三种），**SKIPPED 不计分母**。SMS / PUSH / EMAIL **分渠道、禁止合并**。SMS 全日一槽 `0800`；PUSH 分 `0800`（12 点前）与 `1200`（12 点后）；EMAIL 全日 `1400`（无里程碑日发送=0 属正常，n&lt;20 不告）。
+
+**2026-09-09 现状**：测试库已有 `t_alert_dedup`；Pilot 库也有该表。本机 Nacos `intelligent-collection-local.yml` 已有 webhook，机器人通道已用关键词消息验过。**local 默认不发告警**（扫描器未装配）。Pilot `/opt/app/pilot.env` 已写入 webhook，jar 含扫描器（A1>**35%**；A7/A8/A9>**15%**）。公网 nginx 未改，`/` 仍 403。真告警时群里应出现 `【催收告警】 A1/A2/A3/A7/A8/A9`。
 
 ### 9.1 小白版：以后要怎么配
 
@@ -432,7 +437,7 @@ SHOW TABLES LIKE 't_alert_dedup';
 3. 完成后复制那一长串网址（以 `https://oapi.dingtalk.com/robot/send?access_token=` 开头）。这就是 webhook。**当密码看**：不要发到群里、不要提交 git、不要贴进聊天记录。
 4. **正式上线前**把这串写进 Pilot：Nacos Data ID **`intelligent-collection-pilot.yml`** 的 `collection.alert.dingtalk.webhook`，或 Pilot 机 `/opt/app/pilot.env` 的 `COLLECTION_ALERT_DINGTALK_WEBHOOK`。不要写 `*-common.yml`。本机 `.env.example` 里有注释占位，**不要把真值写进会入库的文件**。
 5. 写完**重启 Pilot 容器**。local 一键启动默认 `collection.scheduler.enabled=false`，即使本机 Nacos 有 webhook 也不会每分钟扫描。Pilot 默认会扫。
-6. 自检：看日志里出现 `[alert]`；真告警时群里应有 `【催收告警】 A1 ...`。连续三天同一条会改成只打日志、不再刷屏。
+6. 自检：看日志里出现 `[alert]`；真告警时群里应有 `【催收告警】 A1 ...` 或 `A7 SMS FAILED ...`。连续三天同一条会改成只打日志、不再刷屏。
 
 只看本地后台、不配机器人：完全没问题，看板照常。
 
@@ -447,6 +452,6 @@ SHOW TABLES LIKE 't_alert_dedup';
 | Pilot | `scheduler.enabled` 默认 true → 装配扫描器；webhook 为空则 log-only |
 | 去重表 | `t_alert_dedup`（alert_id + object_key + PHT 日历日）；连续 3 个日历日 SENT 后改 SUPPRESSED |
 | 安全 | webhook URL = 密钥。机器人侧用自定义关键词 `催收告警`。客户端**未实现**钉钉 HMAC 加签 |
-| 文案 | 固定前缀 `【催收告警】`；含波次/分子分母/SIP Top/stepId；禁止手机号 |
+| 文案 | 固定前缀 `【催收告警】`；含波次/渠道/分子分母/SIP Top/stepId；禁止手机号 |
 
 换群或轮换机器人：只换环境变量并重启 Pilot，不必发版。删表行可解除当日抑制（一般不需要）。

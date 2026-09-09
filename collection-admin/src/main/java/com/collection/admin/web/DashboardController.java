@@ -18,7 +18,7 @@ public class DashboardController {
         this.queries = queries;
     }
 
-    /** 今日执行：五槽 + 分渠道触达 + AI 波次 + 日切断言 + 风险（§5.1.3 / §5.1.7）。 */
+    /** 今日执行：触达时间线 + 分渠道触达 + AI 波次 + 日切断言 + 风险（§5.1.3 / §5.1.7）。 */
     @GetMapping("/today")
     public Map<String, Object> today() {
         return ApiResponse.success(queries.todayExecution());
@@ -62,8 +62,13 @@ public class DashboardController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "25") int pageSize,
             @RequestParam(defaultValue = "7") int days,
-            @RequestParam(defaultValue = "false") boolean includeSynthetic) {
-        return ApiResponse.success(queries.aicallDetail(page, pageSize, days, includeSynthetic));
+            @RequestParam(defaultValue = "false") boolean includeSynthetic,
+            @RequestParam(required = false) String resultLabel,
+            @RequestParam(required = false) String stage,
+            @RequestParam(required = false) String waveKey) {
+        return ApiResponse.success(
+                queries.aicallDetail(
+                        page, pageSize, days, includeSynthetic, resultLabel, stage, waveKey));
     }
 
     @GetMapping("/risk")

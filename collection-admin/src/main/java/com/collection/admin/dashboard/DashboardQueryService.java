@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -137,19 +138,32 @@ public class DashboardQueryService {
 
     public Map<String, Object> aicallDetail(
             int page, int pageSize, int days, boolean includeSynthetic) {
+        return aicallDetail(page, pageSize, days, includeSynthetic, null, null, null);
+    }
+
+    public Map<String, Object> aicallDetail(
+            int page,
+            int pageSize,
+            int days,
+            boolean includeSynthetic,
+            String resultLabel,
+            String stage,
+            String waveKey) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(100, pageSize));
         int windowDays = clampDays(days);
         int offset = (p - 1) * size;
         String synth = includeSynthetic ? "" : " AND s.is_synthetic = 0";
+        DetailFilter filter = DetailFilter.of(resultLabel, stage, waveKey);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("layer", "HOT");
         data.put("freshness", "on_demand");
         data.put("windowDays", windowDays);
         data.put("page", p);
         data.put("pageSize", size);
-        data.put("total", countAiCallDetail(windowDays, synth));
-        data.put("items", queryAiCallDetail(windowDays, size, offset, synth));
+        data.put("total", countAiCallDetail(windowDays, synth, filter));
+        data.put("items", queryAiCallDetail(windowDays, size, offset, synth, filter));
+        data.put("facets", queryAiCallDetailFacets(windowDays, synth));
         return data;
     }
 
@@ -304,7 +318,7 @@ public class DashboardQueryService {
         long failed = 0;
         long effective = 0;
         String batchId = null;
-        Map<String, Long> failReasons = new LinkedHashMap<>();
+        Map<String, Long> answeredLabels = new LinkedHashMap<>();
         for (Map<String, Object> s : sessions) {
             if (batchId == null) {
                 batchId = str(s.get("batch_id"));
@@ -325,6 +339,8 @@ public class DashboardQueryService {
                 if (labelVal != null && !"incomplete".equals(labelVal)) {
                     effective++;
                 }
+                String tag = (labelVal == null || labelVal.isEmpty()) ? "未回传" : labelVal;
+                answeredLabels.merge(tag, 1L, Long::sum);
             } else if ("SNR".equals(bucket)) {
                 snr++;
             } else if ("BUSY".equals(bucket)) {
@@ -333,33 +349,10 @@ public class DashboardQueryService {
                 noAnswer++;
             } else if ("FAILED".equals(bucket)) {
                 failed++;
-                String key = reason == null ? "UNKNOWN" : reason;
-                failReasons.merge(key, 1L, Long::sum);
             }
         }
-        long planned =
-                countLong(
-                        "SELECT COUNT(*) FROM t_contact_plan_step s "
-                                + "WHERE s.channel_type='AI_CALL' "
-                                + "AND COALESCE(s.original_trigger_time, s.trigger_time) >= ? "
-                                + "AND DATE_FORMAT(COALESCE(s.original_trigger_time, s.trigger_time),'%H%i') "
-                                + ("0915".equals(hhmm)
-                                        ? " BETWEEN '0900' AND '1000'"
-                                        : " BETWEEN '1420' AND '1530'"),
-                        from);
-        long skippedSteps =
-                countLong(
-                        "SELECT COUNT(*) FROM t_contact_plan_step s "
-                                + "WHERE s.channel_type='AI_CALL' AND s.status='SKIPPED' "
-                                + "AND COALESCE(s.original_trigger_time, s.completed_at, s.updated_at) >= ? "
-                                + "AND DATE_FORMAT(COALESCE(s.original_trigger_time, s.completed_at),'%H%i') "
-                                + ("0915".equals(hhmm)
-                                        ? " BETWEEN '0900' AND '1000'"
-                                        : " BETWEEN '1420' AND '1530'"),
-                        from);
         slot.put("batchId", batchId);
         slot.put("waveKey", WaveKey.fromBatchId(batchId));
-        slot.put("planned", planned);
         slot.put("completed", completed);
         slot.put("ringing", ringing);
         slot.put("answered", answered);
@@ -369,22 +362,10 @@ public class DashboardQueryService {
         slot.put("busy", busy);
         slot.put("noAnswer", noAnswer);
         slot.put("failed", failed);
-        slot.put("skipped", skippedSteps);
         slot.put("answerRate", rate(answered, completed));
         slot.put("failedRate", rate(failed, completed));
-        slot.put("missing", completed == 0 && planned == 0);
-        List<Map<String, Object>> top = new ArrayList<>();
-        failReasons.entrySet().stream()
-                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
-                .limit(5)
-                .forEach(
-                        e -> {
-                            Map<String, Object> row = new LinkedHashMap<>();
-                            row.put("reason", e.getKey());
-                            row.put("count", e.getValue());
-                            top.add(row);
-                        });
-        slot.put("failureTop", top);
+        slot.put("missing", completed == 0);
+        slot.put("answeredLabels", countRows(answeredLabels, "label"));
         return slot;
     }
 
@@ -752,22 +733,30 @@ public class DashboardQueryService {
                 this::genericRow);
     }
 
-    private long countAiCallDetail(int windowDays, String synth) {
+    private long countAiCallDetail(int windowDays, String synth, DetailFilter filter) {
+        String sql =
+                "SELECT COUNT(*) FROM t_ai_call_session s "
+                        + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
+                        + "WHERE s.event='session.completed' AND "
+                        + liveAnsweredPred("s")
+                        + synth
+                        + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
+                        + windowDays
+                        + " DAY)"
+                        + filter.sql;
         Long n =
-                jdbc.queryForObject(
-                        "SELECT COUNT(*) FROM t_ai_call_session s "
-                                + "WHERE s.event='session.completed' AND "
-                                + liveAnsweredPred("s")
-                                + synth
-                                + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
-                                + windowDays
-                                + " DAY)",
-                        Long.class);
+                filter.args.length == 0
+                        ? jdbc.queryForObject(sql, Long.class)
+                        : jdbc.queryForObject(sql, filter.args, Long.class);
         return n == null ? 0L : n;
     }
 
     private List<Map<String, Object>> queryAiCallDetail(
-            int windowDays, int limit, int offset, String synth) {
+            int windowDays, int limit, int offset, String synth, DetailFilter filter) {
+        Object[] args = new Object[filter.args.length + 2];
+        System.arraycopy(filter.args, 0, args, 0, filter.args.length);
+        args[filter.args.length] = limit;
+        args[filter.args.length + 1] = offset;
         return jdbc.query(
                 answeredSessionSelect()
                         + "WHERE s.event='session.completed' AND "
@@ -776,9 +765,42 @@ public class DashboardQueryService {
                         + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
                         + windowDays
                         + " DAY)"
+                        + filter.sql
                         + " ORDER BY s.batch_id DESC, COALESCE(s.answered_at, s.received_at) DESC LIMIT ? OFFSET ?",
-                new Object[] {limit, offset},
+                args,
                 this::mapAnsweredSession);
+    }
+
+    private Map<String, Object> queryAiCallDetailFacets(int windowDays, String synth) {
+        List<Map<String, Object>> rows =
+                jdbc.query(
+                        "SELECT DISTINCT s.result_label AS resultLabel, "
+                                + "COALESCE(s.stage_snapshot, p.stage) AS stageSnapshot, s.batch_id AS batchId "
+                                + "FROM t_ai_call_session s "
+                                + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
+                                + "WHERE s.event='session.completed' AND "
+                                + liveAnsweredPred("s")
+                                + synth
+                                + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
+                                + windowDays
+                                + " DAY)",
+                        this::genericRow);
+        LinkedHashMap<String, Boolean> labels = new LinkedHashMap<>();
+        LinkedHashMap<String, Boolean> stages = new LinkedHashMap<>();
+        LinkedHashMap<String, Boolean> waves = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String label = str(row.get("resultLabel"));
+            labels.put(label == null ? "" : label, Boolean.TRUE);
+            String stage = str(row.get("stageSnapshot"));
+            stages.put(stage == null ? "" : stage, Boolean.TRUE);
+            String wave = WaveKey.fromBatchId(str(row.get("batchId")));
+            waves.put(wave == null ? "" : wave, Boolean.TRUE);
+        }
+        Map<String, Object> facets = new LinkedHashMap<>();
+        facets.put("labels", new ArrayList<>(labels.keySet()));
+        facets.put("stages", new ArrayList<>(stages.keySet()));
+        facets.put("waves", new ArrayList<>(waves.keySet()));
+        return facets;
     }
 
     private static String labelBucket(String label) {
@@ -1121,7 +1143,60 @@ public class DashboardQueryService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("slot", slot);
         m.put("channel", channel);
+        m.put("pending", DashboardClock.now().toLocalTime().isBefore(LocalTime.parse(slot)));
         return m;
+    }
+
+    private static List<Map<String, Object>> countRows(Map<String, Long> counts, String nameKey) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        counts.entrySet().stream()
+                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+                .forEach(
+                        e -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put(nameKey, e.getKey());
+                            row.put("count", e.getValue());
+                            out.add(row);
+                        });
+        return out;
+    }
+
+    static final class DetailFilter {
+        final String sql;
+        final Object[] args;
+
+        private DetailFilter(String sql, Object[] args) {
+            this.sql = sql;
+            this.args = args;
+        }
+
+        static DetailFilter of(String resultLabel, String stage, String waveKey) {
+            StringBuilder sql = new StringBuilder();
+            List<Object> args = new ArrayList<>();
+            if (resultLabel != null) {
+                if (resultLabel.isEmpty()) {
+                    sql.append(" AND (s.result_label IS NULL OR s.result_label='')");
+                } else {
+                    sql.append(" AND s.result_label=?");
+                    args.add(resultLabel);
+                }
+            }
+            if (stage != null) {
+                if (stage.isEmpty()) {
+                    sql.append(
+                            " AND (COALESCE(s.stage_snapshot, p.stage) IS NULL"
+                                    + " OR COALESCE(s.stage_snapshot, p.stage)='')");
+                } else {
+                    sql.append(" AND COALESCE(s.stage_snapshot, p.stage)=?");
+                    args.add(stage);
+                }
+            }
+            if (waveKey != null && waveKey.matches("\\d{8}-\\d{4}")) {
+                sql.append(" AND s.batch_id LIKE ?");
+                args.add("%" + waveKey + "%");
+            }
+            return new DetailFilter(sql.toString(), args.toArray());
+        }
     }
 
     private static Map<String, Object> nvlMetrics(Map<String, Object> metrics) {

@@ -46,6 +46,7 @@ type SlotRow = {
   stageBreakdown?: { stage: string; delivered: number }[];
   slotBreakdown?: { scriptSlot: string; delivered: number; skipped?: number }[];
   zeroSendNormal?: boolean;
+  pending?: boolean;
   batchId?: string;
   waveKey?: string;
   planned?: number;
@@ -60,8 +61,23 @@ type SlotRow = {
   answerRate?: number | null;
   failedRate?: number | null;
   missing?: boolean;
-  failureTop?: { reason: string; count: number }[];
+  answeredLabels?: { label: string; count: number }[];
 };
+
+type AnsweredRow = {
+  sessionId: string;
+  caseId: number;
+  waveKey?: string;
+  answeredAt?: string | null;
+  receivedAt?: string | null;
+  durationSec?: number | null;
+  resultLabel?: string;
+  summary?: string;
+  stageSnapshot?: string | null;
+  dpdSnapshot?: number | null;
+};
+
+type AiCallDetailItem = AnsweredRow;
 
 type TodayData = {
   layer: string;
@@ -74,18 +90,7 @@ type TodayData = {
     byChannel: OutreachRow[];
     skipReasons: { channel: string; reason: string; count: number }[];
   };
-  answered: {
-    sessionId: string;
-    caseId: number;
-    waveKey?: string;
-    answeredAt?: string;
-    receivedAt?: string;
-    durationSec?: number | null;
-    resultLabel?: string;
-    summary?: string;
-    stageSnapshot?: string;
-    dpdSnapshot?: number | null;
-  }[];
+  answered: AnsweredRow[];
   roll: {
     routedToLegacy: { count: number; caseIds: number[] };
     deliveredAfterRoute: { count: number; caseIds: number[]; pass: boolean };
@@ -191,18 +196,6 @@ type AiAnswerPoint = {
   answered: number;
 };
 
-type AiCallDetailItem = {
-  sessionId: string;
-  caseId: number;
-  answeredAt?: string | null;
-  receivedAt?: string | null;
-  durationSec?: number | null;
-  resultLabel?: string;
-  summary?: string;
-  stageSnapshot?: string | null;
-  dpdSnapshot?: number | null;
-};
-
 type RiskData = {
   highSensitivity: {
     sessionId?: string;
@@ -261,6 +254,117 @@ function fmtDuration(sec?: number | null) {
 function dash(v?: string | number | null) {
   if (v == null || v === "") return "—";
   return String(v);
+}
+
+function firstFilter(v?: (string | number | boolean)[] | null) {
+  if (!v || v.length === 0) return undefined;
+  return String(v[0]);
+}
+
+function uniqueFilterOptions(
+  rows: AnsweredRow[],
+  pick: (r: AnsweredRow) => string | null | undefined,
+  format?: (v: string) => string
+) {
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    const raw = pick(row);
+    const value = raw == null || raw === "" ? "" : String(raw);
+    if (!seen.has(value)) {
+      seen.set(value, format ? format(value) : value === "" ? "未回传" : value);
+    }
+  }
+  return [...seen.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function facetOptions(values: string[] | undefined, format?: (v: string) => string) {
+  return (values || []).map((value) => ({
+    text: format ? format(value) : value === "" ? "未回传" : value,
+    value
+  }));
+}
+
+function answeredColumns(opts: {
+  clientRows?: AnsweredRow[];
+  facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+  filteredValue?: {
+    resultLabel?: string[] | null;
+    stageSnapshot?: string[] | null;
+    waveKey?: string[] | null;
+  };
+}): ColumnsType<AnsweredRow> {
+  const client = !!opts.clientRows;
+  const labelFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => r.resultLabel)
+    : facetOptions(opts.facets?.labels);
+  const stageFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => r.stageSnapshot)
+    : facetOptions(opts.facets?.stages);
+  const waveFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => r.waveKey, (v) => (v ? formatWave(v) : "未分波次"))
+    : facetOptions(opts.facets?.waves, (v) => (v ? formatWave(v) : "未分波次"));
+  return [
+    { title: "案件", dataIndex: "caseId", width: 90 },
+    {
+      title: "Stage",
+      dataIndex: "stageSnapshot",
+      width: 90,
+      render: (v: string) => dash(v),
+      filters: stageFilters.length ? stageFilters : undefined,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.stageSnapshot,
+      onFilter: client
+        ? (value, record) => (record.stageSnapshot || "") === String(value)
+        : undefined
+    },
+    {
+      title: "DPD",
+      dataIndex: "dpdSnapshot",
+      width: 70,
+      align: "right",
+      render: (v: number | null) => dash(v)
+    },
+    {
+      title: "波次",
+      dataIndex: "waveKey",
+      width: 170,
+      render: (v: string) => formatWave(v),
+      filters: waveFilters.length ? waveFilters : undefined,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.waveKey,
+      onFilter: client ? (value, record) => (record.waveKey || "") === String(value) : undefined
+    },
+    {
+      title: "回调时间",
+      dataIndex: "receivedAt",
+      width: 165,
+      render: (v: string) => fmtTs(v)
+    },
+    {
+      title: "时长",
+      dataIndex: "durationSec",
+      width: 80,
+      align: "right",
+      render: (v: number | null) => fmtDuration(v)
+    },
+    {
+      title: "标签",
+      dataIndex: "resultLabel",
+      width: 170,
+      render: (v: string) => (v ? <Tag color={labelColor(labelBucketOf(v))}>{v}</Tag> : "—"),
+      filters: labelFilters.length ? labelFilters : undefined,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.resultLabel,
+      onFilter: client
+        ? (value, record) => (record.resultLabel || "") === String(value)
+        : undefined
+    },
+    {
+      title: "摘要",
+      dataIndex: "summary",
+      render: (v: string) => <SummaryCell text={v} />
+    }
+  ];
 }
 
 function SummaryCell({ text }: { text?: string | null }) {
@@ -516,10 +620,17 @@ export function DashboardPage() {
   } | null>(null);
   const [aicall, setAicall] = useState<AiCallData | null>(null);
   const [aicallDays, setAicallDays] = useState(7);
-  const [aicallDetail, setAicallDetail] = useState<{ total: number; items: AiCallDetailItem[] } | null>(
-    null
-  );
+  const [aicallDetail, setAicallDetail] = useState<{
+    total: number;
+    items: AiCallDetailItem[];
+    facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+  } | null>(null);
   const [aicallDetailPage, setAicallDetailPage] = useState(1);
+  const [aicallDetailFilters, setAicallDetailFilters] = useState<{
+    resultLabel?: string;
+    stage?: string;
+    waveKey?: string;
+  }>({});
   const [risk, setRisk] = useState<RiskData | null>(null);
 
   const loadAll = useCallback(async () => {
@@ -531,7 +642,7 @@ export function DashboardPage() {
       ["matrix", api.dashboardMatrix(days)],
       ["daily", api.dashboardDailyByChannel(days)],
       ["aicall", api.dashboardAicallRealtime(aicallDays)],
-      ["aicallDetail", api.dashboardAicallDetail(aicallDetailPage, 25, aicallDays)],
+      ["aicallDetail", api.dashboardAicallDetail(aicallDetailPage, 25, aicallDays, false, aicallDetailFilters)],
       ["risk", api.dashboardRisk()]
     ];
     const results = await Promise.allSettled(named.map(([, p]) => p));
@@ -552,7 +663,13 @@ export function DashboardPage() {
       }
       if (label === "aicall") setAicall(payload as AiCallData);
       if (label === "aicallDetail") {
-        setAicallDetail(payload as { total: number; items: AiCallDetailItem[] });
+        setAicallDetail(
+          payload as {
+            total: number;
+            items: AiCallDetailItem[];
+            facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+          }
+        );
       }
       if (label === "risk") setRisk(payload as RiskData);
     });
@@ -560,7 +677,7 @@ export function DashboardPage() {
       message.error(`部分看板接口失败：${failed.join("、")}`);
     }
     setLoading(false);
-  }, [days, aicallDays, aicallDetailPage]);
+  }, [days, aicallDays, aicallDetailPage, aicallDetailFilters]);
 
   useEffect(() => {
     loadAll();
@@ -606,10 +723,10 @@ export function DashboardPage() {
               <Flex vertical gap={12}>
                 <div>
                   <Typography.Title level={4} style={{ margin: 0 }}>
-                    五槽收口时间线
+                    今日触达时间线
                   </Typography.Title>
                   <Typography.Text type="secondary">
-                    今日 PHT · Email 发送=0 属正常不标红；AI Call 用会话底座，不用 timeline 送达率
+                    按计划时刻列出今日各渠道结果；未到点显示「尚未到时间」。AI Call 只看实拨，下钻为接通标签。
                   </Typography.Text>
                 </div>
                 <Table
@@ -617,26 +734,27 @@ export function DashboardPage() {
                   size="small"
                   pagination={false}
                   loading={loading && !today}
-                  locale={{ emptyText: "无槽位数据" }}
+                  locale={{ emptyText: "无时段数据" }}
                   dataSource={today?.slots || []}
                   columns={[
-                    { title: "PHT 槽", dataIndex: "slot", width: 80 },
+                    { title: "时段", dataIndex: "slot", width: 80 },
                     { title: "渠道", dataIndex: "channel", width: 90 },
                     {
-                      title: "收口数字",
+                      title: "结果",
                       render: (_: unknown, r: SlotRow) => {
+                        if (r.pending) {
+                          return <Typography.Text type="secondary">尚未到时间</Typography.Text>;
+                        }
                         if (r.channel === "AI_CALL") {
-                          if (r.missing && !r.completed && !r.planned) return "—";
                           const failHot = (r.failedRate ?? 0) > 0.15 && (r.completed ?? 0) >= 20;
                           return (
                             <Flex vertical gap={2}>
                               <span>
-                                实拨 {dash(r.completed)} / 计划 {dash(r.planned)} · ANSWERED {dash(r.answered)} ·
-                                BUSY {dash(r.busy)} · FAILED{" "}
+                                实拨 {dash(r.completed)} · ANSWERED {dash(r.answered)} · BUSY {dash(r.busy)} · FAILED{" "}
                                 <Typography.Text type={failHot ? "danger" : undefined}>
                                   {dash(r.failed)} ({pctRate(r.failedRate)})
                                 </Typography.Text>{" "}
-                                · NO_ANSWER {dash(r.noAnswer)} · SNR {dash(r.snr)} · SKIPPED {dash(r.skipped)}
+                                · NO_ANSWER {dash(r.noAnswer)} · SNR {dash(r.snr)}
                               </span>
                               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                                 wave {dash(r.waveKey)} · batch {dash(r.batchId)}
@@ -659,6 +777,14 @@ export function DashboardPage() {
                     {
                       title: "下钻（仅本渠道）",
                       render: (_: unknown, r: SlotRow) => {
+                        if (r.pending) return "—";
+                        if (r.answeredLabels?.length) {
+                          return r.answeredLabels.map((s) => (
+                            <Tag key={s.label} style={{ marginBottom: 4 }}>
+                              {s.label}×{s.count}
+                            </Tag>
+                          ));
+                        }
                         if (r.stageBreakdown?.length) {
                           return r.stageBreakdown.map((s) => (
                             <Tag key={s.stage} style={{ marginBottom: 4 }}>
@@ -670,13 +796,6 @@ export function DashboardPage() {
                           return r.slotBreakdown.map((s) => (
                             <Tag key={s.scriptSlot} style={{ marginBottom: 4 }}>
                               {s.scriptSlot}×{s.delivered}
-                            </Tag>
-                          ));
-                        }
-                        if (r.failureTop?.length) {
-                          return r.failureTop.map((s) => (
-                            <Tag key={s.reason} color="red" style={{ marginBottom: 4 }}>
-                              {s.reason}×{s.count}
                             </Tag>
                           ));
                         }
@@ -747,48 +866,7 @@ export function DashboardPage() {
                   pagination={false}
                   locale={{ emptyText: "今日无接通" }}
                   dataSource={today?.answered || []}
-                  columns={[
-                    { title: "案件", dataIndex: "caseId", width: 90 },
-                    {
-                      title: "Stage",
-                      dataIndex: "stageSnapshot",
-                      width: 70,
-                      render: (v: string) => dash(v)
-                    },
-                    {
-                      title: "DPD",
-                      dataIndex: "dpdSnapshot",
-                      width: 70,
-                      align: "right",
-                      render: (v: number | null) => dash(v)
-                    },
-                    { title: "波次", dataIndex: "waveKey", width: 160, render: (v: string) => formatWave(v) },
-                    {
-                      title: "回调时间",
-                      dataIndex: "receivedAt",
-                      width: 165,
-                      render: (v: string) => fmtTs(v)
-                    },
-                    {
-                      title: "时长",
-                      dataIndex: "durationSec",
-                      width: 80,
-                      align: "right",
-                      render: (v: number | null) => fmtDuration(v)
-                    },
-                    {
-                      title: "标签",
-                      dataIndex: "resultLabel",
-                      width: 160,
-                      render: (v: string) =>
-                        v ? <Tag color={labelColor(labelBucketOf(v))}>{v}</Tag> : "—"
-                    },
-                    {
-                      title: "摘要",
-                      dataIndex: "summary",
-                      render: (v: string) => <SummaryCell text={v} />
-                    }
-                  ]}
+                  columns={answeredColumns({ clientRows: today?.answered || [] })}
                 />
               </Flex>
             </Card>
@@ -1092,7 +1170,10 @@ export function DashboardPage() {
                       { value: 7, label: "近 7 天" },
                       { value: 30, label: "近 30 天" }
                     ]}
-                    onChange={setAicallDays}
+                    onChange={(v) => {
+                      setAicallDays(v);
+                      setAicallDetailPage(1);
+                    }}
                   />
                 </Flex>
                 <Row gutter={[16, 16]}>
@@ -1182,60 +1263,36 @@ export function DashboardPage() {
                     rowKey="sessionId"
                     size="small"
                     dataSource={aicallDetail?.items || []}
+                    columns={answeredColumns({
+                      facets: aicallDetail?.facets,
+                      filteredValue: {
+                        resultLabel:
+                          aicallDetailFilters.resultLabel != null
+                            ? [aicallDetailFilters.resultLabel]
+                            : null,
+                        stageSnapshot:
+                          aicallDetailFilters.stage != null ? [aicallDetailFilters.stage] : null,
+                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null
+                      }
+                    })}
                     pagination={{
                       current: aicallDetailPage,
                       pageSize: 25,
                       total: aicallDetail?.total ?? 0,
-                      showSizeChanger: false,
-                      onChange: (p) => setAicallDetailPage(p)
+                      showSizeChanger: false
                     }}
-                    columns={[
-                      { title: "案件", dataIndex: "caseId", width: 90 },
-                      {
-                        title: "波次",
-                        dataIndex: "waveKey",
-                        width: 160,
-                        render: (v: string) => formatWave(v)
-                      },
-                      {
-                        title: "Stage",
-                        dataIndex: "stageSnapshot",
-                        width: 70,
-                        render: (v: string) => dash(v)
-                      },
-                      {
-                        title: "DPD",
-                        dataIndex: "dpdSnapshot",
-                        width: 70,
-                        align: "right",
-                        render: (v: number | null) => dash(v)
-                      },
-                      {
-                        title: "回调时间",
-                        dataIndex: "receivedAt",
-                        width: 165,
-                        render: (v: string) => fmtTs(v)
-                      },
-                      {
-                        title: "时长",
-                        dataIndex: "durationSec",
-                        width: 90,
-                        align: "right",
-                        render: (v: number | null) => fmtDuration(v)
-                      },
-                      {
-                        title: "标签",
-                        dataIndex: "resultLabel",
-                        width: 160,
-                        render: (v: string) =>
-                          v ? <Tag color={labelColor(labelBucketOf(v))}>{v}</Tag> : "—"
-                      },
-                      {
-                        title: "摘要",
-                        dataIndex: "summary",
-                        render: (v: string) => <SummaryCell text={v} />
-                      }
-                    ]}
+                    onChange={(pagination, filters) => {
+                      const next = {
+                        resultLabel: firstFilter(filters.resultLabel as (string | number)[] | null),
+                        stage: firstFilter(filters.stageSnapshot as (string | number)[] | null),
+                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null)
+                      };
+                      const page = pagination.current || 1;
+                      setAicallDetailFilters(next);
+                      setAicallDetailPage(
+                        JSON.stringify(next) === JSON.stringify(aicallDetailFilters) ? page : 1
+                      );
+                    }}
                   />
                 </Card>
               </Flex>

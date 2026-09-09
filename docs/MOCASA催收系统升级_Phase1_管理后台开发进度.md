@@ -12,16 +12,16 @@
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 看板两视图 | ✅ | 默认「今日执行」：五槽、分渠道触达、AI 波次、日切断言、风险；「复盘」：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。无经营·催收·策略三 Tab |
+| 看板两视图 | ✅ | 默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险；「复盘」：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。无经营·催收·策略三 Tab |
 | 口径 | ✅ | 禁止跨渠道合并送达率（已删 `queryByStage`）；BUSY/NO_ANSWER 不计 FAILED；分母 0 显示 `—`；接通时间空=「未回传」 |
 | API | ✅ | `GET /dashboard/today`、`GET /dashboard/daily-by-channel`；打开即查 + 手动全量刷新；无 WebSocket |
-| 钉钉 A1/A2/A3 | ✅ 代码 | 扫描器在 `collection.scheduler.enabled=true` 时每分钟跑（**Pilot 默认开，local 一键启动默认关**）。未配 webhook 只打日志。文案前缀 `【催收告警】`，不含手机号 |
+| 钉钉 A1/A2/A3 + A7–A9 | ✅ 代码 | 扫描器在 `collection.scheduler.enabled=true` 时每分钟跑（**Pilot 默认开，local 一键启动默认关**）。未配 webhook 只打日志。文案前缀 `【催收告警】`，不含手机号。A1>35%；A7 SMS / A8 PUSH / A9 EMAIL 各自 >15% 且 n≥20 |
 | `t_alert_dedup` | ✅ | DDL 已写入 `db/schema.sql` / `schema-admin.sql`；**2026-09-07 已在测试库 `ai_collection_db` 建表**（空表） |
 | Webhook 快照 | ✅ | `writeAiCallSession` 补 `stage_snapshot`/`dpd_snapshot`；ON DUPLICATE 不覆盖已有快照 |
 | 日常观测 | ✅ 约定 | 「今日执行」替代按日自动跑 Markdown；停写前提见设计 §5.1.7 |
 | 录音/转写代理 | ⬜ 后置 | 设计有，本批不做 |
-| 钉钉机器人（本机） | ✅ 通道 | 自定义机器人已建；webhook 已写入 Nacos `intelligent-collection-local.yml`（真值不入库）。关键词直发已通。**local 默认不装配扫描器**，本机看板测试不会往群里打 A1/A2/A3 |
-| 钉钉机器人（Pilot） | ⬜ **正式上线前必做** | 见下方「上线闸门」。未写入则 Pilot 扫描器只打日志，群里收不到 CRITICAL |
+| 钉钉机器人（本机） | ✅ 通道 | 自定义机器人已建；webhook 已写入 Nacos `intelligent-collection-local.yml`（真值不入库）。关键词直发已通。**local 默认不装配扫描器**，本机看板测试不会往群里打 A1–A3 / A7–A9 |
+| 钉钉机器人（Pilot） | ✅ 2026-09-09 | A1 阈值 **35%**；A7/A8/A9 渠道 FAILED **>15%** 已随 jar 生效。webhook 在容器内；公网 `/` 仍 403。未改 nginx、未传 dist |
 
 ### 上线闸门（Pilot 发版前，不可跳过）
 
@@ -29,8 +29,8 @@
 
 | # | 项 | 状态 | 做什么 |
 |---|---|---|---|
-| G1 | Pilot 钉钉 webhook | ⬜ | 写入 Nacos **`intelligent-collection-pilot.yml`**（`collection.alert.dingtalk.webhook`）或 Pilot 机 `/opt/app/pilot.env` 的 `COLLECTION_ALERT_DINGTALK_WEBHOOK`。**不要**写进 `intelligent-collection-local.yml` / `*-common.yml`。安全设置=自定义关键词 `催收告警`，不要加签。写完**重启 Pilot 容器**（告警配置无 `@RefreshScope`） |
-| G2 | Pilot 扫描器 | ⬜ 随 G1 | 确认 `SPRING_PROFILES_ACTIVE=pilot` 且 `collection.scheduler.enabled=true`（Pilot 默认已是）。自检：日志 `[alert]`；真告警群里出现 `【催收告警】 A1/A2/A3` |
+| G1 | Pilot 钉钉 webhook | ✅ | 2026-09-08 写入 `/opt/app/pilot.env`；发版后容器内变量已生效（不打印真值） |
+| G2 | Pilot 扫描器 | ✅ | 2026-09-09 发版：A1>**35%**；A7 SMS / A8 PUSH / A9 EMAIL 各自 >**15%**（正好等于不告）。profile=pilot、scheduler=true。公网 `/` 仍 403 |
 
 单测：`collection-admin` 及依赖模块 `mvn test` 通过（2026-09-07）。
 
@@ -148,3 +148,6 @@
 - 2026-09-08（续）：接通明细改真人接通（排除 SNR）；时长只算 `ended_at − answered_at`，缺一则 —；去掉 CONNECT_AND_STOP 告警条（属正常策略，跳过原因表仍可见）。
 - 2026-09-08（DPD）：接通明细不再用案件当前 dpd 回填（535728 09:18 接通后 10:26 还清，现值 −29 不是通话时 DPD）。Owner 抽样去掉 45 天 due_date 窗口（498789 类三期旧账单被裁掉）。
 - 2026-09-08（Owner 粘性补丁）：出队 DPD>30 176 + 结清 27 + DPD<−3 12，补新人 208+12，`status=1` 仍 605（不砍到 600，不中午补发）；`cal_dt` 未改。Strategy Config Stage Plan 展开为每天各渠道（仍 5 行 S0–S4，S4 桶内写明 D+61~90 降频）。
+- 2026-09-08（钉钉）：A1 FAILED 阈值 15%→30%→**35%**。Pilot 已换 jar；未改 nginx、未传 dist。公网 `/` 仍 403。
+- 2026-09-09（渠道 FAILED）：扫描器加 A7 SMS / A8 PUSH / A9 EMAIL，FAILED 率 **>15%** 且 attempted ≥20（SKIPPED 不计分母；PUSH 分 0800/1200）。A1 仍 35%。Pilot 已换 jar；未改 nginx、未传 dist。公网 `/` 仍 403。
+- 2026-09-09（看板）：「五槽收口」改为「今日触达时间线」（不固定条数）；列改为时段/结果；未到点显示「尚未到时间」；AI 只看实拨、下钻接通标签；接通明细标签/Stage/波次可筛选。

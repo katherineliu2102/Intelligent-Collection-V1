@@ -169,10 +169,23 @@ export const api = {
   dashboardMatrix(days = 7) {
     return request(`/dashboard/matrix?days=${days}`);
   },
-  dashboardAicallDetail(page = 1, pageSize = 25, days = 7, includeSynthetic = false) {
-    return request(
-      `/dashboard/aicall/detail?page=${page}&pageSize=${pageSize}&days=${days}&includeSynthetic=${includeSynthetic}`
-    );
+  dashboardAicallDetail(
+    page = 1,
+    pageSize = 25,
+    days = 7,
+    includeSynthetic = false,
+    filters?: { resultLabel?: string; stage?: string; waveKey?: string }
+  ) {
+    const q = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+      days: String(days),
+      includeSynthetic: String(includeSynthetic)
+    });
+    if (filters?.resultLabel != null) q.set("resultLabel", filters.resultLabel);
+    if (filters?.stage != null) q.set("stage", filters.stage);
+    if (filters?.waveKey != null) q.set("waveKey", filters.waveKey);
+    return request(`/dashboard/aicall/detail?${q.toString()}`);
   },
   dashboardRisk() {
     return request("/dashboard/risk");

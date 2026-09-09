@@ -141,6 +141,20 @@ class DashboardQueryServiceTest {
     }
 
     @Test
+    void aicallDetailFilterAddsLabelAndWavePredicates() {
+        service.aicallDetail(1, 25, 7, false, "vague_commitment", "S2", "20260909-0915");
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(Object[].class), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("s.result_label=?")
+                                        && s.contains("COALESCE(s.stage_snapshot, p.stage)=?")
+                                        && s.contains("s.batch_id LIKE ?"));
+    }
+
+    @Test
     void aicallWavesUseSameDateWindowAsFunnel() {
         service.aicallRealtime(7, false);
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);

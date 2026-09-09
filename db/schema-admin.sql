@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS t_ops_exception (
 
 CREATE TABLE IF NOT EXISTS t_alert_dedup (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    alert_id            VARCHAR(16)     NOT NULL COMMENT 'A1/A2/A3',
+    alert_id            VARCHAR(16)     NOT NULL COMMENT 'A1/A2/A3/A7/A8/A9',
     object_key          VARCHAR(64)     NOT NULL COMMENT '槽位 HHMM 或 hanging',
     calendar_day        DATE            NOT NULL COMMENT 'PHT 日历日',
     status              VARCHAR(16)     NOT NULL DEFAULT 'SENT' COMMENT 'SENT/SUPPRESSED/RECOVERED',

@@ -17,9 +17,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * AI Call CRITICAL A1–A3。仅 {@code collection.scheduler.enabled=true} 时扫描（§5.5.4）。
+ * 钉钉 CRITICAL：AI Call A1–A3 + 消息渠道 FAILED 率 A7–A9。仅 {@code
+ * collection.scheduler.enabled=true} 时扫描（§5.5.4）。
  *
- * <p>文案含波次、分子分母、SIP Top、悬挂 id；不含明文手机号。n&lt;20 不告。
+ * <p>文案含波次/渠道、分子分母、SIP Top、悬挂 id；不含明文手机号。n&lt;20 不告。
  */
 @Component
 @ConditionalOnProperty(prefix = "collection.scheduler", name = "enabled", havingValue = "true")
@@ -27,7 +28,12 @@ public class AiCallAlertScanner {
 
     private static final Logger log = LoggerFactory.getLogger(AiCallAlertScanner.class);
     private static final int MIN_N = 20;
-    static final double FAILED_RATE_THRESHOLD = 0.15;
+    static final double FAILED_RATE_THRESHOLD = 0.35;
+    static final double CHANNEL_FAILED_RATE_THRESHOLD = 0.15;
+    /** 与 {@code DashboardQueryService} 看板口径保持一致。 */
+    private static final String FAILED_RESULTS = "('FAILED','REJECTED','BOUNCED')";
+    private static final String ATTEMPTED_RESULTS =
+            "('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED')";
 
     private final JdbcTemplate jdbc;
     private final AlertDedupRepository dedup;
@@ -54,6 +60,7 @@ public class AiCallAlertScanner {
             scanA1(todayStart, day);
             scanA2(now, todayStart, day);
             scanA3(now, day);
+            scanChannelFailed(todayStart, day);
         } catch (RuntimeException e) {
             log.error("[alert] scan failed", e);
         }
@@ -119,7 +126,7 @@ public class AiCallAlertScanner {
                             + agg.slot
                             + " sipTop="
                             + agg.sipTop()
-                            + " threshold=15% n>="
+                            + " threshold=35% n>="
                             + MIN_N);
         }
     }
@@ -235,6 +242,65 @@ public class AiCallAlertScanner {
                         + hanging.size()
                         + " stepIds="
                         + shown);
+    }
+
+    /**
+     * A7 SMS / A8 PUSH / A9 EMAIL：今日 timeline FAILED 率 &gt;15% 且 attempted ≥20。口径与看板一致：FAILED =
+     * FAILED/REJECTED/BOUNCED，分母 = ATTEMPTED（不含 SKIPPED）。分渠道、禁止合并。槽位对齐今日执行：SMS 全日
+     * 0800；PUSH 0800（HOUR&lt;12）与 1200（HOUR≥12）；EMAIL 全日 1400。
+     */
+    void scanChannelFailed(LocalDateTime todayStart, LocalDate day) {
+        scanOneChannel("A7", "SMS", "0800", todayStart, day, null);
+        scanOneChannel("A8", "PUSH", "0800", todayStart, day, "HOUR(created_at) < 12");
+        scanOneChannel("A8", "PUSH", "1200", todayStart, day, "HOUR(created_at) >= 12");
+        scanOneChannel("A9", "EMAIL", "1400", todayStart, day, null);
+    }
+
+    void scanOneChannel(
+            String alertId,
+            String channel,
+            String slot,
+            LocalDateTime todayStart,
+            LocalDate day,
+            String hourPred) {
+        String sql =
+                "SELECT COUNT(*) AS attempted, SUM(result IN "
+                        + FAILED_RESULTS
+                        + ") AS failed FROM t_contact_timeline "
+                        + "WHERE direction='OUT' AND channel=? AND created_at >= ? "
+                        + "AND result IN "
+                        + ATTEMPTED_RESULTS;
+        if (hourPred != null) {
+            sql += " AND " + hourPred;
+        }
+        Map<String, Object> row = jdbc.queryForMap(sql, channel, todayStart);
+        long attempted = toLong(row.get("attempted"));
+        long failed = toLong(row.get("failed"));
+        double rate = attempted == 0 ? 0 : (double) failed / attempted;
+        boolean fire = attempted >= MIN_N && rate > CHANNEL_FAILED_RATE_THRESHOLD;
+        if (!fire) {
+            if (attempted >= MIN_N) {
+                dedup.markRecovered(alertId, slot, day);
+            }
+            return;
+        }
+        dispatch(
+                alertId,
+                slot,
+                day,
+                alertId
+                        + " "
+                        + channel
+                        + " FAILED "
+                        + failed
+                        + "/"
+                        + attempted
+                        + " ("
+                        + pct(rate)
+                        + ") slot="
+                        + slot
+                        + " threshold=15% n>="
+                        + MIN_N);
     }
 
     private void dispatch(String alertId, String objectKey, LocalDate day, String text) {
