@@ -2,7 +2,8 @@
 
 > 环境：Pilot 机 `bdp01`；对外域名 `https://collection-admin.mocasa.com`
 > 容器 `collection-admin`，镜像 `intelligent-collection-admin:pilot`
-> **登录地址与账号见 `docs/ops/生产访问凭据.local.md`（已 gitignore，不入库）**，下文一律用 `$PILOT_HOST` 代指。
+> **SSH 主机（不是密码）**：`$PILOT_HOST=34.87.136.20`，用户 `ubuntu`（本机免密即可 `ssh ubuntu@34.87.136.20`）。乱推别的 IP 会连错机器。
+> **管理后台网页账号**见本机 `docs/ops/管理后台测试账号_*.local.md`（gitignore，含口令，不入库）。仓库里**没有** `生产访问凭据.local.md`，不要再找那份文件。
 
 本手册只讲「怎么把新包发上去」。容器的启动参数、必填环境变量与就绪校验以 [`deploy/pilot-run.sh`](../../deploy/pilot-run.sh) 为准，本文不复述，避免两处口径漂移。
 
@@ -21,7 +22,7 @@
 - `deploy/Dockerfile` 的 `COPY` 路径是**仓库根相对**的，构建上下文必须同时具备 `collection-admin/target/collection-admin.jar` 与 `deploy/certs/`。
 - **CI 与本机必须是 JDK 8**。GitHub Actions 跑 Temurin 8 + Spotless `google-java-format 1.7`（AOSP，相对 `origin/main` 增量）。本机用 11/17/21 编过不代表 CI 能过：`List.of` / `var` 会 `cannot find symbol`；在 Java 21 上跑 `spotless:apply` 会因 GJF 1.7 的 `removeUnusedImports` 直接失败。
 - **§1 的 JDK/Maven 路径是这台 Windows 工作站的约定**（`C:\Users\voghion\...`）。别人照抄会失败；换成自己机器上的 **JDK 8 + Maven 3.9.x** 即可，版本要求不变。
-- **`$PILOT_HOST`、登录账号、密码不写进本手册。** 真值只在 gitignore 的 `docs/ops/生产访问凭据.local.md`。
+- **SSH 用公网 IP，网页口令不写进本手册。** `$PILOT_HOST=34.87.136.20`（见文首）。PowerShell：`$env:PILOT_HOST="34.87.136.20"` 后再 `scp` / `ssh ubuntu@$env:PILOT_HOST`。网页登录口令只放 `docs/ops/*.local.md`。
 - **触达是否已切生产，以容器 `printenv` + `[PilotReadiness]` 为准，不要只看 Git 里的 yml。** `pilot-run.sh` 读的是机上 `/opt/app/pilot.env`：新 jar 里即使 `sms-test-mode: false`，env 残留 `true` 仍走 `/v1/sms/testSend`。
 - **触达开关：GitHub 入库缺省必须等于 Pilot 正在跑的口径。** 禁止只改 `/opt/app/pilot.env`、不改仓库。2026-09-09 事故：当时仓库仍写 `sms-test-mode=true`、Pilot 只靠 env 切生产，版本对不上；`true` 走 `/v1/sms/testSend`，通知中心测试账号会路由到 **QHSms**（正式 `mocasa` 账号没有这条供应商），08:00 一次失败 157 条。yml 缺省现已改为 `false`，发版仍须确认 **env 不是 `true`**（环境变量优先于 yml）。
 

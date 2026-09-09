@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 Pilot 机（bdp01；地址见 docs/ops/生产访问凭据.local.md，不入库）上拉起应用，消费 Pub/Sub 积压。
+# 在 Pilot 机 bdp01（SSH：ubuntu@34.87.136.20）上拉起应用，消费 Pub/Sub 积压。
 #
 # 前置：本机需有 deploy/pilot.env（由 .env.pilot 传上来，不入仓）与 GCP 服务账号 json。
 # 用法：deploy/pilot-run.sh [镜像 tar 路径]

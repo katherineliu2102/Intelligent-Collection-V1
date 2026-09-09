@@ -421,7 +421,7 @@ SHOW TABLES LIKE 't_alert_dedup';
 - 登录：`admin` / `local-dev`（角色 `SYSTEM_ADMIN`，仅 local profile；与 `.env.example` 一致）
 - 前端：`http://127.0.0.1:5173`
 - 后端：`http://localhost:8888`
-- Pilot（上线方案落地后）：`https://collection-admin.mocasa.com`，仅白名单出口（办公室 / VPN / 已登记补充 IP，清单见上线方案）；账号见 `docs/ops/生产访问凭据.local.md`，不要把生产口令写进本手册
+- Pilot（上线方案落地后）：`https://collection-admin.mocasa.com`，仅白名单出口（办公室 / VPN / 已登记补充 IP，清单见上线方案）；网页账号见本机 `docs/ops/管理后台测试账号_*.local.md`，不要把口令写进本手册。SSH 发版主机是 `ubuntu@34.87.136.20`（`bdp01`），见 [发版手册](./channel/MOCASA催收系统升级_Phase1_发版手册.md)
 - L4b 统一触达地址：手机 `+639451374358` / 邮箱 `wzynju@126.com` / Push token `1a0018970bf0c19de04`
 - L4b 主流程案件：`99000000`（S0）～ `99000005`（S4）
 
