@@ -5,8 +5,8 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * 允许携带 Cookie 的管理面来源。浏览器即使同源也会带 {@code Origin}，Spring CorsFilter
- * 对不在名单里的 Origin 直接 403 Invalid CORS request；生产域名漏配则登录页永远登不进去。
+ * 允许携带 Cookie 的管理面来源。浏览器即使同源也会带 {@code Origin}，Spring CorsFilter 对不在名单里的 Origin 直接 403 Invalid CORS
+ * request；生产域名漏配则登录页永远登不进去。
  */
 @Configuration
 public class AdminCorsConfig implements WebMvcConfigurer {

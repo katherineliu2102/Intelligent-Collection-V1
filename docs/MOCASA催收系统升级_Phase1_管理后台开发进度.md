@@ -1,6 +1,6 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台开发进度
 
-> **日期**: 2026-09-09（原文 2026-09-01，按日追加）
+> **日期**: 2026-09-10（原文 2026-09-01，按日追加）
 > **设计基线**: 管理后台设计文档 **v1.7**
 > **跟踪方式**: 本文件是管理后台开发进度的跟踪入口（testing 目录无副本）。完成任务后更新状态列并追加进度日志。
 
@@ -13,9 +13,9 @@
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 看板两视图 | ✅ | 默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险；「复盘」：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。无经营·催收·策略三 Tab |
-| 口径 | ✅ | 禁止跨渠道合并送达率（已删 `queryByStage`）；BUSY/NO_ANSWER 不计 FAILED；分母 0 显示 `—`；接通时间空=「未回传」 |
+| 口径 | ✅ | 禁止跨渠道合并送达率；AI FAILED = `network`+`our_system`（callee 含 DECLINE/空号不计）；真人=`party=human`；disposition 分布仅 `right_party=yes`；分母 0 显示 `—` |
 | API | ✅ | `GET /dashboard/today`、`GET /dashboard/daily-by-channel`；打开即查 + 手动全量刷新；无 WebSocket |
-| 钉钉 A1/A2/A3 + A7–A9 | ✅ 代码 | 扫描器在 `collection.scheduler.enabled=true` 时每分钟跑（**Pilot 默认开，local 一键启动默认关**）。未配 webhook 只打日志。文案前缀 `【催收告警】`，不含手机号。A1>35%；A7 SMS / A8 PUSH / A9 EMAIL 各自 >15% 且 n≥20 |
+| 钉钉 A1/A2/A3 + A7–A9 | ✅ 代码 | 扫描器在 `collection.scheduler.enabled=true` 时每分钟跑（**Pilot 默认开，local 一键启动默认关**）。未配 webhook 只打日志。文案前缀 `【催收告警】`，不含手机号。A1>35%，FAILED 与看板同为 network+our_system；A7 SMS / A8 PUSH / A9 EMAIL 各自 >15% 且 n≥20 |
 | `t_alert_dedup` | ✅ | DDL 已写入 `db/schema.sql` / `schema-admin.sql`；**2026-09-07 已在测试库 `ai_collection_db` 建表**（空表） |
 | Webhook 快照 | ✅ | `writeAiCallSession` 补 `stage_snapshot`/`dpd_snapshot`；ON DUPLICATE 不覆盖已有快照 |
 | 日常观测 | ✅ 约定 | 「今日执行」替代按日自动跑 Markdown；停写前提见设计 §5.1.7 |
@@ -181,4 +181,4 @@
 - 2026-09-09（渠道 FAILED）：扫描器加 A7 SMS / A8 PUSH / A9 EMAIL，FAILED 率 **>15%** 且 attempted ≥20（SKIPPED 不计分母；PUSH 分 0800/1200）。A1 仍 35%。Pilot 已换 jar；未改 nginx、未传 dist。公网 `/` 仍 403。
 - 2026-09-09（看板）：「五槽收口」改为「今日触达时间线」（不固定条数）；列改为时段/结果；未到点显示「尚未到时间」；AI 只看实拨、下钻接通标签；接通明细标签/Stage/波次可筛选。
 - 2026-09-09（前端上线评审）：新增 G3–G9。首次开放要求 `/api`、登录拦截闭合、每人独立账号（先统一 SYSTEM_ADMIN）、release + current 原子发布、nginx 实机验收、Webhook 对照与三层回滚；稳定后做 VIEWER / OPERATOR / SYSTEM_ADMIN 三角色 RBAC，高危操作仅 SYSTEM_ADMIN。催收系统已有钉钉告警，本轮不建管理后台专属钉钉告警。
-- 2026-09-09（前端上线开发）：方案 B。完成 G3/G4 本地代码：Vite dev/preview/production 统一 `/api`；补 `/plans/**`、`/catalog/**` 登录拦截及纯单元测试；Pilot 配置与 `pilot-run.sh` 支持三个 indexed 账号并兼容旧单账号。生成三个独立 SYSTEM_ADMIN 测试账号（明文仅 gitignore 本地文件）。Nginx 目标配置及四条 ACL 已入仓。13 条定向认证测试、全 reactor 测试、前端 production build、Git Bash `bash -n deploy/pilot-run.sh` 均通过；本机无 Nginx/Docker，G7 仍待 Pilot 实机 `nginx -t`。维护窗口批准 15:00–00:00，30 分钟；现网未动。
+- 2026-09-10（看板六层）：时间线/波次改为线路接通/真人/有效沟通；FAILED 与 A1 改为 `network`+`our_system`；callee 其他单独展示；接通明细补 party/有效沟通/right_party；disposition 分布仅 `right_party=yes`。前端仍须另传 dist，不进 jar。

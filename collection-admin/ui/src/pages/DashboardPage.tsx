@@ -52,12 +52,16 @@ type SlotRow = {
   planned?: number;
   completed?: number;
   ringing?: number;
+  lineAnswered?: number;
   answered?: number;
   snr?: number;
+  mailbox?: number;
   aiConnected?: number;
+  human?: number;
   effective?: number;
   busy?: number;
   noAnswer?: number;
+  calleeOther?: number;
   answerRate?: number | null;
   failedRate?: number | null;
   missing?: boolean;
@@ -71,6 +75,11 @@ type AnsweredRow = {
   answeredAt?: string | null;
   receivedAt?: string | null;
   durationSec?: number | null;
+  party?: string | null;
+  effectiveConversation?: boolean | number | null;
+  rightParty?: string | null;
+  connectKind?: string | null;
+  lineReason?: string | null;
   resultLabel?: string;
   summary?: string;
   stageSnapshot?: string | null;
@@ -154,20 +163,29 @@ type AiCallData = {
     ringing?: number;
     answered: number;
     liveAnswered?: number;
+    human?: number;
     aiConnected: number;
+    effective?: number;
+    rpc?: number;
+    ptp?: number;
     invalid: number;
   };
   labelDistribution: { label: string; count: number; bucket: string }[];
   sipDistribution: { sipCode: string; count: number }[];
-  failureStructure?: { reason: string; count: number }[];
+  failureStructure?: { failureClass?: string; reason: string; label?: string; count: number }[];
   waves?: {
     waveKey: string;
     slot?: string;
     completed: number;
+    lineAnswered?: number;
+    human?: number;
+    effective?: number;
+    mailbox?: number;
     answered: number;
     snr: number;
     busy: number;
     noAnswer: number;
+    calleeOther?: number;
     failed: number;
     answerRate: number | null;
     failedRate: number | null;
@@ -256,6 +274,26 @@ function dash(v?: string | number | null) {
   return String(v);
 }
 
+function yn(v?: boolean | number | string | null) {
+  if (v == null || v === "") return "—";
+  if (v === true || v === 1 || v === "1") return "是";
+  if (v === false || v === 0 || v === "0") return "否";
+  return String(v);
+}
+
+function connectKindOf(r: AnsweredRow): string {
+  if (r.connectKind) return r.connectKind;
+  if (r.party === "human") return "human";
+  if (r.party === "voicemail" || r.party === "call_screening") return "mailbox";
+  return "unrecognized";
+}
+
+function connectKindText(kind?: string | null) {
+  if (kind === "human") return "真人";
+  if (kind === "mailbox") return "信箱/筛选";
+  return "未识别对方";
+}
+
 function firstFilter(v?: (string | number | boolean)[] | null) {
   if (!v || v.length === 0) return undefined;
   return String(v[0]);
@@ -286,11 +324,12 @@ function facetOptions(values: string[] | undefined, format?: (v: string) => stri
 
 function answeredColumns(opts: {
   clientRows?: AnsweredRow[];
-  facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+  facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
   filteredValue?: {
     resultLabel?: string[] | null;
     stageSnapshot?: string[] | null;
     waveKey?: string[] | null;
+    connectKind?: string[] | null;
   };
 }): ColumnsType<AnsweredRow> {
   const client = !!opts.clientRows;
@@ -303,6 +342,9 @@ function answeredColumns(opts: {
   const waveFilters = client
     ? uniqueFilterOptions(opts.clientRows || [], (r) => r.waveKey, (v) => (v ? formatWave(v) : "未分波次"))
     : facetOptions(opts.facets?.waves, (v) => (v ? formatWave(v) : "未分波次"));
+  const kindFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => connectKindOf(r), connectKindText)
+    : facetOptions(opts.facets?.connectKinds || ["human", "mailbox", "unrecognized"], connectKindText);
   return [
     { title: "案件", dataIndex: "caseId", width: 90 },
     {
@@ -348,7 +390,37 @@ function answeredColumns(opts: {
       render: (v: number | null) => fmtDuration(v)
     },
     {
-      title: "标签",
+      title: "接通类型",
+      dataIndex: "connectKind",
+      width: 120,
+      render: (_: unknown, r: AnsweredRow) => connectKindText(connectKindOf(r)),
+      filters: kindFilters.length ? kindFilters : undefined,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.connectKind,
+      onFilter: client
+        ? (value, record) => connectKindOf(record) === String(value)
+        : undefined
+    },
+    {
+      title: "party",
+      dataIndex: "party",
+      width: 90,
+      render: (v: string) => dash(v)
+    },
+    {
+      title: "有效沟通",
+      dataIndex: "effectiveConversation",
+      width: 90,
+      render: (v: boolean | number | null) => yn(v)
+    },
+    {
+      title: "right_party",
+      dataIndex: "rightParty",
+      width: 100,
+      render: (v: string) => dash(v)
+    },
+    {
+      title: "disposition",
       dataIndex: "resultLabel",
       width: 170,
       render: (v: string) => (v ? <Tag color={labelColor(labelBucketOf(v))}>{v}</Tag> : "—"),
@@ -373,6 +445,20 @@ function SummaryCell({ text }: { text?: string | null }) {
     <Typography.Paragraph ellipsis={{ rows: 2, tooltip: text }} style={{ marginBottom: 0 }}>
       {text}
     </Typography.Paragraph>
+  );
+}
+
+function AiTodayConnectSummary({ slots }: { slots: SlotRow[] }) {
+  const ai = slots.filter((s) => s.channel === "AI_CALL" && !s.pending);
+  if (ai.length === 0) return null;
+  const line = ai.reduce((n, s) => n + Number(s.lineAnswered ?? 0), 0);
+  const human = ai.reduce((n, s) => n + Number(s.human ?? s.aiConnected ?? 0), 0);
+  const mailbox = ai.reduce((n, s) => n + Number(s.mailbox ?? s.snr ?? 0), 0);
+  const unrecognized = Math.max(0, line - human - mailbox);
+  return (
+    <Typography.Text type="secondary">
+      今日线路接通 {line} · 真人 {human} · 信箱/筛选 {mailbox} · 未识别对方 {unrecognized}
+    </Typography.Text>
   );
 }
 
@@ -415,7 +501,7 @@ function BarList({
         <Flex key={i} align="center" gap={8}>
           <div
             style={{
-              width: 168,
+              width: 220,
               textAlign: "right",
               flexShrink: 0,
               fontSize: 12,
@@ -623,13 +709,14 @@ export function DashboardPage() {
   const [aicallDetail, setAicallDetail] = useState<{
     total: number;
     items: AiCallDetailItem[];
-    facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+    facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
   } | null>(null);
   const [aicallDetailPage, setAicallDetailPage] = useState(1);
   const [aicallDetailFilters, setAicallDetailFilters] = useState<{
     resultLabel?: string;
     stage?: string;
     waveKey?: string;
+    connectKind?: string;
   }>({});
   const [risk, setRisk] = useState<RiskData | null>(null);
 
@@ -667,7 +754,7 @@ export function DashboardPage() {
           payload as {
             total: number;
             items: AiCallDetailItem[];
-            facets?: { labels?: string[]; stages?: string[]; waves?: string[] };
+            facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
           }
         );
       }
@@ -726,7 +813,7 @@ export function DashboardPage() {
                     今日触达时间线
                   </Typography.Title>
                   <Typography.Text type="secondary">
-                    按计划时刻列出今日各渠道结果；未到点显示「尚未到时间」。AI Call 只看实拨，下钻为接通标签。
+                    按计划时刻列出今日各渠道结果；未到点显示「尚未到时间」。AI Call 看六层：线路接通 / 真人 / 有效沟通；FAILED 仅线路与我方。
                   </Typography.Text>
                 </div>
                 <Table
@@ -750,11 +837,16 @@ export function DashboardPage() {
                           return (
                             <Flex vertical gap={2}>
                               <span>
-                                实拨 {dash(r.completed)} · ANSWERED {dash(r.answered)} · BUSY {dash(r.busy)} · FAILED{" "}
+                                实拨 {dash(r.completed)} · 线路接通 {dash(r.lineAnswered)} · 真人{" "}
+                                {dash(r.human ?? r.aiConnected)} · 有效沟通 {dash(r.effective)}
+                              </span>
+                              <span>
+                                忙线(BUSY) {dash(r.busy)} · 未接(NO_ANSWER) {dash(r.noAnswer)} · 对方侧其他{" "}
+                                {dash(r.calleeOther)} · 失败{" "}
                                 <Typography.Text type={failHot ? "danger" : undefined}>
                                   {dash(r.failed)} ({pctRate(r.failedRate)})
                                 </Typography.Text>{" "}
-                                · NO_ANSWER {dash(r.noAnswer)} · SNR {dash(r.snr)}
+                                · 信箱/筛选 {dash(r.mailbox ?? r.snr)}
                               </span>
                               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                                 wave {dash(r.waveKey)} · batch {dash(r.batchId)}
@@ -814,7 +906,7 @@ export function DashboardPage() {
                     今日触达执行
                   </Typography.Title>
                   <Typography.Text type="secondary">
-                    每渠道独立；禁止跨渠道合并送达率。AI Call 口径见上表与接通明细。
+                    每渠道独立；禁止跨渠道合并送达率。AI Call 口径见上表与线路接通明细。
                   </Typography.Text>
                 </div>
                 <Row gutter={[16, 16]}>
@@ -854,17 +946,18 @@ export function DashboardPage() {
               <Flex vertical gap={12}>
                 <div>
                   <Typography.Title level={4} style={{ margin: 0 }}>
-                    AI Call 今日接通
+                    AI Call 今日线路接通
                   </Typography.Title>
                   <Typography.Text type="secondary">
-                    标签/摘要来自供应商 ai_result，未回传则为空。
+                    默认含信箱与未识别对方；用「接通类型」筛选真人。disposition 只在 right_party=yes 时有值。
                   </Typography.Text>
+                  <AiTodayConnectSummary slots={today?.slots || []} />
                 </div>
                 <Table
                   rowKey="sessionId"
                   size="small"
                   pagination={false}
-                  locale={{ emptyText: "今日无接通" }}
+                  locale={{ emptyText: "今日无线路接通" }}
                   dataSource={today?.answered || []}
                   columns={answeredColumns({ clientRows: today?.answered || [] })}
                 />
@@ -1181,20 +1274,78 @@ export function DashboardPage() {
                     <Statistic title="拨出" value={Number(aicall?.funnel?.dispatched ?? 0)} />
                   </Col>
                   <Col xs={12} md={4}>
-                    <Statistic title="接通" value={Number(aicall?.funnel?.liveAnswered ?? 0)} />
+                    <Statistic title="线路接通" value={Number(aicall?.funnel?.answered ?? 0)} />
                   </Col>
                   <Col xs={12} md={4}>
-                    <Statistic title="真人接续" value={Number(aicall?.funnel?.aiConnected ?? 0)} />
+                    <Statistic
+                      title="真人接通"
+                      value={Number(aicall?.funnel?.human ?? aicall?.funnel?.aiConnected ?? 0)}
+                    />
                   </Col>
                   <Col xs={12} md={4}>
-                    <Statistic title="接通但无效" value={Number(aicall?.funnel?.invalid ?? 0)} />
+                    <Statistic title="有效沟通" value={Number(aicall?.funnel?.effective ?? 0)} />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic title="RPC" value={Number(aicall?.funnel?.rpc ?? 0)} />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic title="PTP" value={Number(aicall?.funnel?.ptp ?? 0)} />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic title="信箱/筛选" value={Number(aicall?.funnel?.invalid ?? 0)} />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic
+                      title="线路接通率"
+                      value={
+                        aicall?.funnel?.dispatched
+                          ? pctRate((aicall?.funnel?.answered ?? 0) / aicall.funnel.dispatched)
+                          : "—"
+                      }
+                    />
                   </Col>
                   <Col xs={12} md={4}>
                     <Statistic
                       title="真人接通率"
                       value={
                         aicall?.funnel?.dispatched
-                          ? pctRate((aicall?.funnel?.aiConnected ?? 0) / aicall.funnel.dispatched)
+                          ? pctRate(
+                              (aicall?.funnel?.human ?? aicall?.funnel?.aiConnected ?? 0) /
+                                aicall.funnel.dispatched
+                            )
+                          : "—"
+                      }
+                    />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic
+                      title="有效沟通率"
+                      value={
+                        (aicall?.funnel?.human ?? aicall?.funnel?.aiConnected)
+                          ? pctRate(
+                              (aicall?.funnel?.effective ?? 0) /
+                                (aicall?.funnel?.human ?? aicall?.funnel?.aiConnected ?? 1)
+                            )
+                          : "—"
+                      }
+                    />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic
+                      title="RPC率（有效沟通分母）"
+                      value={
+                        aicall?.funnel?.effective
+                          ? pctRate((aicall?.funnel?.rpc ?? 0) / aicall.funnel.effective)
+                          : "—"
+                      }
+                    />
+                  </Col>
+                  <Col xs={12} md={4}>
+                    <Statistic
+                      title="PTP率（RPC分母）"
+                      value={
+                        aicall?.funnel?.rpc
+                          ? pctRate((aicall?.funnel?.ptp ?? 0) / aicall.funnel.rpc)
                           : "—"
                       }
                     />
@@ -1206,6 +1357,7 @@ export function DashboardPage() {
                     size="small"
                     pagination={false}
                     dataSource={aicall?.waves || []}
+                    scroll={{ x: 1100 }}
                     columns={[
                       {
                         title: "波次",
@@ -1214,13 +1366,24 @@ export function DashboardPage() {
                         render: (v: string) => formatWave(v)
                       },
                       { title: "实拨", dataIndex: "completed", align: "right" },
-                      { title: "ANSWERED", dataIndex: "answered", align: "right" },
-                      { title: "BUSY", dataIndex: "busy", align: "right" },
-                      { title: "FAILED", dataIndex: "failed", align: "right" },
-                      { title: "NO_ANSWER", dataIndex: "noAnswer", align: "right" },
-                      { title: "SNR", dataIndex: "snr", align: "right" },
+                      { title: "线路接通", dataIndex: "lineAnswered", align: "right" },
                       {
-                        title: "FAILED 率",
+                        title: "真人",
+                        align: "right",
+                        render: (_: unknown, r) => dash(r.human ?? r.answered)
+                      },
+                      { title: "有效沟通", dataIndex: "effective", align: "right" },
+                      { title: "忙线", dataIndex: "busy", align: "right" },
+                      { title: "未接", dataIndex: "noAnswer", align: "right" },
+                      { title: "对方侧其他", dataIndex: "calleeOther", align: "right" },
+                      { title: "失败", dataIndex: "failed", align: "right" },
+                      {
+                        title: "信箱/筛选",
+                        align: "right",
+                        render: (_: unknown, r) => dash(r.mailbox ?? r.snr)
+                      },
+                      {
+                        title: "失败率",
                         dataIndex: "failedRate",
                         align: "right",
                         render: (v: number | null) => pctRate(v)
@@ -1230,10 +1393,10 @@ export function DashboardPage() {
                 </Card>
                 <Row gutter={[16, 16]}>
                   <Col xs={24}>
-                    <Card size="small" title="接通后结果标签">
+                    <Card size="small" title="RPC 后 disposition（right_party=yes）">
                       <Flex wrap="wrap" gap={8}>
                         {(aicall?.labelDistribution || []).length === 0 ? (
-                          <Typography.Text type="secondary">暂无接通样本</Typography.Text>
+                          <Typography.Text type="secondary">暂无本人收口样本</Typography.Text>
                         ) : (
                           (aicall?.labelDistribution || []).map((l) => (
                             <Tag key={l.label} color={labelColor(l.bucket)} style={{ margin: 0 }}>
@@ -1245,23 +1408,24 @@ export function DashboardPage() {
                     </Card>
                   </Col>
                   <Col xs={24}>
-                    <Card size="small" title="FAILED 结构（不含 BUSY/NO_ANSWER）">
+                    <Card size="small" title="未接通结构（先 failure_class，再细码）">
                       {(aicall?.failureStructure || []).length === 0 ? (
                         <Typography.Text type="secondary">无</Typography.Text>
                       ) : (
                         <BarList
                           data={aicall?.failureStructure || []}
-                          labelKey="reason"
+                          labelKey="label"
                           valueKey="count"
                         />
                       )}
                     </Card>
                   </Col>
                 </Row>
-                <Card size="small" title="接通明细">
+                <Card size="small" title="线路接通明细">
                   <Table
                     rowKey="sessionId"
                     size="small"
+                    locale={{ emptyText: "该窗口无线路接通" }}
                     dataSource={aicallDetail?.items || []}
                     columns={answeredColumns({
                       facets: aicallDetail?.facets,
@@ -1272,7 +1436,10 @@ export function DashboardPage() {
                             : null,
                         stageSnapshot:
                           aicallDetailFilters.stage != null ? [aicallDetailFilters.stage] : null,
-                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null
+                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null,
+                        connectKind: aicallDetailFilters.connectKind
+                          ? [aicallDetailFilters.connectKind]
+                          : null
                       }
                     })}
                     pagination={{
@@ -1285,7 +1452,8 @@ export function DashboardPage() {
                       const next = {
                         resultLabel: firstFilter(filters.resultLabel as (string | number)[] | null),
                         stage: firstFilter(filters.stageSnapshot as (string | number)[] | null),
-                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null)
+                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null),
+                        connectKind: firstFilter(filters.connectKind as (string | number)[] | null)
                       };
                       const page = pagination.current || 1;
                       setAicallDetailFilters(next);
@@ -1355,13 +1523,14 @@ function labelBucketOf(label?: string): string {
   if (!label) return "未分类";
   if (
     label === "promise_to_pay" ||
-    label === "follow_up_required" ||
-    label === "vague_commitment" ||
-    label === "refused_to_pay" ||
-    label === "refused_to_discuss"
+    label === "payment_arrangement" ||
+    label === "refused" ||
+    label === "hardship" ||
+    label === "callback" ||
+    label === "unresolved"
   ) {
     return "业务结果";
   }
-  if (label === "dispute") return "合规风险";
+  if (label === "disputed") return "合规风险";
   return "未分类";
 }

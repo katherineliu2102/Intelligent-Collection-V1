@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
 > **版本**: v1.7
-> **日期**: 2026-09-09
+> **日期**: 2026-09-10
 > **状态**: ✅ 已确定（设计基线）；v1.7 补管理后台首次上线账号策略、三角色 RBAC 目标态、高危操作边界与原子发布要求。未开工项见正文 ⏳ / ❓。
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
 > **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
@@ -266,7 +266,7 @@ flowchart LR
 | # | 原则 | 说明 |
 |---|------|------|
 | P1 | **不聚合异质渠道** | SMS（单向通知）/ PUSH（推送）/ EMAIL（邮件）/ AI_CALL（双向对话）触达语义完全不同，**禁止合并统计**。任何「按 Stage / 按时间」的触达聚合都必须先按渠道拆分，或以「渠道 × 维度」矩阵呈现。违反后果：指标失真、无法定位问题渠道。 |
-| P2 | **AI Call 独立口径** | AI_CALL 有独立的电信层漏斗（拨出→拨通→接通→AI 接续）与业务结果（`result_label`），与 SMS 的 deliveryRate 口径**分区隔离**，禁止用 deliveryRate 看 AI。 |
+| P2 | **AI Call 独立口径** | AI_CALL 有独立漏斗（线路接通 / 真人接通 / 有效沟通 / RPC / PTP）与 `disposition` 七值，与 SMS 的 deliveryRate 口径**分区隔离**，禁止用 deliveryRate 看 AI。 |
 | P3 | **时点 vs 区间严格分离** | 存量（在催、OS 余额、Aging）= 时点型，无时间窗；流量（今日新增、今日触达、今日回收）= 区间型，必带时间窗。每个 panel 标注且仅标注一个时窗。 |
 | P4 | **两视图内容正交** | **今日执行** 与 **复盘** 各自回答独立问题，同一数据模块只归属一个视图，不重复出现。不按角色拆第三套人格页。 |
 | P5 | **指标口径先文档后代码** | 任何看板指标的新增 / 修改 / 删除，**必须先更新本节口径定义，再动代码**。开发完成自查标准：前端每一个数字都能对应到本节某一行口径；对不上即为偏移，必须返工。禁止开发时自创口径、自创分母、自创分组维度。 |
@@ -289,7 +289,7 @@ flowchart LR
 |------|----------|-----------|
 | 今日触达时间线（NEW，替代自动跑 §2；不固定条数） | 今日执行 | 各计划时刻打了多少（后续可多轮） |
 | 今日触达执行（分渠道） | 今日执行 | 今日各渠道送达/跳过；**禁止跨渠道合并** |
-| AI Call 业务结果（**按波次**，§5.1.6） | 今日执行 | 本波实拨 / BUSY / FAILED / 接通 / 有效对话 |
+| AI Call 业务结果（**按波次**，§5.1.6） | 今日执行 | 本波实拨 / 线路接通 / 真人 / 有效沟通 / BUSY / FAILED |
 | 日切与分流断言（NEW，替代自动跑 §4） | 今日执行 | 迁出后再打 = 0；升档与 `stageChanged` 对齐 |
 | 风险信号与异常 | 今日执行 | 悬挂、Guard、OPEN 异常 |
 | 资产组合快照 | 复盘 | 池子多大、今日进出多少 |
@@ -354,7 +354,7 @@ flowchart LR
 | 时段 | 渠道 | 结果列 |
 |------|------|--------|
 | 08:00 | SMS / PUSH | DELIVERED / attempted；SMS 附加 Stage 拆分（仅该渠道内） |
-| 09:15 | AI_CALL | **只看实拨**：ANSWERED / BUSY / FAILED / NO_ANSWER / SNR；不下钻失败原因，下钻为接通 `result_label` |
+| 09:15 | AI_CALL | **六层**：实拨 / 线路接通 / 真人 / 有效沟通；未接通：BUSY / NO_ANSWER / 对方侧其他 / FAILED（仅 `network`+`our_system`）/ 信箱筛选。下钻为 `right_party=yes` 的 `disposition` |
 | 12:00 | PUSH | DELIVERED |
 | 14:00 | EMAIL | DELIVERED + SKIPPED；slot 拆分。无里程碑库存时发送=0 属正常。未到 14:00 显示「尚未到时间」 |
 | 14:30 | AI_CALL | 同 09:15 |
@@ -379,7 +379,7 @@ flowchart LR
 | EMAIL | 31 | **25** | 6 | 14:00 里程碑波（D0/D+1/D+4/D+31/D+75 日历触发，**无里程碑库存时发送=0 属正常**）；9/4 跳过 6 = 3 已结清 + 3 投影出窗 |
 | AI_CALL | — | — | — | **不用本表口径**（原则 P2）， funnel 与结果见 §5.1.6；此处只放「今日波次数 / 实拨 / 接通」三个速览数字 + 跳转链接 |
 
-**模块 2：AI Call 业务结果**——完整指标字典见 **§5.1.6**（本视图引用其「今日」时窗子集：漏斗、result_label 分布、接通明细）。
+**模块 2：AI Call 业务结果**——完整指标字典见 **§5.1.6**（本视图引用其「今日」时窗子集：漏斗、`disposition` 分布、接通明细）。
 
 **模块 3：风险信号与异常**（时点 + 今日，热层）
 
@@ -459,44 +459,47 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 
 每日两波：**09:15 / 14:30**（`batch_id` 形如 `mocasa-YYYYMMDD-HHMM-N`）。所有漏斗、失败结构、接通明细都必须能**按波次下钻**；波次表列 = 波次 | 计划 | 实拨 | 拨通 | 接通 | AI 接续 | 有效对话 | 失败结构 Top 原因。
 
-**C. 电信层漏斗**（5 层，率值分母均为上一层）
+**C. 电信层漏斗**（线路接通 ≠ 真人接通 ≠ 有效沟通）
 
-| 层 | 口径（SQL 条件） | 业务含义 | 9/4 实锚（09:15 波 / 14:30 波） |
-|---|---|---|---|
-| L0 计划拨出 | 波次内 AI_CALL step 总数 | 策略层计划打多少 | 287 / 234（含 SKIPPED 88 / 56） |
-| L1 实拨（分母基准） | `session.completed` 会话数 | 供应商受理并回终态 | **199 / 178** |
-| L2 拨通（振铃） | `was_ringing=1` | 线路/号码质量 | — |
-| L3 接通 | `was_answered=1`（含 VOICEMAIL/CALL_SCREENING） | 客户接起 | **4 / 2**（接通率 2.0% / 1.1%，全日 6/377 = **1.6%**） |
-| L4 AI 接续 | `was_ai_connected=1` AND `line_reason='NORMAL'` | 线路层「AI 接上了」，**不是催收有效对话** | — |
+| 层 | 口径（SQL 条件） | 业务含义 |
+|---|---|---|
+| L1 实拨（分母基准） | `session.completed` 会话数 | 供应商受理并回终态 |
+| L2 拨通（振铃） | `was_ringing=1` | 线路/号码质量 |
+| L3 线路接通 | `was_answered=1`（含 VOICEMAIL/CALL_SCREENING） | 客户侧接起 |
+| L4 真人接通 | `party='human'` | 对方是真人，**不是**有效催收对话 |
+| L5 有效沟通 | `effective_conversation=1` | 真人开口；分母为 L4 |
+| L6 RPC | `right_party='yes'` | 本人；分母为 L5 |
+| L7 PTP | `disposition='promise_to_pay'` | 承诺还款；分母为 L6 |
 
-- 派生率值：接通率 = L3÷L1；AI 接续率 = L4÷L3；**有效对话率 = 有效业务结果（见 E）÷ L3**。
-- 「接通但无效」单独一档：`was_answered=1` 且 `line_reason ∈ {VOICEMAIL, CALL_SCREENING}`（9/4 SNR 各 2 通），防止信箱/筛选计入有效对话。
+- 派生率值：线路接通率 = L3÷L1；真人接通率 = L4÷L1；有效沟通率 = L5÷L4；RPC 率 = L6÷L5；PTP 率 = L7÷L6。
+- 「信箱/筛选」单独一档：`party ∈ {voicemail, call_screening}`（或旧行 `line_reason ∈ {VOICEMAIL, CALL_SCREENING}`）。真人未开口不算 FAILED，时间线体现为「真人 − 有效沟通」。
+- **禁止**再用 `was_ai_connected=1 AND line_reason='NORMAL'` 或开放集 `result_label` 作为漏斗分子。
 
 **D. 未接通结构分析**（定位「打不通」的核心视图）
 
-按 `final_failure_reason` 分组计数 + `sip_code` 分布，**按波次/按日趋势**呈现：
+先按 Callback `failure_class`（`callee` / `network` / `our_system`）分层，再按 `final_failure_reason` 细码 + `sip_code` 分布，**按波次/按日趋势**呈现。无 class 的旧行按细码回退；未知新细码归 `our_system`（手册 §9.5）。
 
-| 类别 | 取值 | 性质 | 9/4 实锚（两波合计 377） |
-|---|---|---|---|
-| BUSY | `final_failure_reason='BUSY'`（SIP 486） | **客户侧忙，不算 FAILED**；当前最大流失，盯主叫轮换 | **173（46%）** |
-| NO_ANSWER | `'NO_ANSWER'`（sip_code 常为空） | 客户侧未接，不算 FAILED | 61（16%） |
-| 媒体协商失败 | `'MEDIA_NEGOTIATION_FAILED'`（SIP 406） | **供应商侧故障**，FAILED 主构成 | **129（34%）** |
-| 其他 FAILED | FORBIDDEN / DECLINE / TEMP_UNAVAILABLE / REQUEST_TIMEOUT / INVALID_NUMBER / SIP_SERVER_ERROR | 供应商侧，逐个看 | 4 |
-| SNR（信箱/筛选） | `line_reason ∈ {VOICEMAIL, CALL_SCREENING}` | 单独档，不计 FAILED | 4 |
+| 类别 | 取值 | 性质 |
+|---|---|---|
+| callee · BUSY | `BUSY`（SIP 486） | 对方忙，**不算 FAILED** |
+| callee · NO_ANSWER | `NO_ANSWER` | 对方未接，**不算 FAILED** |
+| callee · 其他 | `DECLINE` / `INVALID_NUMBER` / `TEMP_UNAVAILABLE` | 对方侧结果，**不算 FAILED**；看板「对方侧其他」 |
+| network | `MEDIA_NEGOTIATION_FAILED` / `SIP_SERVER_ERROR` / `FAILED` / `FORBIDDEN` / `REQUEST_TIMEOUT` | 线路/运营商，计入 FAILED（406 仍是主构成） |
+| our_system | `MISSING_CALLER_CLI` 等手册列明细码，以及未知新码 | 我方未打出或未收口，计入 FAILED |
+| 信箱/筛选 | `party ∈ {voicemail, call_screening}`（或旧行 `line_reason ∈ {VOICEMAIL, CALL_SCREENING}`） | 已线路接通，单独档，不计 FAILED |
 
-- **FAILED 率 = （媒体协商失败 + 其他 FAILED）÷ 实拨**；BUSY / NO_ANSWER **严禁计入**（由 A6 单独盯，见 §5.5.4）。
+- **FAILED 率 = （network + our_system）÷ 实拨**；callee（含 BUSY / NO_ANSWER / DECLINE / 空号 / 临时不可用）**严禁计入**。A1 与看板同一口径。
 - 主叫 × SIP 交叉：当前仅 `6310001` 一行；扩号后直接看哪个号 486 多。
 
 **E. 业务结果层**（定位「通了没效果」）
 
 | 指标                | 口径                                                                                                 | 说明与实锚                                                                                                                                                                  |
 | ----------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `result_label` 分布 | by `result_label` 计数（窗口内 L3 接通会话）                                                                  | **开放标签集，不冻结枚举**：已观测 `promise_to_pay` / `follow_up_required` / `dispute` / `refused_to_pay` / `refused_to_discuss` / `vague_commitment` / `incomplete`；新标签原样展示，禁止归入「其他」 |
-| 有效业务结果            | `result_label` 非空 AND `≠ 'incomplete'`                                                             | 9/4：6 接通中仅 1 通（`533831` refused_to_pay）                                                                                                                                |
-| 仅核名/短通            | `result_label` 空 AND `summary` 空                                                                   | 9/4：2 通（1 轮转写、无借款人发言）                                                                                                                                                  |
-| `summary` 填充分     | 接通会话中 `summary` 非空占比                                                                               | **有条件落库**：Facade 回 `ai_result.*` 才写入；实质标签 9/1 起稳定回传，仅核名常空（库路径正常，非 bug）                                                                                                 |
-| `promises_json`   | `ai_result.promises[]` 原始数组                                                                        | **现恒空**；供应商回传前不展示 PTP 金额/日期列                                                                                                                                           |
-| `needs_review`    | 终态：`was_answered=1` 且无借款人发言（转写判定）；**当前代理口径**：`was_answered=1` AND `result_label` 空 AND `summary` 空 | 转写不落库（仅存 `script_url`，需 Facade key 拉）；角色标注判定规则以 `513749`/`513849` 实测格式定，未定前用代理口径                                                                                       |
+| `disposition` 分布 | by `disposition` 计数（窗口内 `right_party='yes'`） | 七值：`promise_to_pay` / `payment_arrangement` / `refused` / `disputed` / `hardship` / `callback` / `unresolved`；PTP **不进引擎**。未确认本人的真人会话不进本分布 |
+| 有效沟通 | `effective_conversation=1` | 分母为真人接通 |
+| RPC | `right_party='yes'` | 分母为有效沟通 |
+| `promises_json` | `ai_result.promises[]` 原始数组 | 非 PTP/分期应为 `[]` |
+| `needs_review` | 终态：真人未开口等 | 新契约以 `party` + `effective_conversation` 判定 |
 
 **F. 接通明细列字典**（下钻表，每列来源与空值处理）
 
@@ -507,10 +510,13 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 | Stage / DPD | `stage_snapshot` / `dpd_snapshot`（会话发生时快照） | 快照空显示 `—`；**禁止用投影现值回填** |
 | 接通时间 | `answered_at`（供应商 `dial_timeline`） | 未回传显示「未回传」，**禁止显示 0 或 epoch** |
 | 时长 | `ended_at - answered_at` 派生（秒） | 任一为空显示 `—`，**禁止显示 0**；**禁止**用 `dialed_at` / `received_at` 顶替 |
-| 结果标签 / 摘要 | `result_label` / `summary` | 空显示 `（无标签）` / `—` |
+| party | `party` | 本表仅真人，正常为 `human` |
+| 有效沟通 | `effective_conversation` | 空显示 `—` |
+| right_party | `right_party` | `yes` / `no` / `unknown`；空显示 `—` |
+| 结果标签 / 摘要 | `disposition` / `summary` | 空显示 `—`；`disposition` 仅 `right_party=yes` 时有值 |
 | 主叫 | `caller_cli` | — |
 
-接通明细与「真人接通」**不含 SNR**（`line_reason ∈ {VOICEMAIL, CALL_SCREENING}`）；SNR 只出现在波次结构 / 「接通但无效」。
+接通明细默认 **线路接通**（`was_answered=1`），可用接通类型筛选真人 / 信箱筛选 / 未识别对方。
 
 **G. SKIPPED（未入波）分类**——L0 与 L1 的差值必须可解释，按原因分组：Guard 拦截（合规/频次）/ 已结清 / 出窗（投影 dpd 超窗）/ **CONNECT_AND_STOP**（同日已接通案件的当日后续 AI 步骤 SKIPPED；**跨日可再拨**，9/3 实证 `529588` 9/1、9/2 接通后 9/3 下午再通）/ 频控上限（如 S4 dpd≥61 仅 1 通/日）。CONNECT_AND_STOP 是策略配置的正常结果，看板只在「跳过原因」中计数，**不做告警条**。
 
@@ -528,12 +534,14 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 **J. AI Call 看板禁止事项**（开发自查清单，违反即返工）
 
 1. 禁止用 timeline 的 deliveryRate 口径看 AI（原则 P2）；
-2. 禁止把 BUSY / NO_ANSWER 计入 FAILED 率；
+2. 禁止把 callee（BUSY / NO_ANSWER / DECLINE / INVALID_NUMBER / TEMP_UNAVAILABLE）计入 FAILED 率；FAILED 仅 `network` + `our_system`；
 3. 禁止 `answered_at` 空显示 0、时长空显示 0；
 4. 禁止把 `is_synthetic=1` 或 `batch.completed` 行计入漏斗分母；
 5. 禁止按投影现值 stage/dpd 归桶（只用 `stage_snapshot`/`dpd_snapshot`）；
-6. 禁止冻结 `result_label` 枚举或把新标签归入「其他」；
+6. 禁止冻结 `result_label` 枚举或把新标签归入「其他」；催收看板读 `disposition` 七值，不读旧开放标签；
 7. 禁止把 AI_CALL 与其他渠道合并进同一张触达汇总表（原则 P1）。
+8. 禁止用 `was_answered` 当真人接通分子；真人接通必须 `party=human`。
+9. 禁止把 `disposition` 分布建在非 `right_party=yes` 的会话上。
 
 **供应商并行推动（不改本仓库，带证据去谈）**：SIP 406 媒体协商、486 + 单主叫号轮换（含 local presence 拨号评估）、回调补 `answered_at`/`ended_at`/`duration` 与发言轮次字段、`promises[]` 回传。
 
@@ -794,7 +802,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 | ID | 条件 | 意图 |
 |---|---|---|
-| A1 | 波次 FAILED 率 >35% 且真实 completed ≥20 | SIP 406 类媒体故障；避开当前基线附近的误报，显著恶化才响 |
+| A1 | 波次 FAILED 率 >35% 且真实 completed ≥20；FAILED = `failure_class` 为 `network` 或 `our_system`（无 class 时按细码回退） | 线路/我方故障（含 SIP 406）；callee 拒接空号不告 |
 | A2 | AI_CALL 步骤 `trigger_time` 已过 ≥10 分钟仍 PENDING/活跃，且该槽无对应 `wave_key` 会话 | 漏催（按库内到期步骤推导，不硬编码档位/槽位） |
 | A3 | 步骤 EXECUTING 且 `dispatched_at` 已过 15 分钟、明细表无对应 `session_id` | 悬挂；**同步入异常队列**供人工收敛，不只是通知 |
 | A7 | SMS FAILED 率 >15% 且 attempted ≥20 | 短信通道故障；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计分母）；全日一槽 0800 |
@@ -1290,7 +1298,7 @@ gantt
 ---
 
 > **修订历史**  
-> - v1.7 · 2026-09-09 · 定稿首次上线每人独立账号但统一 SYSTEM_ADMIN；上线稳定后实施 VIEWER / OPERATOR / SYSTEM_ADMIN 三角色 RBAC；DLQ 重放、配置回滚、故障注入、紧急停催仅 SYSTEM_ADMIN；高危操作二次确认 + 必填原因 + 审计；前端采用 release + current 软链原子发布；Pilot 按单机人工恢复 30–60 分钟，不新建管理后台专属钉钉告警
+> - v1.7 · 2026-09-10 · 看板 AI Call 对齐手册六层：时间线/波次展示线路接通/真人/有效沟通；FAILED 与 A1 改为 `network`+`our_system`；callee 其他单独计；接通明细补 party/有效沟通/right_party；disposition 分布仅 `right_party=yes`
 > - v1.6 · 2026-09-09 · 钉钉加 A7/A8/A9：SMS / PUSH / EMAIL FAILED 率 >15% 且 attempted ≥20；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计）；分渠道、禁止合并；PUSH 分 0800/1200 两槽  
 > - v1.6 · 2026-09-07 · 拍板：看板改为「今日执行 / 复盘」两任务视图（取消三套人格 UI）；内部角色后置到 `t_system_role`，服务商预留走 `tenant_id` 而非角色 Tab；钉钉本批只做 A1–A3（纠正 v1.3 把 Q3 标成已交付）；看板不自动刷（关闭 Q1）；日常观测改走后台，停写按日自动跑 Markdown 的前提见 §5.1.7  
 > - v1.5.1 · 2026-09-04 · §5.1 指标口径细化到「开发无需脑补」颗粒度：新增原则 P5（指标口径先文档后代码，前端每个数字必须对应本节某行口径）与口径表通用约定（PHT/实锚/分母 0 显示 `—`）；经营/催收/策略三视图全部改为逐指标口径表（分子分母 + 表.字段过滤条件 + 时窗 + 9/4 实测锚点）；§5.1.6 扩写为 AI Call 指标字典 A–J（数据底座/波次单位/5 层电信漏斗含实锚/未接通结构 D 表/业务结果层 E 表/接通明细列字典/SKIPPED 分类/健康基线与验收出口/禁止事项清单），全部口径锚定 8/25–9/4 真实分流数据  

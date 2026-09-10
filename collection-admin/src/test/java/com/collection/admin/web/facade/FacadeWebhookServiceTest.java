@@ -30,12 +30,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import org.springframework.dao.EmptyResultDataAccessException;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
@@ -72,10 +72,7 @@ class FacadeWebhookServiceTest {
 
     @Test
     void answeredPublishesWithoutDisposition() throws Exception {
-        String json =
-                "{\"event\":\"session.completed\",\"session_id\":\"sess-1\",\"batch_id\":\"batch-9\","
-                        + "\"client_metadata\":{\"plan_id\":11,\"step_id\":22,\"case_id\":9},"
-                        + "\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,\"was_ai_connected\":true}}";
+        String json = answeredJson("sess-1", "batch-9");
         when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(false);
 
         Map<String, Object> out =
@@ -98,7 +95,8 @@ class FacadeWebhookServiceTest {
         String json =
                 "{\"event\":\"session.completed\",\"session_id\":\"sess-1\","
                         + "\"client_metadata\":{\"plan_id\":11,\"step_id\":22},"
-                        + "\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,\"was_ai_connected\":true}}";
+                        + "\"line_outcome\":{\"party\":\"human\",\"reason\":\"NORMAL\",\"was_answered\":true},"
+                        + "\"ai_result\":{\"effective_conversation\":true}}";
         when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(true);
 
         service.handle(objectMapper.readTree(json), sign(json, "test-secret"));
@@ -123,7 +121,8 @@ class FacadeWebhookServiceTest {
     void uniqueExecutingAiCallFallbackPublishes() throws Exception {
         String json =
                 "{\"event\":\"session.completed\",\"session_id\":\"sess-2\",\"external_case_id\":\"9\","
-                        + "\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,\"was_ai_connected\":true}}";
+                        + "\"line_outcome\":{\"party\":\"human\",\"reason\":\"NORMAL\",\"was_answered\":true},"
+                        + "\"ai_result\":{\"effective_conversation\":true}}";
         when(auditRepository.existsValidByProviderMsgId("sess-2")).thenReturn(false);
         ContactPlan plan = new ContactPlan();
         plan.setId(11L);
@@ -161,10 +160,7 @@ class FacadeWebhookServiceTest {
 
     @Test
     void writesStageAndDpdSnapshotsFromPlanAndProjection() throws Exception {
-        String json =
-                "{\"event\":\"session.completed\",\"session_id\":\"sess-1\",\"batch_id\":\"batch-9\","
-                        + "\"client_metadata\":{\"plan_id\":11,\"step_id\":22,\"case_id\":9},"
-                        + "\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,\"was_ai_connected\":true}}";
+        String json = answeredJson("sess-1", "batch-9");
         when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(false);
         ContactPlan plan = new ContactPlan();
         plan.setId(11L);
@@ -202,12 +198,31 @@ class FacadeWebhookServiceTest {
                         any(),
                         any(),
                         any(),
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                        any(),
                         any());
         assertTrue(sql.getValue().contains("stage_snapshot"));
+        assertTrue(sql.getValue().contains("party"));
+        assertTrue(sql.getValue().contains("effective_conversation"));
+        assertTrue(sql.getValue().contains("disposition"));
         assertTrue(sql.getValue().contains("dpd_snapshot"));
         assertTrue(sql.getValue().contains("COALESCE(stage_snapshot, VALUES(stage_snapshot))"));
         verify(planRepository).findById(11L);
         verify(jdbcTemplate).queryForMap(contains("t_ai_collection"), eq(9L));
+    }
+
+    private static String answeredJson(String sessionId, String batchId) {
+        return "{\"event\":\"session.completed\",\"session_id\":\""
+                + sessionId
+                + "\",\"batch_id\":\""
+                + batchId
+                + "\","
+                + "\"client_metadata\":{\"plan_id\":11,\"step_id\":22,\"case_id\":9},"
+                + "\"line_outcome\":{\"party\":\"human\",\"reason\":\"NORMAL\",\"was_answered\":true},"
+                + "\"ai_result\":{\"effective_conversation\":true,\"disposition\":\"promise_to_pay\"}}";
     }
 
     private static String sign(String json, String secret) throws Exception {

@@ -54,8 +54,7 @@ class AiCallAlertScannerTest {
 
     @Test
     void a1DoesNotFireAtExactly35Percent() {
-        when(jdbc.query(anyString(), any(RowMapper.class), any()))
-                .thenReturn(sessionsMixed(20, 7));
+        when(jdbc.query(anyString(), any(RowMapper.class), any())).thenReturn(sessionsMixed(20, 7));
 
         scanner.scanA1(LocalDateTime.of(2026, 9, 7, 10, 0), LocalDate.of(2026, 9, 7));
 
@@ -65,8 +64,7 @@ class AiCallAlertScannerTest {
 
     @Test
     void a1FiresWhenFailedRateExceeds35Percent() {
-        when(jdbc.query(anyString(), any(RowMapper.class), any()))
-                .thenReturn(sessionsMixed(20, 8));
+        when(jdbc.query(anyString(), any(RowMapper.class), any())).thenReturn(sessionsMixed(20, 8));
 
         scanner.scanA1(LocalDateTime.of(2026, 9, 7, 10, 0), LocalDate.of(2026, 9, 7));
 
@@ -77,6 +75,17 @@ class AiCallAlertScannerTest {
     @Test
     void a1DoesNotFireForBusy() {
         when(jdbc.query(anyString(), any(RowMapper.class), any())).thenReturn(sessions(20, "BUSY"));
+
+        scanner.scanA1(LocalDateTime.of(2026, 9, 7, 10, 0), LocalDate.of(2026, 9, 7));
+
+        verify(dingtalk, never()).sendText(anyString());
+        verify(dedup).markRecovered(eq("A1"), eq("0915"), any(LocalDate.class));
+    }
+
+    @Test
+    void a1DoesNotFireForCalleeDecline() {
+        when(jdbc.query(anyString(), any(RowMapper.class), any()))
+                .thenReturn(sessions(20, "DECLINE"));
 
         scanner.scanA1(LocalDateTime.of(2026, 9, 7, 10, 0), LocalDate.of(2026, 9, 7));
 
@@ -213,7 +222,9 @@ class AiCallAlertScannerTest {
         row.put("line_reason", null);
         row.put(
                 "final_failure_reason",
-                "BUSY".equals(reason) ? "BUSY" : "MEDIA_NEGOTIATION_FAILED");
+                "BUSY".equals(reason)
+                        ? "BUSY"
+                        : "DECLINE".equals(reason) ? "DECLINE" : "MEDIA_NEGOTIATION_FAILED");
         row.put("sip_code", "488");
         row.put("caller_cli", "6310001");
         return row;

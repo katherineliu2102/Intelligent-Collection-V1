@@ -149,12 +149,25 @@ public class DashboardQueryService {
             String resultLabel,
             String stage,
             String waveKey) {
+        return aicallDetail(
+                page, pageSize, days, includeSynthetic, resultLabel, stage, waveKey, null);
+    }
+
+    public Map<String, Object> aicallDetail(
+            int page,
+            int pageSize,
+            int days,
+            boolean includeSynthetic,
+            String resultLabel,
+            String stage,
+            String waveKey,
+            String connectKind) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(100, pageSize));
         int windowDays = clampDays(days);
         int offset = (p - 1) * size;
         String synth = includeSynthetic ? "" : " AND s.is_synthetic = 0";
-        DetailFilter filter = DetailFilter.of(resultLabel, stage, waveKey);
+        DetailFilter filter = DetailFilter.of(resultLabel, stage, waveKey, connectKind);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("layer", "HOT");
         data.put("freshness", "on_demand");
@@ -301,68 +314,33 @@ public class DashboardQueryService {
         String like = "%-" + hhmm + "-%";
         List<Map<String, Object>> sessions =
                 jdbc.query(
-                        "SELECT batch_id, was_answered, was_ringing, was_ai_connected, line_reason, "
-                                + "final_failure_reason, sip_code, result_label "
+                        "SELECT batch_id, was_answered, was_ringing, party, effective_conversation, "
+                                + "right_party, disposition, line_reason, final_failure_reason, "
+                                + "failure_class, sip_code "
                                 + "FROM t_ai_call_session "
                                 + "WHERE event='session.completed' AND is_synthetic=0 "
                                 + "AND received_at >= ? AND batch_id LIKE ?",
                         new Object[] {from, like},
                         this::genericRow);
-        long completed = sessions.size();
-        long ringing = 0;
-        long answered = 0;
-        long aiConnected = 0;
-        long snr = 0;
-        long busy = 0;
-        long noAnswer = 0;
-        long failed = 0;
-        long effective = 0;
+        Map<String, Object> agg = emptyAiAgg();
         String batchId = null;
         Map<String, Long> answeredLabels = new LinkedHashMap<>();
         for (Map<String, Object> s : sessions) {
             if (batchId == null) {
                 batchId = str(s.get("batch_id"));
             }
-            boolean ans = toLong(s.get("was_answered")) == 1;
-            String reason = str(s.get("final_failure_reason"));
-            String line = str(s.get("line_reason"));
-            if (toLong(s.get("was_ringing")) == 1) {
-                ringing++;
-            }
-            String bucket = AiCallFailureClassifier.bucket(ans, reason, line);
-            if ("ANSWERED".equals(bucket)) {
-                answered++;
-                if (toLong(s.get("was_ai_connected")) == 1 && "NORMAL".equals(line)) {
-                    aiConnected++;
-                }
-                String labelVal = str(s.get("result_label"));
-                if (labelVal != null && !"incomplete".equals(labelVal)) {
-                    effective++;
-                }
-                String tag = (labelVal == null || labelVal.isEmpty()) ? "未回传" : labelVal;
-                answeredLabels.merge(tag, 1L, Long::sum);
-            } else if ("SNR".equals(bucket)) {
-                snr++;
-            } else if ("BUSY".equals(bucket)) {
-                busy++;
-            } else if ("NO_ANSWER".equals(bucket)) {
-                noAnswer++;
-            } else if ("FAILED".equals(bucket)) {
-                failed++;
-            }
+            accumulateAi(agg, s, answeredLabels);
         }
         slot.put("batchId", batchId);
         slot.put("waveKey", WaveKey.fromBatchId(batchId));
-        slot.put("completed", completed);
-        slot.put("ringing", ringing);
-        slot.put("answered", answered);
-        slot.put("snr", snr);
-        slot.put("aiConnected", aiConnected);
-        slot.put("effective", effective);
-        slot.put("busy", busy);
-        slot.put("noAnswer", noAnswer);
-        slot.put("failed", failed);
-        slot.put("answerRate", rate(answered, completed));
+        slot.putAll(agg);
+        long completed = toLong(agg.get("completed"));
+        long human = toLong(agg.get("human"));
+        long failed = toLong(agg.get("failed"));
+        slot.put("answered", human);
+        slot.put("aiConnected", human);
+        slot.put("snr", toLong(agg.get("mailbox")));
+        slot.put("answerRate", rate(human, completed));
         slot.put("failedRate", rate(failed, completed));
         slot.put("missing", completed == 0);
         slot.put("answeredLabels", countRows(answeredLabels, "label"));
@@ -389,8 +367,7 @@ public class DashboardQueryService {
                                 + "WHEN s.result='SKIPPED' AND EXISTS ("
                                 + "  SELECT 1 FROM t_ai_call_session a "
                                 + "  WHERE a.case_id = t.case_id AND a.event='session.completed' "
-                                + "  AND a.is_synthetic=0 AND a.was_answered=1 "
-                                + "  AND a.line_reason NOT IN ('VOICEMAIL','CALL_SCREENING') "
+                                + "  AND a.is_synthetic=0 AND a.party='human' "
                                 + "  AND a.received_at >= ? AND a.received_at < t.created_at"
                                 + ") THEN 'CONNECT_AND_STOP' "
                                 + "WHEN s.result='SKIPPED' THEN 'OTHER_SKIPPED' "
@@ -411,7 +388,7 @@ public class DashboardQueryService {
                 answeredSessionSelect()
                         + "WHERE s.event='session.completed' AND s.is_synthetic=0 "
                         + "AND "
-                        + liveAnsweredPred("s")
+                        + lineAnsweredPred("s")
                         + " AND s.received_at >= ? "
                         + "ORDER BY COALESCE(s.answered_at, s.received_at) DESC LIMIT 100",
                 new Object[] {from},
@@ -577,8 +554,7 @@ public class DashboardQueryService {
     private List<Map<String, Object>> queryAiAnswerRateByDay(int windowDays) {
         return jdbc.query(
                 "SELECT DATE(received_at) AS day, COUNT(*) AS completed, "
-                        + "SUM(was_answered=1 AND (line_reason IS NULL "
-                        + "OR line_reason NOT IN ('VOICEMAIL','CALL_SCREENING'))) AS answered "
+                        + "SUM(party='human') AS answered "
                         + "FROM t_ai_call_session "
                         + "WHERE event='session.completed' AND is_synthetic=0 "
                         + "AND received_at >= DATE_SUB(NOW(), INTERVAL "
@@ -588,13 +564,12 @@ public class DashboardQueryService {
                 this::genericRow);
     }
 
-    private List<Map<String, Object>> queryAiCallWaves(
-            int windowDays, boolean includeSynthetic) {
+    private List<Map<String, Object>> queryAiCallWaves(int windowDays, boolean includeSynthetic) {
         String synth = includeSynthetic ? "" : " AND is_synthetic = 0";
         List<Map<String, Object>> batches =
                 jdbc.query(
-                        "SELECT batch_id, was_answered, was_ringing, was_ai_connected, line_reason, "
-                                + "final_failure_reason, sip_code "
+                        "SELECT batch_id, was_answered, party, effective_conversation, right_party, "
+                                + "disposition, line_reason, final_failure_reason, failure_class, sip_code "
                                 + "FROM t_ai_call_session WHERE event='session.completed' "
                                 + synth
                                 + " AND received_at >= DATE_SUB(NOW(), INTERVAL "
@@ -611,38 +586,20 @@ public class DashboardQueryService {
                     byWave.computeIfAbsent(
                             wave,
                             k -> {
-                                Map<String, Object> m = new LinkedHashMap<>();
+                                Map<String, Object> m = emptyAiAgg();
                                 m.put("waveKey", k);
                                 m.put("slot", WaveKey.slotHhmm(k));
-                                m.put("completed", 0L);
-                                m.put("answered", 0L);
-                                m.put("snr", 0L);
-                                m.put("busy", 0L);
-                                m.put("noAnswer", 0L);
-                                m.put("failed", 0L);
                                 return m;
                             });
-            boolean ans = toLong(s.get("was_answered")) == 1;
-            String bucket =
-                    AiCallFailureClassifier.bucket(
-                            ans, str(s.get("final_failure_reason")), str(s.get("line_reason")));
-            inc(agg, "completed");
-            if ("ANSWERED".equals(bucket)) {
-                inc(agg, "answered");
-            } else if ("SNR".equals(bucket)) {
-                inc(agg, "snr");
-            } else if ("BUSY".equals(bucket)) {
-                inc(agg, "busy");
-            } else if ("NO_ANSWER".equals(bucket)) {
-                inc(agg, "noAnswer");
-            } else if ("FAILED".equals(bucket)) {
-                inc(agg, "failed");
-            }
+            accumulateAi(agg, s, null);
         }
         List<Map<String, Object>> waves = new ArrayList<>(byWave.values());
         for (Map<String, Object> w : waves) {
             long completed = toLong(w.get("completed"));
-            w.put("answerRate", rate(toLong(w.get("answered")), completed));
+            long human = toLong(w.get("human"));
+            w.put("answered", human);
+            w.put("snr", toLong(w.get("mailbox")));
+            w.put("answerRate", rate(human, completed));
             w.put("failedRate", rate(toLong(w.get("failed")), completed));
         }
         waves.sort(
@@ -670,10 +627,14 @@ public class DashboardQueryService {
                         "SELECT COUNT(*) AS dispatched, "
                                 + "COALESCE(SUM(was_ringing=1),0) AS ringing, "
                                 + "COALESCE(SUM(was_answered=1),0) AS answered, "
-                                + "COALESCE(SUM(was_answered=1 AND (line_reason IS NULL "
-                                + "OR line_reason NOT IN ('VOICEMAIL','CALL_SCREENING'))),0) AS liveAnswered, "
-                                + "COALESCE(SUM(was_ai_connected=1 AND line_reason='NORMAL'),0) AS aiConnected, "
-                                + "COALESCE(SUM(was_answered=1 AND line_reason IN ('VOICEMAIL','CALL_SCREENING')),0) AS invalid "
+                                + "COALESCE(SUM(party='human'),0) AS liveAnswered, "
+                                + "COALESCE(SUM(party='human'),0) AS human, "
+                                + "COALESCE(SUM(party='human'),0) AS aiConnected, "
+                                + "COALESCE(SUM(effective_conversation=1),0) AS effective, "
+                                + "COALESCE(SUM(right_party='yes'),0) AS rpc, "
+                                + "COALESCE(SUM(disposition='promise_to_pay'),0) AS ptp, "
+                                + "COALESCE(SUM(party IN ('voicemail','call_screening') "
+                                + "OR line_reason IN ('VOICEMAIL','CALL_SCREENING')),0) AS invalid "
                                 + "FROM t_ai_call_session "
                                 + "WHERE event='session.completed' AND received_at >= DATE_SUB(NOW(), INTERVAL "
                                 + windowDays
@@ -684,31 +645,59 @@ public class DashboardQueryService {
     private List<Map<String, Object>> queryAiCallFailureStructure(
             int windowDays, boolean includeSynthetic) {
         String synth = includeSynthetic ? "" : " AND is_synthetic = 0";
-        return jdbc.query(
-                "SELECT COALESCE(final_failure_reason,'UNKNOWN') AS reason, COUNT(*) AS count "
-                        + "FROM t_ai_call_session "
-                        + "WHERE event='session.completed' AND was_answered=0 "
-                        + "AND COALESCE(final_failure_reason,'') NOT IN ('BUSY','NO_ANSWER') "
-                        + synth
-                        + " AND received_at >= DATE_SUB(NOW(), INTERVAL "
-                        + windowDays
-                        + " DAY) "
-                        + "GROUP BY COALESCE(final_failure_reason,'UNKNOWN') ORDER BY count DESC",
-                this::genericRow);
+        List<Map<String, Object>> raw =
+                jdbc.query(
+                        "SELECT failure_class AS failureClass, "
+                                + "COALESCE(final_failure_reason,'UNKNOWN') AS reason, COUNT(*) AS count "
+                                + "FROM t_ai_call_session "
+                                + "WHERE event='session.completed' AND was_answered=0 "
+                                + synth
+                                + " AND received_at >= DATE_SUB(NOW(), INTERVAL "
+                                + windowDays
+                                + " DAY) "
+                                + "GROUP BY failure_class, COALESCE(final_failure_reason,'UNKNOWN')",
+                        this::genericRow);
+        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
+        for (Map<String, Object> row : raw) {
+            String rawReason = str(row.get("reason"));
+            final String reason =
+                    (rawReason == null || rawReason.isEmpty()) ? "UNKNOWN" : rawReason;
+            String resolved =
+                    AiCallFailureClassifier.resolveFailureClass(
+                            str(row.get("failureClass")), "UNKNOWN".equals(reason) ? null : reason);
+            final String cls = resolved == null ? "unclassified" : resolved;
+            String key = cls + "|" + reason;
+            Map<String, Object> agg =
+                    merged.computeIfAbsent(
+                            key,
+                            k -> {
+                                Map<String, Object> m = new LinkedHashMap<>();
+                                m.put("failureClass", cls);
+                                m.put("reason", reason);
+                                m.put(
+                                        "label",
+                                        AiCallFailureClassifier.classLabel(cls) + " · " + reason);
+                                m.put("count", 0L);
+                                return m;
+                            });
+            agg.put("count", toLong(agg.get("count")) + toLong(row.get("count")));
+        }
+        List<Map<String, Object>> out = new ArrayList<>(merged.values());
+        out.sort((a, b) -> Long.compare(toLong(b.get("count")), toLong(a.get("count"))));
+        return out;
     }
 
     private List<Map<String, Object>> queryAiCallLabels(int windowDays, boolean includeSynthetic) {
         String synth = includeSynthetic ? "" : " AND is_synthetic = 0";
         return jdbc.query(
-                "SELECT COALESCE(result_label,'未分类') AS label, COUNT(*) AS count "
+                "SELECT COALESCE(disposition,'未分类') AS label, COUNT(*) AS count "
                         + "FROM t_ai_call_session "
-                        + "WHERE event='session.completed' AND "
-                        + liveAnsweredPred(null)
+                        + "WHERE event='session.completed' AND right_party='yes' "
                         + synth
                         + " AND received_at >= DATE_SUB(NOW(), INTERVAL "
                         + windowDays
                         + " DAY) "
-                        + "GROUP BY COALESCE(result_label,'未分类') ORDER BY count DESC",
+                        + "GROUP BY COALESCE(disposition,'未分类') ORDER BY count DESC",
                 (rs, n) -> {
                     Map<String, Object> row = new LinkedHashMap<>();
                     String label = rs.getString("label");
@@ -738,7 +727,7 @@ public class DashboardQueryService {
                 "SELECT COUNT(*) FROM t_ai_call_session s "
                         + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
                         + "WHERE s.event='session.completed' AND "
-                        + liveAnsweredPred("s")
+                        + lineAnsweredPred("s")
                         + synth
                         + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
                         + windowDays
@@ -760,7 +749,7 @@ public class DashboardQueryService {
         return jdbc.query(
                 answeredSessionSelect()
                         + "WHERE s.event='session.completed' AND "
-                        + liveAnsweredPred("s")
+                        + lineAnsweredPred("s")
                         + synth
                         + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
                         + windowDays
@@ -774,12 +763,12 @@ public class DashboardQueryService {
     private Map<String, Object> queryAiCallDetailFacets(int windowDays, String synth) {
         List<Map<String, Object>> rows =
                 jdbc.query(
-                        "SELECT DISTINCT s.result_label AS resultLabel, "
+                        "SELECT DISTINCT s.disposition AS resultLabel, "
                                 + "COALESCE(s.stage_snapshot, p.stage) AS stageSnapshot, s.batch_id AS batchId "
                                 + "FROM t_ai_call_session s "
                                 + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
                                 + "WHERE s.event='session.completed' AND "
-                                + liveAnsweredPred("s")
+                                + lineAnsweredPred("s")
                                 + synth
                                 + " AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
                                 + windowDays
@@ -800,18 +789,24 @@ public class DashboardQueryService {
         facets.put("labels", new ArrayList<>(labels.keySet()));
         facets.put("stages", new ArrayList<>(stages.keySet()));
         facets.put("waves", new ArrayList<>(waves.keySet()));
+        List<String> kinds = new ArrayList<>();
+        kinds.add("human");
+        kinds.add("mailbox");
+        kinds.add("unrecognized");
+        facets.put("connectKinds", kinds);
         return facets;
     }
 
     private static String labelBucket(String label) {
         if ("promise_to_pay".equals(label)
-                || "follow_up_required".equals(label)
-                || "vague_commitment".equals(label)
-                || "refused_to_pay".equals(label)
-                || "refused_to_discuss".equals(label)) {
+                || "payment_arrangement".equals(label)
+                || "refused".equals(label)
+                || "hardship".equals(label)
+                || "callback".equals(label)
+                || "unresolved".equals(label)) {
             return "业务结果";
         }
-        if ("dispute".equals(label)) {
+        if ("disputed".equals(label)) {
             return "合规风险";
         }
         return "未分类";
@@ -820,8 +815,8 @@ public class DashboardQueryService {
     private List<Map<String, Object>> queryHighSensitivityLabels() {
         return jdbc.query(
                 "SELECT session_id AS sessionId, case_id AS caseId, "
-                        + "result_label AS resultLabel, summary, received_at AS receivedAt "
-                        + "FROM t_ai_call_session WHERE result_label = 'dispute' "
+                        + "disposition AS resultLabel, summary, received_at AS receivedAt "
+                        + "FROM t_ai_call_session WHERE disposition = 'disputed' "
                         + "ORDER BY received_at DESC LIMIT 20",
                 this::genericRow);
     }
@@ -1170,14 +1165,15 @@ public class DashboardQueryService {
             this.args = args;
         }
 
-        static DetailFilter of(String resultLabel, String stage, String waveKey) {
+        static DetailFilter of(
+                String resultLabel, String stage, String waveKey, String connectKind) {
             StringBuilder sql = new StringBuilder();
             List<Object> args = new ArrayList<>();
             if (resultLabel != null) {
                 if (resultLabel.isEmpty()) {
-                    sql.append(" AND (s.result_label IS NULL OR s.result_label='')");
+                    sql.append(" AND (s.disposition IS NULL OR s.disposition='')");
                 } else {
-                    sql.append(" AND s.result_label=?");
+                    sql.append(" AND s.disposition=?");
                     args.add(resultLabel);
                 }
             }
@@ -1195,7 +1191,66 @@ public class DashboardQueryService {
                 sql.append(" AND s.batch_id LIKE ?");
                 args.add("%" + waveKey + "%");
             }
+            sql.append(AiCallFailureClassifier.connectKindSql("s", connectKind));
             return new DetailFilter(sql.toString(), args.toArray());
+        }
+    }
+
+    private static Map<String, Object> emptyAiAgg() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("completed", 0L);
+        m.put("ringing", 0L);
+        m.put("lineAnswered", 0L);
+        m.put("human", 0L);
+        m.put("effective", 0L);
+        m.put("mailbox", 0L);
+        m.put("busy", 0L);
+        m.put("noAnswer", 0L);
+        m.put("calleeOther", 0L);
+        m.put("failed", 0L);
+        return m;
+    }
+
+    private static void accumulateAi(
+            Map<String, Object> agg, Map<String, Object> s, Map<String, Long> labels) {
+        boolean ans = toLong(s.get("was_answered")) == 1;
+        String reason = str(s.get("final_failure_reason"));
+        String line = str(s.get("line_reason"));
+        String party = str(s.get("party"));
+        String failureClass = str(s.get("failure_class"));
+        inc(agg, "completed");
+        if (toLong(s.get("was_ringing")) == 1) {
+            inc(agg, "ringing");
+        }
+        if (ans) {
+            inc(agg, "lineAnswered");
+        }
+        if (AiCallFailureClassifier.isMailbox(party, line)) {
+            inc(agg, "mailbox");
+        }
+        if ("human".equalsIgnoreCase(party)) {
+            inc(agg, "human");
+        }
+        if (s.get("effective_conversation") != null
+                && toLong(s.get("effective_conversation")) == 1) {
+            inc(agg, "effective");
+        }
+        if (!ans) {
+            if (AiCallFailureClassifier.isBusy(reason)) {
+                inc(agg, "busy");
+            } else if (AiCallFailureClassifier.isNoAnswer(reason)) {
+                inc(agg, "noAnswer");
+            } else if (AiCallFailureClassifier.isCalleeOther(
+                    ans, failureClass, reason, line, party)) {
+                inc(agg, "calleeOther");
+            } else if (AiCallFailureClassifier.isFailed(ans, failureClass, reason, line)) {
+                inc(agg, "failed");
+            }
+        }
+        if (labels != null && "yes".equalsIgnoreCase(str(s.get("right_party")))) {
+            String labelVal = str(s.get("disposition"));
+            String tag = (labelVal == null || labelVal.isEmpty()) ? "未回传" : labelVal;
+            labels.merge(tag, 1L, Long::sum);
         }
     }
 
@@ -1220,21 +1275,23 @@ public class DashboardQueryService {
         return m;
     }
 
-    /** 真人接通：线路接起且非信箱/筛选。缺 alias 时用于无表前缀 SQL。 */
+    /** 线路接通：{@code was_answered=1}（含信箱 / 未识别对方）。 */
+    static String lineAnsweredPred(String alias) {
+        String p = alias == null || alias.isEmpty() ? "" : alias + ".";
+        return p + "was_answered=1";
+    }
+
+    /** 真人接通：{@code party=human}。缺 alias 时用于无表前缀 SQL。 */
     static String liveAnsweredPred(String alias) {
         String p = alias == null || alias.isEmpty() ? "" : alias + ".";
-        return p
-                + "was_answered=1 AND ("
-                + p
-                + "line_reason IS NULL OR "
-                + p
-                + "line_reason NOT IN ('VOICEMAIL','CALL_SCREENING'))";
+        return p + "party='human'";
     }
 
     private static String answeredSessionSelect() {
         return "SELECT s.session_id, s.case_id, s.batch_id, s.answered_at, s.ended_at, s.received_at, "
                 + "TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at) AS durationSec, "
-                + "s.result_label, s.summary, "
+                + "s.party, s.effective_conversation, s.right_party, "
+                + "s.disposition AS result_label, s.summary, "
                 + "COALESCE(s.stage_snapshot, p.stage) AS stage_snapshot, "
                 + "s.dpd_snapshot AS dpd_snapshot, "
                 + "s.caller_cli, s.line_reason "
@@ -1252,11 +1309,19 @@ public class DashboardQueryService {
         row.put("endedAt", rs.getObject("ended_at"));
         row.put("receivedAt", rs.getObject("received_at"));
         row.put("durationSec", rs.getObject("durationSec"));
+        row.put("party", rs.getString("party"));
+        Object effective = rs.getObject("effective_conversation");
+        row.put("effectiveConversation", effective == null ? null : toLong(effective) == 1);
+        row.put("rightParty", rs.getString("right_party"));
         row.put("resultLabel", rs.getString("result_label"));
         row.put("summary", rs.getString("summary"));
         row.put("stageSnapshot", rs.getString("stage_snapshot"));
         row.put("dpdSnapshot", rs.getObject("dpd_snapshot"));
         row.put("callerCli", rs.getString("caller_cli"));
+        String party = rs.getString("party");
+        String lineReason = rs.getString("line_reason");
+        row.put("lineReason", lineReason);
+        row.put("connectKind", AiCallFailureClassifier.connectKind(party, lineReason));
         return row;
     }
 

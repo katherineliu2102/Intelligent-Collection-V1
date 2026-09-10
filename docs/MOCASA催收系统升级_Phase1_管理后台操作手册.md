@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
 > **版本**: Phase 1 / 看板 v1.6  
-> **日期**: 2026-09-07  
+> **日期**: 2026-09-10  
 > **状态**: ✅ 操作说明（测试库 `ai_collection_db`）；设计 SSOT 见设计文档  
 > **读者**: 运营、测试、策略、研发联调同事  
 > **数据源**: 当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。  
@@ -199,9 +199,9 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 | 模块 | 看什么 | 注意 |
 |------|--------|------|
-| 今日触达时间线 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI（条数不固定） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 只看实拨，不下钻失败原因，下钻为接通标签。 |
+| 今日触达时间线 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI（条数不固定） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 看线路接通/真人/有效沟通；FAILED 仅线路与我方；下钻为 RPC 后的 disposition。 |
 | 分渠道触达 | SMS / PUSH / EMAIL 各一张卡 | **禁止**把多渠道合成一条送达率 |
-| AI 接通 | 实拨 / BUSY / FAILED / NO_ANSWER / SNR；**真人接通明细不含 SNR**；标签 / Stage / 波次可筛选 | BUSY/NO_ANSWER **不计** FAILED。时长 = `ended_at − answered_at`，缺一则 `—`，禁止显示 0 |
+| AI 接通 | 时间线：线路接通/真人/有效沟通；明细默认线路接通，可筛真人/信箱/未识别；FAILED = network+our_system | 线路接通=`was_answered`；真人=`party=human`。`disposition` 只在 `right_party=yes` 时有值。时长 = `ended_at − answered_at`，缺一则 `—` |
 | 日切断言 | 迁出后再 DELIVERED、升档、inbox、新建 plan | 迁出后再打必须为 0，>0 标红 |
 | 风险 | 悬挂、Guard、到期仍 PENDING | 悬挂 >0 去 Ops Queue / Case Monitor |
 
@@ -429,7 +429,7 @@ SHOW TABLES LIKE 't_alert_dedup';
 
 ## 9. 钉钉告警（A1–A3 / A7–A9）
 
-本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
+本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A1 的 FAILED = `failure_class` 为 `network` 或 `our_system`（DECLINE/空号等 callee **不告**），与看板同一口径。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
 
 渠道 FAILED 口径与看板「今日执行」一致：分子 = `FAILED`/`REJECTED`/`BOUNCED`，分母 = ATTEMPTED（`DELIVERED`/`SENT`/`ACCEPTED` + 失败三种），**SKIPPED 不计分母**。SMS / PUSH / EMAIL **分渠道、禁止合并**。SMS 全日一槽 `0800`；PUSH 分 `0800`（12 点前）与 `1200`（12 点后）；EMAIL 全日 `1400`（无里程碑日发送=0 属正常，n&lt;20 不告）。
 

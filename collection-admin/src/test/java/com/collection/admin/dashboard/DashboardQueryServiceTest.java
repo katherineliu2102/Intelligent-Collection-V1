@@ -106,7 +106,7 @@ class DashboardQueryServiceTest {
     }
 
     @Test
-    void answeredDetailExcludesSnrAndUsesEndedMinusAnswered() {
+    void answeredDetailListsLineAnswered() {
         service.todayExecution();
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
@@ -115,9 +115,9 @@ class DashboardQueryServiceTest {
                 .anyMatch(
                         s ->
                                 s.contains("TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at)")
-                                        && s.contains("VOICEMAIL")
-                                        && s.contains("CALL_SCREENING")
-                                        && s.contains("was_answered=1"));
+                                        && s.contains("s.was_answered=1")
+                                        && s.contains("s.effective_conversation")
+                                        && s.contains("s.right_party"));
         assertThat(sql.getAllValues())
                 .noneMatch(s -> s.contains("COALESCE(s.answered_at, s.dialed_at)"));
         assertThat(sql.getAllValues())
@@ -128,7 +128,7 @@ class DashboardQueryServiceTest {
     }
 
     @Test
-    void aicallDetailExcludesSnr() {
+    void aicallDetailDefaultsToLineAnswered() {
         service.aicallDetail(1, 25, 7, false);
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
@@ -137,7 +137,19 @@ class DashboardQueryServiceTest {
                 .anyMatch(
                         s ->
                                 s.contains("TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at)")
-                                        && s.contains("line_reason NOT IN ('VOICEMAIL','CALL_SCREENING')"));
+                                        && s.contains("s.was_answered=1")
+                                        && s.contains("s.effective_conversation")
+                                        && s.contains("s.right_party"));
+    }
+
+    @Test
+    void aicallDetailFilterAddsConnectKind() {
+        service.aicallDetail(1, 25, 7, false, null, null, null, "unrecognized");
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(Object[].class), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(s -> s.contains("party<>'human'") && s.contains("was_answered=1"));
     }
 
     @Test
@@ -149,9 +161,33 @@ class DashboardQueryServiceTest {
         assertThat(sql.getAllValues())
                 .anyMatch(
                         s ->
-                                s.contains("s.result_label=?")
+                                s.contains("s.disposition=?")
                                         && s.contains("COALESCE(s.stage_snapshot, p.stage)=?")
                                         && s.contains("s.batch_id LIKE ?"));
+    }
+
+    @Test
+    void aicallLabelsRequireRightPartyYes() {
+        service.aicallRealtime(7, false);
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(s -> s.contains("right_party='yes'") && s.contains("disposition"));
+    }
+
+    @Test
+    void aicallFailureStructureGroupsByFailureClass() {
+        service.aicallRealtime(7, false);
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("failure_class")
+                                        && s.contains("was_answered=0")
+                                        && s.contains("GROUP BY failure_class"));
     }
 
     @Test
@@ -179,6 +215,6 @@ class DashboardQueryServiceTest {
                         s ->
                                 s.contains("session_id AS sessionId")
                                         && s.contains("case_id AS caseId")
-                                        && s.contains("result_label AS resultLabel"));
+                                        && s.contains("disposition AS resultLabel"));
     }
 }

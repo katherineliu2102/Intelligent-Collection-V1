@@ -174,7 +174,7 @@ export const api = {
     pageSize = 25,
     days = 7,
     includeSynthetic = false,
-    filters?: { resultLabel?: string; stage?: string; waveKey?: string }
+    filters?: { resultLabel?: string; stage?: string; waveKey?: string; connectKind?: string }
   ) {
     const q = new URLSearchParams({
       page: String(page),
@@ -185,6 +185,7 @@ export const api = {
     if (filters?.resultLabel != null) q.set("resultLabel", filters.resultLabel);
     if (filters?.stage != null) q.set("stage", filters.stage);
     if (filters?.waveKey != null) q.set("waveKey", filters.waveKey);
+    if (filters?.connectKind != null) q.set("connectKind", filters.connectKind);
     return request(`/dashboard/aicall/detail?${q.toString()}`);
   },
   dashboardRisk() {

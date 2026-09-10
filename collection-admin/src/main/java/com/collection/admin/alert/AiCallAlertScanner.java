@@ -17,8 +17,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 钉钉 CRITICAL：AI Call A1–A3 + 消息渠道 FAILED 率 A7–A9。仅 {@code
- * collection.scheduler.enabled=true} 时扫描（§5.5.4）。
+ * 钉钉 CRITICAL：AI Call A1–A3 + 消息渠道 FAILED 率 A7–A9。仅 {@code collection.scheduler.enabled=true}
+ * 时扫描（§5.5.4）。
  *
  * <p>文案含波次/渠道、分子分母、SIP Top、悬挂 id；不含明文手机号。n&lt;20 不告。
  */
@@ -32,6 +32,7 @@ public class AiCallAlertScanner {
     static final double CHANNEL_FAILED_RATE_THRESHOLD = 0.15;
     /** 与 {@code DashboardQueryService} 看板口径保持一致。 */
     private static final String FAILED_RESULTS = "('FAILED','REJECTED','BOUNCED')";
+
     private static final String ATTEMPTED_RESULTS =
             "('DELIVERED','SENT','ACCEPTED','FAILED','REJECTED','BOUNCED')";
 
@@ -69,7 +70,8 @@ public class AiCallAlertScanner {
     void scanA1(LocalDateTime todayStart, LocalDate day) {
         List<Map<String, Object>> sessions =
                 jdbc.query(
-                        "SELECT batch_id, was_answered, line_reason, final_failure_reason, sip_code "
+                        "SELECT batch_id, was_answered, line_reason, final_failure_reason, "
+                                + "failure_class, sip_code "
                                 + "FROM t_ai_call_session "
                                 + "WHERE event='session.completed' AND is_synthetic=0 AND received_at >= ?",
                         (rs, n) -> {
@@ -78,6 +80,7 @@ public class AiCallAlertScanner {
                             row.put("was_answered", rs.getInt("was_answered"));
                             row.put("line_reason", rs.getString("line_reason"));
                             row.put("final_failure_reason", rs.getString("final_failure_reason"));
+                            row.put("failure_class", rs.getString("failure_class"));
                             row.put("sip_code", rs.getString("sip_code"));
                             return row;
                         },
@@ -94,7 +97,7 @@ public class AiCallAlertScanner {
             boolean ans = toLong(s.get("was_answered")) == 1;
             String reason = str(s.get("final_failure_reason"));
             String line = str(s.get("line_reason"));
-            if (AiCallFailureClassifier.isFailed(ans, reason, line)) {
+            if (AiCallFailureClassifier.isFailed(ans, str(s.get("failure_class")), reason, line)) {
                 agg.failed++;
                 String sip = str(s.get("sip_code"));
                 if (sip != null) {
@@ -246,8 +249,8 @@ public class AiCallAlertScanner {
 
     /**
      * A7 SMS / A8 PUSH / A9 EMAIL：今日 timeline FAILED 率 &gt;15% 且 attempted ≥20。口径与看板一致：FAILED =
-     * FAILED/REJECTED/BOUNCED，分母 = ATTEMPTED（不含 SKIPPED）。分渠道、禁止合并。槽位对齐今日执行：SMS 全日
-     * 0800；PUSH 0800（HOUR&lt;12）与 1200（HOUR≥12）；EMAIL 全日 1400。
+     * FAILED/REJECTED/BOUNCED，分母 = ATTEMPTED（不含 SKIPPED）。分渠道、禁止合并。槽位对齐今日执行：SMS 全日 0800；PUSH
+     * 0800（HOUR&lt;12）与 1200（HOUR≥12）；EMAIL 全日 1400。
      */
     void scanChannelFailed(LocalDateTime todayStart, LocalDate day) {
         scanOneChannel("A7", "SMS", "0800", todayStart, day, null);

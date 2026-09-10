@@ -65,10 +65,18 @@ public class DashboardController {
             @RequestParam(defaultValue = "false") boolean includeSynthetic,
             @RequestParam(required = false) String resultLabel,
             @RequestParam(required = false) String stage,
-            @RequestParam(required = false) String waveKey) {
+            @RequestParam(required = false) String waveKey,
+            @RequestParam(required = false) String connectKind) {
         return ApiResponse.success(
                 queries.aicallDetail(
-                        page, pageSize, days, includeSynthetic, resultLabel, stage, waveKey));
+                        page,
+                        pageSize,
+                        days,
+                        includeSynthetic,
+                        resultLabel,
+                        stage,
+                        waveKey,
+                        connectKind));
     }
 
     @GetMapping("/risk")

@@ -4,7 +4,9 @@ import com.collection.common.enums.ContactResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.apache.commons.lang3.StringUtils;
 
-/** 交接 §2 / §3：从 Facade session.completed 取出身份并映射为 ContactResult。 */
+/**
+ * 从 Facade session.completed 取出身份并映射为 ContactResult（手册 2026-09-09：party + effective_conversation）。
+ */
 public final class FacadeCallbackMapper {
 
     private FacadeCallbackMapper() {}
@@ -44,19 +46,23 @@ public final class FacadeCallbackMapper {
 
     public static ContactResult mapResult(JsonNode root) {
         JsonNode line = root.path("line_outcome");
+        JsonNode ai = root.path("ai_result");
+        String party = party(line);
         String reason = text(line, "reason");
         boolean answered = bool(line, "was_answered");
-        boolean aiConnected = bool(line, "was_ai_connected");
         String failure = text(root, "final_failure_reason");
 
-        if ("VOICEMAIL".equals(reason) && answered) {
+        if ("voicemail".equals(party) || (answered && "VOICEMAIL".equals(reason))) {
             return ContactResult.SENT_NO_RESPONSE;
         }
-        if ("CALL_SCREENING".equals(reason) && answered) {
+        if ("call_screening".equals(party) || (answered && "CALL_SCREENING".equals(reason))) {
             return ContactResult.SENT_NO_RESPONSE;
         }
-        if (aiConnected && "NORMAL".equals(reason)) {
-            return ContactResult.ANSWERED;
+        if ("human".equals(party)) {
+            if (Boolean.TRUE.equals(boolOrNull(ai, "effective_conversation"))) {
+                return ContactResult.ANSWERED;
+            }
+            return ContactResult.SENT_NO_RESPONSE;
         }
         String code = firstNonBlank(failure, reason);
         if ("NO_ANSWER".equals(code)) {
@@ -79,6 +85,11 @@ public final class FacadeCallbackMapper {
         return "batch.completed".equals(text(root, "event"));
     }
 
+    static String party(JsonNode line) {
+        String raw = text(line, "party");
+        return raw == null ? null : raw.trim().toLowerCase();
+    }
+
     static String text(JsonNode node, String field) {
         if (node == null || node.isMissingNode()) {
             return null;
@@ -91,12 +102,22 @@ public final class FacadeCallbackMapper {
         return StringUtils.isBlank(s) ? null : s;
     }
 
-    private static boolean bool(JsonNode node, String field) {
+    static Boolean boolOrNull(JsonNode node, String field) {
         if (node == null || node.isMissingNode()) {
-            return false;
+            return null;
         }
         JsonNode v = node.get(field);
-        return v != null && v.isBoolean() && v.booleanValue();
+        if (v == null || v.isNull() || v.isMissingNode()) {
+            return null;
+        }
+        if (v.isBoolean()) {
+            return v.booleanValue();
+        }
+        return null;
+    }
+
+    private static boolean bool(JsonNode node, String field) {
+        return Boolean.TRUE.equals(boolOrNull(node, field));
     }
 
     private static Long longValue(JsonNode node, String field) {

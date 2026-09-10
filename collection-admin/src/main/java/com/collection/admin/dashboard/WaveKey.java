@@ -25,9 +25,7 @@ public final class WaveKey {
         return m.group(1) + "-" + m.group(2);
     }
 
-    /**
-     * 展示用 {@code 2026-09-08  09:15}；无法解析时返回原文；{@code UNKNOWN} 显示未分波次。
-     */
+    /** 展示用 {@code 2026-09-08 09:15}；无法解析时返回原文；{@code UNKNOWN} 显示未分波次。 */
     public static String formatDisplay(String waveKey) {
         if (waveKey == null || waveKey.isEmpty()) {
             return null;

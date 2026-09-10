@@ -312,8 +312,8 @@ DROP PROCEDURE IF EXISTS sp_schema_relax_callback_audit_ids;
 -- AI Call 会话底座（v1.3 设计，v1.6 首次落库，对应设计文档 §6.2 / §5.1.4）：
 -- 结构化提取 Facade `session.completed` 回调，供看板 AI Call 分区（业务结果首屏 + 渠道卫生层）按原生词聚合。
 -- 与 t_channel_callback_audit 分工：audit 存完整 canonical_payload（审计/重放 SSOT），本表存结构化列（查询/聚合 SSOT）。
--- 两套口径（§6.2）：本表存供应商原生词（was_answered/was_ai_connected/line_reason/sip_code/final_failure_reason/result_label），
--- 映射后 ContactResult 仍在 step/timeline，互不覆盖。字段名以《FACADE客户接入手册》§9.3/§9.4 为准。
+-- 两套口径（§6.2）：本表存供应商原生词（was_answered/party/failure_class/line_reason/sip_code/disposition 等），
+-- 映射后 ContactResult 仍在 step/timeline，互不覆盖。字段名以《VALUBO客户接入手册》§9.3/§10 为准。
 -- stage/dpd 快照由写路径从 plan/step 上下文补（回调不带）；is_synthetic 由 mock 触发通道标记。
 CREATE TABLE IF NOT EXISTS t_ai_call_session (
     id                   BIGINT          AUTO_INCREMENT PRIMARY KEY,
@@ -325,13 +325,18 @@ CREATE TABLE IF NOT EXISTS t_ai_call_session (
     event                VARCHAR(32)     NULL COMMENT 'session.completed / batch.completed',
     -- 电信层（原生词）
     was_ringing          TINYINT(1)      NULL COMMENT 'line_outcome.was_ringing（线路/号码质量）',
-    was_answered         TINYINT(1)      NULL COMMENT 'line_outcome.was_answered（客户接起，含信箱/筛选）',
-    was_ai_connected     TINYINT(1)      NULL COMMENT 'line_outcome.was_ai_connected（真人多轮 = 结果链 L1）',
+    was_answered         TINYINT(1)      NULL COMMENT 'line_outcome.was_answered（线路接通，含信箱/筛选）',
+    was_ai_connected     TINYINT(1)      NULL COMMENT '旧字段；2026-09-09 起新回调常空，看板勿再读',
+    party                VARCHAR(32)     NULL COMMENT 'line_outcome.party：human/voicemail/call_screening',
+    failure_class        VARCHAR(64)     NULL COMMENT '未接通时的 failure_class',
     line_reason          VARCHAR(32)     NULL COMMENT 'line_outcome.reason：NORMAL/VOICEMAIL/CALL_SCREENING',
     sip_code             VARCHAR(32)     NULL COMMENT 'line_outcome.sip_code（406/486/487/603...；未接通时常见）',
     final_failure_reason VARCHAR(64)     NULL COMMENT 'BUSY/NO_ANSWER/FORBIDDEN/DECLINE/TEMP_UNAVAILABLE/REQUEST_TIMEOUT/INVALID_NUMBER/MEDIA_NEGOTIATION_FAILED/SIP_SERVER_ERROR',
-    -- 业务层（ai_result，9/1 实证真实接通会回传）
-    result_label         VARCHAR(64)     NULL COMMENT 'ai_result.result_label（开放标签集：promise_to_pay/follow_up_required/dispute/...，不冻结枚举）',
+    -- 业务层（ai_result）
+    result_label         VARCHAR(64)     NULL COMMENT '旧开放标签；新契约以 disposition 为准，有则原样落库',
+    effective_conversation TINYINT(1)    NULL COMMENT 'ai_result.effective_conversation：真人开口',
+    right_party          VARCHAR(16)     NULL COMMENT 'ai_result.right_party：yes/no',
+    disposition          VARCHAR(64)     NULL COMMENT 'ai_result.disposition 七值，仅落会话表，不进引擎 CHANNEL_CALLBACK',
     summary              TEXT            NULL COMMENT 'ai_result.summary；非空可作 needs_review 辅助清除信号',
     promises_json        JSON            NULL COMMENT 'ai_result.promises[] 原始数组（amount/currency/promised_date）；现恒空',
     -- 观测辅助
@@ -348,8 +353,78 @@ CREATE TABLE IF NOT EXISTS t_ai_call_session (
     INDEX idx_ai_call_session_received (received_at),
     INDEX idx_ai_call_session_case (case_id, received_at),
     INDEX idx_ai_call_session_batch (batch_id),
-    INDEX idx_ai_call_session_label (result_label, received_at)
+    INDEX idx_ai_call_session_label (result_label, received_at),
+    INDEX idx_ai_call_session_party (party, received_at),
+    INDEX idx_ai_call_session_disposition (disposition, received_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Call 会话底座（原生词，看板聚合用）';
+
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_call_session_result_contract()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'party'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN party VARCHAR(32) NULL COMMENT 'line_outcome.party：human/voicemail/call_screening'
+                AFTER was_ai_connected;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'failure_class'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN failure_class VARCHAR(64) NULL COMMENT '未接通时的 failure_class'
+                AFTER party;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'effective_conversation'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN effective_conversation TINYINT(1) NULL COMMENT 'ai_result.effective_conversation'
+                AFTER result_label;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'right_party'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN right_party VARCHAR(16) NULL COMMENT 'ai_result.right_party'
+                AFTER effective_conversation;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'disposition'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN disposition VARCHAR(64) NULL COMMENT 'ai_result.disposition 七值'
+                AFTER right_party;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND INDEX_NAME = 'idx_ai_call_session_party'
+    ) THEN
+        ALTER TABLE t_ai_call_session ADD INDEX idx_ai_call_session_party (party, received_at);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND INDEX_NAME = 'idx_ai_call_session_disposition'
+    ) THEN
+        ALTER TABLE t_ai_call_session ADD INDEX idx_ai_call_session_disposition (disposition, received_at);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_call_session_result_contract();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
 
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (

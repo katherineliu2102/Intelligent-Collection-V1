@@ -34,8 +34,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 §11.3； 事件 {@code disposition}
- * 留空以免引擎把原生词当成 ANSWERED。
+ * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 2026-09-09； 事件 {@code disposition}
+ * 留空以免引擎把原生词（含 PTP）当成 ANSWERED。
  */
 @Service
 public class FacadeWebhookService {
@@ -326,15 +326,19 @@ public class FacadeWebhookService {
             jdbcTemplate.update(
                     "INSERT INTO t_ai_call_session "
                             + "(session_id, batch_id, case_id, plan_id, step_id, event, "
-                            + "was_ringing, was_answered, was_ai_connected, line_reason, sip_code, "
-                            + "final_failure_reason, result_label, summary, promises_json, caller_cli, "
+                            + "was_ringing, was_answered, was_ai_connected, party, failure_class, "
+                            + "line_reason, sip_code, final_failure_reason, result_label, "
+                            + "effective_conversation, right_party, disposition, summary, promises_json, caller_cli, "
                             + "dialed_at, answered_at, ended_at, stage_snapshot, dpd_snapshot, received_at) "
-                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW()) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW()) "
                             + "ON DUPLICATE KEY UPDATE "
                             + "was_ringing=VALUES(was_ringing), was_answered=VALUES(was_answered), "
-                            + "was_ai_connected=VALUES(was_ai_connected), line_reason=VALUES(line_reason), "
+                            + "was_ai_connected=VALUES(was_ai_connected), party=VALUES(party), "
+                            + "failure_class=VALUES(failure_class), line_reason=VALUES(line_reason), "
                             + "sip_code=VALUES(sip_code), final_failure_reason=VALUES(final_failure_reason), "
-                            + "result_label=VALUES(result_label), summary=VALUES(summary), "
+                            + "result_label=VALUES(result_label), effective_conversation=VALUES(effective_conversation), "
+                            + "right_party=VALUES(right_party), disposition=VALUES(disposition), "
+                            + "summary=VALUES(summary), "
                             + "promises_json=VALUES(promises_json), caller_cli=VALUES(caller_cli), "
                             + "dialed_at=VALUES(dialed_at), answered_at=VALUES(answered_at), ended_at=VALUES(ended_at), "
                             + "stage_snapshot=COALESCE(stage_snapshot, VALUES(stage_snapshot)), "
@@ -348,10 +352,15 @@ public class FacadeWebhookService {
                     boolOf(line, "was_ringing"),
                     boolOf(line, "was_answered"),
                     boolOf(line, "was_ai_connected"),
+                    lower(textOf(line, "party")),
+                    textOf(root, "failure_class"),
                     textOf(line, "reason"),
                     textOf(line, "sip_code"),
                     textOf(root, "final_failure_reason"),
                     firstNonBlank(textOf(aiResult, "result_label")),
+                    boolOf(aiResult, "effective_conversation"),
+                    lower(textOf(aiResult, "right_party")),
+                    textOf(aiResult, "disposition"),
                     firstNonBlank(textOf(aiResult, "summary"), textOf(root, "summary")),
                     promises.isArray() ? promises.toString() : null,
                     textOf(parties, "caller_cli"),
@@ -366,6 +375,10 @@ public class FacadeWebhookService {
                     identity.sessionId,
                     e);
         }
+    }
+
+    private static String lower(String raw) {
+        return raw == null ? null : raw.trim().toLowerCase();
     }
 
     private static String firstNonBlank(String... values) {
