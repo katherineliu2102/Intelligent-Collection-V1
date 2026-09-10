@@ -98,9 +98,7 @@ public class CaseProjectionAssembler {
         return projection;
     }
 
-    /**
-     * 仍有逾期时 dpd 必须是已到期期的 max DPD，不能写成下一期未到期的负数。 dueDate 已过则可按 occurredAt 纠正；否则只打日志。
-     */
+    /** 仍有逾期时 dpd 必须是已到期期的 max DPD，不能写成下一期未到期的负数。 dueDate 已过则可按 occurredAt 纠正；否则只打日志。 */
     static Integer coerceOverdueDpd(
             Integer dpd, BigDecimal overdue, LocalDate dueDate, LocalDate asOf, Long caseId) {
         if (dpd == null || overdue == null || overdue.signum() <= 0 || dpd >= 0) {
