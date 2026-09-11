@@ -3,6 +3,7 @@ import {
   Card,
   Descriptions,
   Input,
+  Modal,
   Space,
   Table,
   Tag,
@@ -11,6 +12,7 @@ import {
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { isSystemAdmin, useAdminRole } from "../auth";
 
 type VersionItem = {
   id: number;
@@ -54,6 +56,8 @@ function phaseColor(phase: string): string {
 }
 
 export function StrategyPage() {
+  const role = useAdminRole();
+  const admin = isSystemAdmin(role);
   const [versions, setVersions] = useState<VersionItem[]>([]);
   const [catalog, setCatalog] = useState<CatalogOverview | null>(null);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
@@ -97,16 +101,29 @@ export function StrategyPage() {
       message.warning("Select a target config version first");
       return;
     }
-    setRollingBack(true);
-    try {
-      await api.rollbackConfig(selectedVersion, rollbackReason);
-      message.success(`Rolled back to config version ${selectedVersion}`);
-      await loadVersions();
-    } catch (e: any) {
-      message.error(e.message);
-    } finally {
-      setRollingBack(false);
+    if (!rollbackReason.trim()) {
+      message.warning("Rollback reason is required");
+      return;
     }
+    Modal.confirm({
+      title: "确认回滚配置？",
+      content: `回滚到版本 ${selectedVersion}。此操作仅系统管理员可执行。`,
+      okText: "确认回滚",
+      okButtonProps: { danger: true },
+      async onOk() {
+        setRollingBack(true);
+        try {
+          await api.rollbackConfig(selectedVersion, rollbackReason);
+          message.success(`Rolled back to config version ${selectedVersion}`);
+          await loadVersions();
+        } catch (e: any) {
+          message.error(e.message);
+          throw e;
+        } finally {
+          setRollingBack(false);
+        }
+      }
+    });
   };
   const summary = catalog?.summary || {};
   const connectivity = catalog?.runtime?.connectivity || {};
@@ -225,26 +242,34 @@ export function StrategyPage() {
             { title: "Created At", dataIndex: "createdAt", width: 180 }
           ]}
         />
-        <Space style={{ marginTop: 16 }} align="start">
-          <Input.TextArea
-            rows={2}
-            style={{ width: 360 }}
-            value={rollbackReason}
-            onChange={(e) => setRollbackReason(e.target.value)}
-            placeholder="Rollback reason"
-          />
-          <Button
-            danger
-            onClick={rollback}
-            loading={rollingBack}
-            disabled={selectedVersion == null}
-          >
-            Rollback To Selected Version
-          </Button>
-          <Button onClick={loadVersions} loading={loadingVersions}>
-            Refresh Versions
-          </Button>
-        </Space>
+        {admin ? (
+          <Space style={{ marginTop: 16 }} align="start">
+            <Input.TextArea
+              rows={2}
+              style={{ width: 360 }}
+              value={rollbackReason}
+              onChange={(e) => setRollbackReason(e.target.value)}
+              placeholder="Rollback reason"
+            />
+            <Button
+              danger
+              onClick={rollback}
+              loading={rollingBack}
+              disabled={selectedVersion == null}
+            >
+              Rollback To Selected Version
+            </Button>
+            <Button onClick={loadVersions} loading={loadingVersions}>
+              Refresh Versions
+            </Button>
+          </Space>
+        ) : (
+          <Space style={{ marginTop: 16 }}>
+            <Button onClick={loadVersions} loading={loadingVersions}>
+              Refresh Versions
+            </Button>
+          </Space>
+        )}
       </Card>
     </Space>
   );

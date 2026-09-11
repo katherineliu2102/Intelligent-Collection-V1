@@ -34,6 +34,9 @@ export const api = {
   me() {
     return request("/admin/me");
   },
+  logout() {
+    return request("/auth/logout", { method: "POST" });
+  },
   searchCases(params: Record<string, string | number | boolean>) {
     const query = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
@@ -66,8 +69,23 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
-  auditLogs() {
-    return request("/admin/audit-logs?page=1&pageSize=20");
+  listAccounts() {
+    return request("/admin/accounts");
+  },
+  createAccount(payload: { username: string; password: string; role: string }) {
+    return request("/admin/accounts", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  patchAccount(
+    id: number,
+    payload: { enabled?: boolean; role?: string; password?: string }
+  ) {
+    return request(`/admin/accounts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
   },
   getEvaluationSettings() {
     return request("/config/evaluation-settings");
@@ -88,7 +106,7 @@ export const api = {
   rollbackConfig(targetVersion: number, reason: string) {
     return request("/config/rollback", {
       method: "POST",
-      body: JSON.stringify({ targetVersion, reason })
+      body: JSON.stringify({ targetVersion, reason, confirm: true })
     });
   },
   catalogOverview() {

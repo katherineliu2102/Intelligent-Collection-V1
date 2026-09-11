@@ -155,10 +155,11 @@ R3–R6、R13 依赖受控故障注入。开关默认关闭且需重启才能开
 curl -s -b /tmp/t3o.jar "$BASE/ops/fault-injection"        # 期望 enabled=true, armed=false
 
 arm() { curl -s -b /tmp/t3o.jar -X POST \
-  "$BASE/ops/fault-injection/arm?position=$1&eventType=$2&remaining=$3"; }
+  "$BASE/ops/fault-injection/arm?position=$1&eventType=$2&remaining=$3&reason=t3o-drill&confirm=true"; }
 armId() { curl -s -b /tmp/t3o.jar -X POST \
-  "$BASE/ops/fault-injection/arm?position=$1&eventId=$2&remaining=-1"; }
-disarm() { curl -s -b /tmp/t3o.jar -X DELETE "$BASE/ops/fault-injection"; }
+  "$BASE/ops/fault-injection/arm?position=$1&eventId=$2&remaining=-1&reason=t3o-drill&confirm=true"; }
+disarm() { curl -s -b /tmp/t3o.jar -X DELETE \
+  "$BASE/ops/fault-injection?reason=t3o-drill&confirm=true"; }
 ```
 
 > 注入必须靶向（给 `eventType` 或 `eventId`），接口拒绝无靶向武装——Pilot 上真实事件与演练事件在同一条流里，无靶向会把无关案件推进 DLQ 且事后分不清来源。

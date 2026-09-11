@@ -216,7 +216,7 @@ COLLECTION_ADMIN_AUTH_ACCOUNTS_1_ROLE=SYSTEM_ADMIN
 
 BCrypt 哈希必须用单引号包裹。增删账号需改 `pilot.env` 并重启容器；当前使用者少，可接受。首批不开发账号管理页面。
 
-本轮已生成 `mocasa-admin-01` / `02` / `03` 三个测试账号，均为 `SYSTEM_ADMIN`。明文和可复制的 `pilot.env` 片段只保存在被 gitignore 的 `docs/ops/管理后台测试账号_20260909.local.md`，不得写入普通文档或提交 Git；测试阶段结束后全部轮换。
+本轮三个测试账号为 `mocasa-admin`（`SYSTEM_ADMIN`）、`mocasa-viewer`（`VIEWER`）、`mocasa-operator`（`OPERATOR`）。明文和可复制的 `pilot.env` 片段只保存在被 gitignore 的 `docs/ops/管理后台测试账号_20260909.local.md`，不得写入普通文档或提交 Git；测试阶段结束后全部轮换。
 
 上线稳定后再实现后端真正授权（前端隐藏菜单不算权限）：
 

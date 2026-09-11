@@ -54,9 +54,9 @@
 
 | # | 任务 | 状态 | 约定 |
 |---|---|---|---|
-| P1-1 | 三角色 RBAC | ⬜ | VIEWER / OPERATOR / SYSTEM_ADMIN；必须后端授权，前端菜单不是安全边界 |
-| P1-2 | 高危操作保护 | ⬜ | DLQ 重放、配置回滚、故障注入、紧急停催仅 SYSTEM_ADMIN |
-| P1-3 | 二次确认与审计 | ⬜ | 高危操作必填原因，记录操作者、前后状态和结果；不做双人审批 |
+| P1-1 | 三角色 RBAC | 🟡 | 后端按方法授权；账号以 `t_admin_account` 为准（env 仅空表种子） |
+| P1-2 | 高危操作保护 | 🟡 | DLQ / 配置回滚 / 故障注入仅 SYSTEM_ADMIN；紧急停催仍无按钮，跟 runbook |
+| P1-3 | 二次确认与审计 | 🟡 | 回滚/DLQ/注入要求 confirm+reason；DLQ 与配置变更原有操作人审计。不做双人审批 |
 | P1-4 | 主链路对账 | ⬜ | 应入案 → 实际入案 → 应触达 → 实际触达/回调 |
 | P1-5 | 配置安全 | ⬜ | diff、静态校验、乐观锁、版本和回滚 |
 | P1-6 | 告警处理闭环 | ⬜ | 复用催收系统既有告警，做认领、备注、解决、关闭；不建独立机器人 |
@@ -183,3 +183,5 @@
 - 2026-09-09（前端上线评审）：新增 G3–G9。首次开放要求 `/api`、登录拦截闭合、每人独立账号（先统一 SYSTEM_ADMIN）、release + current 原子发布、nginx 实机验收、Webhook 对照与三层回滚；稳定后做 VIEWER / OPERATOR / SYSTEM_ADMIN 三角色 RBAC，高危操作仅 SYSTEM_ADMIN。催收系统已有钉钉告警，本轮不建管理后台专属钉钉告警。
 - 2026-09-10（看板六层）：时间线/波次改为线路接通/真人/有效沟通；FAILED 与 A1 改为 `network`+`our_system`；callee 其他单独展示；接通明细补 party/有效沟通/right_party；disposition 分布仅 `right_party=yes`。前端仍须另传 dist，不进 jar。
 - 2026-09-11（复盘作业集）：资产卡改为昨日作业集（T+1、动作时 dpd>0、不含 SKIPPED）；结清/回收只在作业集当日；去掉近 7 天触达/48h；接通明细去掉时长与接通类型，列名 `effective_conversation`；矩阵标注 AI=线路接通。
+- 2026-09-11（RBAC 第一刀）：后端按角色+HTTP 方法授权；VIEWER 只读；OPERATOR 可写模板/冻结/异常；DLQ/回滚/故障注入仅超管且要 confirm+reason。前端藏回滚、禁用 VIEWER 写按钮。账号仍走 env ROLE。
+- 2026-09-11（账号管理 + 去重）：System 去掉与 Strategy 重复的配置日志；超管在 System 管理 `t_admin_account`（env 仅空表种子）。Ops ACK/Resolve 未接引擎，OPEN 外不显示 ACK、按钮不可点。

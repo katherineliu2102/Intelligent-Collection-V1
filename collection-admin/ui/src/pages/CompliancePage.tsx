@@ -1,8 +1,10 @@
-import { Button, Card, Form, Input, Select, Space, Typography, message } from "antd";
+import { Button, Card, Form, Input, Select, Space, Tooltip, Typography, message } from "antd";
 import { api } from "../api";
+import { READ_ONLY_HINT, canWrite, useAdminRole } from "../auth";
 
 export function CompliancePage() {
   const [form] = Form.useForm();
+  const writable = canWrite(useAdminRole());
 
   const submit = async () => {
     const values = await form.validateFields();
@@ -47,9 +49,11 @@ export function CompliancePage() {
           <Form.Item name="reason" label="Reason" rules={[{ required: true }]}>
             <Input.TextArea rows={3} />
           </Form.Item>
-          <Button type="primary" onClick={submit}>
-            Submit
-          </Button>
+          <Tooltip title={writable ? undefined : READ_ONLY_HINT}>
+            <Button type="primary" onClick={submit} disabled={!writable}>
+              Submit
+            </Button>
+          </Tooltip>
         </Form>
       </Space>
     </Card>

@@ -50,9 +50,9 @@
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
 | Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（读 `t_ai_collection` 投影，见 §3.4）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
-| Ops Queue | `/ops` | 异常队列（ACK / Resolve） | `/ops/exceptions` |
+| Ops Queue | `/ops` | 异常队列只读浏览；ACK/Resolve 未接引擎，按钮禁用 | `/ops/exceptions` |
 | Compliance | `/compliance` | 冻结 / 解冻 / 升级 | `/compliance/*` |
-| System Admin | `/system` | 审计日志等 | `/admin/audit-logs` |
+| System Admin | `/system` | 账号管理（仅超管）：禁用 / 改角色 / 重置口令 / 新建 | `/admin/accounts` |
 
 ---
 
@@ -150,10 +150,11 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 **Pilot 账号与权限口径（上线方案 v1.3）**：
 
-- 首次开放使用 `mocasa-admin-01` / `02` / `03` 三个独立测试账号，暂时统一 `SYSTEM_ADMIN`；禁止多人共享一个账号。明文和 Pilot env 片段见已 gitignore 的 `docs/ops/管理后台测试账号_20260909.local.md`。
-- 上线稳定后实施 `VIEWER` / `OPERATOR` / `SYSTEM_ADMIN` 三角色。当前代码尚未按角色执行后端授权，不要把前端菜单隐藏当成权限已经生效。
-- DLQ 重放、配置版本回滚、故障注入、紧急停催目标态仅 `SYSTEM_ADMIN` 可执行，并要求二次确认、必填原因和操作审计。
-- 第一版账号由 Pilot 环境文件维护，不在本页面创建或重置账号；账号和口令见本地凭据文件，不入仓库。
+- 三个独立测试账号 `mocasa-admin` / `mocasa-viewer` / `mocasa-operator`，禁止多人共享。角色分别为 `SYSTEM_ADMIN` / `VIEWER` / `OPERATOR`。明文和 Pilot env 片段见已 gitignore 的 `docs/ops/管理后台测试账号_20260909.local.md`。
+- 后端按角色拒绝写接口（VIEWER 只读；高危、活计划、目录写仅超管）。前端隐藏高危回滚入口、VIEWER 写按钮禁用，**安全边界仍是后端 403**。
+- DLQ 重放、配置版本回滚、故障注入仅 `SYSTEM_ADMIN`；二次确认 + 必填原因。紧急停催第一版仍走 runbook，后台无全局停催按钮。
+- 登录后以库表 `t_admin_account` 为准（启动时空表会从 env 种子一次）。超管在 System Admin 禁用/改角色/重置口令；不能禁用或降级最后一个 SYSTEM_ADMIN。
+- 配置变更日志只在 Strategy → Config Versions（含回滚）。
 - 催收系统已有钉钉业务告警，本轮不新建管理后台专属钉钉告警。
 
 ### 2.6 30 秒自检
@@ -275,9 +276,9 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 ### 3.5 Ops Queue / Compliance / System Admin
 
-- **Ops Queue**：按状态（OPEN/ACK/RESOLVED/IGNORED）筛选异常，逐条 ACK 或 Resolve。
+- **Ops Queue**：按状态筛选异常。ACK/Resolve **尚未接入引擎**（不会重拨/关通话），OPEN 行按钮禁用，非 OPEN 不显示 ACK。
 - **Compliance**：对案件执行冻结 / 解冻 / 升级（写审计日志）。
-- **System Admin**：查看配置变更审计日志（`t_config_change_log`）。
+- **System Admin**：仅超管。管理登录账号（`t_admin_account`）。配置变更日志在 Strategy → Config Versions。
 
 ---
 

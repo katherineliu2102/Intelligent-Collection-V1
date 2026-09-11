@@ -149,6 +149,10 @@ type PortfolioData = {
   byStage: {
     stage: string;
     cases: number;
+    smsAttempted?: number;
+    pushAttempted?: number;
+    emailAttempted?: number;
+    aiAnswered?: number;
     openingOutstanding?: number;
     repaidCases?: number;
     repaidAmount?: number;
@@ -245,6 +249,31 @@ function money(v?: number | string) {
   if (v == null || v === "" || Number.isNaN(n)) return "—";
   return "₱" + n.toLocaleString("en-PH", { maximumFractionDigits: 0 });
 }
+
+function CountChip({ label, value }: { label: string; value: number }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "2px 10px",
+        borderRadius: 8,
+        background: "#f3f4f6",
+        fontSize: 13,
+        lineHeight: "22px",
+        whiteSpace: "nowrap"
+      }}
+    >
+      <span style={{ color: "#16a34a", fontWeight: 600 }}>{label}</span>
+      <span style={{ color: "#111827", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
+const centerHead = { onHeaderCell: () => ({ style: { textAlign: "center" as const } }) };
 
 function formatWave(wave?: string | null) {
   if (!wave) return "—";
@@ -1129,26 +1158,57 @@ export function DashboardPage() {
                         rowKey="stage"
                         size="small"
                         pagination={false}
+                        tableLayout="fixed"
+                        style={{ width: "100%" }}
                         dataSource={portfolio?.byStage || []}
                         columns={[
-                          { title: "Stage", dataIndex: "stage", width: 80 },
-                          { title: "触达案件", dataIndex: "cases", align: "right", width: 96 },
+                          { title: "Stage", dataIndex: "stage", width: "8%", align: "center", ...centerHead },
+                          {
+                            title: "触达案件",
+                            dataIndex: "cases",
+                            align: "center",
+                            width: "10%",
+                            ...centerHead
+                          },
+                          {
+                            title: (
+                              <Tooltip title="该行催收名单上，昨日 SMS/PUSH/EMAIL 尝试发出次数（含失败，不含 SKIPPED）；线路接通为 AI was_answered。">
+                                触达情况
+                              </Tooltip>
+                            ),
+                            width: "36%",
+                            align: "center",
+                            ...centerHead,
+                            render: (_: unknown, row) => (
+                              <Space size={6} wrap style={{ justifyContent: "center" }}>
+                                <CountChip label="SMS" value={Number(row.smsAttempted ?? 0)} />
+                                <CountChip label="Push" value={Number(row.pushAttempted ?? 0)} />
+                                <CountChip label="Email" value={Number(row.emailAttempted ?? 0)} />
+                                <CountChip label="线路接通" value={Number(row.aiAnswered ?? 0)} />
+                              </Space>
+                            )
+                          },
                           {
                             title: "昨日日切余额",
                             dataIndex: "openingOutstanding",
-                            align: "right",
+                            align: "center",
+                            width: "16%",
+                            ...centerHead,
                             render: (v: number) => money(v)
                           },
                           {
                             title: "有还款案件",
                             dataIndex: "repaidCases",
-                            align: "right",
-                            width: 110
+                            align: "center",
+                            width: "14%",
+                            ...centerHead
                           },
                           {
                             title: "还款金额",
                             dataIndex: "repaidAmount",
-                            align: "right",
+                            align: "center",
+                            width: "16%",
+                            ...centerHead,
                             render: (v: number) => money(v)
                           }
                         ]}

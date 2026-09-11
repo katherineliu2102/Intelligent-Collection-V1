@@ -53,6 +53,12 @@ collection:
         - username: admin
           password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
           role: SYSTEM_ADMIN
+        - username: viewer
+          password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
+          role: VIEWER
+        - username: operator
+          password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
+          role: OPERATOR
   # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
   # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
   ingestion:

@@ -306,3 +306,17 @@ DELIMITER ;
 
 CALL sp_admin_add_change_log_columns();
 DROP PROCEDURE IF EXISTS sp_admin_add_change_log_columns;
+
+-- 管理面账号（最小账号管理：禁用 / 改角色 / 重置口令）。登录优先读本表；空表时回退 env 并在启动时种子。
+CREATE TABLE IF NOT EXISTS t_admin_account (
+    id              BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    username        VARCHAR(64)     NOT NULL COMMENT '登录名，全局唯一',
+    password_hash   VARCHAR(100)    NOT NULL COMMENT 'BCrypt，不明文',
+    role            VARCHAR(32)     NOT NULL COMMENT 'VIEWER/OPERATOR/SYSTEM_ADMIN',
+    enabled         TINYINT(1)      NOT NULL DEFAULT 1 COMMENT '0=禁用不可登录',
+    created_by      VARCHAR(64)     NULL,
+    updated_by      VARCHAR(64)     NULL,
+    created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='管理后台登录账号';

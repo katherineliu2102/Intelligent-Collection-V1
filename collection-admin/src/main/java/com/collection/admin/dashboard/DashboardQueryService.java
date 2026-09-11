@@ -950,6 +950,29 @@ public class DashboardQueryService {
                 + " GROUP BY x.case_id";
     }
 
+    /** 昨日作业集案件上的 SMS/PUSH/EMAIL 尝试次数（含失败，不含 SKIPPED）。占位 from,to。 */
+    static String yesterdayMsgAttemptByCaseSql() {
+        return "SELECT t.case_id, "
+                + "SUM(t.channel='SMS') AS sms, "
+                + "SUM(t.channel='PUSH') AS push, "
+                + "SUM(t.channel='EMAIL') AS email "
+                + "FROM t_contact_timeline t "
+                + "WHERE t.direction='OUT' AND t.channel IN ('SMS','PUSH','EMAIL') "
+                + "AND t.result IN "
+                + ATTEMPTED_RESULTS
+                + " AND t.created_at >= ? AND t.created_at < ? "
+                + "GROUP BY t.case_id";
+    }
+
+    /** 昨日作业集案件上的 AI 线路接通次数。占位 from,to。 */
+    static String yesterdayAiAnsweredByCaseSql() {
+        return "SELECT s.case_id, SUM(s.was_answered=1) AS aiAnswered "
+                + "FROM t_ai_call_session s "
+                + "WHERE s.event='session.completed' AND s.is_synthetic=0 "
+                + "AND s.received_at >= ? AND s.received_at < ? "
+                + "GROUP BY s.case_id";
+    }
+
     private Map<String, Object> queryYesterdayReview(LocalDateTime from, LocalDateTime to) {
         return nvl(
                 oneRow(
@@ -980,12 +1003,22 @@ public class DashboardQueryService {
         return jdbc.query(
                 "SELECT COALESCE(z.action_stage,'UNKNOWN') AS stage, "
                         + "COUNT(*) AS cases, "
+                        + "COALESCE(SUM(m.sms),0) AS smsAttempted, "
+                        + "COALESCE(SUM(m.push),0) AS pushAttempted, "
+                        + "COALESCE(SUM(m.email),0) AS emailAttempted, "
+                        + "COALESCE(SUM(a.aiAnswered),0) AS aiAnswered, "
                         + "COALESCE(SUM(o.opening_outstanding),0) AS openingOutstanding, "
                         + "COALESCE(COUNT(r.case_id),0) AS repaidCases, "
                         + "COALESCE(SUM(r.paid_amount),0) AS repaidAmount "
                         + "FROM ("
                         + yesterdayWorksetWithStageSql()
                         + ") z "
+                        + "LEFT JOIN ("
+                        + yesterdayMsgAttemptByCaseSql()
+                        + ") m ON m.case_id = z.case_id "
+                        + "LEFT JOIN ("
+                        + yesterdayAiAnsweredByCaseSql()
+                        + ") a ON a.case_id = z.case_id "
                         + "LEFT JOIN ("
                         + yesterdayOpeningOsSql()
                         + ") o ON o.case_id = z.case_id "
@@ -995,7 +1028,7 @@ public class DashboardQueryService {
                         + "GROUP BY COALESCE(z.action_stage,'UNKNOWN') "
                         + "ORDER BY MIN(FIELD(COALESCE(z.action_stage,'UNKNOWN'),"
                         + "'S1','S2','S3','S4','UNKNOWN'))",
-                new Object[] {from, to, from, to, from, to, from, to},
+                new Object[] {from, to, from, to, from, to, from, to, from, to, from, to},
                 this::genericRow);
     }
 

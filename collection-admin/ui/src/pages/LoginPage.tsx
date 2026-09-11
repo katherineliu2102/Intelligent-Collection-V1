@@ -17,8 +17,8 @@ export function LoginPage({ onSuccess }: Props) {
 
   return (
     <Card style={{ maxWidth: 480, margin: "48px auto" }}>
-      <Typography.Title level={4}>Admin Login</Typography.Title>
-      <Form form={form} layout="vertical" initialValues={{ username: "admin" }}>
+      <Typography.Title level={4}>Collections Admin</Typography.Title>
+      <Form form={form} layout="vertical">
         <Form.Item name="username" label="Username" rules={[{ required: true }]}>
           <Input />
         </Form.Item>

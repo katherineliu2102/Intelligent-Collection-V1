@@ -2,6 +2,9 @@ package com.collection.admin.web;
 
 import com.collection.engine.fault.EngineFaultInjector;
 import java.util.Map;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,27 +46,54 @@ public class FaultInjectionController {
      * @param remaining 剩余失败次数，{@code -1} 为不限次
      */
     @PostMapping("/arm")
-    public Map<String, Object> arm(
+    public ResponseEntity<Map<String, Object>> arm(
             @RequestParam String position,
             @RequestParam(required = false) String eventType,
             @RequestParam(required = false) String eventId,
-            @RequestParam(defaultValue = "1") long remaining) {
+            @RequestParam(defaultValue = "1") long remaining,
+            @RequestParam(required = false) String reason,
+            @RequestParam(defaultValue = "false") boolean confirm) {
+        ResponseEntity<Map<String, Object>> rejected = rejectUnlessConfirmed(reason, confirm);
+        if (rejected != null) {
+            return rejected;
+        }
         EngineFaultInjector.Position parsed;
         try {
             parsed = EngineFaultInjector.Position.valueOf(position.trim().toUpperCase());
         } catch (IllegalArgumentException e) {
-            return ApiResponse.failure(
-                    "INVALID_POSITION", "position 只能是 BEFORE_HANDLER 或 AFTER_HANDLER");
+            return ResponseEntity.badRequest()
+                    .body(
+                            ApiResponse.failure(
+                                    "INVALID_POSITION", "position 只能是 BEFORE_HANDLER 或 AFTER_HANDLER"));
         }
         try {
-            return ApiResponse.success(injector.arm(parsed, eventType, eventId, remaining));
+            return ResponseEntity.ok(
+                    ApiResponse.success(injector.arm(parsed, eventType, eventId, remaining)));
         } catch (IllegalStateException | IllegalArgumentException e) {
-            return ApiResponse.failure("ARM_REJECTED", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.failure("ARM_REJECTED", e.getMessage()));
         }
     }
 
     @DeleteMapping
-    public Map<String, Object> disarm() {
-        return ApiResponse.success(injector.disarm());
+    public ResponseEntity<Map<String, Object>> disarm(
+            @RequestParam(required = false) String reason,
+            @RequestParam(defaultValue = "false") boolean confirm) {
+        ResponseEntity<Map<String, Object>> rejected = rejectUnlessConfirmed(reason, confirm);
+        if (rejected != null) {
+            return rejected;
+        }
+        return ResponseEntity.ok(ApiResponse.success(injector.disarm()));
+    }
+
+    private static ResponseEntity<Map<String, Object>> rejectUnlessConfirmed(
+            String reason, boolean confirm) {
+        if (!confirm || StringUtils.isBlank(reason)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(
+                            ApiResponse.failure(
+                                    "CONFIRMATION_REQUIRED", "reason and confirm=true are required"));
+        }
+        return null;
     }
 }

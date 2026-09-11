@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -23,10 +24,17 @@ public class AdminAuthenticator {
             "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
     private final AdminAuthProperties properties;
+    private final AdminAccountStore accountStore;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
     public AdminAuthenticator(AdminAuthProperties properties) {
+        this(properties, null);
+    }
+
+    @Autowired
+    public AdminAuthenticator(AdminAuthProperties properties, AdminAccountStore accountStore) {
         this.properties = properties;
+        this.accountStore = accountStore;
     }
 
     /**
@@ -38,6 +46,25 @@ public class AdminAuthenticator {
         if (StringUtils.isBlank(username) || StringUtils.isBlank(password)) {
             return Optional.empty();
         }
+        if (accountStore != null && accountStore.hasAnyRow()) {
+            AdminAccountStore.AccountRow row = accountStore.findByUsername(username);
+            String hash =
+                    row != null && row.isEnabled() && StringUtils.isNotBlank(row.getPasswordHash())
+                            ? row.getPasswordHash()
+                            : DUMMY_HASH;
+            boolean matched = encoder.matches(password, hash);
+            if (row == null || !row.isEnabled() || !matched) {
+                log.warn("[AdminAuth] 登录失败 username={}", username);
+                return Optional.empty();
+            }
+            String role = AdminRole.parse(row.getRole()).name();
+            Map<String, Object> user = new LinkedHashMap<>();
+            user.put("username", row.getUsername());
+            user.put("role", role);
+            log.info("[AdminAuth] 登录成功 username={} role={}", row.getUsername(), role);
+            return Optional.of(user);
+        }
+
         AdminAuthProperties.Account account =
                 properties.getAccounts().stream()
                         .filter(a -> username.equals(a.getUsername()))
@@ -54,15 +81,19 @@ public class AdminAuthenticator {
             return Optional.empty();
         }
 
+        String role = AdminRole.parse(account.getRole()).name();
         Map<String, Object> user = new LinkedHashMap<>();
         user.put("username", account.getUsername());
-        user.put("role", account.getRole());
-        log.info("[AdminAuth] 登录成功 username={} role={}", account.getUsername(), account.getRole());
+        user.put("role", role);
+        log.info("[AdminAuth] 登录成功 username={} role={}", account.getUsername(), role);
         return Optional.of(user);
     }
 
     /** 是否配了可用账号。供启动闸门判断，避免带着"无人可登录"或"人人可登录"的状态上线。 */
     public boolean hasUsableAccount() {
+        if (accountStore != null && accountStore.hasAnyRow()) {
+            return accountStore.hasEnabled();
+        }
         return properties.getAccounts().stream()
                 .anyMatch(
                         a ->

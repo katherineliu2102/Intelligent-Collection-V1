@@ -123,7 +123,12 @@ class DashboardQueryServiceTest {
                         s ->
                                 s.contains("x.src='AI'")
                                         && s.contains("stage_snapshot")
-                                        && s.contains("GROUP BY x.case_id"));
+                                        && s.contains("GROUP BY x.case_id")
+                                        && s.contains("smsAttempted")
+                                        && s.contains("pushAttempted")
+                                        && s.contains("emailAttempted")
+                                        && s.contains("aiAnswered")
+                                        && s.contains("SUM(s.was_answered=1)"));
     }
 
     @Test

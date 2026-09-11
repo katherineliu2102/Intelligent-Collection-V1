@@ -132,4 +132,53 @@ class AdminAuthenticatorTest {
 
         assertThat(new AdminAuthenticator(props).authenticate("admin", "local-dev")).isPresent();
     }
+
+    @Test
+    void unknownConfiguredRoleBecomesViewer() {
+        AdminAuthenticator auth = authenticator(account("ops", "s3cret", "GOD"));
+
+        assertThat(auth.authenticate("ops", "s3cret").get()).containsEntry("role", "VIEWER");
+    }
+
+    @Test
+    void disabledDatabaseAccountCannotLoginEvenWithCorrectPassword() {
+        AdminAccountStore store = org.mockito.Mockito.mock(AdminAccountStore.class);
+        org.mockito.Mockito.when(store.hasAnyRow()).thenReturn(true);
+        org.mockito.Mockito.when(store.hasEnabled()).thenReturn(false);
+        AdminAccountStore.AccountRow row = new AdminAccountStore.AccountRow();
+        row.setUsername("ops");
+        row.setPasswordHash(ENCODER.encode("s3cret"));
+        row.setRole("SYSTEM_ADMIN");
+        row.setEnabled(false);
+        org.mockito.Mockito.when(store.findByUsername("ops")).thenReturn(row);
+
+        AdminAuthenticator auth = new AdminAuthenticator(new AdminAuthProperties(), store);
+
+        assertThat(auth.authenticate("ops", "s3cret")).isEmpty();
+        assertThat(auth.hasUsableAccount()).isFalse();
+    }
+
+    @Test
+    void enabledDatabaseAccountIgnoresEnvRole() {
+        AdminAccountStore store = org.mockito.Mockito.mock(AdminAccountStore.class);
+        org.mockito.Mockito.when(store.hasAnyRow()).thenReturn(true);
+        org.mockito.Mockito.when(store.hasEnabled()).thenReturn(true);
+        AdminAccountStore.AccountRow row = new AdminAccountStore.AccountRow();
+        row.setUsername("ops");
+        row.setPasswordHash(ENCODER.encode("s3cret"));
+        row.setRole("VIEWER");
+        row.setEnabled(true);
+        org.mockito.Mockito.when(store.findByUsername("ops")).thenReturn(row);
+
+        AdminAuthenticator auth =
+                new AdminAuthenticator(authenticatorProps("ops", "s3cret", "SYSTEM_ADMIN"), store);
+
+        assertThat(auth.authenticate("ops", "s3cret").get()).containsEntry("role", "VIEWER");
+    }
+
+    private static AdminAuthProperties authenticatorProps(String user, String password, String role) {
+        AdminAuthProperties props = new AdminAuthProperties();
+        props.setAccounts(Collections.singletonList(account(user, password, role)));
+        return props;
+    }
 }
