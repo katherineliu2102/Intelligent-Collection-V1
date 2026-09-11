@@ -71,27 +71,14 @@ class DashboardQueryServiceTest {
                 .query(sql.capture(), any(RowMapper.class));
         assertThat(sql.getAllValues())
                 .anyMatch(s -> s.contains("GROUP BY t.channel, COALESCE(p.stage"))
-                .anyMatch(s -> s.contains("COALESCE(s.stage_snapshot, p.stage, c.stage"))
+                .anyMatch(s -> s.contains("SUM(s.was_answered=1)"))
+                .anyMatch(s -> s.contains("AI_CALL_HUMAN") && s.contains("party='human'"))
                 .noneMatch(
                         s -> s.contains("GROUP BY COALESCE(p.stage") && !s.contains("t.channel"));
     }
 
     @Test
-    void portfolioByStageOmitsS0AndNullStage() {
-        service.portfolio();
-        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
-                .query(sql.capture(), any(RowMapper.class));
-        assertThat(sql.getAllValues())
-                .anyMatch(
-                        s ->
-                                s.contains("stage IN ('S1','S2','S3','S4')")
-                                        && s.contains("collection_status='IN_COLLECTION'")
-                                        && !s.contains("'N/A'"));
-    }
-
-    @Test
-    void touchConversionCountsDistinctCasesAndIncludesAiAnswered() {
+    void portfolioYesterdayWorksetExcludesSkippedAndUsesActionDpd() {
         service.portfolio();
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
@@ -99,10 +86,44 @@ class DashboardQueryServiceTest {
         assertThat(sql.getAllValues())
                 .anyMatch(
                         s ->
-                                s.contains("COUNT(DISTINCT t.case_id) AS touched")
-                                        && s.contains("'SENT'")
+                                s.contains("t_contact_timeline")
                                         && s.contains("t_ai_call_session")
-                                        && s.contains("UNION ALL"));
+                                        && s.contains("UNION ALL")
+                                        && s.contains("SKIPPED") == false
+                                        && s.contains("$.caseContext.dpd")
+                                        && s.contains("dpd_snapshot")
+                                        && !s.contains("c.dpd > 0"));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("t_ai_collection_inbox")
+                                        && s.contains("repaymentEvent")
+                                        && s.contains("paidAmount")
+                                && s.contains("openingOutstanding")
+                                && s.contains("caseEvent"));
+        assertThat(sql.getAllValues()).noneMatch(s -> s.contains("outstandingYesterdayEst"));
+        assertThat(sql.getAllValues()).noneMatch(s -> s.contains("settledMissingTime"));
+        assertThat(sql.getAllValues())
+                .noneMatch(
+                        s ->
+                                s.contains("collection_status='IN_COLLECTION'")
+                                        && s.contains("stage IN ('S1','S2','S3','S4')")
+                                        && s.contains("FROM t_ai_collection")
+                                        && !s.contains("t_contact_timeline"));
+    }
+
+    @Test
+    void portfolioWorksetByStageUsesActionSnapshotNotLiveStage() {
+        service.portfolio();
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(Object[].class), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("x.src='AI'")
+                                        && s.contains("stage_snapshot")
+                                        && s.contains("GROUP BY x.case_id"));
     }
 
     @Test
@@ -114,12 +135,13 @@ class DashboardQueryServiceTest {
         assertThat(sql.getAllValues())
                 .anyMatch(
                         s ->
-                                s.contains("TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at)")
-                                        && s.contains("s.was_answered=1")
+                                s.contains("s.was_answered=1")
                                         && s.contains("s.effective_conversation")
-                                        && s.contains("s.right_party"));
+                                        && s.contains("s.right_party")
+                                        && s.contains("s.party"));
         assertThat(sql.getAllValues())
                 .noneMatch(s -> s.contains("COALESCE(s.answered_at, s.dialed_at)"));
+        assertThat(sql.getAllValues()).noneMatch(s -> s.contains("TIMESTAMPDIFF"));
         assertThat(sql.getAllValues())
                 .anyMatch(
                         s ->
@@ -136,10 +158,10 @@ class DashboardQueryServiceTest {
         assertThat(sql.getAllValues())
                 .anyMatch(
                         s ->
-                                s.contains("TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at)")
-                                        && s.contains("s.was_answered=1")
+                                s.contains("s.was_answered=1")
                                         && s.contains("s.effective_conversation")
                                         && s.contains("s.right_party"));
+        assertThat(sql.getAllValues()).noneMatch(s -> s.contains("TIMESTAMPDIFF"));
     }
 
     @Test

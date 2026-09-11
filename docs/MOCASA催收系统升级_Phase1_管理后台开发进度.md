@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台开发进度
 
-> **日期**: 2026-09-10（原文 2026-09-01，按日追加）
-> **设计基线**: 管理后台设计文档 **v1.7**
+> **日期**: 2026-09-11（原文 2026-09-01，按日追加）
+> **设计基线**: 管理后台设计文档 **v1.8**
 > **跟踪方式**: 本文件是管理后台开发进度的跟踪入口（testing 目录无副本）。完成任务后更新状态列并追加进度日志。
 
 ---
@@ -12,7 +12,7 @@
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 看板两视图 | ✅ | 默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险；「复盘」：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。无经营·催收·策略三 Tab |
+| 看板两视图 | ✅ | 默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险；「复盘」：昨日作业集 / 渠道×Stage 矩阵 / 分渠道趋势。无经营·催收·策略三 Tab |
 | 口径 | ✅ | 禁止跨渠道合并送达率；AI FAILED = `network`+`our_system`（callee 含 DECLINE/空号不计）；真人=`party=human`；disposition 分布仅 `right_party=yes`；分母 0 显示 `—` |
 | API | ✅ | `GET /dashboard/today`、`GET /dashboard/daily-by-channel`；打开即查 + 手动全量刷新；无 WebSocket |
 | 钉钉 A1/A2/A3 + A7–A9 | ✅ 代码 | 扫描器在 `collection.scheduler.enabled=true` 时每分钟跑（**Pilot 默认开，local 一键启动默认关**）。未配 webhook 只打日志。文案前缀 `【催收告警】`，不含手机号。A1>35%，FAILED 与看板同为 network+our_system；A7 SMS / A8 PUSH / A9 EMAIL 各自 >15% 且 n≥20 |
@@ -182,3 +182,4 @@
 - 2026-09-09（看板）：「五槽收口」改为「今日触达时间线」（不固定条数）；列改为时段/结果；未到点显示「尚未到时间」；AI 只看实拨、下钻接通标签；接通明细标签/Stage/波次可筛选。
 - 2026-09-09（前端上线评审）：新增 G3–G9。首次开放要求 `/api`、登录拦截闭合、每人独立账号（先统一 SYSTEM_ADMIN）、release + current 原子发布、nginx 实机验收、Webhook 对照与三层回滚；稳定后做 VIEWER / OPERATOR / SYSTEM_ADMIN 三角色 RBAC，高危操作仅 SYSTEM_ADMIN。催收系统已有钉钉告警，本轮不建管理后台专属钉钉告警。
 - 2026-09-10（看板六层）：时间线/波次改为线路接通/真人/有效沟通；FAILED 与 A1 改为 `network`+`our_system`；callee 其他单独展示；接通明细补 party/有效沟通/right_party；disposition 分布仅 `right_party=yes`。前端仍须另传 dist，不进 jar。
+- 2026-09-11（复盘作业集）：资产卡改为昨日作业集（T+1、动作时 dpd>0、不含 SKIPPED）；结清/回收只在作业集当日；去掉近 7 天触达/48h；接通明细去掉时长与接通类型，列名 `effective_conversation`；矩阵标注 AI=线路接通。

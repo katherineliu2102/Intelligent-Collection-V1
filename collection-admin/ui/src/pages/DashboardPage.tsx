@@ -74,12 +74,9 @@ type AnsweredRow = {
   waveKey?: string;
   answeredAt?: string | null;
   receivedAt?: string | null;
-  durationSec?: number | null;
   party?: string | null;
   effectiveConversation?: boolean | number | null;
   rightParty?: string | null;
-  connectKind?: string | null;
-  lineReason?: string | null;
   resultLabel?: string;
   summary?: string;
   stageSnapshot?: string | null;
@@ -141,20 +138,21 @@ type OutreachData = {
 
 type PortfolioData = {
   asOf: string;
-  portfolio: {
-    totalCases: number;
-    inCollection: number;
-    settled: number;
-    ceased: number;
-    inCollectionOutstanding: number;
-    todayRecovered: number;
-    todaySettled: number;
+  businessDate?: string;
+  freshness?: string;
+  workset: {
+    cases: number;
+    openingOutstanding: number;
+    repaidCases: number;
+    repaidAmount: number;
   };
-  byStage: { stage: string; cases: number; outstanding: number }[];
-  byStatus: { status: string; cases: number; outstanding: number }[];
-  touchConversion: { touched: number; converted48h: number; settledInWindow?: number };
-  todayInbox: { todayInbox: number };
-  plans?: Record<string, number | string>;
+  byStage: {
+    stage: string;
+    cases: number;
+    openingOutstanding?: number;
+    repaidCases?: number;
+    repaidAmount?: number;
+  }[];
 };
 
 type AiCallData = {
@@ -261,14 +259,6 @@ function fmtTs(v?: string | null) {
   return String(v).slice(0, 19).replace("T", " ");
 }
 
-function fmtDuration(sec?: number | null) {
-  if (sec == null || Number.isNaN(Number(sec)) || Number(sec) <= 0) return "—";
-  const n = Number(sec);
-  const m = Math.floor(n / 60);
-  const s = n % 60;
-  return m > 0 ? `${m}m${s}s` : `${s}s`;
-}
-
 function dash(v?: string | number | null) {
   if (v == null || v === "") return "—";
   return String(v);
@@ -279,19 +269,6 @@ function yn(v?: boolean | number | string | null) {
   if (v === true || v === 1 || v === "1") return "是";
   if (v === false || v === 0 || v === "0") return "否";
   return String(v);
-}
-
-function connectKindOf(r: AnsweredRow): string {
-  if (r.connectKind) return r.connectKind;
-  if (r.party === "human") return "human";
-  if (r.party === "voicemail" || r.party === "call_screening") return "mailbox";
-  return "unrecognized";
-}
-
-function connectKindText(kind?: string | null) {
-  if (kind === "human") return "真人";
-  if (kind === "mailbox") return "信箱/筛选";
-  return "未识别对方";
 }
 
 function firstFilter(v?: (string | number | boolean)[] | null) {
@@ -329,7 +306,6 @@ function answeredColumns(opts: {
     resultLabel?: string[] | null;
     stageSnapshot?: string[] | null;
     waveKey?: string[] | null;
-    connectKind?: string[] | null;
   };
 }): ColumnsType<AnsweredRow> {
   const client = !!opts.clientRows;
@@ -342,9 +318,9 @@ function answeredColumns(opts: {
   const waveFilters = client
     ? uniqueFilterOptions(opts.clientRows || [], (r) => r.waveKey, (v) => (v ? formatWave(v) : "未分波次"))
     : facetOptions(opts.facets?.waves, (v) => (v ? formatWave(v) : "未分波次"));
-  const kindFilters = client
-    ? uniqueFilterOptions(opts.clientRows || [], (r) => connectKindOf(r), connectKindText)
-    : facetOptions(opts.facets?.connectKinds || ["human", "mailbox", "unrecognized"], connectKindText);
+  const partyFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => r.party)
+    : facetOptions(["human", "voicemail", "call_screening"]);
   return [
     { title: "案件", dataIndex: "caseId", width: 90 },
     {
@@ -383,34 +359,18 @@ function answeredColumns(opts: {
       render: (v: string) => fmtTs(v)
     },
     {
-      title: "时长",
-      dataIndex: "durationSec",
-      width: 80,
-      align: "right",
-      render: (v: number | null) => fmtDuration(v)
-    },
-    {
-      title: "接通类型",
-      dataIndex: "connectKind",
-      width: 120,
-      render: (_: unknown, r: AnsweredRow) => connectKindText(connectKindOf(r)),
-      filters: kindFilters.length ? kindFilters : undefined,
-      filterMultiple: false,
-      filteredValue: opts.filteredValue?.connectKind,
-      onFilter: client
-        ? (value, record) => connectKindOf(record) === String(value)
-        : undefined
-    },
-    {
       title: "party",
       dataIndex: "party",
-      width: 90,
-      render: (v: string) => dash(v)
+      width: 110,
+      render: (v: string) => dash(v),
+      filters: client && partyFilters.length ? partyFilters : undefined,
+      filterMultiple: false,
+      onFilter: client ? (value, record) => (record.party || "") === String(value) : undefined
     },
     {
-      title: "有效沟通",
+      title: "effective_conversation",
       dataIndex: "effectiveConversation",
-      width: 90,
+      width: 170,
       render: (v: boolean | number | null) => yn(v)
     },
     {
@@ -583,8 +543,13 @@ function TrendSpark({
 }
 
 function ChannelStageMatrix({ rows }: { rows: MatrixRow[] }) {
-  const stages = ["S0", "S1", "S2", "S3", "S4", "UNKNOWN"];
-  const channelOrder = ["SMS", "PUSH", "EMAIL", "AI_CALL"];
+  const stages = ["S0", "S1", "S2", "S3", "S4"];
+  const channelOrder = ["SMS", "PUSH", "EMAIL", "AI_CALL", "AI_CALL_HUMAN"];
+  const channelLabel = (ch: string) => {
+    if (ch === "AI_CALL") return "AI Call 线路接通";
+    if (ch === "AI_CALL_HUMAN") return "AI Call 真人接通";
+    return ch;
+  };
   const channels = Array.from(new Set(rows.map((r) => r.channel)));
   channels.sort((a, b) => {
     const ia = channelOrder.indexOf(a);
@@ -606,9 +571,14 @@ function ChannelStageMatrix({ rows }: { rows: MatrixRow[] }) {
       locale={{ emptyText: "无数据" }}
       dataSource={channels}
       columns={[
-        { title: "渠道 \\ Stage", dataIndex: "", width: 110, render: (v: string) => v },
+        {
+          title: "渠道 \\ Stage",
+          dataIndex: "",
+          width: 150,
+          render: (v: string) => channelLabel(v)
+        },
         ...stages.map((s) => ({
-          title: s === "UNKNOWN" ? "未归类" : s,
+          title: s,
           align: "right" as const,
           width: 92,
           render: (_: unknown, channel: string) => {
@@ -617,8 +587,15 @@ function ChannelStageMatrix({ rows }: { rows: MatrixRow[] }) {
             const delivered = Number(c?.delivered) || 0;
             const alpha = attempted === 0 ? 0 : 0.15 + 0.75 * (attempted / (maxByRow.get(channel) || 1));
             const rate = attempted > 0 ? delivered / attempted : null;
+            const rateHint =
+              channel === "AI_CALL"
+                ? "线路接通（含真人/信箱等）"
+                : channel === "AI_CALL_HUMAN"
+                  ? "真人接通 party=human"
+                  : "发送率";
             return (
               <span
+                title={attempted > 0 ? rateHint : undefined}
                 style={{
                   display: "inline-block",
                   minWidth: 48,
@@ -716,7 +693,6 @@ export function DashboardPage() {
     resultLabel?: string;
     stage?: string;
     waveKey?: string;
-    connectKind?: string;
   }>({});
   const [risk, setRisk] = useState<RiskData | null>(null);
 
@@ -949,7 +925,8 @@ export function DashboardPage() {
                     AI Call 今日线路接通
                   </Typography.Title>
                   <Typography.Text type="secondary">
-                    默认含信箱与未识别对方；用「接通类型」筛选真人。disposition 只在 right_party=yes 时有值。
+                    默认含信箱与未识别对方。列名与 VALUBO 回传一致（party / effective_conversation）。disposition 只在
+                    right_party=yes 时有值。
                   </Typography.Text>
                   <AiTodayConnectSummary slots={today?.slots || []} />
                 </div>
@@ -1093,84 +1070,90 @@ export function DashboardPage() {
                 <Flex justify="space-between" wrap="wrap" gap={12}>
                   <div>
                     <Typography.Title level={4} style={{ margin: 0 }}>
-                      资产组合快照
+                      昨日复盘
                     </Typography.Title>
                     <Typography.Text type="secondary">
-                      时点存量 · 只看在催 S1–S4（不展示 S0 / stage 为空）
+                      T+1 看昨天（PHT）· dpd&gt;0 · 不含 SKIPPED / S0 · 催收名单不是账本在催全量
                     </Typography.Text>
                   </div>
-                  <Typography.Text type="secondary">快照：{portfolio?.asOf || "—"}</Typography.Text>
+                  <Typography.Text type="secondary">
+                    业务日 {portfolio?.businessDate || "—"} · 查询 {portfolio?.asOf || "—"}
+                  </Typography.Text>
                 </Flex>
                 <Row gutter={[16, 16]}>
                   <Col xs={12} md={6}>
-                    <Statistic title="在催案件" value={Number(portfolio?.portfolio?.inCollection ?? 0)} />
+                    <Statistic
+                      title={
+                        <Tooltip title="昨天 SMS/PUSH/EMAIL 尝试发出或 AI completed，且动作时 dpd>0 的去重案件。">
+                          昨日催收案件
+                        </Tooltip>
+                      }
+                      value={Number(portfolio?.workset?.cases ?? 0)}
+                    />
                   </Col>
                   <Col xs={12} md={6}>
-                    <Statistic title="OS 在催余额" value={money(portfolio?.portfolio?.inCollectionOutstanding)} />
+                    <Statistic
+                      title={
+                        <Tooltip title="催收名单 ∩ 昨日 caseEvent 日切快照的 overdueAmount。投影表只有现值，没有按日余额历史。">
+                          昨日日切余额
+                        </Tooltip>
+                      }
+                      value={money(portfolio?.workset?.openingOutstanding)}
+                    />
                   </Col>
                   <Col xs={12} md={6}>
-                    <Statistic title="今日新增 inbox" value={Number(portfolio?.todayInbox?.todayInbox ?? 0)} />
+                    <Statistic
+                      title={
+                        <Tooltip title="催收名单中，昨日 inbox 入站的 repaymentEvent 去重案件（与触达同一自然日）。">
+                          有还款案件
+                        </Tooltip>
+                      }
+                      value={Number(portfolio?.workset?.repaidCases ?? 0)}
+                    />
                   </Col>
                   <Col xs={12} md={6}>
-                    <Statistic title="今日结清" value={Number(portfolio?.portfolio?.todaySettled ?? 0)} />
+                    <Statistic
+                      title={
+                        <Tooltip title="上述昨日 repaymentEvent 的 paidAmount 合计。">
+                          昨日还款金额
+                        </Tooltip>
+                      }
+                      value={money(portfolio?.workset?.repaidAmount)}
+                    />
                   </Col>
                 </Row>
                 <Row gutter={[16, 16]}>
                   <Col xs={24}>
-                    <Card size="small" title="按 Stage（在催 S1–S4）">
+                    <Card size="small" title="触达时点 Stage 分布">
                       <Table
                         rowKey="stage"
                         size="small"
                         pagination={false}
-                        dataSource={(portfolio?.byStage || []).filter((r) =>
-                          ["S1", "S2", "S3", "S4"].includes(String(r.stage))
-                        )}
+                        dataSource={portfolio?.byStage || []}
                         columns={[
-                          { title: "Stage", dataIndex: "stage", width: 90 },
-                          { title: "案件", dataIndex: "cases", align: "right", width: 96 },
+                          { title: "Stage", dataIndex: "stage", width: 80 },
+                          { title: "触达案件", dataIndex: "cases", align: "right", width: 96 },
                           {
-                            title: "OS 余额",
-                            dataIndex: "outstanding",
+                            title: "昨日日切余额",
+                            dataIndex: "openingOutstanding",
+                            align: "right",
+                            render: (v: number) => money(v)
+                          },
+                          {
+                            title: "有还款案件",
+                            dataIndex: "repaidCases",
+                            align: "right",
+                            width: 110
+                          },
+                          {
+                            title: "还款金额",
+                            dataIndex: "repaidAmount",
                             align: "right",
                             render: (v: number) => money(v)
                           }
                         ]}
                       />
                     </Card>
-                  </Col>
-                </Row>
-                <Row gutter={[16, 16]}>
-                  <Col xs={12} md={8}>
-                    <Statistic title="今日回收" value={money(portfolio?.portfolio?.todayRecovered)} />
-                  </Col>
-                  <Col xs={12} md={8}>
-                    <Statistic
-                      title={
-                        <Tooltip title="近 7 日去重案件数：SMS/PUSH/EMAIL 成功发出，或 AI 接通。不是触达次数。">
-                          近 7 天触达案件
-                        </Tooltip>
-                      }
-                      value={Number(portfolio?.touchConversion?.touched ?? 0)}
-                    />
-                  </Col>
-                  <Col xs={12} md={8}>
-                    <Statistic
-                      title={
-                        <Tooltip title="上述触达案件中，首次触达后 48 小时内 settled_at 有值的比例。热层尚无结清时间时显示 —。">
-                          触达→48h 结清
-                        </Tooltip>
-                      }
-                      value={
-                        !portfolio?.touchConversion?.touched
-                          ? "—"
-                          : !portfolio.touchConversion.settledInWindow
-                            ? "—"
-                            : pctRate(
-                                (portfolio.touchConversion.converted48h ?? 0) /
-                                  portfolio.touchConversion.touched
-                              )
-                      }
-                    />
                   </Col>
                 </Row>
               </Flex>
@@ -1221,7 +1204,7 @@ export function DashboardPage() {
                     );
                   })}
                 </Row>
-                <Card size="small" title="渠道 × Stage 矩阵（格=Attempted / 发送或接通率）">
+                <Card size="small" title="渠道 × Stage 矩阵（格=Attempted / 率；AI Call 分线路接通与真人接通两行）">
                   {(matrix?.rows || []).length === 0 ? (
                     <Typography.Text type="secondary">暂无矩阵数据</Typography.Text>
                   ) : (
@@ -1436,10 +1419,7 @@ export function DashboardPage() {
                             : null,
                         stageSnapshot:
                           aicallDetailFilters.stage != null ? [aicallDetailFilters.stage] : null,
-                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null,
-                        connectKind: aicallDetailFilters.connectKind
-                          ? [aicallDetailFilters.connectKind]
-                          : null
+                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null
                       }
                     })}
                     pagination={{
@@ -1452,8 +1432,7 @@ export function DashboardPage() {
                       const next = {
                         resultLabel: firstFilter(filters.resultLabel as (string | number)[] | null),
                         stage: firstFilter(filters.stageSnapshot as (string | number)[] | null),
-                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null),
-                        connectKind: firstFilter(filters.connectKind as (string | number)[] | null)
+                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null)
                       };
                       const page = pagination.current || 1;
                       setAicallDetailFilters(next);

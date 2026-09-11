@@ -1,8 +1,8 @@
 # MOCASA 催收系统升级 — Phase 1 管理后台设计文档
 
-> **版本**: v1.7
-> **日期**: 2026-09-10
-> **状态**: ✅ 已确定（设计基线）；v1.7 补管理后台首次上线账号策略、三角色 RBAC 目标态、高危操作边界与原子发布要求。未开工项见正文 ⏳ / ❓。
+> **版本**: v1.8
+> **日期**: 2026-09-11
+> **状态**: ✅ 已确定（设计基线）；v1.8 复盘资产卡改为昨日作业集（T+1、dpd>0），接通明细列与 VALUBO 字段对齐。未开工项见正文 ⏳ / ❓。
 > **范围**: 内部运营管理后台；菲律宾 MOCASA 现金贷 Phase 1；含商业化扩展预留  
 > **定位**: 定义催收系统管理后台的信息架构、功能模块、交互闭环、技术边界与分阶段交付路线；不含前端实现细节与 API 契约全文。  
 > **关联文档**:  
@@ -281,7 +281,7 @@ flowchart LR
 | 视图 | 核心问题 | 内容性质 | 默认时窗 | 刷新 |
 |------|----------|----------|----------|------|
 | **今日执行**（默认首屏） | 今天五槽打完了吗？接通/失败结构如何？有没有漏催或悬挂？ | 执行（分槽触达 + AI 波次 + 日切/分流断言 + 异常） | 今日 PHT | **打开即查**，手动刷新；**不做** WebSocket / 定时自动刷 |
-| **复盘** | 池子多大？收回来多少？哪个渠道在哪个 Stage 差？ | 结果 + 质量（存量 + 回收 + Aging + 矩阵 + 趋势） | 时点 + 近 7 日 | 打开即查；趋势允许 T+1 |
+| **复盘** | 昨天催了谁？作业集里当天收回多少？哪个渠道在哪个 Stage 差？ | 结果 + 质量（昨日作业集 + 矩阵 + 趋势） | 昨日 PHT（T+1）+ 近 7 日质量 | 打开即查昨日；不做热更新 |
 
 **正交性**：每个数据模块只归属一个视图。判断依据 =「这个数字是用来当班盯盘，还是用来隔日调策略」。
 
@@ -292,8 +292,8 @@ flowchart LR
 | AI Call 业务结果（**按波次**，§5.1.6） | 今日执行 | 本波实拨 / 线路接通 / 真人 / 有效沟通 / BUSY / FAILED |
 | 日切与分流断言（NEW，替代自动跑 §4） | 今日执行 | 迁出后再打 = 0；升档与 `stageChanged` 对齐 |
 | 风险信号与异常 | 今日执行 | 悬挂、Guard、OPEN 异常 |
-| 资产组合快照 | 复盘 | 池子多大、今日进出多少 |
-| 回收成效 | 复盘 | 收回来多少 |
+| 昨日作业集（原资产组合快照） | 复盘 | 昨天对 dpd>0 动过手的案件；作业集内当日结清/回收 |
+| 回收成效 | 复盘 | 仅作业集内当日转化（不是账本催回） |
 | 队列与迁徙（Aging） | 复盘 | 资产健康度 |
 | 渠道 × Stage 矩阵 | 复盘 | 哪个渠道在哪个 Stage 差 |
 | 计划执行分布 | 复盘 | 计划跑得正常吗 |
@@ -306,29 +306,37 @@ flowchart LR
 
 回答「催收业务整体经营结果」。不涉及当波渠道执行细节。面向超管隔日/周末看，不是当班盯盘。
 
-**模块 1：资产组合快照**（时点型 + 今日流量，热层）
+**模块 1：昨日复盘**（区间型，T+1，热层读昨日日志；原「昨日作业集」）
+
+复盘日 `D` = **昨天（PHT 00:00–23:59）**。打开日为 `D+1`，**不热更新、不用打开时刻冒充日终存量**。本卡回答「昨天催了谁」，**不是**账本在催池。禁止再使用「在催案件」作本卡主数字。不含 S0 / `dpd≤0`。
+
+**催收动作**（计入作业集）：SMS/PUSH/EMAIL 为 `direction=OUT` 且 `result ∈ ATTEMPTED`（SENT/DELIVERED/ACCEPTED/FAILED/REJECTED/BOUNCED），**不含 SKIPPED**；AI Call 为 `session.completed` 且 `is_synthetic=0`。按 `case_id` 去重。
+
+**dpd>0（禁止用投影现值回填）**：AI 用会话 `dpd_snapshot`；短信等用计划 `context_snapshot.caseContext.dpd`（建计划时快照）。快照缺 dpd 时，仅当动作时 Stage ∈ {S1,S2,S3,S4} 才计入（S0 代理排除）。
+
+| 指标 | 口径 | 数据源与过滤 | 时窗 |
+|------|------|-------------|------|
+| 昨日催收案件 | 去重 `case_id` | 催收动作 ∩ 动作时 dpd>0 | `D` |
+| 昨日日切余额 | 催收名单 ∩ 昨日 `caseEvent` 快照 `overdueAmount`（同案取当日最后一条） | `t_ai_collection_inbox`；投影表无按日余额历史，禁止用现值回推冒充昨日 OS | 昨日 03:00 日切 |
+| 有还款案件 / 还款金额 | 催收名单 ∩ 昨日入站 `repaymentEvent`；金额 `paidAmount` | inbox `created_at` 落 `D`（与触达同一自然日） | `D` |
+| 触达时点 Stage 分布 | 按计划/会话 Stage 快照：触达案件、昨日日切余额、有还款、还款金额 | 禁止用投影现值 Stage | `D` |
+
+**本卡删除**：用 `settled_at` 空把整卡打成「未就绪」；今日新增 inbox、近 7 天触达、48h。
+
+> **口径警戒**：不是日终在催全量。昨日余额是「现值 + 昨日已入账还款」的还原，日切罚息/部分字段缺失时会偏。还款以 inbox 入站为准，不依赖投影 `settled_at`。
+
+**本卡删除（禁止再放）**：今日新增 inbox、近 7 天触达案件、触达→48h 结清、日终在催全量、已结清/停催存量。3 日内催回不进本卡（须独立 cohort，Stage 用进入日快照）。
+
+> **口径警戒**：漏掉昨天未尝试（含 SKIPPED）的逾期户，不能当漏催监控。昨日余额是估算，不能对财务日终账。
+
+**模块 2：回收成效**（区间型；Phase 1 首页只保留模块 1 的作业集内当日转化）
 
 | 指标 | 口径 | 数据源与过滤 | 时窗 | 实锚（9/4） |
 |------|------|-------------|------|------------|
-| 在催案件 | `COUNT(*)` | `t_ai_collection` WHERE `collection_status='IN_COLLECTION'` | 时点 | **338** |
-| OS 在催余额 | `SUM(total_outstanding)` | 同上（仅 IN_COLLECTION） | 时点 | **₱1,851,624** |
-| 今日新增 inbox | `COUNT(*)` | `t_ai_collection_inbox` WHERE `message_type='caseEvent'` AND `created_at ≥ PHT 今日 00:00` | 今日 | **261** |
-| 今日回收金额 | `SUM(last_paid_amount)` | `t_ai_collection` WHERE `settled_at ≥ PHT 今日 00:00` | 今日 | — |
-| 今日结清案件 | `COUNT(*)` | 同上 | 今日 | — |
-| 已结清（存量） | `COUNT(*)` WHERE `collection_status='SETTLED'` | `t_ai_collection` | 时点 | **36** |
-| 停催（存量） | `COUNT(*)` WHERE `collection_status='CEASED'` | `t_ai_collection` | 时点 | **5** |
+| 分 Stage 回收率 | 各 Stage 结清案件 ÷ 该 Stage 入催案件；**Stage 取计划快照 `t_contact_plan.stage`，禁止用投影现值** | plan + collection | 近 7 日 | 基线 PRD §2.3：S1 ~36% / S2 ~17% ；**Phase 1 复盘首页不展示** |
+| 回收金额趋势 | 按日 `SUM(last_paid_amount)`（`settled_at` 落当日） | `t_ai_collection` | 近 7/30 日 | — ；**Phase 1 复盘首页不展示** |
 
-> **口径警戒**：`在催案件`（存量 338）与 `今日新增 inbox`（流量 261）是两个不同事物，**禁止互相对账或放在同一趋势线上**。
-
-**模块 2：回收成效**（区间型，热+冷）
-
-| 指标 | 口径 | 数据源与过滤 | 时窗 | 实锚（9/4） |
-|------|------|-------------|------|------------|
-| 触达→还款转化 | 窗口内 `settled_at` 落入窗口的案件数 ÷ 窗口内有任一渠道 `DELIVERED`/`ANSWERED` 记录的去重案件数 | `t_contact_timeline` + `t_ai_collection` | 近 7 日 / 自定义 | — |
-| 分 Stage 回收率 | 各 Stage 结清案件 ÷ 该 Stage 入催案件；**Stage 取计划快照 `t_contact_plan.stage`，禁止用投影现值** | plan + collection | 近 7 日 | 基线 PRD §2.3：S1 ~36% / S2 ~17% |
-| 回收金额趋势 | 按日 `SUM(last_paid_amount)`（`settled_at` 落当日） | `t_ai_collection` | 近 7/30 日 | — |
-
-> **Phase 1 限制**：还款事件只有「结清」（`settled_at`/`last_paid_amount`），部分还款无独立事件流；Roll-rate 迁徙矩阵需日切 stage 历史快照表，**推迟 Phase 2**（当前无此表，禁止用投影现值伪造迁徙）。
+> **Phase 1 限制**：还款事实依赖 `repaymentEvent` 写入的 `settled_at`/`last_paid_amount`；日切 `caseEvent` 把状态改成 SETTLED **不会**补结清时刻。Roll-rate 迁徙矩阵需日切 stage 历史快照表，**推迟 Phase 2**（禁止用投影现值伪造迁徙）。
 
 **模块 3：队列与迁徙（Aging）**（时点型，热层）
 
@@ -339,7 +347,7 @@ flowchart LR
 
 **模块 4：渠道 ROI 概览（P1）** ⏳ 成本单价维护方式待确认（配置表或手工导入），Phase 1 不展示。
 
-> **Aging 归属说明**（2026-09-04 确认，v1.6 仍有效）：DPD 桶分布反映资产组合健康度，挂**复盘**，**不放今日执行**——今日执行关心「这波打了多少」。
+> **Aging 归属说明**（2026-09-04 确认，v1.6 仍有效）：DPD 桶分布反映**当前逾期存量**健康度，与昨日作业集不是同一批人。挂复盘、**不放今日执行**。Phase 1 复盘**首页不展示** Aging，避免和作业集对账。
 
 > **回收口径说明**：绩效报表导出不在本系统实现（[PRD §9.1](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md#91-绩效报表)）；看板仅供内部策略与监控使用。
 
@@ -409,7 +417,7 @@ flowchart LR
 | 指标 | 口径 | 数据源与过滤 |
 |------|------|-------------|
 | 矩阵格-触达量 | `COUNT(*)` by (`channel`, `stage`) | `t_contact_timeline` LEFT JOIN `t_contact_plan` ON `plan_id`，窗口 `created_at ≥ 近 7 日` |
-| 矩阵格-送达/接通率 | 格内 `DELIVERED` ÷ 格内触达量（AI_CALL 列改用 `was_answered` 率，取自 `t_ai_call_session`，与其他渠道分区呈现） | 同上 + session 表 |
+| 矩阵格-送达/接通率 | SMS/PUSH/EMAIL：格内发出率。AI Call **两行**：线路接通 `was_answered÷completed`；真人接通 `party=human÷completed`。不展示未归类列 | 同上 + session 表 |
 
 > **Stage 口径（关键）**：取 **`t_contact_plan.stage`（计划创建时快照）**，**禁止用投影现值 `t_ai_collection.dpd` 回推**。9/4 实测曾出现 22 户快照与 live 口径不一致（样本 DPD≤30 但触达落 `S4_*` 槽），用现值会把历史触达错误归桶。
 
@@ -508,15 +516,14 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 | 会话 / 案件 | `session_id` / `case_id` | — |
 | 波次 | `batch_id` | — |
 | Stage / DPD | `stage_snapshot` / `dpd_snapshot`（会话发生时快照） | 快照空显示 `—`；**禁止用投影现值回填** |
-| 接通时间 | `answered_at`（供应商 `dial_timeline`） | 未回传显示「未回传」，**禁止显示 0 或 epoch** |
-| 时长 | `ended_at - answered_at` 派生（秒） | 任一为空显示 `—`，**禁止显示 0**；**禁止**用 `dialed_at` / `received_at` 顶替 |
-| party | `party` | 本表仅真人，正常为 `human` |
-| 有效沟通 | `effective_conversation` | 空显示 `—` |
+| 接通时间 | `answered_at`（供应商 `dial_timeline`） | 未回传显示 `—`，**禁止显示 0 或 epoch** |
+| party | `line_outcome.party` | 展示回传原值；空显示 `—`。不派生「接通类型」列 |
+| effective_conversation | `ai_result.effective_conversation` | 列名与 VALUBO 字段一致；空显示 `—` |
 | right_party | `right_party` | `yes` / `no` / `unknown`；空显示 `—` |
 | 结果标签 / 摘要 | `disposition` / `summary` | 空显示 `—`；`disposition` 仅 `right_party=yes` 时有值 |
 | 主叫 | `caller_cli` | — |
 
-接通明细默认 **线路接通**（`was_answered=1`），可用接通类型筛选真人 / 信箱筛选 / 未识别对方。
+接通明细默认 **线路接通**（`was_answered=1`）。**不展示时长列**（供应商尚未稳定回传 `answered_at`/`ended_at`，禁止用其它时间顶替）。不展示派生「接通类型」列。
 
 **G. SKIPPED（未入波）分类**——L0 与 L1 的差值必须可解释，按原因分组：Guard 拦截（合规/频次）/ 已结清 / 出窗（投影 dpd 超窗）/ **CONNECT_AND_STOP**（同日已接通案件的当日后续 AI 步骤 SKIPPED；**跨日可再拨**，9/3 实证 `529588` 9/1、9/2 接通后 9/3 下午再通）/ 频控上限（如 S4 dpd≥61 仅 1 通/日）。CONNECT_AND_STOP 是策略配置的正常结果，看板只在「跳过原因」中计数，**不做告警条**。
 

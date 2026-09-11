@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 Phase 1 — 管理后台操作手册
 
-> **版本**: Phase 1 / 看板 v1.6  
-> **日期**: 2026-09-10  
+> **版本**: Phase 1 / 看板 v1.8  
+> **日期**: 2026-09-11  
 > **状态**: ✅ 操作说明（测试库 `ai_collection_db`）；设计 SSOT 见设计文档  
 > **读者**: 运营、测试、策略、研发联调同事  
 > **数据源**: 当前连接**测试 MySQL** `ai_collection_db`（JDBC 由 Nacos 下发），与 L4b 联调、催收引擎写入的是同一个库；正式跑通后再切生产库。  
@@ -46,7 +46,7 @@
 
 | 菜单 | 路由 | 说明 | 数据来源 |
 |------|------|------|----------|
-| Data Analysis | `/dashboard` | **今日执行 / 复盘** 两视图。默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险。复盘：存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。打开即查 + 手动刷新，无自动刷。 | `GET /dashboard/today`、`/dashboard/daily-by-channel`、`/dashboard/outreach/realtime` 等 |
+| Data Analysis | `/dashboard` | **今日执行 / 复盘** 两视图。默认「今日执行」：触达时间线、分渠道触达、AI 波次、日切断言、风险。复盘：昨日作业集（T+1、dpd>0）/ 渠道×Stage 矩阵 / 分渠道趋势。打开即查 + 手动刷新，无自动刷。 | `GET /dashboard/today`、`/dashboard/daily-by-channel`、`/dashboard/outreach/realtime` 等 |
 | Strategy Config | `/strategy` | 策略总览 + 阶段计划 + 渠道连通性 + Holdout 评估参数 + 配置版本/回滚 | `/catalog/overview`、`/config/*` |
 | Templates | `/templates` | SMS / Push **可编辑热更新** + Email 只读；Plans 页可编辑计划模板 | `/catalog/overview`、`/config/script-templates`、`/config/plan-templates` |
 | Case Monitor | `/cases` | 案件检索 + 按案件下钻计划（含已完成）步骤与触达时间线 | `/cases/search`（读 `t_ai_collection` 投影，见 §3.4）、`/plans/by-case/{caseId}/history`、`/plans/{planId}/steps`、`/plans/timeline/{userId}` |
@@ -177,7 +177,7 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 | 页 | 过关标准 |
 |---|---|
 | Data Analysis → 今日执行 | 默认就是这一页；**没有**「经营 / 催收 / 策略」三 Tab。触达时间线、分渠道、AI 接通、日切、风险能出数或合理空态（分母 0 为 `—`，接通时间空为「未回传」，未到点为「尚未到时间」） |
-| Data Analysis → 复盘 | 能切过去；存量 / Aging / 渠道×Stage 矩阵 / 分渠道趋势。矩阵格是单渠道×Stage |
+| Data Analysis → 复盘 | 能切过去；昨日作业集 / 渠道×Stage 矩阵 / 分渠道趋势。矩阵格是单渠道×Stage；AI 格是线路接通率 |
 | 右上角刷新 | 整页重拉，没有自动刷 |
 | Case Monitor | 能搜到测试库案件；点进计划/时间线不 500 |
 | Ops Queue | 能打开；A3 悬挂若有会在此，本机无扫描器时可能为空 |
@@ -191,7 +191,7 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 ### 3.1 Data Analysis（触达看板）
 
-**入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。默认打开 **今日执行**（PHT 当日）；可切到 **复盘**（近 7 日 / 存量）。点右上角 **刷新** 会重拉当前页全部接口，**没有**定时自动刷或 WebSocket。
+**入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。默认打开 **今日执行**（PHT 当日）；可切到 **复盘**（昨日作业集 T+1 + 近 7 日质量）。点右上角 **刷新** 会重拉当前页全部接口，**没有**定时自动刷或 WebSocket。
 
 日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1–A3 / A7–A9 是叫醒通道，不替代看板。
 
@@ -201,11 +201,11 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 |------|--------|------|
 | 今日触达时间线 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI（条数不固定） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 看线路接通/真人/有效沟通；FAILED 仅线路与我方；下钻为 RPC 后的 disposition。 |
 | 分渠道触达 | SMS / PUSH / EMAIL 各一张卡 | **禁止**把多渠道合成一条送达率 |
-| AI 接通 | 时间线：线路接通/真人/有效沟通；明细默认线路接通，可筛真人/信箱/未识别；FAILED = network+our_system | 线路接通=`was_answered`；真人=`party=human`。`disposition` 只在 `right_party=yes` 时有值。时长 = `ended_at − answered_at`，缺一则 `—` |
+| AI 接通 | 时间线：线路接通/真人/有效沟通；明细默认线路接通；FAILED = network+our_system | 线路接通=`was_answered`；真人=`party=human`。明细列 `party` / `effective_conversation` / `right_party`。不展示时长。`disposition` 只在 `right_party=yes` 时有值。 |
 | 日切断言 | 迁出后再 DELIVERED、升档、inbox、新建 plan | 迁出后再打必须为 0，>0 标红 |
 | 风险 | 悬挂、Guard、到期仍 PENDING | 悬挂 >0 去 Ops Queue / Case Monitor |
 
-**复盘**：资产组合（在催 S1–S4，不含 Aging / S0 / stage 空 / 停催存量）、渠道×Stage 矩阵、分渠道趋势、AI 近 7 日漏斗。矩阵格是「单渠道 × Stage」，没有跨渠道「按 Stage」触达表。
+**复盘**：昨日作业集（昨天有催收动作且动作时 dpd>0 的去重案件；OS 为作业集 T+1 现值；结清/回收只算作业集内当日全清；结清时刻缺失显示「未就绪」）、渠道×Stage 矩阵（AI 格=线路接通率，不是真人）、分渠道趋势、AI 近 7 日漏斗。不展示日终在催全量、近 7 天触达、48h 结清、Aging。
 
 **口径（SMS/PUSH/EMAIL）**（分母只算真正发出去的）：
 

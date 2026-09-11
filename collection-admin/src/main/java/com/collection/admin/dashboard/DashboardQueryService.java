@@ -68,23 +68,17 @@ public class DashboardQueryService {
     }
 
     public Map<String, Object> portfolio() {
+        LocalDateTime to = DashboardClock.todayStart();
+        LocalDateTime from = to.minusDays(1);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("layer", "HOT");
-        data.put("freshness", "on_demand");
+        data.put("freshness", "t_plus_1");
+        data.put("businessDate", from.toLocalDate().toString());
+        data.put("from", from.format(TS_FMT));
+        data.put("to", to.format(TS_FMT));
         data.put("asOf", DashboardClock.now().format(TS_FMT));
-        data.put("portfolio", queryPortfolioSummary());
-        data.put("byStage", queryPortfolioByStage());
-        data.put("byStatus", queryPortfolioByStatus());
-        Map<String, Object> touch = queryTouchConversion();
-        touch.put(
-                "settledInWindow",
-                countLong(
-                        "SELECT COUNT(*) FROM t_ai_collection "
-                                + "WHERE settled_at IS NOT NULL AND settled_at >= DATE_SUB(?, INTERVAL 7 DAY)",
-                        DashboardClock.now()));
-        data.put("touchConversion", touch);
-        data.put("todayInbox", queryTodayInbox());
-        data.put("plans", queryPlanSummary());
+        data.put("workset", queryYesterdayReview(from, to));
+        data.put("byStage", queryYesterdayReviewByStage(from, to));
         return data;
     }
 
@@ -518,17 +512,30 @@ public class DashboardQueryService {
         rows.addAll(
                 jdbc.query(
                         "SELECT 'AI_CALL' AS channel, "
-                                + "COALESCE(s.stage_snapshot, p.stage, c.stage, 'UNKNOWN') AS stage, "
+                                + "COALESCE(s.stage_snapshot, p.stage, 'UNKNOWN') AS stage, "
                                 + "COUNT(*) AS records, COUNT(*) AS attempted, "
                                 + "SUM(s.was_answered=1) AS delivered "
                                 + "FROM t_ai_call_session s "
                                 + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
-                                + "LEFT JOIN t_ai_collection c ON c.case_id = s.case_id "
                                 + "WHERE s.event='session.completed' AND s.is_synthetic=0 "
                                 + "AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
                                 + windowDays
                                 + " DAY) "
-                                + "GROUP BY COALESCE(s.stage_snapshot, p.stage, c.stage, 'UNKNOWN')",
+                                + "GROUP BY COALESCE(s.stage_snapshot, p.stage, 'UNKNOWN')",
+                        this::genericRow));
+        rows.addAll(
+                jdbc.query(
+                        "SELECT 'AI_CALL_HUMAN' AS channel, "
+                                + "COALESCE(s.stage_snapshot, p.stage, 'UNKNOWN') AS stage, "
+                                + "COUNT(*) AS records, COUNT(*) AS attempted, "
+                                + "SUM(s.party='human') AS delivered "
+                                + "FROM t_ai_call_session s "
+                                + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
+                                + "WHERE s.event='session.completed' AND s.is_synthetic=0 "
+                                + "AND s.received_at >= DATE_SUB(NOW(), INTERVAL "
+                                + windowDays
+                                + " DAY) "
+                                + "GROUP BY COALESCE(s.stage_snapshot, p.stage, 'UNKNOWN')",
                         this::genericRow));
         return rows;
     }
@@ -859,73 +866,137 @@ public class DashboardQueryService {
                         from));
     }
 
-    private Map<String, Object> queryPortfolioSummary() {
-        LocalDateTime todayStart = DashboardClock.todayStart();
-        return nvl(
-                oneRow(
-                        "SELECT COUNT(*) AS totalCases, "
-                                + "COALESCE(SUM(collection_status='IN_COLLECTION'),0) AS inCollection, "
-                                + "COALESCE(SUM(collection_status='SETTLED'),0) AS settled, "
-                                + "COALESCE(SUM(collection_status='CEASED'),0) AS ceased, "
-                                + "COALESCE(SUM(CASE WHEN collection_status='IN_COLLECTION' THEN total_outstanding ELSE 0 END),0) AS inCollectionOutstanding, "
-                                + "COALESCE(SUM(total_outstanding),0) AS totalOutstanding, "
-                                + "COALESCE(SUM(CASE WHEN settled_at >= ? THEN last_paid_amount ELSE 0 END),0) AS todayRecovered, "
-                                + "COALESCE(SUM(CASE WHEN settled_at >= ? THEN 1 ELSE 0 END),0) AS todaySettled "
-                                + "FROM t_ai_collection",
-                        todayStart,
-                        todayStart));
+    /**
+     * 昨日作业集：动作时 dpd&gt;0（快照缺 dpd 则 Stage∈S1–S4）。占位符 4 个：from,to,from,to。
+     */
+    static String yesterdayWorksetSql() {
+        return "SELECT x.case_id FROM ("
+                + yesterdayActionUnionSql()
+                + ") x WHERE "
+                + actionDpdPositivePred("x")
+                + " GROUP BY x.case_id";
     }
 
-    private Map<String, Object> queryTouchConversion() {
-        LocalDateTime now = DashboardClock.now();
-        return nvl(
-                oneRow(
-                        "SELECT COUNT(DISTINCT t.case_id) AS touched, "
-                                + "COUNT(DISTINCT CASE WHEN c.settled_at IS NOT NULL "
-                                + "AND c.settled_at >= t.first_touch "
-                                + "AND c.settled_at <= DATE_ADD(t.first_touch, INTERVAL 48 HOUR) "
-                                + "THEN t.case_id END) AS converted48h "
-                                + "FROM (SELECT case_id, MIN(ts) AS first_touch FROM ("
-                                + "  SELECT case_id, created_at AS ts FROM t_contact_timeline "
-                                + "  WHERE direction='OUT' "
-                                + "  AND result IN ('DELIVERED','SENT','ACCEPTED','ANSWERED') "
-                                + "  AND created_at >= DATE_SUB(?, INTERVAL 7 DAY) "
-                                + "  UNION ALL "
-                                + "  SELECT case_id, received_at AS ts FROM t_ai_call_session "
-                                + "  WHERE event='session.completed' AND is_synthetic=0 AND was_answered=1 "
-                                + "  AND received_at >= DATE_SUB(?, INTERVAL 7 DAY)"
-                                + ") u GROUP BY case_id) t "
-                                + "LEFT JOIN t_ai_collection c ON c.case_id = t.case_id",
-                        now,
-                        now));
+    private static String yesterdayActionUnionSql() {
+        return "SELECT t.case_id, "
+                + "CAST(JSON_EXTRACT(p.context_snapshot,'$.caseContext.dpd') AS SIGNED)"
+                + " AS action_dpd, "
+                + "p.stage AS action_stage, 'MSG' AS src "
+                + "FROM t_contact_timeline t "
+                + "JOIN t_contact_plan p ON p.id = t.plan_id "
+                + "WHERE t.direction='OUT' AND t.channel IN ('SMS','PUSH','EMAIL') "
+                + "AND t.result IN "
+                + ATTEMPTED_RESULTS
+                + " AND t.created_at >= ? AND t.created_at < ? "
+                + "UNION ALL "
+                + "SELECT s.case_id, s.dpd_snapshot, COALESCE(s.stage_snapshot, p.stage), 'AI' "
+                + "FROM t_ai_call_session s "
+                + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
+                + "WHERE s.event='session.completed' AND s.is_synthetic=0 "
+                + "AND s.received_at >= ? AND s.received_at < ?";
     }
 
-    private List<Map<String, Object>> queryPortfolioByStage() {
+    static String actionDpdPositivePred(String alias) {
+        String p = alias == null || alias.isEmpty() ? "" : alias + ".";
+        return "(("
+                + p
+                + "action_dpd > 0) OR ("
+                + p
+                + "action_dpd IS NULL AND "
+                + p
+                + "action_stage IN ('S1','S2','S3','S4')))";
+    }
+
+    static String yesterdayOpeningOsSql() {
+        return "SELECT i.case_id, CAST(JSON_UNQUOTE(COALESCE("
+                + "JSON_EXTRACT(i.payload,'$.data.overdueAmount'),"
+                + "JSON_EXTRACT(i.payload,'$.overdueAmount'),"
+                + "JSON_EXTRACT(i.payload,'$.data.totalOutstanding'))) AS DECIMAL(18,2)) "
+                + "AS opening_outstanding "
+                + "FROM t_ai_collection_inbox i "
+                + "INNER JOIN (SELECT case_id, MAX(id) AS id FROM t_ai_collection_inbox "
+                + "WHERE message_type='caseEvent' AND created_at >= ? AND created_at < ? "
+                + "GROUP BY case_id) last ON last.id = i.id";
+    }
+
+    static String yesterdayRepayAggSql() {
+        return "SELECT i.case_id, COALESCE(SUM("
+                + inboxPaidAmountExpr("i")
+                + "),0) AS paid_amount "
+                + "FROM t_ai_collection_inbox i "
+                + "WHERE i.message_type='repaymentEvent' "
+                + "AND i.created_at >= ? AND i.created_at < ? "
+                + "GROUP BY i.case_id";
+    }
+
+    static String inboxPaidAmountExpr(String alias) {
+        String payload = alias + ".payload";
+        return "CAST(JSON_UNQUOTE(COALESCE("
+                + "JSON_EXTRACT("
+                + payload
+                + ",'$.data.paidAmount'),"
+                + "JSON_EXTRACT("
+                + payload
+                + ",'$.paidAmount'))) AS DECIMAL(18,2))";
+    }
+
+    private static String yesterdayWorksetWithStageSql() {
+        return "SELECT x.case_id, COALESCE(MAX(CASE WHEN x.src='AI' THEN x.action_stage END), "
+                + "MAX(CASE WHEN x.src='MSG' THEN x.action_stage END)) AS action_stage "
+                + "FROM ("
+                + yesterdayActionUnionSql()
+                + ") x WHERE "
+                + actionDpdPositivePred("x")
+                + " GROUP BY x.case_id";
+    }
+
+    private Map<String, Object> queryYesterdayReview(LocalDateTime from, LocalDateTime to) {
+        return nvl(
+                oneRow(
+                        "SELECT COUNT(*) AS cases, "
+                                + "COALESCE(SUM(o.opening_outstanding),0) AS openingOutstanding, "
+                                + "COALESCE(COUNT(r.case_id),0) AS repaidCases, "
+                                + "COALESCE(SUM(r.paid_amount),0) AS repaidAmount "
+                                + "FROM ("
+                                + yesterdayWorksetSql()
+                                + ") w LEFT JOIN ("
+                                + yesterdayOpeningOsSql()
+                                + ") o ON o.case_id = w.case_id "
+                                + "LEFT JOIN ("
+                                + yesterdayRepayAggSql()
+                                + ") r ON r.case_id = w.case_id",
+                        from,
+                        to,
+                        from,
+                        to,
+                        from,
+                        to,
+                        from,
+                        to));
+    }
+
+    private List<Map<String, Object>> queryYesterdayReviewByStage(
+            LocalDateTime from, LocalDateTime to) {
         return jdbc.query(
-                "SELECT stage, COUNT(*) AS cases, "
-                        + "COALESCE(SUM(total_outstanding),0) AS outstanding "
-                        + "FROM t_ai_collection "
-                        + "WHERE collection_status='IN_COLLECTION' "
-                        + "AND stage IN ('S1','S2','S3','S4') "
-                        + "GROUP BY stage "
-                        + "ORDER BY MIN(FIELD(stage,'S1','S2','S3','S4'))",
+                "SELECT COALESCE(z.action_stage,'UNKNOWN') AS stage, "
+                        + "COUNT(*) AS cases, "
+                        + "COALESCE(SUM(o.opening_outstanding),0) AS openingOutstanding, "
+                        + "COALESCE(COUNT(r.case_id),0) AS repaidCases, "
+                        + "COALESCE(SUM(r.paid_amount),0) AS repaidAmount "
+                        + "FROM ("
+                        + yesterdayWorksetWithStageSql()
+                        + ") z "
+                        + "LEFT JOIN ("
+                        + yesterdayOpeningOsSql()
+                        + ") o ON o.case_id = z.case_id "
+                        + "LEFT JOIN ("
+                        + yesterdayRepayAggSql()
+                        + ") r ON r.case_id = z.case_id "
+                        + "GROUP BY COALESCE(z.action_stage,'UNKNOWN') "
+                        + "ORDER BY MIN(FIELD(COALESCE(z.action_stage,'UNKNOWN'),"
+                        + "'S1','S2','S3','S4','UNKNOWN'))",
+                new Object[] {from, to, from, to, from, to, from, to},
                 this::genericRow);
-    }
-
-    private List<Map<String, Object>> queryPortfolioByStatus() {
-        return jdbc.query(
-                "SELECT collection_status AS status, COUNT(*) AS cases, "
-                        + "COALESCE(SUM(total_outstanding),0) AS outstanding "
-                        + "FROM t_ai_collection GROUP BY collection_status ORDER BY cases DESC",
-                this::genericRow);
-    }
-
-    private Map<String, Object> queryTodayInbox() {
-        return nvl(
-                oneRow(
-                        "SELECT COUNT(*) AS todayInbox FROM t_ai_collection_inbox "
-                                + "WHERE message_type = 'caseEvent' AND created_at >= ?",
-                        DashboardClock.todayStart()));
     }
 
     private List<Map<String, Object>> queryAgingBuckets() {
@@ -1289,7 +1360,6 @@ public class DashboardQueryService {
 
     private static String answeredSessionSelect() {
         return "SELECT s.session_id, s.case_id, s.batch_id, s.answered_at, s.ended_at, s.received_at, "
-                + "TIMESTAMPDIFF(SECOND, s.answered_at, s.ended_at) AS durationSec, "
                 + "s.party, s.effective_conversation, s.right_party, "
                 + "s.disposition AS result_label, s.summary, "
                 + "COALESCE(s.stage_snapshot, p.stage) AS stage_snapshot, "
@@ -1308,7 +1378,6 @@ public class DashboardQueryService {
         row.put("answeredAt", rs.getObject("answered_at"));
         row.put("endedAt", rs.getObject("ended_at"));
         row.put("receivedAt", rs.getObject("received_at"));
-        row.put("durationSec", rs.getObject("durationSec"));
         row.put("party", rs.getString("party"));
         Object effective = rs.getObject("effective_conversation");
         row.put("effectiveConversation", effective == null ? null : toLong(effective) == 1);
