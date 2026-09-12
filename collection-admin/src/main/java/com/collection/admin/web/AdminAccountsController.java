@@ -1,7 +1,7 @@
 package com.collection.admin.web;
 
-import com.collection.admin.auth.AdminAuthInterceptor;
 import com.collection.admin.auth.AdminAccountStore;
+import com.collection.admin.auth.AdminAuthInterceptor;
 import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
@@ -42,8 +42,11 @@ public class AdminAccountsController {
 
     @PatchMapping("/{id}")
     public Map<String, Object> patch(
-            @PathVariable long id, @RequestBody PatchAccountRequest body, HttpServletRequest request) {
-        store.patch(id, body.getEnabled(), body.getRole(), body.getPassword(), currentUser(request));
+            @PathVariable long id,
+            @RequestBody PatchAccountRequest body,
+            HttpServletRequest request) {
+        store.patch(
+                id, body.getEnabled(), body.getRole(), body.getPassword(), currentUser(request));
         return ApiResponse.success(store.listPublic());
     }
 

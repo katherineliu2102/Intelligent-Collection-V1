@@ -194,6 +194,9 @@ public class AiCallAlertScanner {
     }
 
     void scanA3(LocalDateTime now, LocalDate day) {
+        // 波次聚合下 timeout_time 可达 30–120 分钟；dispatch+15m 无 session 仍可能在排队。
+        // 有 timeout_time：对齐超时哨兵，到期仍无 session 才算悬挂。无 timeout_time：15 分钟兜底。
+        // 不自动关 Ops 异常：session 回来不等于人工已处理，结单只做一次性运维。
         LocalDateTime hangBefore = now.minusMinutes(15);
         List<Map<String, Object>> hanging =
                 jdbc.query(
@@ -202,9 +205,13 @@ public class AiCallAlertScanner {
                                 + "FROM t_contact_plan_step s "
                                 + "JOIN t_contact_plan p ON p.id = s.plan_id "
                                 + "WHERE s.channel_type='AI_CALL' AND s.status='EXECUTING' "
-                                + "AND s.dispatched_at IS NOT NULL AND s.dispatched_at < ? "
+                                + "AND s.dispatched_at IS NOT NULL "
                                 + "AND NOT EXISTS (SELECT 1 FROM t_ai_call_session x "
-                                + "  WHERE x.step_id=s.id AND x.event='session.completed')",
+                                + "  WHERE x.step_id=s.id AND x.event='session.completed') "
+                                + "AND ("
+                                + "  (s.timeout_time IS NULL AND s.dispatched_at < ?) "
+                                + "  OR (s.timeout_time IS NOT NULL AND s.timeout_time <= ?)"
+                                + ")",
                         (rs, n) -> {
                             Map<String, Object> row = new LinkedHashMap<>();
                             row.put("stepId", rs.getLong("stepId"));
@@ -213,7 +220,8 @@ public class AiCallAlertScanner {
                             row.put("dispatchedAt", rs.getTimestamp("dispatchedAt"));
                             return row;
                         },
-                        hangBefore);
+                        hangBefore,
+                        now);
         if (hanging.isEmpty()) {
             dedup.markRecovered("A3", "hanging", day);
             return;

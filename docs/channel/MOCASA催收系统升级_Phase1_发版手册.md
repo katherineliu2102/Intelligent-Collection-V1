@@ -188,7 +188,8 @@ docker build --no-cache -t intelligent-collection-admin:pilot .
 ## 5. 这台机的运行口径
 
 - Profile：`pilot`
-- `COLLECTION_SCHEDULER_ENABLED=true`（`application-pilot.yml` 缺省即 true）：**接入 + 调度触达都开**。日槽 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 由 Cloud Scheduler → 调度订阅驱动。不要按旧口径改成 `false`（那会变成只接入、当天不再触达）。
+- `COLLECTION_SCHEDULER_ENABLED=true`（`application-pilot.yml` 缺省即 true）：**接入 + 调度触达都开**。日槽 08:00 SMS / 09:15·11:30·14:30·16:15·18:40 AI / 12:00 Push / 14:00 Email 由 Cloud Scheduler → 调度订阅驱动（新钟点不必加 Job，`planStepDue` 扫 `trigger_time`）。不要按旧口径改成 `false`（那会变成只接入、当天不再触达）。
+- 日限（与仓库 yml 缺省同向，env 优先）：`CHANNEL_DAILY_LIMIT_AI_CALL=10`，`CHANNEL_DAILY_TOTAL_LIMIT=15`。`pilot.env` 若仍写 2 / 5 会把新包盖回去。S4 D+61~90 一天一通靠模板。重建入口 `POST /ops/plans/rebuild-strategy?confirm=FIVE_WAVES_20260911`（仅 SYSTEM_ADMIN）。默认窗口 ≥19:00 PHT；错过夜间窗口用 `force=true` catch-up。见 [五波迭代](./MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md)。
 - 触达开关：`CHANNEL_NOTIFICATION_SMS_TEST_MODE=false`，Push 无 test-token / 异步 `/send`，见 §0.1。
 - 配置：`/opt/app/pilot.env` + Nacos（`NACOS_NAMESPACE` / `NACOS_GROUP` 见 `pilot.env`）
 - 库：`ai_collection_db`（与线上催收同一套）

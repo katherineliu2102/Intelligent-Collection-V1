@@ -89,7 +89,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
 | `.env` 的 `COLLECTION_SCAN_CASE_IDS` | 一键启动后会发生什么 |
 |---|---|
 | `999999999`（只看后台） | 引擎在跑，但扫描名单是假 id → **零触达**。看板仍显示测试库里已有的历史/Pilot 数据 |
-| 本轮批准的真实 case_id | 到期步骤会按 **PHT 槽点**（08:00 / 09:15 / 12:00 / 14:00 / 14:30）触发，不是启动后 30 分钟。已经过点的到期步骤会在扫描周期内很快补打 |
+| 本轮批准的真实 case_id | 到期步骤会按 **PHT 槽点**（08:00 / 09:15 / 11:30 / 12:00 / 14:00 / 14:30 / 16:15 / 18:40）触发，不是启动后 30 分钟。已经过点的到期步骤会在扫描周期内很快补打 |
 
 local 与共享测试库上的 Pilot **不要同时用真实白名单扫库**，会互抢步骤。只看新看板时用占位白名单。
 
@@ -200,7 +200,7 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 | 模块 | 看什么 | 注意 |
 |------|--------|------|
-| 今日触达时间线 | 08:00 SMS/PUSH、09:15 AI、12:00 PUSH、14:00 EMAIL、14:30 AI（条数不固定） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 看线路接通/真人/有效沟通；FAILED 仅线路与我方；下钻为 RPC 后的 disposition。 |
+| 今日触达时间线 | 08:00 SMS/PUSH、09:15 / 11:30 / 14:30 / 16:15 / 18:40 AI、12:00 PUSH、14:00 EMAIL（条数不固定；S4 后段当天可能只有 09:15 一通 AI） | 未到点显示「尚未到时间」。Email 发送=0 显示「正常零发送」，不标红。AI 看线路接通/真人/有效沟通；FAILED 仅线路与我方；下钻为 RPC 后的 disposition。 |
 | 分渠道触达 | SMS / PUSH / EMAIL 各一张卡 | **禁止**把多渠道合成一条送达率 |
 | AI 接通 | 时间线：线路接通/真人/有效沟通；明细默认线路接通；FAILED = network+our_system | 线路接通=`was_answered`；真人=`party=human`。明细列 `party` / `effective_conversation` / `right_party`。不展示时长。`disposition` 只在 `right_party=yes` 时有值。 |
 | 日切断言 | 迁出后再 DELIVERED、升档、inbox、新建 plan | 迁出后再打必须为 0，>0 标红 |
@@ -346,7 +346,7 @@ curl -s "http://localhost:8888/plans/141/steps"                            # 某
 curl -s "http://localhost:8888/plans/timeline/99000002?limit=50"           # 按 userId 时间线
 curl -s "http://localhost:8888/catalog/overview"                           # 策略/模板目录
 curl -s -b cookies.txt \
-  "http://localhost:8888/dashboard/today"                                  # 今日执行（五槽 / 日切 / AI 波次）
+  "http://localhost:8888/dashboard/today"                                  # 今日执行（触达时间线 / 日切 / AI 波次）
 curl -s -b cookies.txt \
   "http://localhost:8888/dashboard/outreach/realtime?days=30"              # 触达复盘（分渠道，无跨渠道合并率）
 ```
@@ -430,7 +430,7 @@ SHOW TABLES LIKE 't_alert_dedup';
 
 ## 9. 钉钉告警（A1–A3 / A7–A9）
 
-本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A1 的 FAILED = `failure_class` 为 `network` 或 `our_system`（DECLINE/空号等 callee **不告**），与看板同一口径。A3 还会写入后台 **Ops Queue**。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
+本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A1 的 FAILED = `failure_class` 为 `network` 或 `our_system`（DECLINE/空号等 callee **不告**），与看板同一口径。A3 还会写入后台 **Ops Queue**。**A3 不在 dispatch 后 15 分钟就告**：波次聚合下排队超过 15 分钟仍可能正常。有 `timeout_time` 时与超时哨兵对齐（到期仍 EXECUTING 且无 `session.completed`）；没有 `timeout_time` 才用 dispatch+15 分钟兜底。异常队列**不自动结单**，session 回来后仍须人工关闭。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
 
 渠道 FAILED 口径与看板「今日执行」一致：分子 = `FAILED`/`REJECTED`/`BOUNCED`，分母 = ATTEMPTED（`DELIVERED`/`SENT`/`ACCEPTED` + 失败三种），**SKIPPED 不计分母**。SMS / PUSH / EMAIL **分渠道、禁止合并**。SMS 全日一槽 `0800`；PUSH 分 `0800`（12 点前）与 `1200`（12 点后）；EMAIL 全日 `1400`（无里程碑日发送=0 属正常，n&lt;20 不告）。
 

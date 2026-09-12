@@ -176,7 +176,7 @@ T3o 开始前必须满足：
 - Webhook 必须启用签名校验；
 - T3o 渠道不得回退到 mock，且 sandbox/测试地址与限频已生效；T4 必须切换为批准真实地址，仍保持限频；
 - `collection.repayment-url-template` 已显式配置（环境变量 `COLLECTION_REPAYMENT_URL_TEMPLATE`，Phase 1 取 App 官方短链 `https://mocasa.com/s/4cTu`）。该值会原样渲染进 SMS 正文、Push `deep_link` 与 Email `payment_link`，漏配会落到代码默认模板，客户点开是打不开的链接；
-- `channel.compliance.daily-total-limit=5`、`daily-limit.AI_CALL=2`。里程碑日单案槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，沿用默认的合计 3 次会让当天后两个槽位被静默拦掉；
+- `channel.compliance.daily-total-limit=15`、`daily-limit.AI_CALL=10`。五波后里程碑日约 SMS+Push+Email+5×AI = 8 次，沿用默认合计 3 或旧 Pilot 合计 5 都会让后段波次被静默拦掉。S4 D+61~90 仍一天一通（模板只铺 09:15）。口径见 [五波迭代](../../channel/MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md)；
 - `t_script_template` 中 **SMS 10 槽 + Push 7 槽全部 ACTIVE**（`db/seed-phase1-config.sql`）。`DefaultStepResolver` 对缺槽是跳过不发（与 Email 一致），漏配不会发占位串但会静默少触达，故 `PilotReadinessValidator` 在启动时逐槽校验并列出缺失项；
 - `t_contact_plan_template` 使用 **dayBlocks 绝对槽位**而非 `delayMin`。`delayMin` 是 L4 联调节奏（步骤间隔 1 分钟），在真实客户上会造成 3 分钟内连收 3 条；
 - `collection.ingestion.fault-injection-enabled=false`。

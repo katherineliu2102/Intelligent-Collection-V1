@@ -114,12 +114,12 @@ channel:
   # 表现为每条真实回调都验签失败回 401。紧急覆盖直接设同名环境变量（松散绑定优先级更高）。
   # 调度开启时 PilotReadinessValidator 要求 callback-secret 非空。
   compliance:
-    # 里程碑日的槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，
-    # 沿用默认的合计 3 次会让当天后两个槽位被 ExecutionGuard 拦掉。
-    # 外呼 2 次/案/日对齐编排规格 §7.11（S4 D+61~90 降为 1 次由 dayBlocks 少铺一个槽实现，不靠日限）。
-    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:5}
+    # 五波后里程碑日约 SMS+Push+Email+5×AI = 8 次；合计必须高于该数，否则多出来的波次会被 Guard 静默跳过。
+    # 10 / 15 是上限不是每天打满。S4 D+61~90 一天一通靠 dayBlocks 只铺 09:15，不靠日限=1。
+    # 口径：docs/channel/MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md
+    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:15}
     daily-limit:
       SMS: ${CHANNEL_DAILY_LIMIT_SMS:1}
       PUSH: ${CHANNEL_DAILY_LIMIT_PUSH:1}
       EMAIL: ${CHANNEL_DAILY_LIMIT_EMAIL:1}
-      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:2}
+      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:10}

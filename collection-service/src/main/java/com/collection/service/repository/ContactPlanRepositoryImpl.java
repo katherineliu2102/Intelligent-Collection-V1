@@ -56,6 +56,18 @@ public class ContactPlanRepositoryImpl implements ContactPlanRepository {
     }
 
     @Override
+    public Long findMaxActiveS1ToS4PlanId() {
+        return planMapper.selectMaxActiveS1ToS4PlanId();
+    }
+
+    @Override
+    public List<Long> findActiveS1ToS4PlanIds(long afterId, long maxId, int limit) {
+        int capped = Math.max(1, Math.min(limit, 500));
+        List<Long> ids = planMapper.selectActiveS1ToS4PlanIds(afterId, maxId, capped);
+        return ids == null ? Collections.emptyList() : ids;
+    }
+
+    @Override
     public ContactPlan getLastCompletedPlan(Long caseId) {
         return planMapper.selectLastCompleted(caseId);
     }

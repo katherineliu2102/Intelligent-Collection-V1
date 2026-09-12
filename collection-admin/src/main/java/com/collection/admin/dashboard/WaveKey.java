@@ -25,6 +25,18 @@ public final class WaveKey {
         return m.group(1) + "-" + m.group(2);
     }
 
+    /** {@code YYYY-MM-DD}；无法解析时 {@code null}。 */
+    public static String dateIso(String waveKey) {
+        if (waveKey == null || waveKey.length() < 8 || "UNKNOWN".equals(waveKey)) {
+            return null;
+        }
+        String day = waveKey.substring(0, 8);
+        if (!day.chars().allMatch(Character::isDigit)) {
+            return null;
+        }
+        return day.substring(0, 4) + "-" + day.substring(4, 6) + "-" + day.substring(6, 8);
+    }
+
     /** 展示用 {@code 2026-09-08 09:15}；无法解析时返回原文；{@code UNKNOWN} 显示未分波次。 */
     public static String formatDisplay(String waveKey) {
         if (waveKey == null || waveKey.isEmpty()) {
@@ -63,13 +75,27 @@ public final class WaveKey {
         return waveKey.substring(dash + 1);
     }
 
-    /** 从 PHT 触发时刻归到 09:15 / 14:30 槽（不硬编码档位，只认当日两波钟点）。 */
+    /**
+     * 从 PHT 触发时刻归到五波槽（互不重叠，约 ±15 分钟）。口径见迭代文档 2026-09-11。
+     *
+     * <p>0915=09:00–09:29；1130=11:15–11:44；1430=14:15–14:44；1615=16:00–16:29；1840=18:25–18:54。
+     */
     public static String slotHhmmFromTrigger(int hour, int minute) {
-        if (hour == 9 || (hour == 8 && minute >= 45) || (hour == 10 && minute <= 15)) {
+        int minutes = hour * 60 + minute;
+        if (minutes >= 9 * 60 && minutes <= 9 * 60 + 29) {
             return "0915";
         }
-        if ((hour == 14 && minute >= 15) || (hour == 15 && minute <= 15)) {
+        if (minutes >= 11 * 60 + 15 && minutes <= 11 * 60 + 44) {
+            return "1130";
+        }
+        if (minutes >= 14 * 60 + 15 && minutes <= 14 * 60 + 44) {
             return "1430";
+        }
+        if (minutes >= 16 * 60 && minutes <= 16 * 60 + 29) {
+            return "1615";
+        }
+        if (minutes >= 18 * 60 + 25 && minutes <= 18 * 60 + 54) {
+            return "1840";
         }
         return null;
     }

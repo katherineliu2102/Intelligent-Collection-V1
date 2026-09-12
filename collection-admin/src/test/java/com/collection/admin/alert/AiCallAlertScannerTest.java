@@ -1,5 +1,6 @@
 package com.collection.admin.alert;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
@@ -112,7 +114,7 @@ class AiCallAlertScannerTest {
         row.put("planId", 11L);
         row.put("caseId", 9L);
         hanging.add(row);
-        when(jdbc.query(anyString(), any(RowMapper.class), any())).thenReturn(hanging);
+        when(jdbc.query(anyString(), any(RowMapper.class), any(), any())).thenReturn(hanging);
 
         scanner.scanA3(LocalDateTime.of(2026, 9, 7, 10, 0), LocalDate.of(2026, 9, 7));
 
@@ -129,6 +131,31 @@ class AiCallAlertScannerTest {
                         eq("A3:AI_CALL:88"));
         verify(dingtalk).sendText(contains("A3 hanging"));
         verify(dingtalk, never()).sendText(contains("09xxxxxxxx"));
+    }
+
+    @Test
+    void a3SqlWaitsForTimeoutTimeWhenPresent() {
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        when(jdbc.query(sql.capture(), any(RowMapper.class), any(), any()))
+                .thenReturn(new ArrayList<>());
+
+        scanner.scanA3(LocalDateTime.of(2026, 9, 12, 10, 0), LocalDate.of(2026, 9, 12));
+
+        String q = sql.getValue();
+        assertThat(q).contains("timeout_time IS NULL");
+        assertThat(q).contains("timeout_time <= ?");
+        verify(dingtalk, never()).sendText(anyString());
+        verify(exceptions, never())
+                .upsertOpen(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        any(),
+                        any(),
+                        any(),
+                        anyString(),
+                        anyString(),
+                        anyString());
     }
 
     @Test

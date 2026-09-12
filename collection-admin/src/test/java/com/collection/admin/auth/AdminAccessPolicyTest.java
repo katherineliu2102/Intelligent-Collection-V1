@@ -24,6 +24,7 @@ class AdminAccessPolicyTest {
         "OPERATOR,POST,/compliance/freeze,true",
         "OPERATOR,POST,/config/rollback,false",
         "OPERATOR,POST,/ops/dlq/redrive,false",
+        "OPERATOR,POST,/ops/plans/rebuild-strategy,false",
         "OPERATOR,POST,/ops/fault-injection/arm,false",
         "OPERATOR,DELETE,/ops/fault-injection,false",
         "OPERATOR,POST,/plans/1/cancel,false",
@@ -33,6 +34,7 @@ class AdminAccessPolicyTest {
         "OPERATOR,GET,/admin/accounts,false",
         "SYSTEM_ADMIN,GET,/admin/accounts,true",
         "SYSTEM_ADMIN,POST,/ops/dlq/redrive,true",
+        "SYSTEM_ADMIN,POST,/ops/plans/rebuild-strategy,true",
         "SYSTEM_ADMIN,POST,/config/rollback,true",
         "SYSTEM_ADMIN,DELETE,/ops/fault-injection,true",
         "SYSTEM_ADMIN,POST,/catalog/x,true"

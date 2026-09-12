@@ -1396,4 +1396,99 @@ class PlanLifecycleManagerTest {
                 .with(CollectionEvent.CASE_ID, CASE_ID)
                 .with(CollectionEvent.PLAN_ID, PLAN_ID);
     }
+
+    // ───────────────────────── 策略刷新重建 ─────────────────────────
+
+    @Test
+    @DisplayName("策略刷新：S2 活跃计划 MANUAL 取消后按当前模板重建，不走 owner_date，不钳 08:00")
+    void rebuildStrategyPlan_cancelsManualAndCreatesWithoutOwnerGate() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S2);
+        plan.getSteps().add(newStep(STEP_ID, 1, ChannelType.SMS, StepStatus.PENDING));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        ContactPlan created = newPlan(0L, null, Stage.S2);
+        created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
+        created.getSteps().get(0).setTriggerTime(LocalDateTime.of(2026, 9, 12, 11, 30));
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(created);
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getOutcome()).isEqualTo("REBUILT");
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.MANUAL);
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        assertThat(captor.getValue().getSteps().get(0).getTriggerTime())
+                .isEqualTo(LocalDateTime.of(2026, 9, 12, 11, 30));
+        verify(caseService, never()).isOwnerReconciledToday();
+    }
+
+    @Test
+    @DisplayName("策略刷新：AI_CALL EXECUTING 跳过且不取消")
+    void rebuildStrategyPlan_skipsExecutingAi() {
+        plan.setStatus(PlanStatus.STEP_EXECUTING);
+        plan.setStage(Stage.S2);
+        plan.getSteps().add(newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.EXECUTING));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getOutcome()).isEqualTo("SKIPPED");
+        assertThat(result.getReason()).isEqualTo("SKIPPED_EXECUTING_AI");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planFactory, never()).create(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：S0 跳过")
+    void rebuildStrategyPlan_skipsS0() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S0);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getReason()).isEqualTo("SKIPPED_STAGE");
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：Factory 无未来槽则不取消")
+    void rebuildStrategyPlan_factoryNullDoesNotCancel() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S4);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planFactory.create(any(), eq(Stage.S4), any())).thenReturn(null);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getReason()).isEqualTo("SKIPPED_NO_FUTURE_SLOTS");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：dryRun 不写库")
+    void rebuildStrategyPlan_dryRunDoesNotWrite() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S1);
+        ContactPlan created = newPlan(0L, null, Stage.S1);
+        created.getSteps().add(newStep(0L, 1, ChannelType.AI_CALL, null));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planFactory.create(any(), eq(Stage.S1), any())).thenReturn(created);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, true);
+
+        assertThat(result.getOutcome()).isEqualTo("WOULD_REBUILD");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
 }

@@ -89,7 +89,8 @@ class AdminAuthInterceptorTest {
     @Test
     void unknownRoleIsViewerAndCannotWrite() throws Exception {
         AdminAuthInterceptor interceptor = interceptor();
-        HttpServletRequest request = requestWithRole("SUPERUSER", "PUT", "/config/script-templates");
+        HttpServletRequest request =
+                requestWithRole("SUPERUSER", "PUT", "/config/script-templates");
         HttpServletResponse response = mock(HttpServletResponse.class);
         StringWriter body = new StringWriter();
         when(response.getWriter()).thenReturn(new PrintWriter(body));

@@ -68,6 +68,24 @@ public interface ContactPlanMapper {
             @Param("caseId") Long caseId, @Param("stage") Stage stage);
 
     @Select(
+            "SELECT MAX(id) FROM t_contact_plan "
+                    + "WHERE renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+                    + "AND stage IN ('S1','S2','S3','S4')")
+    Long selectMaxActiveS1ToS4PlanId();
+
+    @Select(
+            "SELECT id FROM t_contact_plan "
+                    + "WHERE renewal_pending = 0 "
+                    + "AND status NOT IN ('PLAN_COMPLETED','PLAN_CANCELLED') "
+                    + "AND stage IN ('S1','S2','S3','S4') "
+                    + "AND id > #{afterId} "
+                    + "AND id <= #{maxId} "
+                    + "ORDER BY id ASC LIMIT #{limit}")
+    List<Long> selectActiveS1ToS4PlanIds(
+            @Param("afterId") long afterId, @Param("maxId") long maxId, @Param("limit") int limit);
+
+    @Select(
             "SELECT * FROM t_contact_plan "
                     + "WHERE case_id = #{caseId} AND status = 'PLAN_COMPLETED' "
                     + "ORDER BY completed_at DESC LIMIT 1")

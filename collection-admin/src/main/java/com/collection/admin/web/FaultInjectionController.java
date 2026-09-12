@@ -64,7 +64,8 @@ public class FaultInjectionController {
             return ResponseEntity.badRequest()
                     .body(
                             ApiResponse.failure(
-                                    "INVALID_POSITION", "position 只能是 BEFORE_HANDLER 或 AFTER_HANDLER"));
+                                    "INVALID_POSITION",
+                                    "position 只能是 BEFORE_HANDLER 或 AFTER_HANDLER"));
         }
         try {
             return ResponseEntity.ok(
@@ -92,7 +93,8 @@ public class FaultInjectionController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(
                             ApiResponse.failure(
-                                    "CONFIRMATION_REQUIRED", "reason and confirm=true are required"));
+                                    "CONFIRMATION_REQUIRED",
+                                    "reason and confirm=true are required"));
         }
         return null;
     }

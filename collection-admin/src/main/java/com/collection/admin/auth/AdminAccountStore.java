@@ -111,7 +111,8 @@ public class AdminAccountStore implements ApplicationRunner {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "username too short");
         }
         if (StringUtils.isBlank(rawPassword) || rawPassword.length() < 8) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "password must be at least 8 characters");
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "password must be at least 8 characters");
         }
         String normalized = AdminRole.parse(role).name();
         try {
@@ -157,7 +158,8 @@ public class AdminAccountStore implements ApplicationRunner {
                 id);
     }
 
-    private void assertNotLastAdminLockout(AccountRow current, boolean nextEnabled, String nextRole) {
+    private void assertNotLastAdminLockout(
+            AccountRow current, boolean nextEnabled, String nextRole) {
         boolean wasAdmin =
                 current.isEnabled() && AdminRole.SYSTEM_ADMIN == AdminRole.parse(current.getRole());
         boolean stayAdmin = nextEnabled && AdminRole.SYSTEM_ADMIN == AdminRole.parse(nextRole);

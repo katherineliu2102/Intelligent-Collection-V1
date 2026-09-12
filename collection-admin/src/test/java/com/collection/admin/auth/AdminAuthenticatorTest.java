@@ -176,7 +176,8 @@ class AdminAuthenticatorTest {
         assertThat(auth.authenticate("ops", "s3cret").get()).containsEntry("role", "VIEWER");
     }
 
-    private static AdminAuthProperties authenticatorProps(String user, String password, String role) {
+    private static AdminAuthProperties authenticatorProps(
+            String user, String password, String role) {
         AdminAuthProperties props = new AdminAuthProperties();
         props.setAccounts(Collections.singletonList(account(user, password, role)));
         return props;

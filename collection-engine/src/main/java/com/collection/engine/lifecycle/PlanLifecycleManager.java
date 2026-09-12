@@ -21,7 +21,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -587,6 +589,181 @@ public class PlanLifecycleManager {
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
         }
         return noEvents();
+    }
+
+    // ───────────────────────── 运维：策略刷新重建（五波迭代） ─────────────────────────
+
+    /** 当前 S1–S4 活跃计划 MAX(id)；没有则 null。 */
+    public Long maxActiveS1ToS4PlanId() {
+        return planRepository.findMaxActiveS1ToS4PlanId();
+    }
+
+    /** S1–S4 活跃计划 id 升序分页；不含 S0。仅返回 {@code id <= maxId}，避免新计划被二次重建。 */
+    public List<Long> listActiveS1ToS4PlanIds(long afterId, long maxId, int limit) {
+        return planRepository.findActiveS1ToS4PlanIds(afterId, maxId, limit);
+    }
+
+    /**
+     * 按当前模板取消并重建一份 S1–S4 活跃计划。
+     *
+     * <p>不走 owner_date 门控（非当日 NEW 的在催案也要换模板）。不把首步钳到次日 08:00——须在 19:00 PHT 之后调用，让 {@code
+     * futureSlots} 自然从次日 08:00 起。取消原因 {@code MANUAL}；Factory 先预演，失败则不取消。当前有 {@code AI_CALL
+     * EXECUTING} 则跳过。
+     */
+    @Transactional
+    public StrategyRebuildResult rebuildStrategyPlan(Long planId, boolean dryRun) {
+        if (planId == null) {
+            return StrategyRebuildResult.failed("MISSING_PLAN_ID", null, null, null);
+        }
+        ContactPlan locked = planRepository.findPlanWithLock(planId);
+        if (locked == null) {
+            return StrategyRebuildResult.failed("PLAN_NOT_FOUND", planId, null, null);
+        }
+        if (locked.isTerminal()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_TERMINAL", planId, locked.getCaseId(), locked.getStage());
+        }
+        Stage stage = locked.getStage();
+        if (stage == null
+                || stage == Stage.S0
+                || (stage != Stage.S1
+                        && stage != Stage.S2
+                        && stage != Stage.S3
+                        && stage != Stage.S4)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_STAGE", planId, locked.getCaseId(), stage);
+        }
+        if (hasExecutingAiCall(locked)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_EXECUTING_AI", planId, locked.getCaseId(), stage);
+        }
+        if (!stillInCollection(locked)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_LEFT_COLLECTION", planId, locked.getCaseId(), stage);
+        }
+        ContextSnapshot carried = snapshotFromPlan(locked);
+        CaseInfo fromSnap = caseInfoFromSnapshot(carried);
+        final ContextSnapshot snapshot = carried;
+        final CaseInfo caseInfo =
+                fromSnap != null ? fromSnap : caseService.getCaseInfo(locked.getCaseId());
+        if (caseInfo != null && isCeased(caseInfo)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_CEASED", planId, locked.getCaseId(), stage);
+        }
+        if (caseInfo != null && caseInfo.isRepaid()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_REPAID", planId, locked.getCaseId(), stage);
+        }
+        ContactPlan draft =
+                spiInvoker.call(
+                        SpiType.PLAN_FACTORY, () -> planFactory.create(caseInfo, stage, snapshot));
+        if (draft == null || draft.getSteps() == null || draft.getSteps().isEmpty()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_NO_FUTURE_SLOTS", planId, locked.getCaseId(), stage);
+        }
+        if (dryRun) {
+            return StrategyRebuildResult.wouldRebuild(planId, locked.getCaseId(), stage);
+        }
+        cancelPlan(locked, CancelReason.MANUAL);
+        boolean created =
+                createPlanForStage(
+                        locked.getCaseId(), stage, caseInfo, snapshot, locked.getId(), false);
+        if (!created) {
+            throw new IllegalStateException(
+                    "strategy rebuild cancelled plan "
+                            + planId
+                            + " but factory did not persist successor");
+        }
+        log.info(
+                "[rebuild-strategy] case {} oldPlan {} stage {} MANUAL cancel + rebuild",
+                locked.getCaseId(),
+                planId,
+                stage);
+        return StrategyRebuildResult.rebuilt(planId, locked.getCaseId(), stage);
+    }
+
+    private boolean hasExecutingAiCall(ContactPlan plan) {
+        if (plan.getSteps() == null) {
+            return false;
+        }
+        for (ContactPlanStep step : plan.getSteps()) {
+            if (step != null
+                    && step.getChannelType() == ChannelType.AI_CALL
+                    && step.getStatus() == StepStatus.EXECUTING) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 策略刷新单案结果。 */
+    public static final class StrategyRebuildResult {
+        private final String outcome;
+        private final String reason;
+        private final Long planId;
+        private final Long caseId;
+        private final String stage;
+
+        private StrategyRebuildResult(
+                String outcome, String reason, Long planId, Long caseId, String stage) {
+            this.outcome = outcome;
+            this.reason = reason;
+            this.planId = planId;
+            this.caseId = caseId;
+            this.stage = stage;
+        }
+
+        public static StrategyRebuildResult rebuilt(Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "REBUILT", null, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult wouldRebuild(Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "WOULD_REBUILD", null, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult skipped(
+                String reason, Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "SKIPPED", reason, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult failed(
+                String reason, Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "FAILED", reason, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public String getOutcome() {
+            return outcome;
+        }
+
+        public String getReason() {
+            return reason;
+        }
+
+        public Long getPlanId() {
+            return planId;
+        }
+
+        public Long getCaseId() {
+            return caseId;
+        }
+
+        public String getStage() {
+            return stage;
+        }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("outcome", outcome);
+            row.put("reason", reason);
+            row.put("planId", planId);
+            row.put("caseId", caseId);
+            row.put("stage", stage);
+            return row;
+        }
     }
 
     // ───────────────────────── 私有：计划创建复用（§2.2） ─────────────────────────

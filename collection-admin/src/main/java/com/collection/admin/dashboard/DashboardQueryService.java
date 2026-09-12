@@ -156,12 +156,46 @@ public class DashboardQueryService {
             String stage,
             String waveKey,
             String connectKind) {
+        return aicallDetail(
+                page,
+                pageSize,
+                days,
+                includeSynthetic,
+                resultLabel,
+                stage,
+                waveKey,
+                connectKind,
+                null,
+                null,
+                null);
+    }
+
+    public Map<String, Object> aicallDetail(
+            int page,
+            int pageSize,
+            int days,
+            boolean includeSynthetic,
+            String resultLabel,
+            String stage,
+            String waveKey,
+            String connectKind,
+            String party,
+            String effectiveConversation,
+            String rightParty) {
         int p = Math.max(1, page);
         int size = Math.max(1, Math.min(100, pageSize));
         int windowDays = clampDays(days);
         int offset = (p - 1) * size;
         String synth = includeSynthetic ? "" : " AND s.is_synthetic = 0";
-        DetailFilter filter = DetailFilter.of(resultLabel, stage, waveKey, connectKind);
+        DetailFilter filter =
+                DetailFilter.of(
+                        resultLabel,
+                        stage,
+                        waveKey,
+                        connectKind,
+                        party,
+                        effectiveConversation,
+                        rightParty);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("layer", "HOT");
         data.put("freshness", "on_demand");
@@ -175,13 +209,19 @@ public class DashboardQueryService {
     }
 
     public Map<String, Object> risk() {
+        return risk(7);
+    }
+
+    public Map<String, Object> risk(int days) {
+        int windowDays = clampDays(days);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("layer", "HOT");
         data.put("freshness", "on_demand");
-        data.put("highSensitivity", queryHighSensitivityLabels());
-        data.put("disconnect", queryDisconnect());
+        data.put("windowDays", windowDays);
+        data.put("highSensitivity", queryHighSensitivityLabels(windowDays));
+        data.put("disconnect", queryDisconnect(windowDays));
         data.put("hanging", queryHanging());
-        data.put("guardBlocked", queryGuardBlocked(null));
+        data.put("guardBlocked", queryGuardBlockedWindow(windowDays));
         return data;
     }
 
@@ -190,9 +230,12 @@ public class DashboardQueryService {
         slots.add(smsSlot(from));
         slots.add(pushSlot(from, "08:00", true));
         slots.add(aiSlot(from, "09:15", "0915"));
+        slots.add(aiSlot(from, "11:30", "1130"));
         slots.add(pushSlot(from, "12:00", false));
         slots.add(emailSlot(from));
         slots.add(aiSlot(from, "14:30", "1430"));
+        slots.add(aiSlot(from, "16:15", "1615"));
+        slots.add(aiSlot(from, "18:40", "1840"));
         return slots;
     }
 
@@ -384,7 +427,8 @@ public class DashboardQueryService {
                         + "AND "
                         + lineAnsweredPred("s")
                         + " AND s.received_at >= ? "
-                        + "ORDER BY COALESCE(s.answered_at, s.received_at) DESC LIMIT 100",
+                        + answeredOrderBy("s")
+                        + " LIMIT 100",
                 new Object[] {from},
                 this::mapAnsweredSession);
     }
@@ -484,8 +528,8 @@ public class DashboardQueryService {
                                 + "AND trigger_time IS NOT NULL AND trigger_time <= ?",
                         DashboardClock.now()));
         risk.put("exceptions", queryExceptions());
-        risk.put("disconnect", queryDisconnect());
-        risk.put("highSensitivity", queryHighSensitivityLabels());
+        risk.put("disconnect", queryDisconnectToday(from));
+        risk.put("highSensitivity", queryHighSensitivityLabelsToday(from));
         return risk;
     }
 
@@ -595,6 +639,7 @@ public class DashboardQueryService {
                             k -> {
                                 Map<String, Object> m = emptyAiAgg();
                                 m.put("waveKey", k);
+                                m.put("waveDate", WaveKey.dateIso(k));
                                 m.put("slot", WaveKey.slotHhmm(k));
                                 return m;
                             });
@@ -762,7 +807,8 @@ public class DashboardQueryService {
                         + windowDays
                         + " DAY)"
                         + filter.sql
-                        + " ORDER BY s.batch_id DESC, COALESCE(s.answered_at, s.received_at) DESC LIMIT ? OFFSET ?",
+                        + answeredOrderBy("s")
+                        + " LIMIT ? OFFSET ?",
                 args,
                 this::mapAnsweredSession);
     }
@@ -771,7 +817,9 @@ public class DashboardQueryService {
         List<Map<String, Object>> rows =
                 jdbc.query(
                         "SELECT DISTINCT s.disposition AS resultLabel, "
-                                + "COALESCE(s.stage_snapshot, p.stage) AS stageSnapshot, s.batch_id AS batchId "
+                                + "COALESCE(s.stage_snapshot, p.stage) AS stageSnapshot, s.batch_id AS batchId, "
+                                + "s.party AS party, s.right_party AS rightParty, "
+                                + "s.effective_conversation AS effectiveConversation "
                                 + "FROM t_ai_call_session s "
                                 + "LEFT JOIN t_contact_plan p ON p.id = s.plan_id "
                                 + "WHERE s.event='session.completed' AND "
@@ -784,6 +832,11 @@ public class DashboardQueryService {
         LinkedHashMap<String, Boolean> labels = new LinkedHashMap<>();
         LinkedHashMap<String, Boolean> stages = new LinkedHashMap<>();
         LinkedHashMap<String, Boolean> waves = new LinkedHashMap<>();
+        LinkedHashMap<String, Boolean> parties = new LinkedHashMap<>();
+        LinkedHashMap<String, Boolean> rightParties = new LinkedHashMap<>();
+        LinkedHashMap<String, Boolean> effectives = new LinkedHashMap<>();
+        effectives.put("1", Boolean.TRUE);
+        effectives.put("0", Boolean.TRUE);
         for (Map<String, Object> row : rows) {
             String label = str(row.get("resultLabel"));
             labels.put(label == null ? "" : label, Boolean.TRUE);
@@ -791,11 +844,18 @@ public class DashboardQueryService {
             stages.put(stage == null ? "" : stage, Boolean.TRUE);
             String wave = WaveKey.fromBatchId(str(row.get("batchId")));
             waves.put(wave == null ? "" : wave, Boolean.TRUE);
+            String party = str(row.get("party"));
+            parties.put(party == null ? "" : party, Boolean.TRUE);
+            String rp = str(row.get("rightParty"));
+            rightParties.put(rp == null ? "" : rp, Boolean.TRUE);
         }
         Map<String, Object> facets = new LinkedHashMap<>();
         facets.put("labels", new ArrayList<>(labels.keySet()));
         facets.put("stages", new ArrayList<>(stages.keySet()));
         facets.put("waves", new ArrayList<>(waves.keySet()));
+        facets.put("parties", new ArrayList<>(parties.keySet()));
+        facets.put("rightParties", new ArrayList<>(rightParties.keySet()));
+        facets.put("effectives", new ArrayList<>(effectives.keySet()));
         List<String> kinds = new ArrayList<>();
         kinds.add("human");
         kinds.add("mailbox");
@@ -819,20 +879,73 @@ public class DashboardQueryService {
         return "未分类";
     }
 
-    private List<Map<String, Object>> queryHighSensitivityLabels() {
+    private List<Map<String, Object>> queryHighSensitivityLabels(int windowDays) {
         return jdbc.query(
                 "SELECT session_id AS sessionId, case_id AS caseId, "
                         + "disposition AS resultLabel, summary, received_at AS receivedAt "
                         + "FROM t_ai_call_session WHERE disposition = 'disputed' "
-                        + "ORDER BY received_at DESC LIMIT 20",
+                        + "AND received_at >= DATE_SUB(NOW(), INTERVAL "
+                        + windowDays
+                        + " DAY) "
+                        + "ORDER BY received_at DESC LIMIT 50",
                 this::genericRow);
     }
 
-    private Map<String, Object> queryDisconnect() {
-        return nvl(
-                oneRow(
-                        "SELECT COUNT(*) AS invalidNumber FROM t_ai_call_session "
-                                + "WHERE final_failure_reason = 'INVALID_NUMBER'"));
+    private List<Map<String, Object>> queryHighSensitivityLabelsToday(LocalDateTime from) {
+        return jdbc.query(
+                "SELECT session_id AS sessionId, case_id AS caseId, "
+                        + "disposition AS resultLabel, summary, received_at AS receivedAt "
+                        + "FROM t_ai_call_session WHERE disposition = 'disputed' "
+                        + "AND received_at >= ? "
+                        + "ORDER BY received_at DESC LIMIT 50",
+                new Object[] {from},
+                this::genericRow);
+    }
+
+    private Map<String, Object> queryDisconnect(int windowDays) {
+        Map<String, Object> out =
+                nvl(
+                        oneRow(
+                                "SELECT COUNT(*) AS invalidNumber FROM t_ai_call_session "
+                                        + "WHERE final_failure_reason = 'INVALID_NUMBER' "
+                                        + "AND received_at >= DATE_SUB(NOW(), INTERVAL "
+                                        + windowDays
+                                        + " DAY)"));
+        out.put(
+                "items",
+                jdbc.query(
+                        "SELECT session_id AS sessionId, case_id AS caseId, batch_id AS batchId, "
+                                + "final_failure_reason AS reason, received_at AS receivedAt "
+                                + "FROM t_ai_call_session "
+                                + "WHERE final_failure_reason = 'INVALID_NUMBER' "
+                                + "AND received_at >= DATE_SUB(NOW(), INTERVAL "
+                                + windowDays
+                                + " DAY) "
+                                + "ORDER BY received_at DESC LIMIT 50",
+                        this::genericRow));
+        return out;
+    }
+
+    private Map<String, Object> queryDisconnectToday(LocalDateTime from) {
+        Map<String, Object> out =
+                nvl(
+                        oneRow(
+                                "SELECT COUNT(*) AS invalidNumber FROM t_ai_call_session "
+                                        + "WHERE final_failure_reason = 'INVALID_NUMBER' "
+                                        + "AND received_at >= ?",
+                                from));
+        out.put(
+                "items",
+                jdbc.query(
+                        "SELECT session_id AS sessionId, case_id AS caseId, batch_id AS batchId, "
+                                + "final_failure_reason AS reason, received_at AS receivedAt "
+                                + "FROM t_ai_call_session "
+                                + "WHERE final_failure_reason = 'INVALID_NUMBER' "
+                                + "AND received_at >= ? "
+                                + "ORDER BY received_at DESC LIMIT 50",
+                        new Object[] {from},
+                        this::genericRow));
+        return out;
     }
 
     private List<Map<String, Object>> queryHanging() {
@@ -843,11 +956,14 @@ public class DashboardQueryService {
                         + "JOIN t_contact_plan p ON p.id = s.plan_id "
                         + "WHERE s.channel_type = 'AI_CALL' AND s.status = 'EXECUTING' "
                         + "AND s.dispatched_at IS NOT NULL "
-                        + "AND s.dispatched_at < DATE_SUB(?, INTERVAL 15 MINUTE) "
                         + "AND NOT EXISTS (SELECT 1 FROM t_ai_call_session x "
                         + "  WHERE x.step_id = s.id AND x.event='session.completed') "
+                        + "AND ("
+                        + "  (s.timeout_time IS NULL AND s.dispatched_at < DATE_SUB(?, INTERVAL 15 MINUTE)) "
+                        + "  OR (s.timeout_time IS NOT NULL AND s.timeout_time <= ?)"
+                        + ") "
                         + "ORDER BY s.dispatched_at ASC LIMIT 20",
-                new Object[] {DashboardClock.now()},
+                new Object[] {DashboardClock.now(), DashboardClock.now()},
                 this::genericRow);
     }
 
@@ -866,9 +982,33 @@ public class DashboardQueryService {
                         from));
     }
 
-    /**
-     * 昨日作业集：动作时 dpd&gt;0（快照缺 dpd 则 Stage∈S1–S4）。占位符 4 个：from,to,from,to。
-     */
+    private Map<String, Object> queryGuardBlockedWindow(int windowDays) {
+        Map<String, Object> out =
+                nvl(
+                        oneRow(
+                                "SELECT COUNT(*) AS guardBlocked FROM t_contact_plan_step "
+                                        + "WHERE status='SKIPPED' AND result='COMPLIANCE_BLOCKED' "
+                                        + "AND COALESCE(completed_at, updated_at) >= DATE_SUB(NOW(), INTERVAL "
+                                        + windowDays
+                                        + " DAY)"));
+        out.put(
+                "items",
+                jdbc.query(
+                        "SELECT s.id AS stepId, s.plan_id AS planId, p.case_id AS caseId, "
+                                + "s.channel_type AS channel, s.result AS result, "
+                                + "COALESCE(s.completed_at, s.updated_at) AS skippedAt "
+                                + "FROM t_contact_plan_step s "
+                                + "JOIN t_contact_plan p ON p.id = s.plan_id "
+                                + "WHERE s.status='SKIPPED' AND s.result='COMPLIANCE_BLOCKED' "
+                                + "AND COALESCE(s.completed_at, s.updated_at) >= DATE_SUB(NOW(), INTERVAL "
+                                + windowDays
+                                + " DAY) "
+                                + "ORDER BY COALESCE(s.completed_at, s.updated_at) DESC LIMIT 50",
+                        this::genericRow));
+        return out;
+    }
+
+    /** 昨日作业集：动作时 dpd&gt;0（快照缺 dpd 则 Stage∈S1–S4）。占位符 4 个：from,to,from,to。 */
     static String yesterdayWorksetSql() {
         return "SELECT x.case_id FROM ("
                 + yesterdayActionUnionSql()
@@ -1271,6 +1411,17 @@ public class DashboardQueryService {
 
         static DetailFilter of(
                 String resultLabel, String stage, String waveKey, String connectKind) {
+            return of(resultLabel, stage, waveKey, connectKind, null, null, null);
+        }
+
+        static DetailFilter of(
+                String resultLabel,
+                String stage,
+                String waveKey,
+                String connectKind,
+                String party,
+                String effectiveConversation,
+                String rightParty) {
             StringBuilder sql = new StringBuilder();
             List<Object> args = new ArrayList<>();
             if (resultLabel != null) {
@@ -1295,8 +1446,37 @@ public class DashboardQueryService {
                 sql.append(" AND s.batch_id LIKE ?");
                 args.add("%" + waveKey + "%");
             }
+            if (party != null) {
+                if (party.isEmpty()) {
+                    sql.append(" AND (s.party IS NULL OR s.party='')");
+                } else {
+                    sql.append(" AND s.party=?");
+                    args.add(party);
+                }
+            }
+            if (effectiveConversation != null) {
+                if (isTruthyFlag(effectiveConversation)) {
+                    sql.append(" AND s.effective_conversation=1");
+                } else {
+                    sql.append(
+                            " AND (s.effective_conversation=0 OR s.effective_conversation IS NULL)");
+                }
+            }
+            if (rightParty != null) {
+                if (rightParty.isEmpty()) {
+                    sql.append(" AND (s.right_party IS NULL OR s.right_party='')");
+                } else {
+                    sql.append(" AND s.right_party=?");
+                    args.add(rightParty);
+                }
+            }
             sql.append(AiCallFailureClassifier.connectKindSql("s", connectKind));
             return new DetailFilter(sql.toString(), args.toArray());
+        }
+
+        private static boolean isTruthyFlag(String raw) {
+            String v = raw.trim().toLowerCase();
+            return "1".equals(v) || "true".equals(v) || "yes".equals(v);
         }
     }
 
@@ -1383,6 +1563,20 @@ public class DashboardQueryService {
     static String lineAnsweredPred(String alias) {
         String p = alias == null || alias.isEmpty() ? "" : alias + ".";
         return p + "was_answered=1";
+    }
+
+    /** 有效沟通优先，其次本人（right_party=yes），再按接通/回调时间。 */
+    static String answeredOrderBy(String alias) {
+        String p = alias == null || alias.isEmpty() ? "" : alias + ".";
+        return " ORDER BY ("
+                + p
+                + "effective_conversation=1) DESC, (LOWER(IFNULL("
+                + p
+                + "right_party,''))='yes') DESC, COALESCE("
+                + p
+                + "answered_at, "
+                + p
+                + "received_at) DESC";
     }
 
     /** 真人接通：{@code party=human}。缺 alias 时用于无表前缀 SQL。 */

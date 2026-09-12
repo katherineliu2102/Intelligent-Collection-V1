@@ -363,9 +363,12 @@ flowchart LR
 |------|------|--------|
 | 08:00 | SMS / PUSH | DELIVERED / attempted；SMS 附加 Stage 拆分（仅该渠道内） |
 | 09:15 | AI_CALL | **六层**：实拨 / 线路接通 / 真人 / 有效沟通；未接通：BUSY / NO_ANSWER / 对方侧其他 / FAILED（仅 `network`+`our_system`）/ 信箱筛选。下钻为 `right_party=yes` 的 `disposition` |
+| 11:30 | AI_CALL | 同 09:15 |
 | 12:00 | PUSH | DELIVERED |
 | 14:00 | EMAIL | DELIVERED + SKIPPED；slot 拆分。无里程碑库存时发送=0 属正常。未到 14:00 显示「尚未到时间」 |
 | 14:30 | AI_CALL | 同 09:15 |
+| 16:15 | AI_CALL | 同 09:15 |
+| 18:40 | AI_CALL | 同 09:15 |
 
 **模块 1：今日触达执行**（区间型，热层）——**每渠道独立一张卡，禁止合并**（原则 P1）
 
@@ -394,7 +397,7 @@ flowchart LR
 | 指标 | 口径 | 数据源与过滤 | 时窗 |
 |------|------|-------------|------|
 | Guard 拦截量 | 窗口内因合规/频次 Guard 被 SKIPPED 的步骤数，按渠道分组 | `t_contact_plan_step`（SKIPPED + guard 原因） | 今日 |
-| AI 悬挂 | AI_CALL 步骤 `EXECUTING` 且 `dispatched_at < now()-15min` 的数量；>0 跳转 Case Monitor | `t_contact_plan_step` | 时点 |
+| AI 悬挂 | AI_CALL 步骤 `EXECUTING`、无 `session.completed`，且（无 `timeout_time` 时 `dispatched_at < now()-15min`，有则 `timeout_time <= now`）；>0 跳转 Case Monitor | `t_contact_plan_step` | 时点 |
 | 渠道断连 | 窗口内 `FAILED` 计数按渠道 × 原因分组（供应商侧故障识别） | timeline + `t_ai_call_session.final_failure_reason` | 今日 |
 | 异常队列入口 | 未处理异常计数 by 类型（回调超时 / 计划卡死 / 熔断） | `t_ops_exception` | 时点 |
 | 活跃步骤卫生 | 当前 `EXECUTING` / 到期仍 `PENDING` 的 AI_CALL 步数；全日收口后应变 0 | `t_contact_plan_step` | 时点 |
@@ -465,7 +468,7 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 
 **B. 波次：AI Call 分析的基本单位**
 
-每日两波：**09:15 / 14:30**（`batch_id` 形如 `mocasa-YYYYMMDD-HHMM-N`）。所有漏斗、失败结构、接通明细都必须能**按波次下钻**；波次表列 = 波次 | 计划 | 实拨 | 拨通 | 接通 | AI 接续 | 有效对话 | 失败结构 Top 原因。
+每日五波：**09:15 / 11:30 / 14:30 / 16:15 / 18:40**（`batch_id` 形如 `mocasa-YYYYMMDD-HHMM-N`；S4 D+61~90 仅 09:15）。所有漏斗、失败结构、接通明细都必须能**按波次下钻**；波次表列 = 波次 | 计划 | 实拨 | 拨通 | 接通 | AI 接续 | 有效对话 | 失败结构 Top 原因。
 
 **C. 电信层漏斗**（线路接通 ≠ 真人接通 ≠ 有效沟通）
 
@@ -641,7 +644,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 参数 | 引擎现行值 | 说明 |
 |------|--------|------|
 | 触达时段 | 08:00–21:00（PHT）+ 静音窗 21:00–08:00 | 引擎 Guard 实现；与 PRD §7.2 默认（08:00 AM ~ 09:00 PM PHT）**一致**——v1.2 表格「6:00–22:00」系误引，v1.4 核对 PRD 原文后修正（Q9 关闭） |
-| 单用户日触达上限 | AI_CALL 日上限 2、全渠道日合计 3 | 引擎 Guard 现行配置（PRD §7.2 默认每渠道 1/日、跨渠道合计 3/日；AI_CALL 现配 2，可调不硬编码）。注意回调 `attempt_count` 是单通 SIP 重试次数，非日频次 |
+| 单用户日触达上限 | Pilot：AI_CALL **10**、全渠道合计 **15**；local/L4a 仍为 AI_CALL 2、合计 3 | Guard 可配，不硬编码。S4 D+61~90 一天一通靠模板只铺 09:15。见 [五波迭代](./channel/MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md) |
 | AI Call 呼损率上限 | 策略配置员设定 | 超阈值降级渐进式拨号 |
 
 保存即生效；违规拦截记录可在案件 360° 或看板中查看（v1.3：看板 AI Call 分区露出窗口内 Guard 跳过步数，见 §5.1.1a），不单独建设合规管理模块 ✅。投诉冻结、`CONNECT_AND_STOP`（当日接通停呼）均已在引擎侧生效——后台只做可见性，不重做合规引擎。
@@ -811,7 +814,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 |---|---|---|
 | A1 | 波次 FAILED 率 >35% 且真实 completed ≥20；FAILED = `failure_class` 为 `network` 或 `our_system`（无 class 时按细码回退） | 线路/我方故障（含 SIP 406）；callee 拒接空号不告 |
 | A2 | AI_CALL 步骤 `trigger_time` 已过 ≥10 分钟仍 PENDING/活跃，且该槽无对应 `wave_key` 会话 | 漏催（按库内到期步骤推导，不硬编码档位/槽位） |
-| A3 | 步骤 EXECUTING 且 `dispatched_at` 已过 15 分钟、明细表无对应 `session_id` | 悬挂；**同步入异常队列**供人工收敛，不只是通知 |
+| A3 | 步骤 EXECUTING、明细表无 `session.completed`，且已过引擎 `timeout_time`（无 timeout 时才用 dispatched+15min） | 真悬挂（超时哨兵也应处理）；**同步入异常队列供人工收敛**，session 到达不自动结单 |
 | A7 | SMS FAILED 率 >15% 且 attempted ≥20 | 短信通道故障；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计分母）；全日一槽 0800 |
 | A8 | PUSH FAILED 率 >15% 且 attempted ≥20 | 推送通道故障；同上口径；分槽 0800（HOUR&lt;12）与 1200（HOUR≥12），禁止与 SMS/Email 合并 |
 | A9 | EMAIL FAILED 率 >15% 且 attempted ≥20 | 邮件通道故障；同上口径；全日一槽 1400。无里程碑日发送=0 属正常，n&lt;20 不告 |

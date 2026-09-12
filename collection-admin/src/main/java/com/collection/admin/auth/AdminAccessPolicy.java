@@ -44,13 +44,12 @@ public final class AdminAccessPolicy {
         return "GET".equals(m) || "HEAD".equals(m) || "OPTIONS".equals(m);
     }
 
-    /**
-     * OPERATOR 不可写的路径。活计划 / 目录当前几乎没有写接口，先按 fail-closed 锁上，避免后补 POST 默认放开。
-     */
+    /** OPERATOR 不可写的路径。活计划 / 目录当前几乎没有写接口，先按 fail-closed 锁上，避免后补 POST 默认放开。 */
     static boolean isAdminOnlyWrite(String servletPath) {
         String path = normalize(servletPath);
         return pathEqualsOrPrefix(path, "/ops/dlq")
                 || pathEqualsOrPrefix(path, "/ops/fault-injection")
+                || pathEqualsOrPrefix(path, "/ops/plans")
                 || pathEqualsOrPrefix(path, "/config/rollback")
                 || pathEqualsOrPrefix(path, "/plans")
                 || pathEqualsOrPrefix(path, "/catalog")

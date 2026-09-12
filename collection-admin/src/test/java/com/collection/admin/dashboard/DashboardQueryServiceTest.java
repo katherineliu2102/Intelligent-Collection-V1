@@ -99,8 +99,8 @@ class DashboardQueryServiceTest {
                                 s.contains("t_ai_collection_inbox")
                                         && s.contains("repaymentEvent")
                                         && s.contains("paidAmount")
-                                && s.contains("openingOutstanding")
-                                && s.contains("caseEvent"));
+                                        && s.contains("openingOutstanding")
+                                        && s.contains("caseEvent"));
         assertThat(sql.getAllValues()).noneMatch(s -> s.contains("outstandingYesterdayEst"));
         assertThat(sql.getAllValues()).noneMatch(s -> s.contains("settledMissingTime"));
         assertThat(sql.getAllValues())
@@ -165,7 +165,8 @@ class DashboardQueryServiceTest {
                         s ->
                                 s.contains("s.was_answered=1")
                                         && s.contains("s.effective_conversation")
-                                        && s.contains("s.right_party"));
+                                        && s.contains("s.right_party")
+                                        && s.contains("effective_conversation=1) DESC"));
         assertThat(sql.getAllValues()).noneMatch(s -> s.contains("TIMESTAMPDIFF"));
     }
 
@@ -191,6 +192,21 @@ class DashboardQueryServiceTest {
                                 s.contains("s.disposition=?")
                                         && s.contains("COALESCE(s.stage_snapshot, p.stage)=?")
                                         && s.contains("s.batch_id LIKE ?"));
+    }
+
+    @Test
+    void aicallDetailFilterAddsPartyEffectiveRightParty() {
+        service.aicallDetail(
+                1, 25, 7, false, null, null, null, null, "human", "1", "yes");
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(Object[].class), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("s.party=?")
+                                        && s.contains("s.effective_conversation=1")
+                                        && s.contains("s.right_party=?"));
     }
 
     @Test
@@ -243,5 +259,20 @@ class DashboardQueryServiceTest {
                                 s.contains("session_id AS sessionId")
                                         && s.contains("case_id AS caseId")
                                         && s.contains("disposition AS resultLabel"));
+    }
+
+    @Test
+    void hangingAlignsWithEngineTimeoutTime() {
+        service.risk();
+        ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
+                .query(sql.capture(), any(Object[].class), any(RowMapper.class));
+        assertThat(sql.getAllValues())
+                .anyMatch(
+                        s ->
+                                s.contains("s.status = 'EXECUTING'")
+                                        && s.contains("timeout_time IS NULL")
+                                        && s.contains("timeout_time <= ?")
+                                        && s.contains("session.completed"));
     }
 }

@@ -177,6 +177,7 @@ type AiCallData = {
   failureStructure?: { failureClass?: string; reason: string; label?: string; count: number }[];
   waves?: {
     waveKey: string;
+    waveDate?: string | null;
     slot?: string;
     completed: number;
     lineAnswered?: number;
@@ -217,6 +218,7 @@ type AiAnswerPoint = {
 };
 
 type RiskData = {
+  windowDays?: number;
   highSensitivity: {
     sessionId?: string;
     session_id?: string;
@@ -227,8 +229,21 @@ type RiskData = {
     receivedAt?: string;
     received_at?: string;
   }[];
-  disconnect: { invalidNumber: number };
-  guardBlocked: { guardBlocked: number };
+  disconnect: {
+    invalidNumber: number;
+    items?: { sessionId?: string; caseId?: number; batchId?: string; reason?: string; receivedAt?: string }[];
+  };
+  guardBlocked: {
+    guardBlocked: number;
+    items?: {
+      stepId?: number;
+      planId?: number;
+      caseId?: number;
+      channel?: string;
+      result?: string;
+      skippedAt?: string;
+    }[];
+  };
   hanging: {
     stepId: number;
     planId: number;
@@ -293,11 +308,37 @@ function dash(v?: string | number | null) {
   return String(v);
 }
 
+function ynValue(v?: boolean | number | string | null) {
+  if (v === true || v === 1 || v === "1" || v === "true" || v === "yes") return "1";
+  if (v === false || v === 0 || v === "0" || v === "false" || v === "no") return "0";
+  return "";
+}
+
 function yn(v?: boolean | number | string | null) {
   if (v == null || v === "") return "—";
-  if (v === true || v === 1 || v === "1") return "是";
-  if (v === false || v === 0 || v === "0") return "否";
+  if (ynValue(v) === "1") return "是";
+  if (ynValue(v) === "0") return "否";
   return String(v);
+}
+
+function sortAnsweredRows(rows: AnsweredRow[]) {
+  return [...rows].sort((a, b) => {
+    const e = Number(ynValue(b.effectiveConversation)) - Number(ynValue(a.effectiveConversation));
+    if (e !== 0) return e;
+    return (
+      Number((b.rightParty || "").toLowerCase() === "yes") -
+      Number((a.rightParty || "").toLowerCase() === "yes")
+    );
+  });
+}
+
+function waveDateOf(waveDate?: string | null, waveKey?: string | null) {
+  if (waveDate) return waveDate;
+  const k = waveKey || "";
+  if (k.length >= 8 && /^\d{8}/.test(k)) {
+    return `${k.slice(0, 4)}-${k.slice(4, 6)}-${k.slice(6, 8)}`;
+  }
+  return "—";
 }
 
 function firstFilter(v?: (string | number | boolean)[] | null) {
@@ -330,11 +371,22 @@ function facetOptions(values: string[] | undefined, format?: (v: string) => stri
 
 function answeredColumns(opts: {
   clientRows?: AnsweredRow[];
-  facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
+  facets?: {
+    labels?: string[];
+    stages?: string[];
+    waves?: string[];
+    connectKinds?: string[];
+    parties?: string[];
+    rightParties?: string[];
+    effectives?: string[];
+  };
   filteredValue?: {
     resultLabel?: string[] | null;
     stageSnapshot?: string[] | null;
     waveKey?: string[] | null;
+    party?: string[] | null;
+    effectiveConversation?: string[] | null;
+    rightParty?: string[] | null;
   };
 }): ColumnsType<AnsweredRow> {
   const client = !!opts.clientRows;
@@ -349,7 +401,14 @@ function answeredColumns(opts: {
     : facetOptions(opts.facets?.waves, (v) => (v ? formatWave(v) : "未分波次"));
   const partyFilters = client
     ? uniqueFilterOptions(opts.clientRows || [], (r) => r.party)
-    : facetOptions(["human", "voicemail", "call_screening"]);
+    : facetOptions(opts.facets?.parties);
+  const effectiveFilters = [
+    { text: "是", value: "1" },
+    { text: "否", value: "0" }
+  ];
+  const rightPartyFilters = client
+    ? uniqueFilterOptions(opts.clientRows || [], (r) => r.rightParty)
+    : facetOptions(opts.facets?.rightParties);
   return [
     { title: "案件", dataIndex: "caseId", width: 90 },
     {
@@ -392,21 +451,43 @@ function answeredColumns(opts: {
       dataIndex: "party",
       width: 110,
       render: (v: string) => dash(v),
-      filters: client && partyFilters.length ? partyFilters : undefined,
+      filters: partyFilters.length ? partyFilters : undefined,
       filterMultiple: false,
+      filteredValue: opts.filteredValue?.party,
       onFilter: client ? (value, record) => (record.party || "") === String(value) : undefined
     },
     {
       title: "effective_conversation",
       dataIndex: "effectiveConversation",
       width: 170,
-      render: (v: boolean | number | null) => yn(v)
+      sorter: client
+        ? (a, b) =>
+            Number(ynValue(b.effectiveConversation)) - Number(ynValue(a.effectiveConversation))
+        : undefined,
+      render: (v: boolean | number | null) => yn(v),
+      filters: effectiveFilters,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.effectiveConversation,
+      onFilter: client
+        ? (value, record) => ynValue(record.effectiveConversation) === String(value)
+        : undefined
     },
     {
       title: "right_party",
       dataIndex: "rightParty",
-      width: 100,
-      render: (v: string) => dash(v)
+      width: 110,
+      sorter: client
+        ? (a, b) =>
+            Number((b.rightParty || "").toLowerCase() === "yes") -
+            Number((a.rightParty || "").toLowerCase() === "yes")
+        : undefined,
+      render: (v: string) => dash(v),
+      filters: rightPartyFilters.length ? rightPartyFilters : undefined,
+      filterMultiple: false,
+      filteredValue: opts.filteredValue?.rightParty,
+      onFilter: client
+        ? (value, record) => (record.rightParty || "") === String(value)
+        : undefined
     },
     {
       title: "disposition",
@@ -715,13 +796,24 @@ export function DashboardPage() {
   const [aicallDetail, setAicallDetail] = useState<{
     total: number;
     items: AiCallDetailItem[];
-    facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
+    facets?: {
+      labels?: string[];
+      stages?: string[];
+      waves?: string[];
+      connectKinds?: string[];
+      parties?: string[];
+      rightParties?: string[];
+      effectives?: string[];
+    };
   } | null>(null);
   const [aicallDetailPage, setAicallDetailPage] = useState(1);
   const [aicallDetailFilters, setAicallDetailFilters] = useState<{
     resultLabel?: string;
     stage?: string;
     waveKey?: string;
+    party?: string;
+    effectiveConversation?: string;
+    rightParty?: string;
   }>({});
   const [risk, setRisk] = useState<RiskData | null>(null);
 
@@ -735,7 +827,7 @@ export function DashboardPage() {
       ["daily", api.dashboardDailyByChannel(days)],
       ["aicall", api.dashboardAicallRealtime(aicallDays)],
       ["aicallDetail", api.dashboardAicallDetail(aicallDetailPage, 25, aicallDays, false, aicallDetailFilters)],
-      ["risk", api.dashboardRisk()]
+      ["risk", api.dashboardRisk(aicallDays)]
     ];
     const results = await Promise.allSettled(named.map(([, p]) => p));
     const failed: string[] = [];
@@ -759,7 +851,15 @@ export function DashboardPage() {
           payload as {
             total: number;
             items: AiCallDetailItem[];
-            facets?: { labels?: string[]; stages?: string[]; waves?: string[]; connectKinds?: string[] };
+            facets?: {
+              labels?: string[];
+              stages?: string[];
+              waves?: string[];
+              connectKinds?: string[];
+              parties?: string[];
+              rightParties?: string[];
+              effectives?: string[];
+            };
           }
         );
       }
@@ -964,7 +1064,7 @@ export function DashboardPage() {
                   size="small"
                   pagination={false}
                   locale={{ emptyText: "今日无线路接通" }}
-                  dataSource={today?.answered || []}
+                  dataSource={sortAnsweredRows(today?.answered || [])}
                   columns={answeredColumns({ clientRows: today?.answered || [] })}
                 />
               </Flex>
@@ -1403,6 +1503,17 @@ export function DashboardPage() {
                     scroll={{ x: 1100 }}
                     columns={[
                       {
+                        title: "日期",
+                        dataIndex: "waveDate",
+                        width: 120,
+                        defaultSortOrder: "descend",
+                        sorter: (a, b) =>
+                          String(waveDateOf(a.waveDate, a.waveKey)).localeCompare(
+                            String(waveDateOf(b.waveDate, b.waveKey))
+                          ),
+                        render: (_: unknown, r) => waveDateOf(r.waveDate, r.waveKey)
+                      },
+                      {
                         title: "波次",
                         dataIndex: "waveKey",
                         width: 168,
@@ -1479,7 +1590,16 @@ export function DashboardPage() {
                             : null,
                         stageSnapshot:
                           aicallDetailFilters.stage != null ? [aicallDetailFilters.stage] : null,
-                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null
+                        waveKey: aicallDetailFilters.waveKey ? [aicallDetailFilters.waveKey] : null,
+                        party: aicallDetailFilters.party != null ? [aicallDetailFilters.party] : null,
+                        effectiveConversation:
+                          aicallDetailFilters.effectiveConversation != null
+                            ? [aicallDetailFilters.effectiveConversation]
+                            : null,
+                        rightParty:
+                          aicallDetailFilters.rightParty != null
+                            ? [aicallDetailFilters.rightParty]
+                            : null
                       }
                     })}
                     pagination={{
@@ -1492,7 +1612,12 @@ export function DashboardPage() {
                       const next = {
                         resultLabel: firstFilter(filters.resultLabel as (string | number)[] | null),
                         stage: firstFilter(filters.stageSnapshot as (string | number)[] | null),
-                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null)
+                        waveKey: firstFilter(filters.waveKey as (string | number)[] | null),
+                        party: firstFilter(filters.party as (string | number)[] | null),
+                        effectiveConversation: firstFilter(
+                          filters.effectiveConversation as (string | number)[] | null
+                        ),
+                        rightParty: firstFilter(filters.rightParty as (string | number)[] | null)
                       };
                       const page = pagination.current || 1;
                       setAicallDetailFilters(next);
@@ -1510,45 +1635,96 @@ export function DashboardPage() {
                 <Typography.Title level={4} style={{ margin: 0 }}>
                   风险清单（复盘窗口）
                 </Typography.Title>
-                <Flex gap={24}>
+                <Typography.Text type="secondary">
+                  与上方 AI 复盘天数一致。Guard 拦截是合规/频控/空地址等的正常 SKIPPED（COMPLIANCE_BLOCKED），不是 Ops
+                  异常；引擎故障是 GUARD_ERROR。下表明细与数字同一口径。
+                </Typography.Text>
+                <Flex gap={24} wrap="wrap">
                   <Statistic
                     title="断联 INVALID_NUMBER"
                     value={Number(risk?.disconnect?.invalidNumber ?? 0)}
                     valueStyle={{ color: "#cf1322" }}
                   />
-                  <Statistic title="Guard 拦截（全量时点）" value={Number(risk?.guardBlocked?.guardBlocked ?? 0)} />
+                  <Statistic
+                    title="Guard 拦截（正常拦截）"
+                    value={Number(risk?.guardBlocked?.guardBlocked ?? 0)}
+                  />
+                  <Statistic title="高敏 disputed" value={(risk?.highSensitivity || []).length} />
                 </Flex>
-                <Table
-                  rowKey={(r) => String(r.sessionId || r.session_id || r.caseId || "")}
-                  size="small"
-                  pagination={false}
-                  locale={{ emptyText: "暂无高敏标签" }}
-                  dataSource={risk?.highSensitivity || []}
-                  tableLayout="fixed"
-                  columns={[
-                    { title: "案件", dataIndex: "caseId", width: 96 },
-                    {
-                      title: "标签",
-                      width: 100,
-                      render: (_: unknown, r: RiskData["highSensitivity"][number]) => (
-                        <Tag color="red">{r.resultLabel || r.result_label}</Tag>
-                      )
-                    },
-                    {
-                      title: "摘要",
-                      dataIndex: "summary",
-                      render: (v: string) => <SummaryCell text={v} />
-                    },
-                    {
-                      title: "会话",
-                      dataIndex: "sessionId",
-                      width: 160,
-                      ellipsis: true,
-                      render: (v: string, r: RiskData["highSensitivity"][number]) =>
-                        v || r.session_id || "—"
-                    }
-                  ]}
-                />
+                <Card size="small" title="断联明细 INVALID_NUMBER">
+                  <Table
+                    rowKey={(r) => String(r.sessionId || r.caseId || r.receivedAt || "")}
+                    size="small"
+                    pagination={false}
+                    locale={{ emptyText: "该窗口无 INVALID_NUMBER" }}
+                    dataSource={risk?.disconnect?.items || []}
+                    columns={[
+                      { title: "案件", dataIndex: "caseId", width: 96 },
+                      { title: "原因", dataIndex: "reason", width: 160 },
+                      {
+                        title: "时间",
+                        dataIndex: "receivedAt",
+                        width: 170,
+                        render: (v: string) => fmtTs(v)
+                      },
+                      { title: "会话", dataIndex: "sessionId", ellipsis: true }
+                    ]}
+                  />
+                </Card>
+                <Card size="small" title="Guard 拦截明细（正常拦截）">
+                  <Table
+                    rowKey={(r) => String(r.stepId || `${r.planId}-${r.caseId}`)}
+                    size="small"
+                    pagination={false}
+                    locale={{ emptyText: "该窗口无 Guard 拦截" }}
+                    dataSource={risk?.guardBlocked?.items || []}
+                    columns={[
+                      { title: "案件", dataIndex: "caseId", width: 96 },
+                      { title: "渠道", dataIndex: "channel", width: 100 },
+                      { title: "step", dataIndex: "stepId", width: 90 },
+                      { title: "plan", dataIndex: "planId", width: 90 },
+                      {
+                        title: "拦截时间",
+                        dataIndex: "skippedAt",
+                        width: 170,
+                        render: (v: string) => fmtTs(v)
+                      }
+                    ]}
+                  />
+                </Card>
+                <Card size="small" title="高敏标签 disputed">
+                  <Table
+                    rowKey={(r) => String(r.sessionId || r.session_id || r.caseId || "")}
+                    size="small"
+                    pagination={false}
+                    locale={{ emptyText: "该窗口无 disputed" }}
+                    dataSource={risk?.highSensitivity || []}
+                    tableLayout="fixed"
+                    columns={[
+                      { title: "案件", dataIndex: "caseId", width: 96 },
+                      {
+                        title: "标签",
+                        width: 100,
+                        render: (_: unknown, r: RiskData["highSensitivity"][number]) => (
+                          <Tag color="red">{r.resultLabel || r.result_label}</Tag>
+                        )
+                      },
+                      {
+                        title: "摘要",
+                        dataIndex: "summary",
+                        render: (v: string) => <SummaryCell text={v} />
+                      },
+                      {
+                        title: "会话",
+                        dataIndex: "sessionId",
+                        width: 160,
+                        ellipsis: true,
+                        render: (v: string, r: RiskData["highSensitivity"][number]) =>
+                          v || r.session_id || "—"
+                      }
+                    ]}
+                  />
+                </Card>
               </Flex>
             </Card>
           </>

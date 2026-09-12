@@ -192,7 +192,15 @@ export const api = {
     pageSize = 25,
     days = 7,
     includeSynthetic = false,
-    filters?: { resultLabel?: string; stage?: string; waveKey?: string; connectKind?: string }
+    filters?: {
+      resultLabel?: string;
+      stage?: string;
+      waveKey?: string;
+      connectKind?: string;
+      party?: string;
+      effectiveConversation?: string;
+      rightParty?: string;
+    }
   ) {
     const q = new URLSearchParams({
       page: String(page),
@@ -204,10 +212,15 @@ export const api = {
     if (filters?.stage != null) q.set("stage", filters.stage);
     if (filters?.waveKey != null) q.set("waveKey", filters.waveKey);
     if (filters?.connectKind != null) q.set("connectKind", filters.connectKind);
+    if (filters?.party != null) q.set("party", filters.party);
+    if (filters?.effectiveConversation != null) {
+      q.set("effectiveConversation", filters.effectiveConversation);
+    }
+    if (filters?.rightParty != null) q.set("rightParty", filters.rightParty);
     return request(`/dashboard/aicall/detail?${q.toString()}`);
   },
-  dashboardRisk() {
-    return request("/dashboard/risk");
+  dashboardRisk(days = 7) {
+    return request(`/dashboard/risk?days=${days}`);
   },
   deactivatePlanTemplate(templateCode: string) {
     return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {

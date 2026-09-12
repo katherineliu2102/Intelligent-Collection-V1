@@ -66,7 +66,10 @@ public class DashboardController {
             @RequestParam(required = false) String resultLabel,
             @RequestParam(required = false) String stage,
             @RequestParam(required = false) String waveKey,
-            @RequestParam(required = false) String connectKind) {
+            @RequestParam(required = false) String connectKind,
+            @RequestParam(required = false) String party,
+            @RequestParam(required = false) String effectiveConversation,
+            @RequestParam(required = false) String rightParty) {
         return ApiResponse.success(
                 queries.aicallDetail(
                         page,
@@ -76,11 +79,14 @@ public class DashboardController {
                         resultLabel,
                         stage,
                         waveKey,
-                        connectKind));
+                        connectKind,
+                        party,
+                        effectiveConversation,
+                        rightParty));
     }
 
     @GetMapping("/risk")
-    public Map<String, Object> risk() {
-        return ApiResponse.success(queries.risk());
+    public Map<String, Object> risk(@RequestParam(defaultValue = "7") int days) {
+        return ApiResponse.success(queries.risk(days));
     }
 }
