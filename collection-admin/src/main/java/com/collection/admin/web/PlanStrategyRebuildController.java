@@ -72,8 +72,7 @@ public class PlanStrategyRebuildController {
         if (freeze != null && freeze > 0) {
             while (batch.size() < cap) {
                 int page = Math.min(PAGE_SIZE, cap - batch.size());
-                List<Long> ids =
-                        planLifecycleManager.listActiveS1ToS4PlanIds(cursor, freeze, page);
+                List<Long> ids = planLifecycleManager.listActiveS1ToS4PlanIds(cursor, freeze, page);
                 if (ids == null || ids.isEmpty()) {
                     break;
                 }

@@ -196,8 +196,7 @@ class DashboardQueryServiceTest {
 
     @Test
     void aicallDetailFilterAddsPartyEffectiveRightParty() {
-        service.aicallDetail(
-                1, 25, 7, false, null, null, null, null, "human", "1", "yes");
+        service.aicallDetail(1, 25, 7, false, null, null, null, null, "human", "1", "yes");
         ArgumentCaptor<String> sql = ArgumentCaptor.forClass(String.class);
         org.mockito.Mockito.verify(jdbc, org.mockito.Mockito.atLeastOnce())
                 .query(sql.capture(), any(Object[].class), any(RowMapper.class));

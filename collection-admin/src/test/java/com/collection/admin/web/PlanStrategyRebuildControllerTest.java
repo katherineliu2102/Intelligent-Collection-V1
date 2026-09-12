@@ -67,7 +67,8 @@ class PlanStrategyRebuildControllerTest {
     @Test
     void dryRunCountsWouldRebuild() {
         when(manager.maxActiveS1ToS4PlanId()).thenReturn(88L);
-        when(manager.listActiveS1ToS4PlanIds(0L, 88L, 10)).thenReturn(Collections.singletonList(88L));
+        when(manager.listActiveS1ToS4PlanIds(0L, 88L, 10))
+                .thenReturn(Collections.singletonList(88L));
         when(manager.rebuildStrategyPlan(88L, true))
                 .thenReturn(StrategyRebuildResult.wouldRebuild(88L, 1002L, Stage.S2));
 
@@ -87,7 +88,8 @@ class PlanStrategyRebuildControllerTest {
     @Test
     void recordsExecutingSkips() {
         when(manager.maxActiveS1ToS4PlanId()).thenReturn(91L);
-        when(manager.listActiveS1ToS4PlanIds(0L, 91L, 10)).thenReturn(Collections.singletonList(91L));
+        when(manager.listActiveS1ToS4PlanIds(0L, 91L, 10))
+                .thenReturn(Collections.singletonList(91L));
         when(manager.rebuildStrategyPlan(91L, false))
                 .thenReturn(
                         StrategyRebuildResult.skipped("SKIPPED_EXECUTING_AI", 91L, 7L, Stage.S3));
@@ -116,7 +118,8 @@ class PlanStrategyRebuildControllerTest {
 
     @Test
     void snapshotsIdsBeforeMutatingAndHonorsFrozenMaxId() {
-        when(manager.listActiveS1ToS4PlanIds(0L, 50L, 10)).thenReturn(Collections.singletonList(12L));
+        when(manager.listActiveS1ToS4PlanIds(0L, 50L, 10))
+                .thenReturn(Collections.singletonList(12L));
         when(manager.rebuildStrategyPlan(12L, false))
                 .thenReturn(StrategyRebuildResult.rebuilt(12L, 9L, Stage.S1));
 
