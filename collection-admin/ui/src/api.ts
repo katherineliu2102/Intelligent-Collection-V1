@@ -25,14 +25,17 @@ async function request(path: string, init?: RequestInit) {
 }
 
 export const api = {
-  login(username: string, role: string) {
+  login(username: string, password: string) {
     return request("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, role })
+      body: JSON.stringify({ username, password })
     });
   },
   me() {
     return request("/admin/me");
+  },
+  logout() {
+    return request("/auth/logout", { method: "POST" });
   },
   searchCases(params: Record<string, string | number | boolean>) {
     const query = new URLSearchParams();
@@ -42,6 +45,9 @@ export const api = {
       }
     });
     return request(`/cases/search?${query.toString()}`);
+  },
+  getCase(caseId: string | number) {
+    return request(`/cases/${caseId}`);
   },
   listOps(params: Record<string, string | number>) {
     const query = new URLSearchParams();
@@ -63,8 +69,23 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
-  auditLogs() {
-    return request("/admin/audit-logs?page=1&pageSize=20");
+  listAccounts() {
+    return request("/admin/accounts");
+  },
+  createAccount(payload: { username: string; password: string; role: string }) {
+    return request("/admin/accounts", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  patchAccount(
+    id: number,
+    payload: { enabled?: boolean; role?: string; password?: string }
+  ) {
+    return request(`/admin/accounts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
   },
   getEvaluationSettings() {
     return request("/config/evaluation-settings");
@@ -85,7 +106,7 @@ export const api = {
   rollbackConfig(targetVersion: number, reason: string) {
     return request("/config/rollback", {
       method: "POST",
-      body: JSON.stringify({ targetVersion, reason })
+      body: JSON.stringify({ targetVersion, reason, confirm: true })
     });
   },
   catalogOverview() {
@@ -147,6 +168,59 @@ export const api = {
   },
   dashboardOutreachRealtime(days = 30) {
     return request(`/dashboard/outreach/realtime?days=${days}`);
+  },
+  dashboardToday() {
+    return request("/dashboard/today");
+  },
+  dashboardDailyByChannel(days = 7) {
+    return request(`/dashboard/daily-by-channel?days=${days}`);
+  },
+  dashboardPortfolio() {
+    return request("/dashboard/portfolio");
+  },
+  dashboardAicallRealtime(days = 7) {
+    return request(`/dashboard/aicall/realtime?days=${days}`);
+  },
+  dashboardAging() {
+    return request("/dashboard/aging");
+  },
+  dashboardMatrix(days = 7) {
+    return request(`/dashboard/matrix?days=${days}`);
+  },
+  dashboardAicallDetail(
+    page = 1,
+    pageSize = 25,
+    days = 7,
+    includeSynthetic = false,
+    filters?: {
+      resultLabel?: string;
+      stage?: string;
+      waveKey?: string;
+      connectKind?: string;
+      party?: string;
+      effectiveConversation?: string;
+      rightParty?: string;
+    }
+  ) {
+    const q = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+      days: String(days),
+      includeSynthetic: String(includeSynthetic)
+    });
+    if (filters?.resultLabel != null) q.set("resultLabel", filters.resultLabel);
+    if (filters?.stage != null) q.set("stage", filters.stage);
+    if (filters?.waveKey != null) q.set("waveKey", filters.waveKey);
+    if (filters?.connectKind != null) q.set("connectKind", filters.connectKind);
+    if (filters?.party != null) q.set("party", filters.party);
+    if (filters?.effectiveConversation != null) {
+      q.set("effectiveConversation", filters.effectiveConversation);
+    }
+    if (filters?.rightParty != null) q.set("rightParty", filters.rightParty);
+    return request(`/dashboard/aicall/detail?${q.toString()}`);
+  },
+  dashboardRisk(days = 7) {
+    return request(`/dashboard/risk?days=${days}`);
   },
   deactivatePlanTemplate(templateCode: string) {
     return request(`/config/plan-templates/${encodeURIComponent(templateCode)}`, {

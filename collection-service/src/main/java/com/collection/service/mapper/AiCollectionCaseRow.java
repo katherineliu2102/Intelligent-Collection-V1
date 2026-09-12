@@ -28,5 +28,7 @@ public class AiCollectionCaseRow {
     private String borrowerEmail;
     private String borrowerLanguage;
     private String pushToken;
+    private String owner;
+    private LocalDate ownerDate;
     private LocalDateTime updatedAt;
 }

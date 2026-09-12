@@ -1,30 +1,53 @@
 # MOCASA 催收系统升级 — Phase 1 领域模型与数据定义
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
-> **日期**: 2026-07-08  
-> **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)、[契约对齐索引](./contracts/README.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)、[权威 DDL `../db/schema.sql](../db/schema.sql)`
+> **日期**: 2026-09-04  
+> **状态**: ✅ 已确定（字段 / 枚举 / EventPayload SSOT）；DDL 权威在 [`../db/schema.sql`](../db/schema.sql)  
+> **关联文档**: [架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[核心引擎规格](./MOCASA催收系统升级_Phase1_核心引擎规格.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)、[契约对齐索引](./contracts/README.md)、[ContextSnapshot 契约对齐](./contracts/README_ContextSnapshot契约对齐.md)
 
 ---
 
 ## 目录
 
 - [1. 概览与全局约定](#1-概览与全局约定)
-  - [1.1 数据流全景图](#11-数据流全景图)
+  - [1.1 数据生命周期](#11-数据生命周期)
   - [1.2 表级契约矩阵](#12-表级契约矩阵)
-  - [1.3 对象关系与分类](#13-对象关系与分类)
+  - [1.3 术语与对象分类](#13-术语与对象分类)
   - [1.4 命名·类型·序列化·关联键约定](#14-命名类型序列化关联键约定)
-  - [1.5 计划生命周期关联键](#15-计划生命周期关联键)
+  - [1.5 聚合、身份与不变式](#15-聚合身份与不变式)
 - [2. 枚举与常量定义](#2-枚举与常量定义)
+  - [2.1 ChannelType](#21-channeltype渠道类型)
+  - [2.2 ContactResult](#22-contactresult触达结果)
+  - [2.3 PlanStatus](#23-planstatus触达计划状态)
+  - [2.4 StepStatus](#24-stepstatus步骤执行状态)
+  - [2.5 DecisionType](#25-decisiontype决策类型)
+  - [2.6 EventType](#26-eventtype内部事件类型)
+  - [2.7 CancelReason](#27-cancelreason计划取消原因)
+  - [2.8 Stage](#28-stage催收阶段)
+  - [2.9 ExhaustionAction](#29-exhaustionaction穷尽策略动作)
 - [3. 持久化实体模型](#3-持久化实体模型)
   - [3.1 ContactPlan](#31-contactplan触达计划)
   - [3.2 ContactPlanStep](#32-contactplanstep触达计划步骤)
   - [3.3 DecisionLog](#33-decisionlog决策日志)
   - [3.4 ContactRecord](#34-contactrecord统一触达记录)
+  - [3.5 CaseProjection](#35-caseprojection案件投影)
 - [4. 决策上下文模型](#4-决策上下文模型)
+  - [4.1 CaseContext](#41-casecontext案件上下文)
+  - [4.2 UserProfile](#42-userprofile用户画像)
+  - [4.3 ContactHistory](#43-contacthistory触达历史摘要)
+  - [4.4 ContextSnapshot](#44-contextsnapshot决策上下文快照)
 - [5. SPI 契约 DTO](#5-spi-契约-dto)
   - [5.1 CaseInfo](#51-caseinfo案件基本信息--spi-入参)
+  - [5.2 ExecutionContext](#52-executioncontext执行上下文)
+  - [5.3 GuardVerdict](#53-guardverdict守卫裁定)
+  - [5.4 StepCommand](#54-stepcommand步骤命令)
+  - [5.5 StepResult](#55-stepresult步骤结果)
+  - [5.6 AdvancementDecision](#56-advancementdecision推进决策)
+  - [5.7 ExhaustionResult](#57-exhaustionresult穷尽结果)
 - [6. EventPayload 字段定义](#6-eventpayload-字段定义)
-- [附录 A：数据模型 DDL](#附录-a数据模型-ddl)
+  - [6.1 信封与 payload 边界](#61-信封与-payload-边界)
+  - [6.2 逐事件 payload 字段](#62-逐事件-payload-字段)
+- [附录 A：DDL 例外与指针](#附录-addl-例外与指针)
 - [附录 B：渠道编排层模型](#附录-b渠道编排层模型)
 - [附录 C：变更记录](#附录-c变更记录)
 
@@ -34,185 +57,106 @@
 
 > 本文是 MOCASA 催收 Phase 1 的**领域数据契约 SSOT**——`collection-common` 中枚举、模型、DTO、EventPayload key 与引擎 DDL 的字段定义权威来源，供引擎 / 接入 / 渠道 / 服务四模块对齐。
 
-### 1.1 数据流全景图
+### 1.1 数据生命周期
+<a id="11-数据流全景图"></a>
 
-下图以**数据内容**为主视角：追踪案件/还款原始数据如何逐步转化为决策快照、触达指令与结果、并最终落为可分析的记录。实线 = 运行时主路径；虚线 = 配置 / 离线聚合。
+案件与还款事实经 Pub/Sub 进入接入层，写入投影与收件箱后发布内部事件；引擎据此建计划并冻结决策快照，经 SPI 发出触达指令、收回结果，落时间线与决策日志。回调与调度信号只触发引擎重读已落盘状态。
 
+| 阶段 | 数据 | 载体 | 详见 |
+| --- | --- | --- | --- |
+| 上游事实 | 案件快照 / 还款增量 | Pub/Sub JSON | [数仓契约](./数仓_PubSub交付契约.md)；消费见 [接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md) |
+| 投影 | 运行时案件当前态 | `t_ai_collection` | [§3.5](#35-caseprojection案件投影)；收件箱见 [接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等) |
+| 内部事件 | 入案 / 日切 / 还款 / 步骤到期 | EventPayload | [§6](#6-eventpayload-字段定义)；路由见 [引擎 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) |
+| 计划与快照 | 阶段触达安排 + 冻结上下文 | `t_contact_plan` | [§3.1](#31-contactplan触达计划) / [§4](#4-决策上下文模型) |
+| 指令与结果 | 渠道 / 地址 / 模板 → 结果枚举 | `StepCommand` / `StepResult` | [§5](#5-spi-契约-dto) |
+| 记录 | 触达事实 / 决策审计 | `t_contact_timeline` / `t_decision_log` | [§3.4](#34-contactrecord统一触达记录) / [§3.3](#33-decisionlog决策日志) |
 
-| 阶段           | 数据内容                                              | 载体 / 落表                                 | 说明                                                   |
-| ------------ | ------------------------------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| ① 上游原始数据     | 案件字段（dpd/产品/金额/到期日…）、还款标识                         | PubSub JSON                             | 数仓 Cloud Scheduler 发布，`caseEvent` / `repaymentEvent` |
-| ② 入案 payload | 精简后的案件快照字段 + 阶段                                   | EventPayload（经 `CASE_INGESTED`）         | ingestion 组装，字段见 [§6.2](#62-逐事件-payload-字段)          |
-| ③ 决策上下文快照    | CaseContext + UserProfile + ContactHistory（冻结不可变） | `t_contact_plan.context_snapshot`（JSON） | 引擎建计划时序列化，见 §4                                       |
-| ④ 触达指令 → 结果  | 渠道类型/地址/模板/幂等键 → 成功标记/结果枚举/供应商消息 ID               | `StepCommand` → `StepResult`（SPI DTO）   | 引擎 ↔ 渠道编排，见 §5                                       |
-| ⑤ 统一触达记录     | 渠道、结果、内容摘要、供应商回调原文                                | `t_contact_timeline`                    | 渠道执行 / 人工外呼 / 迁移共写，见 [§3.4](#34-contactrecord统一触达记录) |
-| ⑥ 决策日志       | 决策类型、输入快照、输出结果、置信度                                | `t_decision_log`                        | 引擎只写不读，供数仓分析（**Phase 1 仅 ④ StepResolver**），见 [§3.3](#33-decisionlog决策日志) |
-| ⑦ 外部触发数据     | 供应商回调结果、步骤到期/超时信号                                 | EventPayload（经 admin 收敛）                | 不驱动决策，仅触发引擎重新读取快照/状态                                 |
-
-
-```mermaid
-flowchart LR
-    subgraph SRC["上游原始数据"]
-        D1["案件字段\n(dpd/产品/金额/到期日…)"]
-        D2["还款标识\n(userId/loanId/结清)"]
-    end
-
-    subgraph ING["collection-ingestion"]
-        PAY["入案 payload\n（案件快照字段 + 阶段）"]
-    end
-
-    D1 --> PAY
-    D2 --> ING2["还款事件\n(不入库，仅转发)"]
-
-    subgraph OLD["旧库日切（离线聚合）"]
-        ROLL["DPD / 在催名单扫描"] --> STG["阶段变更 / 停催标记"]
-    end
-
-    PAY --> SNAP
-    STG -.-> ENGIN
-    ING2 --> ENGIN
-
-    subgraph ENGIN["collection-engine"]
-        SNAP["决策上下文快照\n（冻结写入 t_contact_plan）"]
-        CMD["触达指令\n（渠道/地址/模板）"]
-        SNAP --> CMD
-    end
-
-    CMD -->|"SPI 调用"| CH
-
-    subgraph CH["collection-channel"]
-        RES["触达结果\n（成功标记/结果枚举）"]
-        REC["统一触达记录\n→ t_contact_timeline"]
-        RES --> REC
-    end
-
-    RES -->|"SPI 返回"| ENGIN
-    ENGIN --> LOG["决策日志\n→ t_decision_log"]
-
-    subgraph ADM["collection-admin"]
-        CB["供应商回调结果"]
-        SIG["定时触发信号"]
-    end
-
-    CB -.-> ENGIN
-    SIG -.-> ENGIN
-
-    REC -.-> DW["数仓 / BI"]
-    LOG -.-> DW
-```
-
-
-
-> 入站细节 → [数据接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)；引擎消费与链式发布 → [核心引擎规格 §2/§4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；事件传输载体 → [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)。
+日切与 owner 对账见 [接入 §4](./MOCASA催收系统升级_Phase1_数据接入规格.md#4-dpd-日切)；事件传输见 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)；Nacos 模板不在主路径，见 [附录 B](#附录-b渠道编排层模型)。
 
 ### 1.2 表级契约矩阵
 
-#### 状态标记说明
+<a id="a11-t_contact_plan--触达计划主表"></a>
+<a id="a12-t_contact_plan_step--触达计划步骤表"></a>
+<a id="a13-t_decision_log--决策日志"></a>
+<a id="a21-t_contact_timeline--统一触达时间线"></a>
+<a id="a23-t_user_device_token"></a>
+<a id="a3-现有表只读引用"></a>
 
-> 标记描述的是 **Phase 1 对该表的数据库变更类型**，不是运行时业务状态。其中 EXISTING / ALTER 指升级前已存在于 `collection_rebuild`（或关联库）的表；NEW 指本阶段新建表。
+> 标记描述 **Phase 1 对该表的数据库变更类型**，不是运行时业务状态。`schema.sql` 中 12 张 `CREATE TABLE` 各出现一行；字段语义列指向定义节，无字段节的表不进 §3。编排配置与外呼表见 [附录 B](#附录-b渠道编排层模型)。DDL 权威 [`../db/schema.sql`](../db/schema.sql)。
 
-
-| 标记           | 含义                                              |
-| ------------ | ----------------------------------------------- |
-| **NEW**      | Phase 1 新建表，本文档 附录 A（或附录 B）已提供 `CREATE TABLE`   |
-| **NEW ⚠️**   | Phase 1 计划新建，但本文档尚未写出 `CREATE TABLE`（文档/DDL 待补） |
-| **ALTER**    | 既有表，Phase 1 需 `ALTER TABLE` 增字段（DDL 可能在其他模块文档）  |
-| **EXISTING** | 既有表，Phase 1 只读引用，不做 DDL 变更                      |
-| **NACOS**    | Phase 1 走 Nacos 配置，不建表；附录 B DDL 为 Phase 2 落库规划  |
-
-
-> **列差异**：§1.2 仅列 Phase 1 本系统 owned/只读表（A/B/C）；**编排层配置与外呼表见 [附录 B](#附录-b渠道编排层模型)**。A/B 为 owned 表（写入方 / 消费方 / DDL；B 因 Owner 逐行不同独立成列）；C 为外部只读表，用 `引用位置` 替代写入/DDL 列，`状态` 恒为 `EXISTING`。
-
----
+| 标记 | 含义 |
+| --- | --- |
+| **NEW** | Phase 1 新建表，DDL 在 `schema.sql` |
+| **EXISTING** | 既有表（不在 `schema.sql`），Phase 1 只读、不做 DDL 变更 |
+| **NACOS** | Phase 1 走 Nacos，不建表；见附录 B |
 
 #### A. 引擎核心表 — Owner: collection-engine（主架构负责）
 
-
-| 表名                    | 状态  | 首席写入方             | 核心消费方        | DDL 位置     |
-| --------------------- | --- | ----------------- | ------------ | ---------- |
-| `t_contact_plan`      | NEW | collection-engine | 调度扫描, 数仓  | 附录 A A.1.1 |
-| `t_contact_plan_step` | NEW | collection-engine | 渠道编排(SPI 读取) | 附录 A A.1.2 |
-| `t_decision_log`      | NEW | collection-engine | 数仓(决策效果分析)   | 附录 A A.1.3 |
-
+| 表名 | 状态 | 首席写入方 | 核心消费方 | 字段语义 | DDL |
+| --- | --- | --- | --- | --- | --- |
+| `t_contact_plan` | NEW | collection-engine | 调度扫描, 数仓 | [§3.1](#31-contactplan触达计划) | [`schema.sql`](../db/schema.sql) |
+| `t_contact_plan_step` | NEW | collection-engine | 渠道编排(SPI 读取) | [§3.2](#32-contactplanstep触达计划步骤) | [`schema.sql`](../db/schema.sql) |
+| `t_decision_log` | NEW | collection-engine | 数仓(决策效果分析) | [§3.3](#33-decisionlog决策日志) | [`schema.sql`](../db/schema.sql) |
 
 #### B. 跨模块 / 服务层表
 
+| 表名 | 状态 | Owner | 首席写入方 | 核心消费方 | 字段语义 | DDL |
+| --- | --- | --- | --- | --- | --- | --- |
+| `t_contact_timeline` | NEW | 跨模块共写 | channel(自动触达), 人工外呼, ingestion(ETL) | 决策引擎(聚合), 合规引擎(频率), 数仓(BI) | [§3.4](#34-contactrecord统一触达记录) | [`schema.sql`](../db/schema.sql) |
+| `t_ai_collection` | NEW | ingestion | collection-ingestion | 引擎守卫、日切、管理查询；含 `owner` / `owner_date` | [§3.5](#35-caseprojection案件投影) | [`schema.sql`](../db/schema.sql) |
+| `t_ai_collection_inbox` | NEW | ingestion | collection-ingestion | 入站幂等与 PENDING 补发；运维排障 | 无；行为见 [接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等) | [`schema.sql`](../db/schema.sql) |
+| `t_ai_owner_reconcile` | NEW | ingestion | collection-ingestion | 当日 owner 对账水位；引擎/扫描只读 | 无；行为见 [接入 §4.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#41-owner-对账) | [`schema.sql`](../db/schema.sql) |
+| `t_user_device_token` | NEW | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`） | Phase 1 入案不消费 | 无 | [`schema.sql`](../db/schema.sql) |
+| `t_email_suppression` | NEW | 主架构 / common | collection-admin（SendGrid Event Webhook） | ExecutionGuard | 无 | [`schema.sql`](../db/schema.sql) |
+| `t_event_dlq` | NEW | 主架构 / common | collection-engine（事件总线） | 运维重放接口 `/ops/dlq/redrive` | 无（基础设施审计表，不进 §3） | [`schema.sql`](../db/schema.sql) |
+| `t_event_outbox` | NEW | 主架构 / common | collection-engine（状态迁移所在事务） | `OutboxPublisher` 兜底重发（[引擎 §7.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)） | 无（基础设施审计表，不进 §3） | [`schema.sql`](../db/schema.sql) |
+| `t_channel_callback_audit` | NEW | 主架构 / common | collection-admin（渠道 Webhook 入口） | 排障与渠道分析；**不计入 timeline 触达次数**（§3.4 注 4） | 无（基础设施审计表，不进 §3） | [`schema.sql`](../db/schema.sql) |
 
-| 表名                    | 状态                  | Owner          | 首席写入方                               | 核心消费方                                      | DDL 位置                  |
-| --------------------- | ------------------- | -------------- | ----------------------------------- | ------------------------------------------ | ----------------------- |
-| `t_contact_timeline`  | NEW                 | 跨模块共写          | channel(自动触达), 人工外呼, ingestion(ETL) | 决策引擎(聚合), 合规引擎(频率), 数仓(BI)                 | 附录 A A.2.1              |
-| `t_user_device_token` | NEW                 | 数仓（日同步，**可选**） | 数仓 ETL（源 = 旧库 `t_user_extend`）      | Phase 1 入案不消费 | 附录 A A.2.3              |
-| `t_user_profile_ext`  | **NEW（Phase 2 押后）** | service        | ProfileService, 坐席后台                | 决策引擎(画像输入)                                 | 附录 A A.2.2（Phase 1 不建表） |
-| `t_event_dlq`         | NEW                 | 主架构 / common   | collection-engine（事件总线）             | 运维重放接口 `/ops/dlq/redrive`                  | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
-| `t_event_outbox`      | NEW                 | 主架构 / common   | collection-engine（状态迁移所在事务）         | `OutboxPublisher` 兜底重发（[引擎 §7.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#72-派生事件可靠投递)） | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
-| `t_channel_callback_audit` | NEW            | 主架构 / common   | collection-admin（渠道 Webhook 入口）      | 排障与渠道分析；**不计入 timeline 触达次数**（§3.4 注 4）      | [`db/schema.sql`](../db/schema.sql)（基础设施审计表，不在附录 A 展开） |
-
-
-#### C. 现有表 — 只读引用（Phase 1 不做 DDL 变更）
+#### C. 现有表 — 只读引用（不在 `schema.sql`；Phase 1 不做 DDL 变更）
 
 **Phase 1 实际读取**（守卫/日切/兜底经 CaseService·ProfileService；**入案快照主路径**为 `CASE_INGESTED` payload，见 [数据接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）：
 
+| 表名 | 状态 | 引用位置 | 用途 |
+| --- | --- | --- | --- |
+| `t_collection` | EXISTING | 历史对账 | 旧案件主表；不在新系统运行时路径读取 |
+| `t_user_repayment_plan` | EXISTING | §4.1 CaseContext | 还款计划，金额/日期来源 |
+| `t_user_basis` | EXISTING | §4.2 UserProfile.BasicInfo | 用户基本信息（name/phone/email/language） |
+| `t_user_equipment` | EXISTING | §4.2 UserProfile.DeviceInfo | 设备信息；Phase 1 入案不读（`jpushToken` 走 `caseEvent.device.pushToken`） |
 
-| 表名                      | 状态       | 引用位置                        | 用途                                            |
-| ----------------------- | -------- | --------------------------- | --------------------------------------------- |
-| `t_collection`          | EXISTING | 历史对账                     | 旧案件主表；不在新系统运行时路径读取                              |
-| `t_user_repayment_plan` | EXISTING | §4.1 CaseContext            | 还款计划，金额/日期来源                                  |
-| `t_user_basis`          | EXISTING | §4.2 UserProfile.BasicInfo  | 用户基本信息（name/phone/email/language）             |
-| `t_user_equipment`      | EXISTING | §4.2 UserProfile.DeviceInfo | 设备信息；Phase 1 入案不读（`jpushToken` 走 `caseEvent.device.pushToken`） |
+**Phase 2 才引用**（UserProfile 维度 Phase 1 不填充，见 §4.2）：`t_user_work` / `t_user_telephone_book` / `t_system_property`。`t_user_profile_ext` Phase 1 不建表，见 [附录 A](#a22-t_user_profile_ext--用户画像扩展表phase-1-不建表押后-phase-2)。
 
+### 1.3 术语与对象分类
+<a id="13-对象关系与分类"></a>
 
-> **Phase 2 才引用**的现有表（`t_user_work` / `t_user_telephone_book` / `t_system_property`，对应 UserProfile 维度 Phase 1 不填充见 §4.2 🅿️2）不在 Phase 1 矩阵展开，见 [附录 A A.3](#a3-现有表只读引用)。
+先给出业务对象，再对照 Java 类与表。落库边界：**持久实体**独立落表；**快照**以 JSON 写入 `t_contact_plan.context_snapshot`；**瞬态 DTO** 不落库（`DecisionLog.input_snapshot` 仅审计副本）。分类表不含附录 B 编排内部模型。
 
-### 1.3 对象关系与分类
-
-> **范围**：引擎运行时涉及的 **Java 领域模型**（§3–§5），不含 §1.2 库表全清单、不含附录 B 编排内部模型。
-> **落库边界**：**持久实体**独立落表；**快照**以 JSON 写入 `t_contact_plan.context_snapshot`（不单独建表，但会落库）；**瞬态 DTO** 不落库（`DecisionLog.input_snapshot` 仅审计副本）。
-> **分类表**按形态索引各对象的触发事件与职责；下图示运行时数据流（非静态类图）。
-
-```mermaid
-flowchart TB
-    subgraph P1["① 建计划 · CASE_INGESTED"]
-        IN["payload 组装"] --> SNAP["ContextSnapshot"]
-        SNAP --> PLAN["ContactPlan + ContactPlanStep\n落库；snapshot 冻结写入 JSON 列"]
-    end
-
-    subgraph P2["② 步执行 · PLAN_STEP_DUE"]
-        ASM["组装 ExecutionContext\nplan + step + snapshot + recentTimeline"]
-        ASM --> G3["③ ExecutionGuard → GuardVerdict"]
-        G3 --> G4["④ StepResolver → StepCommand"]
-        G4 -.->|"Phase 1 落 DecisionLog"| DL["t_decision_log\n（④ CHANNEL_SELECT）"]
-        G4 --> G5["⑤ ChannelGateway → StepResult"]
-        G5 --> ADV["AdvancementPolicy → AdvancementDecision"]
-        G5 --> WR["写 ContactRecord（时间线）"]
-    end
-
-    subgraph P3["③ 实时守卫（瞬态，不落库）"]
-        PF["PreFlightChecker 读 CaseInfo\n案件存在 / repaid"]
-    end
-
-    PLAN --> ASM
-    P2 -.->|"步骤前"| PF
-```
-
-
+| 术语 | 含义 | Java / 表 |
+| --- | --- | --- |
+| 案件 | 一笔贷款的催收对象 | `case_id` ≡ 上游 `loan_id`，不是旧库 `t_collection.id` |
+| 投影 | 新系统运行时案件当前态 | `CaseProjection` / `t_ai_collection` |
+| 计划 | 某案件在某阶段的一轮触达安排 | `ContactPlan` / `t_contact_plan` |
+| 步骤 | 计划内一次渠道触达 | `ContactPlanStep` / `t_contact_plan_step` |
+| 快照 | 建计划时冻结的决策上下文 | `ContextSnapshot`（JSON 列） |
+| 时间线 | 统一触达事实 | `ContactRecord` / `t_contact_timeline` |
+| 收件箱 | 入站事实已入库、领域事件是否已发 | `t_ai_collection_inbox` |
+| 发件箱 | 引擎状态与派生事件同事务 | `t_event_outbox` |
 
 **模型分类总览**（持久实体 / 快照 / 瞬态 DTO）
 
-
-| 形态         | 对象                                         | 定义节       | 落库                                | 触发事件 / 阶段                                                                                        | 职责                                            |
-| ---------- | ------------------------------------------ | --------- | --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| **持久实体**   | ContactPlan                                | §3.1      | `t_contact_plan`                  | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁                          |
-| **持久实体**   | ContactPlanStep                            | §3.2      | `t_contact_plan_step`             | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进                                      | 计划内单步；含 trigger/timeout 调度字段                  |
-| **持久实体**   | DecisionLog                                | §3.3      | `t_decision_log`                  | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记          | 决策审计；`input_snapshot` 存 ExecutionContext 副本   |
-| **持久实体**   | ContactRecord                              | §3.4      | `t_contact_timeline`              | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截                                                          | 统一触达记录；回调可升级 result                           |
-| **快照**     | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON        | 建计划时写入；阶段变更 / 续建时 carry-forward                                                        | 决策输入字段；无独立表                                   |
-| **快照**     | ContextSnapshot                            | §4.4      | `t_contact_plan.context_snapshot` | 同上；`CASE_BALANCE_UPDATED` 更新余额                                                               | 快照根；策略字段固定，余额允许受控更新                        |
-| **瞬态 DTO** | CaseInfo                                   | §5.1      | 否                                 | `PreFlightChecker`（步骤②）；`PlanFactory` / `ExhaustionPolicy`                                       | 实时案件态（`repaid`）；与快照 CaseContext 语义不同 |
-| **瞬态 DTO** | ExecutionContext                           | §5.2      | 否                                 | `PLAN_STEP_DUE` → 步骤执行 ③④⑤                                                                       | SPI 统一入参；含 snapshot + recentTimeline          |
-| **瞬态 DTO** | GuardVerdict                               | §5.3      | 否                                 | 步骤 ③ `ExecutionGuard.evaluate`                                                                   | 合规裁定：放行 / 拦截原因                                |
-| **瞬态 DTO** | StepCommand / StepResult                   | §5.4–§5.5 | 否                                 | 步骤 ④⑤ `StepResolver` / `ChannelGateway`                                                          | 触达指令 ↔ 渠道执行结果                                 |
-| **瞬态 DTO** | AdvancementDecision / ExhaustionResult     | §5.6–§5.7 | 否                                 | `STEP_COMPLETED` 推进；`PLAN_EXHAUSTED` 续建                                                          | 步骤推进三选一；穷尽后 REBUILD/ESCALATE/COMPLETE         |
-
+| 形态 | 对象 | 定义节 | 落库 | 触发事件 / 阶段 | 职责 |
+| --- | --- | --- | --- | --- | --- |
+| **持久实体** | CaseProjection | §3.5 | `t_ai_collection` | 接入消费 caseEvent / repaymentEvent 写入；日切只读 | 运行时案件当前态；`case_id` PK |
+| **持久实体** | ContactPlan | §3.1 | `t_contact_plan` | `CASE_INGESTED` 创建；`REPAYMENT_RECEIVED` / `STAGE_CHANGED` / `CASE_CEASED` / `CASE_OWNER_RECONCILED` 取消；`PLAN_EXHAUSTED` 续建 | 状态机聚合根；`version` 乐观锁 |
+| **持久实体** | ContactPlanStep | §3.2 | `t_contact_plan_step` | `PLAN_STEP_DUE` 执行；`STEP_COMPLETED` / `CHANNEL_CALLBACK` 推进 | 计划内单步；含 trigger/timeout 调度字段 |
+| **持久实体** | DecisionLog | §3.3 | `t_decision_log` | **Phase 1 仅 ④ StepResolver 解析成功后**（step 级 `CHANNEL_SELECT`）；Guard/推进/穷尽决策 Phase 2 补记 | 决策审计；`input_snapshot` 存 ExecutionContext 副本 |
+| **持久实体** | ContactRecord | §3.4 | `t_contact_timeline` | 渠道 dispatch / `CHANNEL_CALLBACK` / 合规拦截 | 统一触达记录；回调可升级 result |
+| **快照** | CaseContext / UserProfile / ContactHistory | §4.1–§4.3 | 内嵌 `context_snapshot` JSON | 建计划时写入；阶段变更 / 续建时 carry-forward | 决策输入字段；无独立表 |
+| **快照** | ContextSnapshot | §4.4 | `t_contact_plan.context_snapshot` | 同上；`CASE_BALANCE_UPDATED` 更新余额 | 快照根；策略字段固定，余额允许受控更新 |
+| **瞬态 DTO** | CaseInfo | §5.1 | 否 | `PreFlightChecker`（步骤②）；`PlanFactory` / `ExhaustionPolicy` | 实时案件态（`repaid`）；与快照 CaseContext 语义不同 |
+| **瞬态 DTO** | ExecutionContext | §5.2 | 否 | `PLAN_STEP_DUE` → 步骤执行 ③④⑤ | SPI 统一入参；含 snapshot + recentTimeline |
+| **瞬态 DTO** | GuardVerdict | §5.3 | 否 | 步骤 ③ `ExecutionGuard.evaluate` | 合规裁定：放行 / 拦截原因 |
+| **瞬态 DTO** | StepCommand / StepResult | §5.4–§5.5 | 否 | 步骤 ④⑤ `StepResolver` / `ChannelGateway` | 触达指令 ↔ 渠道执行结果 |
+| **瞬态 DTO** | AdvancementDecision / ExhaustionResult | §5.6–§5.7 | 否 | `STEP_COMPLETED` 推进；`PLAN_EXHAUSTED` 续建 | 步骤推进三选一；穷尽后 REBUILD/ESCALATE/COMPLETE |
 
 ### 1.4 命名·类型·序列化·关联键约定
 
@@ -225,7 +169,7 @@ flowchart TB
 | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | Java ↔ DB 列名 | Java **camelCase** ↔ DB **snake_case**；MyBatis 开启 `map-underscore-to-camel-case: true`                                 |
 | 表间关联         | `case_id` / `plan_id` / `step_id` / `user_id` 为**逻辑外键**；Phase 1 DDL **不设**物理 `FOREIGN KEY`                             |
-| 物理库归属        | 引擎/服务新建表 → 新库 `collection_rebuild`；§1.2 C 区现有表 → 旧库只读（并行期），切量策略见 [数据接入 §4.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#42-读库与演进) |
+| 物理库归属        | 引擎/服务新建表 → 新库 `collection_rebuild`；§1.2 C 区现有表 → 旧库只读（并行期），切量策略见 [数据接入 §5](./MOCASA催收系统升级_Phase1_数据接入规格.md#5-迁移与-replay) |
 
 
 #### 类型映射（Java ↔ DB ↔ JSON）
@@ -248,16 +192,28 @@ flowchart TB
 | ---------------- | ------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Model JSON 列** | `context_snapshot`、`input_snapshot`、`output_decision` 等 | `JsonUtil.toJson()` / `fromJson()`（**统一入口**，禁止模块自建序列化器） | 字段结构 / 不可变 / 布尔命名：[§4.4](#44-contextsnapshot决策上下文快照)；`null` vs `0`：[§4.3](#43-contacthistory触达历史摘要)；脱敏：[§4.2](#42-userprofile用户画像) |
 | **EventPayload** | Redis Stream `Map<String,Object>`                       | `CollectionEvent` 常量 key                                | [§6](#6-eventpayload-字段定义) SSOT；**不走** model 序列化                                                                                   |
-| **PubSub 入站**    | 信贷推送原始 JSON                                             | `CasePayloadMapper`                                     | [数据接入规格 §3](./MOCASA催收系统升级_Phase1_数据接入规格.md#31-pubsub-消费)；与 Model JSON 规则无关                                                        |
+| **PubSub 入站**    | 信贷推送原始 JSON                                             | `CasePayloadMapper`                                     | [数据接入规格 §3.1](./MOCASA催收系统升级_Phase1_数据接入规格.md#31-消息路由与契约校验)；与 Model JSON 规则无关                                                        |
 
 
 > **Model JSON 列补充**：MySQL `JSON` 列读回可能规范化键序/空格，断言**语义等价**即可（不按字节相等）。
 
-### 1.5 计划生命周期关联键
+### 1.5 聚合、身份与不变式
+<a id="15-计划生命周期关联键"></a>
 
-> **用途**：梳理业务主键、计划/步骤实体键与幂等去重键的分层关系，供引擎 / 接入 / 数仓对齐。行为语义见 [核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)；接入层 Redis 键见 [数据接入 §3.3](./MOCASA催收系统升级_Phase1_数据接入规格.md#33-接入幂等键)。
+触达计划是状态机**聚合根**（`ContactPlan` / `t_contact_plan`），步骤是其内部实体。案件身份全链路是同一个数字 `case_id`（≡ 上游 `loan_id`），不是旧库 `t_collection.id`。行为见 [核心引擎规格 §4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#4-计划生命周期与状态机)；接入 Redis 键见 [数据接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)。快照寻址与金额用法见 [contracts](./contracts/README_ContextSnapshot契约对齐.md)。
+
+**不变式**
+
+| 项 | 约束 |
+| --- | --- |
+| 单活跃计划 | 同一 `caseId + stage` 同一时刻最多一个非终态计划；DDL `uk_active_stage_key`（`renewal_pending=1` 或终态不占键） |
+| 身份 | **1 user : N loan(case)**；Phase 1 按 loan 粒度催收 |
+| 投影单写 | 仅 ingestion 写 `t_ai_collection`；引擎不回写投影 |
+| 快照 | 策略字段在计划存活期不变；`CASE_BALANCE_UPDATED` 可受控更新运行态金额；发送前内存覆盖见 [§4.4](#44-contextsnapshot决策上下文快照) |
+| 乐观锁 | `t_contact_plan.version` 每次状态变更 +1 |
 
 #### 实体关系
+
 
 ```mermaid
 erDiagram
@@ -346,6 +302,8 @@ loan_id（上游）
 | `t_contact_plan_step` | `step_id`(PK), `plan_id`, `step_order`, `retry_count`, `idempotency_key` |
 | `t_contact_timeline` | `case_id`, `user_id`, `plan_id`, `step_id`, `attempt_key`(UK) |
 | `t_decision_log` | `case_id`, `plan_id`, `step_id` |
+| `t_ai_collection` | `case_id`(PK), `user_id`, `owner`, `owner_date` |
+| `t_ai_collection_inbox` | `event_id`(UK), `case_id` |
 | `t_channel_callback_audit` | `plan_id`, `step_id`, `case_id`, `provider_msg_id` |
 | `t_event_outbox` | `event_id`(UK), `plan_id`, `case_id` |
 
@@ -370,7 +328,7 @@ loan_id（上游）
 | PlanStatus                                              | 计划状态机（6 态）   | `t_contact_plan.status`                                         |
 | StepStatus                                              | 步骤执行状态       | `t_contact_plan_step.status`                                    |
 | DecisionType                                            | SPI 决策类型     | `t_decision_log.decision_type`                                  |
-| EventType                                               | 内部领域事件       | Redis Stream（路由见 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；payload 见 §6） |
+| EventType                                               | 内部领域事件       | Redis Stream（路由见 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；payload 见 §6） |
 | CancelReason                                            | 计划取消原因       | `t_contact_plan.cancel_reason`                                  |
 | Stage                                                   | 催收阶段（DPD 映射） | `t_contact_plan.stage`                                          |
 | ExhaustionAction                                        | 穷尽续建动作       | `ExhaustionResult.action`（§5.7）                                 |
@@ -466,13 +424,13 @@ loan_id（上游）
 | ------------------ | -------------------------------- |
 | PENDING            | 计划刚创建，尚未执行任何步骤，等待首步 trigger_time |
 | STEP_SCHEDULED     | 上一步已结束，下一步 Job 已注册，等待到期          |
-| STEP_EXECUTING     | 当前步骤执行中（渠道发送 / 等待异步回调）           |
-| STEP_WAITING       | 消息类渠道已发出，观察期内等待用户响应              |
-| **PLAN_COMPLETED** | 终态：还款完成，或步骤走完 / 穷尽续建正常结束 |
+| STEP_EXECUTING     | 当前步骤执行中。Phase 1 的 AI_CALL 在此态等 Webhook，不是观察期（[核心引擎 §4.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#41-状态定义)） |
+| STEP_WAITING       | 消息已发出、观察期内等用户响应；Phase 1 不进入（同上） |
+| **PLAN_COMPLETED** | 终态：本计划收口。仍在催时步骤走完须经穷尽（[核心引擎 §4.3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#432-step_completed) / [§4.5](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建)），不在此直接停催 |
 | **PLAN_CANCELLED** | 终态：中断取消（`cancel_reason`）        |
 
 
-> `PLAN_EXHAUSTED` 是 `EventType`，不是 `PlanStatus`（见 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)）。
+> `PLAN_EXHAUSTED` 是 `EventType`，不是 `PlanStatus`（见 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)）。
 
 ### 2.4 StepStatus（步骤执行状态）
 
@@ -509,11 +467,12 @@ loan_id（上游）
 ### 2.6 EventType（内部事件类型）
 
 > **Java**：`com.collection.common.enums.EventType`  
-> **载体**：Redis Stream（路由 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；payload §6；信封 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)）
+> **载体**：Redis Stream（路由 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；payload §6；信封 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)）
 
 | 枚举值 | Phase 1 状态 | 说明 |
 | --- | --- | --- |
-| CASE_INGESTED | 活跃 | 接入首次入催 |
+| CASE_INGESTED | 活跃 | 03:35 owner 对账后的首次进入 NEW 或再入建计划；`caseEvent` 到达时不发 |
+| CASE_OWNER_RECONCILED | 活跃 | 缺席迁出：payload `ownerAction=LEAVE`，引擎取消计划 |
 | STAGE_CHANGED | 活跃 | 日切变更或引擎升档 |
 | REPAYMENT_RECEIVED | 活跃 | 整笔 loan 全额结清：取消该案件活跃计划 |
 | CASE_BALANCE_UPDATED | 活跃 | 部分还款：只刷新活跃计划快照余额，不改状态与模板 |
@@ -536,11 +495,14 @@ loan_id（上游）
 | REPAID        | 用户已还款                          |
 | STAGE_UPGRADE | 阶段变更：取消旧 stage 计划并新建（与模板是否相同无关，见 [核心引擎规格 §4.4](./MOCASA催收系统升级_Phase1_核心引擎规格.md#44-中断处理)） |
 | CEASED        | Max DPD ≥91 完全停催（CASE_CEASED） |
+| CASE_NOT_FOUND | 实时 PreFlight 未找到案件，终结孤儿计划且不记录触达 |
+| NO_DUE_BALANCE | 当前无已到期应还余额；阻断零金额催收文案，后续日切可按新快照重建 |
+| ROUTED_TO_LEGACY | 当日 NEW 批次缺席，对账后迁出；案件仍可能在旧系统在催 |
 
 
-> Phase 1 三值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
+> Phase 1 上表六值均由引擎写入（`CancelReason.isEngineManaged()=true`）。
 >
-> **Phase 2 预留**（枚举值保留，Phase 1 不使用）：`COMPLAINT`（投诉终态取消）、`MANUAL`（管理后台人工取消）、`PTP_EXPIRED`（PTP 到期未还款）。
+> **非引擎写入**：`COMPLAINT`（投诉终态取消，Phase 2 预留）、`MANUAL`（管理后台人工取消，Phase 2 预留）、`MANUAL_CLEANUP`（运维人工清理测试计划，不经事件总线）、`PTP_EXPIRED`（PTP 到期未还款，Phase 2 预留）。
 
 ### 2.8 Stage（催收阶段）
 
@@ -557,7 +519,7 @@ loan_id（上游）
 | S4  | D+31+       | Extended 延长期  |
 
 
-> **D+91 停催不属于 Stage 概念**：由 `PlanFactory.shouldRejectPlan` / ingestion 日切独立处理（发 `CASE_CEASED` 事件，[核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)），Stage 不感知。
+> **D+91 停催不属于 Stage 概念**：由 `PlanFactory.shouldRejectPlan` / ingestion 日切独立处理（发 `CASE_CEASED` 事件，[核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)），Stage 不感知。
 >
 > ⚠️ 上表区间为代码默认值；若后续改为从 `t_contact_plan_template` 配置读取，需同步 `Stage.java`（**代码待跟进**，本次仅文档对齐代码现状）。
 
@@ -578,20 +540,16 @@ loan_id（上游）
 
 ---
 
----
-
----
-
 ## 3. 持久化实体模型
 
-本章定义**落表持久实体**（状态机读写 + 触达时间线），每个类对应一张数据库表（或子表）。`PlanLifecycleManager` 和 `StepExecutionOrchestrator` 通过读写这些实体驱动状态流转。
+本章定义**落表持久实体**。§3.1–§3.4 由状态机与时间线读写；§3.5 为接入投影（运行时案件当前态）。
 
 > **节首约定**：**Java** + **表** + DDL 指针 + **用途**；枚举取值见 §2，运行时行为见 §1.3 / 核心引擎规格。
 
 ### 3.1 ContactPlan（触达计划）
 
 > **Java**：`com.collection.common.model.ContactPlan`  
-> **表**：`t_contact_plan` · DDL [附录 A A.1.1](#a11-t_contact_plan--触达计划主表)  
+> **表**：`t_contact_plan` · DDL [`schema.sql`](../db/schema.sql)  
 > **用途**：状态机聚合根，描述一个案件在某阶段的完整触达计划。
 
 
@@ -617,12 +575,12 @@ loan_id（上游）
 | steps           | ListContactPlanStep | （无）              | —   | **仅内存态**：计划创建、ExecutionContext 组装时持有的步骤序列，不对应 `t_contact_plan` 单表列；持久化时落 `t_contact_plan_step`（§3.2） |
 
 
-> **单活跃计划约束**：同一 `caseId + stage` 在同一时刻最多存在一个非终态计划。详见 [核心引擎规格 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)。
+> **单活跃计划约束**见 [§1.5](#15-聚合身份与不变式)；创建行为见 [核心引擎规格 §4.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#42-计划创建)。
 
 ### 3.2 ContactPlanStep（触达计划步骤）
 
 > **Java**：`com.collection.common.model.ContactPlanStep`  
-> **表**：`t_contact_plan_step` · DDL [附录 A A.1.2](#a12-t_contact_plan_step--触达计划步骤表)  
+> **表**：`t_contact_plan_step` · DDL [`schema.sql`](../db/schema.sql)  
 > **用途**：计划内单步执行单元，含调度（trigger/timeout）与步骤状态。
 
 
@@ -662,7 +620,7 @@ loan_id（上游）
 ### 3.3 DecisionLog（决策日志）
 
 > **Java**：`com.collection.common.model.DecisionLog`  
-> **表**：`t_decision_log` · DDL [附录 A A.1.3](#a13-t_decision_log--决策日志)  
+> **表**：`t_decision_log` · DDL [`schema.sql`](../db/schema.sql)  
 > **用途**：SPI 决策审计；引擎只写不读，供数仓分析与 Phase 2 模型训练。
 > **Phase 1 落库范围**：仅 ④ `StepResolver` 解析成功后写一条 step 级记录（`decision_type=CHANNEL_SELECT`、`engine_type=RULE`、`confidence=1.0`），`fail-open` 事务外写不阻断触达；③ Guard 拦截率走 `t_contact_timeline`，推进/穷尽决策 Phase 2 再补记。
 
@@ -689,7 +647,7 @@ loan_id（上游）
 ### 3.4 ContactRecord（统一触达记录）
 
 > **Java**：`com.collection.common.model.ContactRecord`  
-> **表**：`t_contact_timeline` · DDL [附录 A A.2.1](#a21-t_contact_timeline--统一触达时间线)  
+> **表**：`t_contact_timeline` · DDL [`schema.sql`](../db/schema.sql)  
 > **用途**：统一触达时间线；系统触达、ETL 迁移、回调升级共写此模型。
 
 
@@ -727,6 +685,40 @@ loan_id（上游）
 > 4. 供应商原始回调序列写 `t_channel_callback_audit`，不作为 timeline 触达次数，供排障和渠道分析。
 
 ---
+
+### 3.5 CaseProjection（案件投影）
+
+> **Java**：`com.collection.common.model.CaseProjection`  
+> **表**：`t_ai_collection` · DDL [`schema.sql`](../db/schema.sql)  
+> **用途**：新系统运行时唯一案件当前态；引擎与日切不回读旧 `t_collection`。列以 `schema.sql` 为准；写入规则见 [接入规格](./MOCASA催收系统升级_Phase1_数据接入规格.md)，上游字段映射见 [数仓契约](./数仓_PubSub交付契约.md)。
+
+| 字段 | Java 类型 | DB 列 | 必填 | 说明 |
+| --- | --- | --- | --- | --- |
+| caseId | Long | case_id | 是 | PK；≡ 上游 `loan_id` |
+| userId | Long | user_id | 是 | 用户 ID |
+| caseVersion | String | case_version | 是 | 数仓快照内容指纹；相同略过业务列、不同刷新；指纹相同仍刷新 `owner_date` |
+| dpd | Integer | dpd | 是 | 逾期天数；接入不重算 |
+| stage | String | stage | 否 | S0–S4；D+91 可为空 |
+| collectionStatus | String | collection_status | 是 | 接入派生：`isFullCleared` 优先 → `SETTLED`，否则 `dpd>=91` → `CEASED`，否则 `IN_COLLECTION`；不信任外部同名字段 |
+| product | String | product | 是 | 贷款产品标识 |
+| overdueAmount | BigDecimal | overdue_amount | 是 | 已到期未结清总额，含罚息 |
+| totalOutstanding | BigDecimal | total_outstanding | 是 | 已到期且未结清，对客金额（与 `overdue_amount` 同口径） |
+| penaltyAmount | BigDecimal | penalty_amount | 是 | 罚息 |
+| remainingAmount | BigDecimal | remaining_amount | 是 | 废弃历史列，不再表示全部未结清 |
+| upcomingAmount | BigDecimal | upcoming_amount | 否 | 三期下一期 D-3～D0 待还金额 |
+| dueDate | LocalDate | due_date | 否 | 历史兼容到期日；新契约非全面必填 |
+| nextDueDate | LocalDate | next_due_date | 否 | 与 `upcomingAmount` 成对的下一期还款日 |
+| borrowerName | String | borrower_name | 是 | 借款人姓名 |
+| borrowerPhone | String | borrower_phone | 是 | E.164 |
+| borrowerEmail | String | borrower_email | 否 | 空不阻断入案 |
+| borrowerLanguage | String | borrower_language | 是 | 默认 `en` |
+| pushToken | String | push_token | 否 | JPush；空则 Push fallback SMS，不回查 token 表 |
+| owner | String | owner | 是 | 发给本系统的案件固定 `NEW` |
+| ownerDate | LocalDate | owner_date | 否 | PHT 归属日，`date(occurredAt)`；还款不得刷新 |
+| updatedAt | LocalDateTime | updated_at | 是 | 数仓快照业务更新时间（消息 `occurredAt`） |
+| syncedAt | LocalDateTime | synced_at | 是 | 接入层投影落库时间 |
+
+> 内存合并标志 `stagePresent` / `nextDueDatePresent` 不是表列，见接入规格。`repaymentEvent` 合并运行态、不改 `owner_date`。
 
 ---
 
@@ -795,7 +787,7 @@ loan_id（上游）
 | profileCompleteness | double          | 是   | 画像完整度 0.0-1.0（非空字段数 / 总字段数）              |
 
 
-> 🅿️2 = Phase 2 预留（结构保留、Phase 1 返回 null）。
+> Phase 2 预留字段：结构保留、Phase 1 返回 null。⏳ 待深入讨论：Phase 1 不填充，待数仓/号码检测供应商或坐席标记就绪后再实现。
 
 #### BasicInfo
 
@@ -922,7 +914,7 @@ loan_id（上游）
 
 > **Java**：`com.collection.common.model.ContextSnapshot`  
 > **落库**：`t_contact_plan.context_snapshot`（JSON，§3.1）  
-> **用途**：策略字段在计划存活期保持不变；建计划、阶段变更和续建时写入，`CASE_BALANCE_UPDATED` 可受控更新运行态金额和下一期提醒字段。经 `ExecutionContext`（§5.2）传给 SPI；发送前的 `dpd` / 余额覆盖规则见 [架构 §1.6.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#162-数据所有权与快照边界)。
+> **用途**：策略字段在计划存活期保持不变；建计划、阶段变更和续建时写入，`CASE_BALANCE_UPDATED` 可受控更新运行态金额和下一期提醒字段。经 `ExecutionContext`（§5.2）传给 SPI；发送前的 `dpd` / 余额覆盖规则见 [架构 §2.2](./MOCASA催收系统升级_Phase1_架构设计文档.md#162-数据所有权与快照边界)。
 
 
 | 字段              | 类型             | 必填  | 说明                   |
@@ -934,9 +926,7 @@ loan_id（上游）
 | snapshotVersion | String         | 是   | 快照版本标识（用于 A/B 测试时区分） |
 
 
-> **不可变性约束**：策略字段在同一计划内保持不变，SPI 基于快照做决策，以保证步骤间一致性。新计划在入案、阶段变更或续建时写入快照；不可快照的实时还款状态由 PreFlightChecker 在步骤执行时校验。
->
-> **日变字段例外（对外文案准确性）**：`caseContext.dpd` / `totalOutstanding` 进入用户可见文案，冻结值会随时间失真（单阶段最长跨 60 天）。因此：① 日切发布的 `STAGE_CHANGED` 携带两字段时，carry-forward 写入新快照；② `CASE_BALANCE_UPDATED` 持久化更新活跃计划的 `totalOutstanding`；③ 步骤执行时 `StepExecutionOrchestrator` 用 PreFlightChecker 已读到的 `CaseInfo` 覆盖**内存中的**快照副本（不回写本列、不覆盖 `stage`）。实际渲染值见 `t_decision_log.input_snapshot`。
+> **不可变性**见 [§1.5](#15-聚合身份与不变式)。**日变字段例外**（对外文案）：`caseContext.dpd` / `totalOutstanding` / `stage` 进入用户可见文案。① 日切 `STAGE_CHANGED` 携带字段时 carry-forward；② `CASE_BALANCE_UPDATED` 持久化更新活跃计划运行态金额；③ 步骤执行时用 `CaseInfo` 覆盖**内存**快照副本（`dpd`、运行态金额、`stage`；不回写本列）。计划 `t_contact_plan.stage` 仍只由 `STAGE_CHANGED` 改。实际渲染值见 `t_decision_log.input_snapshot`。寻址与金额见 [contracts](./contracts/README_ContextSnapshot契约对齐.md)。
 >
 > **Phase 1 组装责任**：`CASE_INGESTED` payload 是入案字段来源；完整 `caseEvent` 必带 `dpd`、`product`、`overdueAmount`、`overduePenaltyAmount`、`isFullCleared`，并可带三期提醒 `upcomingAmount` / `nextDueDate`。接入将前两项金额映射为 `totalOutstanding` / `penaltyAmount`，并派生 `collectionStatus`（`isFullCleared` 优先，随后 `dpd>=91`）。`repaymentEvent` 只更新运行态，不补齐完整快照。引擎仅消费内部 payload，并衍生 `stage`（由 dpd）、`strategyTone=STANDARD`、`repaymentUrl`（受控模板）；衍生值不新增 EventPayload key。
 >
@@ -951,28 +941,11 @@ loan_id（上游）
 
 ---
 
----
-
----
-
 ## 5. SPI 契约 DTO
 
-本章定义核心引擎（`engine.lifecycle`）与渠道编排层（`collection-channel`，含 `channel.strategy` 策略实现）之间的接口数据结构。这些 DTO 定义于 `common.dto` 包（`collection-common` 模块，与 `common.spi` 接口同模块发布），构成模块契约层。
+本章定义核心引擎与渠道编排层之间的接口数据结构（`common.dto`，与 `common.spi` 同模块发布）。**调用时机与接口职责见 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)**；本节只定义字段。
 
-SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统升级_Phase1_核心引擎规格.md#6-spi-接口契约)。
-
-> **节首约定**：**Java** + **载体**（不落表，SPI 内存传递）+ **用途**；调用时机见章首 SPI 表 / 核心引擎规格 §5。
-
-
-| DTO                 | 关联 SPI 接口                                         | 契约边界                        |
-| ------------------- | ------------------------------------------------- | --------------------------- |
-| CaseInfo            | PlanFactory / ExhaustionPolicy                    | 引擎 → SPI（精简案件入参）            |
-| ExecutionContext    | ExecutionGuard / StepResolver / AdvancementPolicy | 引擎 → 渠道编排（策略子层）             |
-| GuardVerdict        | ExecutionGuard                                    | 渠道编排（策略子层） → 引擎             |
-| StepCommand         | StepResolver / ChannelGateway                     | 渠道编排内：策略子层 → 执行子层（引擎 ④⑤ 串联） |
-| StepResult          | ChannelGateway / AdvancementPolicy                | 渠道编排（执行子层） → 引擎             |
-| AdvancementDecision | AdvancementPolicy                                 | 渠道编排（策略子层） → 引擎             |
-| ExhaustionResult    | ExhaustionPolicy                                  | 渠道编排（策略子层） → 引擎             |
+> **节首约定**：**Java** + **载体**（不落表，SPI 内存传递）+ **用途**。
 
 
 ### 5.1 CaseInfo（案件基本信息 · SPI 入参）
@@ -1102,7 +1075,7 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | 枚举值            | 含义     | 引擎动作                                                                        |
 | -------------- | ------ | --------------------------------------------------------------------------- |
 | ADVANCE_NEXT   | 推进到下一步 | 注册下一步 Job 或立即执行                                                             |
-| PLAN_COMPLETED | 计划完成   | 计划进入终态 PLAN_COMPLETED                                                       |
+| PLAN_COMPLETED | 策略建议收口 | 引擎在仍在催时改写为 `PLAN_EXHAUSTED`（[核心引擎 §4.3.2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#432-step_completed)）；仅已停催/结清时落入计划终态 |
 | PLAN_EXHAUSTED | 计划穷尽   | 发布 PLAN_EXHAUSTED 事件 → [§4.5 穷尽续建](./MOCASA催收系统升级_Phase1_核心引擎规格.md#45-穷尽续建) |
 
 
@@ -1133,14 +1106,10 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 
 ---
 
----
-
----
-
 ## 6. EventPayload 字段定义
 
 > Java 载体：`com.collection.common.event.CollectionEvent`（信封字段 `eventId` / `eventType` / `occurredAt` + `payload: Map<String,Object>`）。payload 的 key 以 `CollectionEvent` 的静态常量为准（`CASE_ID` / `USER_ID` / `PLAN_ID` / `STEP_ID` / `STAGE` / `MAX_DPD` / `PTP_ID`，以及决策 B 新增的快照字段常量 `DPD` / `PRODUCT` / `TOTAL_OUTSTANDING` / `PENALTY_AMOUNT` / `DUE_DATE` / `FULL_REPAY_TIME` / `NAME` / `PHONE` / `EMAIL` / `JPUSH_TOKEN` 等）。  
-> **本节是各 EventType 的 payload 字段唯一 SSOT。** 引擎路由与处理动作见 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；发布者见下表 §6.2；JSON 传输信封（序列化 / ACK / Stream / DLQ）见 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)；`CHANNEL_CALLBACK` 的供应商回调字段细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)。本节不重复上述内容。
+> **本节是各 EventType 的 payload 字段唯一 SSOT。** 引擎路由与处理动作见 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot)；发布者见下表 §6.2；JSON 传输信封（序列化 / ACK / Stream / DLQ）见 [基础设施 §3](./MOCASA催收系统升级_Phase1_基础设施交互规范.md#3-事件总线redis-stream)；`CHANNEL_CALLBACK` 的供应商回调字段细节见 [渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)。本节不重复上述内容。
 
 ### 6.1 信封与 payload 边界
 
@@ -1154,7 +1123,8 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 
 | EventType                   | 发布者                                                  | payload 字段（key）                                                                                                                                   | 必填 / 缺省                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CASE_INGESTED               | ingestion                                            | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount` 必填；`dueDate` 不再由新契约全面必填。`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS |
+| CASE_INGESTED               | ingestion（owner 对账 ENTER，或水位已是当日的迟到补建） | `caseId`、`userId`、`stage` + 快照字段：`dpd`、`product`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`name`、`phone`、`email`、`jpushToken` | `caseId`、`stage` 与 `dpd`、`product`、`totalOutstanding`、`penaltyAmount` 必填；`dueDate` 不再由新契约全面必填。`userId` 缺省取 `caseId`。**快照字段**：引擎建计划时据此组装 `ContextSnapshot`，运行时不读旧库（[接入 §3.2](./MOCASA催收系统升级_Phase1_数据接入规格.md#32-投影写入inbox-与幂等)）；`jpushToken` 仅在用户注册时携带，缺失不回查、无 token → PUSH fallback SMS。`caseEvent` 到达时**不**发本事件 |
+| CASE_OWNER_RECONCILED       | ingestion（owner 对账 LEAVE）                        | `caseId`、`userId`、`ownerAction=LEAVE`、`cancelReason=ROUTED_TO_LEGACY`                                                                 | `caseId` 必填；`ownerAction` 固定 `LEAVE`。引擎取消该案活跃计划，不得续建。KEEP / ENTER 不发本事件（KEEP 无事件；ENTER 发 `CASE_INGESTED`） |
 | STAGE_CHANGED               | ingestion / engine（ESCALATE 续建）                      | `caseId`、`stage`（=**目标阶段**）、`dpd`、`totalOutstanding`                                                                                             | `caseId`、`stage` 必填；`dpd`、`totalOutstanding` 可选，仅日切发布时携带（值取自 `t_ai_collection` 当日投影），非空则 carry-forward 时刷新新计划快照的同名字段，缺省保持旧值                                                                                                                                                              |
 | REPAYMENT_RECEIVED          | ingestion                                            | `caseId`、`userId`、`cancelReason=REPAID`、`cancelScope=CASE`                                                                                  | `caseId`、`userId` 必填；仅 `repaymentEvent.isFullCleared=true` 时发布，取消该案件活跃计划                                                                                                                                                                                                                     |
 | CASE_BALANCE_UPDATED        | ingestion                                            | `caseId`、`userId`、`totalOutstanding`、`penaltyAmount`、`upcomingAmount`、`nextDueDate`、`isFullCleared`                                                                            | 部分还款事件必须有 `caseId`、非负 `totalOutstanding`；其余运行态字段按消息合并。该事件不携带或驱动 stage，阶段变化仍由 dailyRoll 产生 `STAGE_CHANGED`；金额缺失或为负事件进入 poison                                                                                                                                                                                                                                                                          |
@@ -1164,223 +1134,33 @@ SPI 接口签名与调用时机见 [核心引擎规格 §6](./MOCASA催收系统
 | PLAN_EXHAUSTED              | engine                                               | `caseId`、`planId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CALLBACK_TIMEOUT            | collection-admin（调度订阅 `job=callbackTimeout`）        | `planId`、`stepId`                                                                                                                                 | 均必填                                                                                                                                                                                                                                                                                                                   |
 | CASE_CEASED                 | ingestion（日切 / mock）                                 | `caseId`、`maxDpd`                                                                                                                                 | `caseId` 必填；`maxDpd` 缺省 91                                                                                                                                                                                                                                                                                            |
-| PTP_EXPIRED（**Phase 2 预留**） | （Phase 2）                                            | `caseId`、`ptpId`                                                                                                                                  | Phase 1 不生产、不消费（不入 [核心引擎规格 §2.1](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 路由表）                                                                                                                                                                                                                                                                        |
+| PTP_EXPIRED（**Phase 2 预留**） | （Phase 2）                                            | `caseId`、`ptpId`                                                                                                                                  | Phase 1 不生产、不消费（不入 [核心引擎规格 §2](./MOCASA催收系统升级_Phase1_核心引擎规格.md#21-事件路由表ssot) 路由表）                                                                                                                                                                                                                                                                        |
 
 
 > 新增 payload key 须先在 `CollectionEvent` 增补常量并同步本表（跨模块契约，改前对齐，见 [HANDOFF §五](../HANDOFF.md)）。
 
 ---
 
----
+## 附录 A：DDL 例外与指针
+<a id="附录-a数据模型-ddl"></a>
+<a id="附录-addl-例外与指针"></a>
 
----
+权威 DDL 仅 [`../db/schema.sql`](../db/schema.sql)。字段语义见 [§1.2](#12-表级契约矩阵)「字段语义」列。本节只保留 `schema.sql` 未建表的例外。
 
-## 附录 A：数据模型 DDL
-
-> **权威 DDL**：`[../db/schema.sql](../db/schema.sql)`。**附录定位**：列定义与 `schema.sql` 结构对齐的可读副本；**字段语义 SSOT 见正文 §4–§4**，本节 COMMENT 从简（列 / 类型 / 索引 / DEFAULT / COMMENT）；变更须**双写**（先改 schema.sql，再同步本节）。
-> 为与权威文件对齐，本节统一采用 `CREATE TABLE IF NOT EXISTS` + 表级 `COMMENT`。
-
-### A.1 引擎核心表 CREATE TABLE
-
-#### A.1.1 t_contact_plan — 触达计划主表
-
-```sql
-CREATE TABLE IF NOT EXISTS t_contact_plan (
-    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    case_id             BIGINT          NOT NULL COMMENT '关联案件ID',
-    user_id             BIGINT          NOT NULL COMMENT '用户ID',
-    stage               VARCHAR(16)     NOT NULL COMMENT '催收阶段: S0/S1/S2/S3/S4',
-    plan_template_id    BIGINT          NULL     COMMENT '触达计划模板ID',
-    status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
-    current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
-    total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT '取消原因: REPAID/STAGE_UPGRADE/CEASED（Phase 2 预留 COMPLAINT/MANUAL/PTP_EXPIRED）',
-    context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
-    idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键（case_id:stage:create_timestamp），防止事件重投重复创建。Phase 1 预留',
-    renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',
-    version             INT             NOT NULL DEFAULT 0 COMMENT '乐观锁版本号，每次状态变更 +1',
-    started_at          DATETIME        NULL     COMMENT '首步进入EXECUTING时写入（IF NULL THEN SET）',
-    completed_at        DATETIME        NULL     COMMENT '计划进入终态时写入',
-    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_case (case_id),
-    INDEX idx_status (status),
-    INDEX idx_user_stage (user_id, stage)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划主表';
-```
-
-#### A.1.2 t_contact_plan_step — 触达计划步骤表
-
-```sql
-CREATE TABLE IF NOT EXISTS t_contact_plan_step (
-    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    plan_id             BIGINT          NOT NULL COMMENT '关联触达计划ID',
-    step_order          INT             NOT NULL COMMENT '步骤序号（从1开始）',
-    channel_type        VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
-    template_id         BIGINT          NULL     COMMENT '话术模板ID',
-    delay_minutes       INT             NOT NULL DEFAULT 0 COMMENT '相对上一步的延迟（分钟），首步为相对计划创建时间',
-    trigger_time        DATETIME        NULL     COMMENT '待触发的绝对时间（由引擎计算写入）；被扫描拾取后清空',
-    original_trigger_time DATETIME      NULL     COMMENT '建计划时的原始排期（只写一次，永不更新）：供计划 vs 实际偏差分析',
-    timeout_time        DATETIME        NULL     COMMENT '异步回调超时时间（由引擎在执行时写入）',
-    trigger_condition   VARCHAR(256)    NULL     COMMENT '前置条件表达式（如"前一步未响应"）',
-    status              VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/EXECUTING/COMPLETED/SKIPPED/FAILED',
-    observation_minutes INT             NOT NULL DEFAULT 0 COMMENT '观察期（分钟），0=无观察期',
-    retry_count         INT             NOT NULL DEFAULT 0 COMMENT '已重试次数',
-    result              VARCHAR(32)     NULL     COMMENT '步骤最终结果（ContactResult 枚举值）',
-    idempotency_key     VARCHAR(128)    NULL     COMMENT '幂等键（plan_id:step_order:retry_count，由引擎生成）',
-    executed_at         DATETIME        NULL     COMMENT '步骤开始执行时间（引擎开始尝试）',
-    dispatched_at       DATETIME        NULL     COMMENT '渠道受理时间（供应商已接单）：区分"卡在调用前"与"已发出未回写"',
-    completed_at        DATETIME        NULL     COMMENT '步骤完成时间',
-    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_plan_order (plan_id, step_order),
-    INDEX idx_trigger (trigger_time, status),
-    INDEX idx_timeout (timeout_time, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触达计划步骤表';
-```
-
-#### A.1.3 t_decision_log — 决策日志
-
-```sql
-CREATE TABLE IF NOT EXISTS t_decision_log (
-    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    case_id             BIGINT          NOT NULL,
-    plan_id             BIGINT          NULL     COMMENT '关联触达计划ID（计划级决策时有值）',
-    step_id             BIGINT          NULL     COMMENT '关联触达计划步骤ID（步骤级决策时有值）',
-    decision_type       VARCHAR(32)     NOT NULL COMMENT 'CHANNEL_SELECT/SCRIPT_SELECT/TIMING（Phase 2 预留 ASSIGNMENT/CHANNEL_MODE_SELECT）',
-    engine_type         VARCHAR(16)     NOT NULL COMMENT 'RULE/LLM',
-    engine_version      VARCHAR(32)     NULL,
-    input_snapshot      JSON            NOT NULL COMMENT '决策输入快照',
-    output_decision     JSON            NOT NULL COMMENT '决策结果',
-    reasoning           TEXT            NULL     COMMENT 'Phase 1: 命中规则; Phase 2: LLM CoT',
-    confidence          DECIMAL(5,4)    NOT NULL DEFAULT 1.0000,
-    latency_ms          INT             NULL,
-    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_case_type (case_id, decision_type),
-    INDEX idx_plan_step (plan_id, step_id),
-    INDEX idx_engine (engine_type, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='决策日志';
-```
-
-#### A.1.4 t_contact_plan_template（已移至附录 B）
-
-> 该表由渠道编排层负责，Phase 1 走 Nacos 不建表，DDL 见 [附录 B](#附录-b渠道编排层模型)（Phase 2）。
-
-### A.2 跨模块共享表 CREATE TABLE
-
-#### A.2.1 t_contact_timeline — 统一触达时间线
-
-```sql
-CREATE TABLE IF NOT EXISTS t_contact_timeline (
-    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
-    case_id             BIGINT          NOT NULL,
-    user_id             BIGINT          NOT NULL,
-    plan_id             BIGINT          NULL     COMMENT '关联触达计划（历史迁移数据无计划ID）',
-    step_id             BIGINT          NULL     COMMENT '关联步骤ID（人工渠道/迁移数据无步骤ID）',
-    channel             VARCHAR(32)     NOT NULL COMMENT 'PUSH/SMS/AI_CALL/TTS/EMAIL/VIBER/WHATSAPP/HUMAN_CALL',
-    direction           VARCHAR(8)      NOT NULL DEFAULT 'OUT' COMMENT 'OUT=系统发出 / IN=用户响应',
-    template_id         BIGINT          NULL     COMMENT '使用的话术模板ID',
-    content_summary     VARCHAR(500)    NULL     COMMENT '内容摘要',
-    result              VARCHAR(32)     NULL     COMMENT 'DELIVERED/READ/REPLIED/FAILED/REJECTED/ANSWERED/NO_ANSWER/BUSY',
-    provider_msg_id     VARCHAR(128)    NULL     COMMENT '供应商消息ID',
-    provider_callback   JSON            NULL     COMMENT '供应商回调原始数据',
-    cost                DECIMAL(10,4)   NULL     COMMENT '成本（如有）',
-    source              VARCHAR(16)     NOT NULL DEFAULT 'SYSTEM' COMMENT 'SYSTEM/ETL_SYNC/PUBSUB_SYNC',
-    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_case_time (case_id, created_at),
-    INDEX idx_user_channel (user_id, channel),
-    INDEX idx_plan (plan_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一触达时间线';
-```
-
-#### A.2.2 t_user_profile_ext — 用户画像扩展表（Phase 1 不建表，押后 Phase 2）
+### A.2.2 t_user_profile_ext — 用户画像扩展表（Phase 1 不建表，押后 Phase 2）
+<a id="a22-t_user_profile_ext--用户画像扩展表phase-1-不建表押后-phase-2"></a>
 
 > **决定（2026-06-18）**：Phase 1 **不建** `t_user_profile_ext`。其承载字段（bestContactHour / preferredChannel / phoneValidity / viber·whatsapp 注册态 / sensitivityTag / ptpFulfillRate）Phase 1 无代码消费、无 mapper 接线（`MockProfileService` 仅填 `BasicInfo` + `DeviceInfo.jpushToken`）。
-> 待 Phase 2 数仓/号码检测供应商就绪、或坐席标记功能上线时再建表，DDL 一并同步 `[../db/schema.sql](../db/schema.sql)`。
+> 待 Phase 2 数仓/号码检测供应商就绪、或坐席标记功能上线时再建表，DDL 一并同步 [`../db/schema.sql`](../db/schema.sql)。
 > `UserProfile` 内存模型对应字段（§4.2）**结构保留**（快照契约冻结，见 [ContextSnapshot 契约](./contracts/README_ContextSnapshot契约对齐.md)），Phase 1 返回 null。
-
-#### A.2.3 t_user_device_token — Push Token 镜像（Phase 1）
-
-> **用途**：历史 token 镜像表，Phase 1 入案不读取。`jpushToken` 仅在用户存在注册时随 `caseEvent.device.pushToken` 携带；无 token 时由渠道 fallback SMS。数仓同步可按其他消费者需求保留。
-
-```sql
-CREATE TABLE IF NOT EXISTS t_user_device_token (
-    user_id             BIGINT          NOT NULL PRIMARY KEY COMMENT '用户ID，与 caseEvent userId 对齐',
-    jpush_token         VARCHAR(256)    NULL     COMMENT 'JPush Registration ID（源：旧库 t_user_extend.ji_guang_token）',
-    synced_at           DATETIME        NOT NULL COMMENT '数仓同步批次时间',
-    updated_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_synced_at (synced_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户 Push Token 镜像（数仓日同步，供 ingestion enrichment）';
-```
-
-### A.3 现有表只读引用
-
-> Phase 1 不做 DDL 变更，仅读取。**Phase 1 实际读取**清单（`t_collection` / `t_user_repayment_plan` / `t_user_basis` / `t_user_equipment`，含用途）以 [§1.2 C 区](#12-表级契约矩阵) 为准，本节不重复。
-
-**Phase 2 才引用**（对应 UserProfile 维度 Phase 1 不填充，见 §4.2 🅿️2；Phase 1 矩阵不展开，集中于此）：
-
-
-| 表名                      | 状态       | 引用位置                                       | 说明                                      |
-| ----------------------- | -------- | ------------------------------------------ | --------------------------------------- |
-| `t_user_work`           | EXISTING | §4.2 UserProfile.WorkInfo                  | WorkInfo 维度 Phase 2 预留                  |
-| `t_user_telephone_book` | EXISTING | §4.2 UserProfile.BasicInfo.alternatePhones | 备用号 Phase 2 预留                          |
-| `t_system_property`     | EXISTING | 架构设计文档                                     | 全局系统配置；Phase 1 走 Nacos，DB 轮询 Phase 2 可选 |
-
-
----
-
----
 
 ---
 
 ## 附录 B：渠道编排层模型
+<a id="b1-渠道编排配置表"></a>
+<a id="b2-人工外呼表"></a>
 
-> **Owner**: collection-channel（渠道编排层同事）。核心引擎层**不依赖**本章定义。
-> **§1.2 不展开编排 owned 表**；本节为编排层配置表 / 人工外呼表的字段 / DDL / 写入方 SSOT，由编排同事在 Phase 2 落库时统一确认补全。
-
-**引擎↔渠道的唯一契约**是 §5 的 SPI DTO（`StepCommand` / `StepResult` / `GuardVerdict` / `AdvancementDecision` / `ExhaustionResult`），已定稿。以下为渠道**内部**模型，Phase 1 不在本文冻结：
-
-
-| 类别       | 对象                                                         | Phase 1 处置                       |
-| -------- | ---------------------------------------------------------- | -------------------------------- |
-| 决策 I/O   | DecisionRequest / DecisionResult                           | 渠道内部，编排同事按需定义                    |
-| 发送 I/O   | SendRequest / SendResult                                   | 同上                               |
-| 人工外呼 I/O | CallTaskRequest / TaskResult                               | 随预测式外呼能力落地再定（Phase 1 由 LTH 独立编排） |
-| 渠道枚举     | DialMode / CallTaskStatus / AgentStatus / ComplianceAction | 同上                               |
-
-
-### B.1 渠道编排配置表
-
-> **Phase 1**：策略/合规/渠道/模板配置走 **Nacos**（[架构 §3](./MOCASA催收系统升级_Phase1_架构设计文档.md#2-技术栈决策)），不建表。理由：Phase 1 管理后台为**只读查询面**（可编辑写 UI 另行提供），规则/模板变更频率低，Nacos 支持热更新；Phase 2 admin 写 UI 到位后再落 DB。
-> 下表为 Phase 2 落库规划。
-
-
-| 表名                        | 状态         | 首席写入方              | 核心消费方                                     | DDL 位置      |
-| ------------------------- | ---------- | ------------------ | ----------------------------------------- | ----------- |
-| `t_contact_plan_template` | **NACOS**  | 管理后台 / Nacos       | DefaultPlanFactory(计划创建), Stage.fromDpd() | 本节（Phase 2） |
-| `t_strategy_rule`         | **NACOS**  | 管理后台 / Nacos       | RuleBasedDecisionEngine                   | 本节（Phase 2） |
-| `t_compliance_rule`       | **NACOS**  | 管理后台 / Nacos       | ComplianceExecutionGuard                  | 本节（Phase 2） |
-| `t_compliance_violation`  | **NEW ⚠️** | collection-channel | 合规审计                                      | 本节（Phase 2） |
-| `t_channel_config`        | **NACOS**  | 管理后台/运维 / Nacos    | ChannelAdapter 路由                         | 本节（Phase 2） |
-
-
-### B.2 人工外呼表
-
-> **Phase 1**：人工外呼由 LTH 现网独立编排，与本系统无交互（[架构 ADR](./MOCASA催收系统升级_Phase1_架构设计文档.md#附录-a架构决策记录-adr)）；下表为 Phase 2 预留。
-
-
-| 表名                   | 状态         | 首席写入方                   | 核心消费方                   | DDL 位置      |
-| -------------------- | ---------- | ----------------------- | ----------------------- | ----------- |
-| `t_call_task`        | **NEW ⚠️** | PredictiveDialerService | 坐席系统                    | 本节（Phase 2） |
-| `t_call_task_number` | **NEW ⚠️** | PredictiveDialerService | 坐席分配逻辑                  | 本节（Phase 2） |
-| `t_agent_status`     | **NEW ⚠️** | 坐席 WebSocket / LTH 同步   | PredictiveDialerService | 本节（Phase 2） |
-
-
-> 详见 [渠道文档索引](./channel/README_渠道文档索引.md)。各项按编排同事实现对应渠道能力时**按需补充**，不在 Phase 1 强制冻结。
-
----
-
----
+渠道内部模型（配置表、人工外呼表、DecisionRequest / SendRequest 等）Phase 1 **不在本文冻结**。引擎↔渠道的唯一契约是 [§5](#5-spi-契约-dto) SPI DTO。策略 / 合规 / 渠道开关走 Nacos；人工外呼由 LTH 现网独立编排。详见 [渠道文档索引](./channel/README_渠道文档索引.md)。
 
 ---
 
@@ -1408,9 +1188,13 @@ CREATE TABLE IF NOT EXISTS t_user_device_token (
 | 2026-07-11 | §2.7 删引擎管辖列；§2.8 删 fromDpd 复述；删 §2.10，辅助枚举并入总览表 | §2 / 引擎 §4.1              |
 | 2026-07-11 | §2/§3 节首统一：`Java`+`落库`/`载体`（§2）、`Java`+`表`+DDL+`用途`（§3） | §2 / §3                     |
 | 2026-07-12 | §4/§5 节首统一：`Java`+`落库`（§4 快照）、`Java`+`载体`（§5 SPI DTO）；修正 dto 包路径 | §4 / §5                     |
+| 2026-09-01 | 附录 A 不再复制 `CREATE TABLE`，权威 DDL 仅 `db/schema.sql`；附录 B.1 纠正「后台只读」与现行热更新口径 | 附录 A / 附录 B.1 |
+| 2026-09-03 | 按日 owner 路由：新增 `CASE_OWNER_RECONCILED`、`CancelReason.ROUTED_TO_LEGACY`；`CASE_INGESTED` 改为对账后发布；投影增加 `owner` / `owner_date`，水位表 `t_ai_owner_reconcile` | §2.6 / §2.7 / §6.2 / DDL |
+| 2026-09-03 | 零收检测口径：由 inbox payload 字符串日期扫描改为投影 `owner_date = 当日` 计数（走 `idx_ai_collection_owner_date`，时区口径与投影写入一致）；水位表计数列 `inbox_case_event_count` 更名 `owner_case_count`，含既有环境迁移 | DDL（schema.sql）/ 接入规格 §4.1 |
+| 2026-09-04 | 概念层收口 §1.3 术语 / §1.5 聚合与不变式；§1.1 改为数据生命周期；§1.2 按 `schema.sql` 12 表索引并上收附录空指针；新增 §3.5 投影字段；附录 B 压为渠道索引指针 | §1 / §3.5 / 附录 A / 附录 B |
 
 
 ---
 
-> MOCASA Collection System Upgrade — Phase 1 Domain Model & Data Definition — 2026-07-09
+> MOCASA Collection System Upgrade — Phase 1 Domain Model & Data Definition — 2026-09-04
 

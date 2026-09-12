@@ -29,6 +29,7 @@ collection:
   # 两者不得同时生效，SchedulerEntrypointValidator 会在启动时拒绝双入口。
   scheduler:
     enabled: ${COLLECTION_SCHEDULER_ENABLED:false}
+  # 钉钉 webhook 真值只放 Nacos / 环境变量，此处不下发空默认值，避免把 Nacos 冲成空串。
   idempotency: memory
   eventbus: memory
   # 案件来源与投影写入者：mock = 内存（L4a 用，不需要任何真实数据）；
@@ -52,6 +53,12 @@ collection:
         - username: admin
           password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
           role: SYSTEM_ADMIN
+        - username: viewer
+          password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
+          role: VIEWER
+        - username: operator
+          password-hash: "$2y$10$gqISHaFT7yTL7J3kx7LfYONWbirhLLbQ71/CyVVLlXJ40b6TZbMDm"
+          role: OPERATOR
   # 数据接入 B1（PubSub 消费）。enabled 默认 false → 本地/CI 不启动消费、不依赖 GCP；
   # L4b 联调由 Nacos 覆盖 enabled=true（连接信息走环境变量，不入仓）。
   ingestion:
@@ -91,9 +98,14 @@ channel:
     app-code: mocasa
     # app-key 由 Nacos channel.notification.app-key 下发（intelligent-collection-local.yml）
     sms-content-type: collection
-    sms-test-mode: true   # Level A 冒烟：走 /v1/sms/testSend 免 appKey；生产联调改 false + 配 NOTIFICATION_APP_KEY
-    push-sync-mode: true  # 联调：走 /v1/app_notification/sync/send（可见极光受理结果）；注意 Push 无免签名端点，仍需 app-key
-    push-test-token: ${NOTIFICATION_PUSH_TEST_TOKEN:1a0018970bf0c19de04}  # 测试 app 隔离：所有 push 强制投此 token，绝不触达真实用户；生产置空
+    # 缺省即生产口径，须与 Pilot `/opt/app/pilot.env` 及 application-pilot.yml 一致，禁止把联调值提交入库。
+    # true → /v1/sms/testSend 免签，且仍走真实运营商（QHSms 等），不是沙箱。L4a 才用环境变量临时打开。
+    sms-test-mode: ${CHANNEL_NOTIFICATION_SMS_TEST_MODE:false}
+    sms-test-recipient: ${CHANNEL_NOTIFICATION_SMS_TEST_RECIPIENT:}
+    # false → 生产异步 /v1/app_notification/send；true 仅联调看极光同步回执。
+    push-sync-mode: ${CHANNEL_NOTIFICATION_PUSH_SYNC_MODE:false}
+    # 非空则全部 Push 改投该 token。生产必须空；L4a 用 CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN 覆盖。
+    push-test-token: ${CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN:}
   debug:
     legacy-three-step: false
     single-step: ""

@@ -13,7 +13,8 @@ public interface AiCollectionCaseMapper {
             "SELECT case_id, user_id, case_version, dpd, stage, collection_status, product, "
                     + "overdue_amount, total_outstanding, penalty_amount, remaining_amount, upcoming_amount, "
                     + "due_date, next_due_date, "
-                    + "borrower_name, borrower_phone, borrower_email, borrower_language, push_token, updated_at "
+                    + "borrower_name, borrower_phone, borrower_email, borrower_language, push_token, "
+                    + "owner, owner_date, updated_at "
                     + "FROM t_ai_collection WHERE case_id = #{caseId} LIMIT 1")
     AiCollectionCaseRow selectByCaseId(@Param("caseId") Long caseId);
 

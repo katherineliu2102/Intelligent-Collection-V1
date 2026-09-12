@@ -19,21 +19,23 @@ public interface AiCollectionProjectionMapper {
             "SELECT case_id, user_id, case_version, dpd, stage, collection_status, product, "
                     + "overdue_amount, total_outstanding, penalty_amount, remaining_amount, upcoming_amount, "
                     + "due_date, next_due_date, borrower_name, borrower_phone, borrower_email, "
-                    + "borrower_language, push_token, updated_at "
+                    + "borrower_language, push_token, last_paid_amount, settled_at, owner, owner_date, updated_at "
                     + "FROM t_ai_collection WHERE case_id = #{caseId} FOR UPDATE")
     CaseProjection selectProjectionForUpdate(@Param("caseId") Long caseId);
 
     @Insert(
             "INSERT INTO t_ai_collection (case_id, user_id, case_version, dpd, stage, "
                     + "collection_status, product, overdue_amount, total_outstanding, penalty_amount, "
+                    + "last_paid_amount, settled_at, "
                     + "remaining_amount, upcoming_amount, due_date, next_due_date, "
                     + "borrower_name, borrower_phone, borrower_email, borrower_language, "
-                    + "push_token, updated_at, synced_at) VALUES "
+                    + "push_token, owner, owner_date, updated_at, synced_at) VALUES "
                     + "(#{caseId}, #{userId}, #{caseVersion}, #{dpd}, #{stage}, "
                     + "#{collectionStatus}, #{product}, #{overdueAmount}, #{totalOutstanding}, "
-                    + "#{penaltyAmount}, #{remainingAmount}, #{upcomingAmount}, #{dueDate}, #{nextDueDate}, "
+                    + "#{penaltyAmount}, #{lastPaidAmount}, #{settledAt}, "
+                    + "#{remainingAmount}, #{upcomingAmount}, #{dueDate}, #{nextDueDate}, "
                     + "#{borrowerName}, #{borrowerPhone}, #{borrowerEmail}, #{borrowerLanguage}, "
-                    + "#{pushToken}, #{updatedAt}, NOW())")
+                    + "#{pushToken}, #{owner}, #{ownerDate}, #{updatedAt}, NOW())")
     int insert(CaseProjection projection);
 
     @Update(
@@ -45,9 +47,15 @@ public interface AiCollectionProjectionMapper {
                     + "due_date = #{dueDate}, next_due_date = #{nextDueDate}, borrower_name = #{borrowerName}, "
                     + "borrower_phone = #{borrowerPhone}, borrower_email = #{borrowerEmail}, "
                     + "borrower_language = #{borrowerLanguage}, push_token = #{pushToken}, "
+                    + "owner = #{owner}, owner_date = #{ownerDate}, "
                     + "updated_at = #{updatedAt}, synced_at = NOW() "
                     + "WHERE case_id = #{caseId} AND case_version <> #{caseVersion}")
     int updateIfChanged(CaseProjection projection);
+
+    @Update(
+            "UPDATE t_ai_collection SET owner = #{owner}, owner_date = #{ownerDate}, synced_at = NOW() "
+                    + "WHERE case_id = #{caseId} AND (owner_date IS NULL OR owner_date <= #{ownerDate})")
+    int updateOwnerDate(CaseProjection projection);
 
     /**
      * 还款增量更新余额、dpd 与 {@code stage}。
@@ -66,6 +74,8 @@ public interface AiCollectionProjectionMapper {
                     + "stage = #{stage}, "
                     + "collection_status = #{collectionStatus}, overdue_amount = #{overdueAmount}, "
                     + "total_outstanding = #{totalOutstanding}, penalty_amount = #{penaltyAmount}, "
+                    + "last_paid_amount = COALESCE(#{lastPaidAmount}, last_paid_amount), "
+                    + "settled_at = #{settledAt}, "
                     + "upcoming_amount = #{upcomingAmount}, next_due_date = #{nextDueDate}, "
                     + "updated_at = #{updatedAt}, synced_at = NOW() WHERE case_id = #{caseId}")
     int updateRepaymentDelta(CaseProjection projection);

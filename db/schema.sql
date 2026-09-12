@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS t_contact_plan (
     status              VARCHAR(32)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/STEP_SCHEDULED/STEP_EXECUTING/STEP_WAITING/PLAN_COMPLETED/PLAN_CANCELLED',
     current_step        INT             NOT NULL DEFAULT 0 COMMENT '当前执行到第几步',
     total_steps         INT             NOT NULL COMMENT '总步数',
-    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/CASE_NOT_FOUND/COMPLAINT/MANUAL（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
+    cancel_reason       VARCHAR(64)     NULL     COMMENT 'REPAID/STAGE_UPGRADE/CEASED/CASE_NOT_FOUND/NO_DUE_BALANCE/ROUTED_TO_LEGACY/COMPLAINT/MANUAL/MANUAL_CLEANUP（PTP_EXPIRED 为 Phase 2 预留，Phase 1 不写入）',
     context_snapshot    JSON            NULL     COMMENT '决策上下文快照（ContextSnapshot JSON）',
     idempotency_key     VARCHAR(128)    NULL     COMMENT '计划创建幂等键 case_id:stage:create_timestamp',
     renewal_pending     TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'REBUILD 事务内旧计划过渡标记，调度器不可执行',
@@ -309,6 +309,123 @@ DELIMITER ;
 CALL sp_schema_relax_callback_audit_ids();
 DROP PROCEDURE IF EXISTS sp_schema_relax_callback_audit_ids;
 
+-- AI Call 会话底座（v1.3 设计，v1.6 首次落库，对应设计文档 §6.2 / §5.1.4）：
+-- 结构化提取 Facade `session.completed` 回调，供看板 AI Call 分区（业务结果首屏 + 渠道卫生层）按原生词聚合。
+-- 与 t_channel_callback_audit 分工：audit 存完整 canonical_payload（审计/重放 SSOT），本表存结构化列（查询/聚合 SSOT）。
+-- 两套口径（§6.2）：本表存供应商原生词（was_answered/party/failure_class/line_reason/sip_code/disposition 等），
+-- 映射后 ContactResult 仍在 step/timeline，互不覆盖。字段名以《VALUBO客户接入手册》§9.3/§10 为准。
+-- stage/dpd 快照由写路径从 plan/step 上下文补（回调不带）；is_synthetic 由 mock 触发通道标记。
+CREATE TABLE IF NOT EXISTS t_ai_call_session (
+    id                   BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    session_id           VARCHAR(128)    NOT NULL COMMENT 'Facade session_id',
+    batch_id             VARCHAR(128)    NULL COMMENT 'Facade batch_id / external_batch_id',
+    case_id              BIGINT          NULL COMMENT 'loan_id；identity 未解析时可空',
+    plan_id              BIGINT          NULL,
+    step_id              BIGINT          NULL,
+    event                VARCHAR(32)     NULL COMMENT 'session.completed / batch.completed',
+    -- 电信层（原生词）
+    was_ringing          TINYINT(1)      NULL COMMENT 'line_outcome.was_ringing（线路/号码质量）',
+    was_answered         TINYINT(1)      NULL COMMENT 'line_outcome.was_answered（线路接通，含信箱/筛选）',
+    was_ai_connected     TINYINT(1)      NULL COMMENT '旧字段；2026-09-09 起新回调常空，看板勿再读',
+    party                VARCHAR(32)     NULL COMMENT 'line_outcome.party：human/voicemail/call_screening',
+    failure_class        VARCHAR(64)     NULL COMMENT '未接通时的 failure_class',
+    line_reason          VARCHAR(32)     NULL COMMENT 'line_outcome.reason：NORMAL/VOICEMAIL/CALL_SCREENING',
+    sip_code             VARCHAR(32)     NULL COMMENT 'line_outcome.sip_code（406/486/487/603...；未接通时常见）',
+    final_failure_reason VARCHAR(64)     NULL COMMENT 'BUSY/NO_ANSWER/FORBIDDEN/DECLINE/TEMP_UNAVAILABLE/REQUEST_TIMEOUT/INVALID_NUMBER/MEDIA_NEGOTIATION_FAILED/SIP_SERVER_ERROR',
+    -- 业务层（ai_result）
+    result_label         VARCHAR(64)     NULL COMMENT '旧开放标签；新契约以 disposition 为准，有则原样落库',
+    effective_conversation TINYINT(1)    NULL COMMENT 'ai_result.effective_conversation：真人开口',
+    right_party          VARCHAR(16)     NULL COMMENT 'ai_result.right_party：yes/no',
+    disposition          VARCHAR(64)     NULL COMMENT 'ai_result.disposition 七值，仅落会话表，不进引擎 CHANNEL_CALLBACK',
+    summary              TEXT            NULL COMMENT 'ai_result.summary；非空可作 needs_review 辅助清除信号',
+    promises_json        JSON            NULL COMMENT 'ai_result.promises[] 原始数组（amount/currency/promised_date）；现恒空',
+    -- 观测辅助
+    caller_cli           VARCHAR(32)     NULL COMMENT 'parties.caller_cli 实际外显主叫（当前 6310001）',
+    dialed_at            DATETIME        NULL COMMENT 'dial_timeline.dialed_at',
+    answered_at          DATETIME        NULL COMMENT 'dial_timeline.answered_at；未回传为 NULL，禁止记 0',
+    ended_at             DATETIME        NULL COMMENT 'dial_timeline.ended_at；时长由 ended_at-answered_at 派生',
+    needs_review         TINYINT(1)      NULL COMMENT 'was_answered=1 且无借款人发言（转写判定，未定前退化人工）',
+    is_synthetic         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'mock/测试会话；看板默认过滤',
+    stage_snapshot       VARCHAR(16)     NULL COMMENT '会话发生时 stage 快照（S0-S4），写路径从 plan/step 补',
+    dpd_snapshot         INT             NULL COMMENT '会话发生时 dpd 快照，写路径从 plan/step 补',
+    received_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ai_call_session_id (session_id),
+    INDEX idx_ai_call_session_received (received_at),
+    INDEX idx_ai_call_session_case (case_id, received_at),
+    INDEX idx_ai_call_session_batch (batch_id),
+    INDEX idx_ai_call_session_label (result_label, received_at),
+    INDEX idx_ai_call_session_party (party, received_at),
+    INDEX idx_ai_call_session_disposition (disposition, received_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Call 会话底座（原生词，看板聚合用）';
+
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_call_session_result_contract()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'party'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN party VARCHAR(32) NULL COMMENT 'line_outcome.party：human/voicemail/call_screening'
+                AFTER was_ai_connected;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'failure_class'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN failure_class VARCHAR(64) NULL COMMENT '未接通时的 failure_class'
+                AFTER party;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'effective_conversation'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN effective_conversation TINYINT(1) NULL COMMENT 'ai_result.effective_conversation'
+                AFTER result_label;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'right_party'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN right_party VARCHAR(16) NULL COMMENT 'ai_result.right_party'
+                AFTER effective_conversation;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND COLUMN_NAME = 'disposition'
+    ) THEN
+        ALTER TABLE t_ai_call_session
+            ADD COLUMN disposition VARCHAR(64) NULL COMMENT 'ai_result.disposition 七值'
+                AFTER right_party;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND INDEX_NAME = 'idx_ai_call_session_party'
+    ) THEN
+        ALTER TABLE t_ai_call_session ADD INDEX idx_ai_call_session_party (party, received_at);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_session'
+          AND INDEX_NAME = 'idx_ai_call_session_disposition'
+    ) THEN
+        ALTER TABLE t_ai_call_session ADD INDEX idx_ai_call_session_disposition (disposition, received_at);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_call_session_result_contract();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
+
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (
     id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
@@ -387,6 +504,8 @@ CREATE TABLE IF NOT EXISTS t_ai_collection (
     overdue_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '已到期未结清总额，含罚息',
     total_outstanding       DECIMAL(18,2)   NOT NULL COMMENT '已到期且未结清，对客金额',
     penalty_amount          DECIMAL(18,2)   NOT NULL DEFAULT 0,
+    last_paid_amount        DECIMAL(18,2)   NULL COMMENT '最近一次还款金额（repaymentEvent.paidAmount）',
+    settled_at              DATETIME        NULL COMMENT '最近一次还款时间（repaymentEvent.repayTime，PHT）',
     remaining_amount        DECIMAL(18,2)   NOT NULL DEFAULT 0 COMMENT '废弃历史字段，不再表示全部未结清',
     upcoming_amount         DECIMAL(18,2)   NULL COMMENT '三期下一期 D-3～D0 待还金额',
     due_date                DATE            NULL,
@@ -396,10 +515,13 @@ CREATE TABLE IF NOT EXISTS t_ai_collection (
     borrower_email          VARCHAR(256)    NULL,
     borrower_language       VARCHAR(16)     NOT NULL DEFAULT 'en',
     push_token              VARCHAR(512)    NULL,
+    owner                   VARCHAR(16)     NOT NULL DEFAULT 'NEW' COMMENT '发给本系统的案件固定 NEW',
+    owner_date              DATE            NULL COMMENT 'PHT 归属日，date(occurredAt)；还款不得刷新',
     updated_at              DATETIME        NOT NULL COMMENT '数仓快照业务更新时间',
     synced_at               DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '接入层投影落库时间',
     INDEX idx_ai_collection_active (collection_status, dpd, case_id),
-    INDEX idx_ai_collection_updated (updated_at, case_id)
+    INDEX idx_ai_collection_updated (updated_at, case_id),
+    INDEX idx_ai_collection_owner_date (owner_date, collection_status, case_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='新系统 AI 催收案件当前态';
 
 -- 7.2.5b 入催消息收件箱。event_id 为数仓生成的业务幂等键，重试/重发/重放必须复用同一值。
@@ -473,6 +595,94 @@ DELIMITER ;
 CALL sp_schema_add_ai_collection_repayment_fields();
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_repayment_fields;
 
+-- 既有环境迁移：按日 owner 路由。
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_owner_fields;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_collection_owner_fields()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'owner'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN owner VARCHAR(16) NOT NULL DEFAULT 'NEW' COMMENT '发给本系统的案件固定 NEW'
+            AFTER push_token;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'owner_date'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN owner_date DATE NULL COMMENT 'PHT 归属日，date(occurredAt)；还款不得刷新'
+            AFTER owner;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND INDEX_NAME = 'idx_ai_collection_owner_date'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD INDEX idx_ai_collection_owner_date (owner_date, collection_status, case_id);
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_collection_owner_fields();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_owner_fields;
+
+CREATE TABLE IF NOT EXISTS t_ai_owner_reconcile (
+    reconcile_date          DATE            NOT NULL PRIMARY KEY COMMENT 'PHT 日历日',
+    completed_at            DATETIME        NOT NULL,
+    owner_case_count        INT             NOT NULL DEFAULT 0 COMMENT '写入水位时当日 owner_date=当日的案件数（当日收到 caseEvent 的案件数，按案件去重）'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='当日 owner 对账水位；引擎与扫描只读';
+
+-- 既有环境迁移：零收检测从 inbox JSON 扫描改为投影 owner_date 计数，水位计数列随之改名换义。
+DROP PROCEDURE IF EXISTS sp_schema_rename_owner_reconcile_count;
+DELIMITER //
+CREATE PROCEDURE sp_schema_rename_owner_reconcile_count()
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_owner_reconcile'
+          AND COLUMN_NAME = 'inbox_case_event_count'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_owner_reconcile'
+          AND COLUMN_NAME = 'owner_case_count'
+    ) THEN
+        ALTER TABLE t_ai_owner_reconcile
+            CHANGE COLUMN inbox_case_event_count owner_case_count
+            INT NOT NULL DEFAULT 0 COMMENT '写入水位时当日 owner_date=当日的案件数（当日收到 caseEvent 的案件数，按案件去重）';
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_rename_owner_reconcile_count();
+DROP PROCEDURE IF EXISTS sp_schema_rename_owner_reconcile_count;
+
+-- 既有环境迁移：还款金额与时间字段（「当日回收金额」热层数据底座）。
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_paid_fields;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_collection_paid_fields()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'last_paid_amount'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN last_paid_amount DECIMAL(18,2) NULL COMMENT '最近一次还款金额（repaymentEvent.paidAmount）'
+            AFTER penalty_amount;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_collection' AND COLUMN_NAME = 'settled_at'
+    ) THEN
+        ALTER TABLE t_ai_collection
+            ADD COLUMN settled_at DATETIME NULL COMMENT '最近一次还款时间（repaymentEvent.repayTime，PHT）'
+            AFTER last_paid_amount;
+    END IF;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_collection_paid_fields();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_collection_paid_fields;
+
 -- 既有环境迁移：数仓不再写业务库，t_ai_collection_outbox 无发布器也无消费者。
 -- 归档需求由 t_ai_collection_inbox.payload 承接；确认数仓侧发布器已下线、无 PENDING 记录后再执行下一行。
 -- DROP TABLE IF EXISTS t_ai_collection_outbox;
@@ -544,6 +754,19 @@ CREATE TABLE IF NOT EXISTS t_email_suppression (
     created_at          DATETIME        NOT NULL COMMENT '抑制发生时间（PHT，应用侧传入）',
     UNIQUE KEY uk_email_suppression_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Email 抑制名单（退信/投诉/退订）';
+
+CREATE TABLE IF NOT EXISTS t_alert_dedup (
+    id                  BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    alert_id            VARCHAR(16)     NOT NULL COMMENT 'A1/A2/A3/A7/A8/A9',
+    object_key          VARCHAR(64)     NOT NULL COMMENT '槽位 HHMM 或 hanging',
+    calendar_day        DATE            NOT NULL COMMENT 'PHT 日历日',
+    status              VARCHAR(16)     NOT NULL DEFAULT 'SENT' COMMENT 'SENT/SUPPRESSED/RECOVERED',
+    consecutive_days    INT             NOT NULL DEFAULT 1 COMMENT '连续告警日历日；恢复后清零',
+    last_sent_at        DATETIME        NULL,
+    created_at          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_alert_object_day (alert_id, object_key, calendar_day),
+    INDEX idx_alert_object (alert_id, object_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警去重与 3 日抑制（管理后台设计 §5.5.4）';
 
 -- 7.2.2 用户画像扩展表 t_user_profile_ext：Phase 1 不建表，押后 Phase 2
 --   原因：Phase 1 无代码消费 / 无 mapper（MockProfileService 仅填 basic + device.jpushToken）。

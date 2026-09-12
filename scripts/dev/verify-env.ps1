@@ -1,10 +1,11 @@
-# 环境确认脚本（不启动常驻服务时可用于一次性冒烟）
+﻿# 环境确认脚本（不启动常驻服务时可用于一次性冒烟）
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
 Write-Host "=== 1. 加载 .env ==="
-Get-Content ".env" | ForEach-Object {
+# ⚠ 必须显式 -Encoding UTF8：PS 5.1 默认按 ANSI/GBK 解码，UTF-8 中文注释会把其后的配置行「吞掉」（见 start-local.ps1 注释）。
+Get-Content -LiteralPath ".env" -Encoding UTF8 | ForEach-Object {
     if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
     $p = $_ -split '=', 2
     if ($p.Count -eq 2) { Set-Item -Path "Env:$($p[0].Trim())" -Value $p[1].Trim() }
@@ -13,6 +14,12 @@ if ($env:NACOS_SERVER_ADDR -match '^https?://') {
     $env:NACOS_SERVER_ADDR = ($env:NACOS_SERVER_ADDR -replace '^https?://', '' -replace '/nacos/?$', '')
 }
 Write-Host "NACOS=$env:NACOS_SERVER_ADDR NS=$env:NACOS_NAMESPACE"
+# 扫描隔离闸门：local/test 下 ScanIsolationGuard 强制非空，否则启动即失败
+if (-not $env:COLLECTION_SCAN_CASE_IDS) {
+    $env:COLLECTION_SCAN_CASE_IDS = "999999999"
+    Write-Host "COLLECTION_SCAN_CASE_IDS 未配置 -> 回退占位值 999999999（零触达）"
+}
+Write-Host "SCAN_WHITELIST=$env:COLLECTION_SCAN_CASE_IDS"
 
 Write-Host "`n=== 2. Nacos 健康检查 ==="
 Invoke-RestMethod -Uri "http://$($env:NACOS_SERVER_ADDR)/nacos/v1/console/health/readiness" -TimeoutSec 10 | Out-Null
@@ -54,17 +61,26 @@ Get-ChildItem Env: | ForEach-Object { $psi.EnvironmentVariables[$_.Name] = $_.Va
 $proc = [System.Diagnostics.Process]::Start($psi)
 
 $deadline = (Get-Date).AddSeconds(60)
-$up = $false
+$health = $null
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 3
     try {
         $h = Invoke-RestMethod "http://localhost:8888/actuator/health" -TimeoutSec 2
-        if ($h.status -eq 'UP') { $up = $true; break }
-    } catch { }
+        $health = $h.status
+        break
+    } catch {
+        # HTTP 503 + {"status":"DOWN"} 也算「已响应」：本机无 Redis 时 health 指标为 DOWN，
+        # 但登录会话走 Tomcat 内存、事件总线走 memory，不影响后台使用。
+        $resp = $_.Exception.Response
+        if ($resp -and [int]$resp.StatusCode -eq 503) { $health = "DOWN"; break }
+    }
 }
-if (-not $up) { Write-Error "App not ready within 60s" }
-
-Write-Host "应用 UP"
+if (-not $health) { Write-Error "App not ready within 60s" }
+if ($health -eq "DOWN") {
+    Write-Warning "health=DOWN —— 通常只是本机无 Redis 的健康指标报警，应用已响应，后台可正常使用"
+} else {
+    Write-Host "应用 UP"
+}
 
 Write-Host "`n=== 5. TC-PUSH-EMAIL（91001）==="
 Invoke-RestMethod "http://localhost:8888/mock/ingest?caseId=91001&userId=91001&stage=S1" -Method POST | Out-Null

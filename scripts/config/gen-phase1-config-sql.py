@@ -7,10 +7,14 @@
 
 S4 覆盖 D+31~D+90 共 60 个日块，手写 JSON 不现实，故用脚本生成并把生成物入库审阅。
 
-用法：python3 scripts/config/gen-phase1-config-sql.py > db/seed-phase1-config.sql
+用法：python3 scripts/config/gen-phase1-config-sql.py
+写入：
+  - db/seed-phase1-config.sql（全量种子，勿对 Pilot 热库直接跑 DELETE）
+  - scripts/pilot/20260911-ai-call-five-waves.sql（仅 UPDATE S1–S4 plan_json）
 """
 
 import json
+from pathlib import Path
 
 TENANT = "mocasa-ph"
 
@@ -68,10 +72,9 @@ MILESTONE_EMAIL = {
 # 走 MOCK_<templateId> 占位，不查 t_script_template）。
 AI_CALL_ID = {"S1": 301, "S2": 302, "S3": 303, "S4": 304}
 
-# 编排规格 §7.11：S1~S3 ≤2 呼/日；S4 D+31~60 维持 2 呼，D+61~90 降至 1 呼。
-WAVE1_TIME = "09:15"
-WAVE2_TIME = "14:30"
-S4_WAVE2_LAST_DPD = 60
+# 编排规格 §7.11：S1~S3 与 S4 D+31~60 五波；S4 D+61~90 降至 1 呼；S0 不拨。
+AI_WAVES = ("09:15", "11:30", "14:30", "16:15", "18:40")
+S4_MULTI_WAVE_LAST_DPD = 60
 
 
 def slot(channel, time, template_id):
@@ -101,22 +104,27 @@ def s0_blocks():
 
 
 def overdue_blocks(dpd_from, dpd_to, stage, sms_slot, push_slot):
-    """S1~S4 共用时间表：08:00 SMS / 09:15 AI / 12:00 Push / 14:30 AI，里程碑日加 14:00 Email。
+    """S1~S4：08:00 SMS / AI 波次 / 12:00 Push，里程碑日加 14:00 Email。
 
-    见编排规格 §7.5~§7.8。两次外呼都无条件铺槽：Phase 1 引擎不实现 VoiceQueue，
-    「Wave-1 已接通则当日不再 Wave-2」由 LTH / Facade 侧承担（§7.1）。
+    S1~S3 与 S4 D+31~60：09:15 / 11:30 / 14:30 / 16:15 / 18:40。
+    S4 D+61~90：仅 09:15。S0 不走本函数。
     """
     blocks = []
     for dpd in range(dpd_from, dpd_to + 1):
+        five_waves = stage != "S4" or dpd <= S4_MULTI_WAVE_LAST_DPD
         slots = [
             slot("SMS", "08:00", SMS_ID[sms_slot]),
-            slot("AI_CALL", WAVE1_TIME, AI_CALL_ID[stage]),
-            slot("PUSH", "12:00", PUSH_ID[push_slot]),
+            slot("AI_CALL", "09:15", AI_CALL_ID[stage]),
         ]
+        if five_waves:
+            slots.append(slot("AI_CALL", "11:30", AI_CALL_ID[stage]))
+        slots.append(slot("PUSH", "12:00", PUSH_ID[push_slot]))
         if dpd in MILESTONE_EMAIL:
             slots.append(slot("EMAIL", "14:00", EMAIL_ID[MILESTONE_EMAIL[dpd]]))
-        if stage != "S4" or dpd <= S4_WAVE2_LAST_DPD:
-            slots.append(slot("AI_CALL", WAVE2_TIME, AI_CALL_ID[stage]))
+        if five_waves:
+            slots.append(slot("AI_CALL", "14:30", AI_CALL_ID[stage]))
+            slots.append(slot("AI_CALL", "16:15", AI_CALL_ID[stage]))
+            slots.append(slot("AI_CALL", "18:40", AI_CALL_ID[stage]))
         blocks.append(day_block(dpd, slots))
     return blocks
 
@@ -148,7 +156,7 @@ def main():
     w("-- =====================================================================")
     w("")
     w(f"SET @TENANT = {sql_str(TENANT)};")
-    w("SET @CFG_VER = 2;")
+    w("SET @CFG_VER = 3;")
     w("SET @OPERATOR = 'seed-phase1-config';")
     w("")
     w("START TRANSACTION;")
@@ -226,7 +234,7 @@ def main():
     w("    (tenant_id, config_type, config_key, from_version, to_version, diff_summary, operator, reason, created_at)")
     w("VALUES")
     w("    (@TENANT, 'plan_template', 'phase1-dayblocks', 1, @CFG_VER,")
-    w("     JSON_OBJECT('summary', 'Replace delayMin integration cadence with PHT dayBlocks; complete all 17 SMS/Push slots'),")
+    w("     JSON_OBJECT('summary', 'AI_CALL five waves 09:15/11:30/14:30/16:15/18:40; S4 D+61-90 remains 09:15 only; S0 no AI'),")
     w("     @OPERATOR, 'seed-phase1-config.sql', NOW());")
     w("")
     w("COMMIT;")
@@ -243,8 +251,78 @@ def main():
     w("       (SELECT COUNT(*) FROM t_contact_plan_template WHERE tenant_id = @TENANT AND status = 'ACTIVE') AS plan_templates, -- expect 5")
     w("       (SELECT current_version FROM t_config_version_seq WHERE id = 1) AS config_version;")
 
-    print("\n".join(out))
+    seed_text = "\n".join(out) + "\n"
+    root = Path(__file__).resolve().parents[2]
+    seed_path = root / "db" / "seed-phase1-config.sql"
+    seed_path.write_text(seed_text, encoding="utf-8")
+    migrate_path = write_pilot_update(root)
+    print("wrote", seed_path)
+    print("wrote", migrate_path)
+
+
+def write_pilot_update(root):
+    """Pilot 热库只改 S1–S4 模板，不动 S0 / 文案槽 / 策略路由。"""
+    lines = [
+        "-- 2026-09-11 AI Call 五波：按迭代文档更新 PH1_S1~S4 plan_json。",
+        "-- SSOT: docs/channel/MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md",
+        "-- S0 不动。S4 dpd>=61 仍仅 09:15。不要对热库跑 seed-phase1-config.sql 的 DELETE。",
+        "-- 生成器：scripts/config/gen-phase1-config-sql.py",
+        "SET @TENANT = 'mocasa-ph';",
+        "SELECT COALESCE(MAX(config_version), 0) + 1 INTO @CFG_VER "
+        "FROM t_contact_plan_template WHERE tenant_id = @TENANT;",
+        "",
+    ]
+    for code, _stage, blocks in PLANS:
+        if code == "PH1_S0_STANDARD":
+            continue
+        payload = json.dumps({"dayBlocks": blocks}, separators=(",", ":"), ensure_ascii=False)
+        lines.append(
+            "UPDATE t_contact_plan_template SET plan_json = CAST(%s AS JSON), "
+            "config_version = @CFG_VER, version = version + 1, updated_at = NOW(), "
+            "updated_by = '20260911-ai-call-five-waves' "
+            "WHERE tenant_id = @TENANT AND template_code = %s AND status = 'ACTIVE';"
+            % (sql_str(payload), sql_str(code))
+        )
+    lines.extend(
+        [
+            "",
+            "UPDATE t_config_version_seq SET current_version = GREATEST(current_version, @CFG_VER), "
+            "updated_at = NOW() WHERE id = 1;",
+            "",
+            "INSERT INTO t_config_change_log",
+            "    (tenant_id, config_type, config_key, from_version, to_version, diff_summary, operator, reason, created_at)",
+            "VALUES",
+            "    (@TENANT, 'plan_template', 'phase1-dayblocks', NULL, @CFG_VER,",
+            "     JSON_OBJECT('summary', 'AI_CALL five waves 09:15/11:30/14:30/16:15/18:40; S4 D+61-90 remains 09:15 only; S0 no AI'),",
+            "     '20260911-ai-call-five-waves', 'pilot-update', NOW());",
+            "",
+            "SELECT template_code,",
+            "  JSON_LENGTH(plan_json, '$.dayBlocks') AS days,",
+            "  (LENGTH(plan_json) - LENGTH(REPLACE(plan_json, '\"channel\":\"AI_CALL\"', ''))) "
+            "/ LENGTH('\"channel\":\"AI_CALL\"') AS ai_slots",
+            "FROM t_contact_plan_template",
+            "WHERE tenant_id = @TENANT AND status = 'ACTIVE'",
+            "ORDER BY template_code;",
+            "",
+        ]
+    )
+    path = root / "scripts" / "pilot" / "20260911-ai-call-five-waves.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def _selfcheck():
+    s0_ai = [s for b in s0_blocks() for s in b["slots"] if s["channel"] == "AI_CALL"]
+    assert not s0_ai, s0_ai
+    s1 = overdue_blocks(1, 1, "S1", "S1_SMS_STANDARD", "S1_PUSH_STANDARD")[0]["slots"]
+    assert [s["time"] for s in s1 if s["channel"] == "AI_CALL"] == list(AI_WAVES)
+    s4_early = overdue_blocks(31, 31, "S4", "S4_SMS_STANDARD", "S4_PUSH_STANDARD")[0]["slots"]
+    assert [s["time"] for s in s4_early if s["channel"] == "AI_CALL"] == list(AI_WAVES)
+    s4_late = overdue_blocks(61, 61, "S4", "S4_SMS_STANDARD", "S4_PUSH_STANDARD")[0]["slots"]
+    assert [s["time"] for s in s4_late if s["channel"] == "AI_CALL"] == ["09:15"]
 
 
 if __name__ == "__main__":
+    _selfcheck()
     main()

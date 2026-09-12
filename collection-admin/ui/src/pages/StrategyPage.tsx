@@ -2,9 +2,8 @@ import {
   Button,
   Card,
   Descriptions,
-  Form,
   Input,
-  InputNumber,
+  Modal,
   Space,
   Table,
   Tag,
@@ -13,14 +12,7 @@ import {
 } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-
-type EvaluationSettings = {
-  holdoutRatio: number;
-  configVersion: number;
-  version: number;
-  updatedBy?: string;
-  updatedAt?: string;
-};
+import { isSystemAdmin, useAdminRole } from "../auth";
 
 type VersionItem = {
   id: number;
@@ -64,14 +56,12 @@ function phaseColor(phase: string): string {
 }
 
 export function StrategyPage() {
-  const [form] = Form.useForm();
-  const [settings, setSettings] = useState<EvaluationSettings | null>(null);
+  const role = useAdminRole();
+  const admin = isSystemAdmin(role);
   const [versions, setVersions] = useState<VersionItem[]>([]);
   const [catalog, setCatalog] = useState<CatalogOverview | null>(null);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
-  const [loadingSettings, setLoadingSettings] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackReason, setRollbackReason] = useState("Rollback from admin UI");
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null);
@@ -89,23 +79,6 @@ export function StrategyPage() {
     }
   }, []);
 
-  const loadSettings = useCallback(async () => {
-    setLoadingSettings(true);
-    try {
-      const resp = await api.getEvaluationSettings();
-      const data = resp.data as EvaluationSettings;
-      setSettings(data);
-      form.setFieldsValue({
-        holdoutRatio: Number(data.holdoutRatio),
-        reason: "Update holdout ratio from strategy page"
-      });
-    } catch (e: any) {
-      message.error(e.message);
-    } finally {
-      setLoadingSettings(false);
-    }
-  }, [form]);
-
   const loadVersions = useCallback(async () => {
     setLoadingVersions(true);
     try {
@@ -120,52 +93,38 @@ export function StrategyPage() {
 
   useEffect(() => {
     loadCatalog();
-    loadSettings();
     loadVersions();
-  }, [loadCatalog, loadSettings, loadVersions]);
-
-  const saveSettings = async () => {
-    const values = await form.validateFields();
-    if (!settings) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const resp = await api.updateEvaluationSettings({
-        holdoutRatio: values.holdoutRatio,
-        version: settings.version,
-        reason: values.reason
-      });
-      setSettings(resp.data as EvaluationSettings);
-      message.success("Holdout ratio updated");
-      await loadVersions();
-    } catch (e: any) {
-      message.error(e.message);
-      await loadSettings();
-    } finally {
-      setSaving(false);
-    }
-  };
+  }, [loadCatalog, loadVersions]);
 
   const rollback = async () => {
     if (selectedVersion == null) {
       message.warning("Select a target config version first");
       return;
     }
-    setRollingBack(true);
-    try {
-      const resp = await api.rollbackConfig(selectedVersion, rollbackReason);
-      setSettings(resp.data as EvaluationSettings);
-      message.success(`Rolled back to config version ${selectedVersion}`);
-      await loadVersions();
-      await loadSettings();
-    } catch (e: any) {
-      message.error(e.message);
-    } finally {
-      setRollingBack(false);
+    if (!rollbackReason.trim()) {
+      message.warning("Rollback reason is required");
+      return;
     }
+    Modal.confirm({
+      title: "确认回滚配置？",
+      content: `回滚到版本 ${selectedVersion}。此操作仅系统管理员可执行。`,
+      okText: "确认回滚",
+      okButtonProps: { danger: true },
+      async onOk() {
+        setRollingBack(true);
+        try {
+          await api.rollbackConfig(selectedVersion, rollbackReason);
+          message.success(`Rolled back to config version ${selectedVersion}`);
+          await loadVersions();
+        } catch (e: any) {
+          message.error(e.message);
+          throw e;
+        } finally {
+          setRollingBack(false);
+        }
+      }
+    });
   };
-
   const summary = catalog?.summary || {};
   const connectivity = catalog?.runtime?.connectivity || {};
   const compliance = catalog?.runtime?.compliance || {};
@@ -183,7 +142,17 @@ export function StrategyPage() {
             {String(compliance.quietHours ?? "—")}
           </Descriptions.Item>
           <Descriptions.Item label="Daily Limit">
-            {String(compliance.dailyLimit ?? "—")}
+            {compliance.dailyLimit && typeof compliance.dailyLimit === "object" ? (
+              <Space size={4} wrap>
+                {Object.entries(compliance.dailyLimit).map(([ch, n]) => (
+                  <Tag key={ch} color="blue" style={{ margin: 0 }}>
+                    {ch}: {String(n)}
+                  </Tag>
+                ))}
+              </Space>
+            ) : (
+              "—"
+            )}
           </Descriptions.Item>
         </Descriptions>
         <Space style={{ marginTop: 16 }} wrap>
@@ -203,17 +172,25 @@ export function StrategyPage() {
       </Card>
 
       <Card title="Stage Plan" loading={loadingCatalog}>
+        <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+          引擎 Stage 为 S0–S4；S4 桶内 D+61~90 降为每日 1 通 AI。D+91 停催见上方 Cease Rule。
+        </Typography.Text>
         <Table
           rowKey="id"
           size="small"
           pagination={false}
           dataSource={catalog?.stages || []}
           columns={[
-            { title: "Stage", dataIndex: "id", width: 80 },
-            { title: "Name", dataIndex: "name", width: 180 },
-            { title: "DPD Range", dataIndex: "dpdRange", width: 140 },
-            { title: "Positioning", dataIndex: "positioning" }
+            { title: "Stage", dataIndex: "id", width: 70 },
+            { title: "DPD", dataIndex: "dpdRange", width: 110 },
+            { title: "SMS", dataIndex: "sms", width: 160, render: (v: string) => v || "—" },
+            { title: "Push", dataIndex: "push", width: 140, render: (v: string) => v || "—" },
+            { title: "Email (14:00)", dataIndex: "email", width: 150, render: (v: string) => v || "—" },
+            { title: "AI 外呼", dataIndex: "aiCall", width: 200, render: (v: string) => v || "—" },
+            { title: "Tone", dataIndex: "tone", width: 130, render: (v: string) => v || "—" },
+            { title: "话术重点", dataIndex: "messaging", render: (v: string, r: { positioning?: string }) => v || r.positioning || "—" }
           ]}
+          scroll={{ x: 1100 }}
         />
       </Card>
 
@@ -228,52 +205,14 @@ export function StrategyPage() {
             { title: "Provider", dataIndex: "provider", width: 220 },
             { title: "Adapter", dataIndex: "adapter", width: 200 },
             {
-              title: "Phase 1",
+              title: "Live In Phase 1",
               dataIndex: "phase1",
               width: 100,
               render: (v: string) => <Tag color={phaseColor(v)}>{v}</Tag>
             },
-            {
-              title: "Configured",
-              dataIndex: "configured",
-              width: 110,
-              render: (v: boolean) => <Tag color={v ? "green" : "default"}>{v ? "Y" : "N"}</Tag>
-            },
             { title: "Description", dataIndex: "description" }
           ]}
         />
-      </Card>
-
-      <Card title="Evaluation Settings" loading={loadingSettings}>
-        <Typography.Paragraph type="secondary">
-          Holdout ratio controls the benchmark group size for strategy evaluation. Valid range: 1% -
-          20%.
-        </Typography.Paragraph>
-        <Form form={form} layout="vertical" style={{ maxWidth: 520 }}>
-          <Form.Item
-            name="holdoutRatio"
-            label="Holdout Ratio"
-            rules={[{ required: true, message: "Holdout ratio is required" }]}
-          >
-            <InputNumber min={0.01} max={0.2} step={0.01} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item name="reason" label="Change Reason" rules={[{ required: true }]}>
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Space>
-            <Button type="primary" onClick={saveSettings} loading={saving}>
-              Save Settings
-            </Button>
-            <Button onClick={loadSettings}>Refresh</Button>
-          </Space>
-        </Form>
-        {settings && (
-          <Space style={{ marginTop: 16 }} wrap>
-            <Tag color="blue">configVersion: {settings.configVersion}</Tag>
-            <Tag>optimistic version: {settings.version}</Tag>
-            {settings.updatedBy && <Tag>updatedBy: {settings.updatedBy}</Tag>}
-          </Space>
-        )}
       </Card>
 
       <Card title="Config Versions">
@@ -303,26 +242,34 @@ export function StrategyPage() {
             { title: "Created At", dataIndex: "createdAt", width: 180 }
           ]}
         />
-        <Space style={{ marginTop: 16 }} align="start">
-          <Input.TextArea
-            rows={2}
-            style={{ width: 360 }}
-            value={rollbackReason}
-            onChange={(e) => setRollbackReason(e.target.value)}
-            placeholder="Rollback reason"
-          />
-          <Button
-            danger
-            onClick={rollback}
-            loading={rollingBack}
-            disabled={selectedVersion == null}
-          >
-            Rollback To Selected Version
-          </Button>
-          <Button onClick={loadVersions} loading={loadingVersions}>
-            Refresh Versions
-          </Button>
-        </Space>
+        {admin ? (
+          <Space style={{ marginTop: 16 }} align="start">
+            <Input.TextArea
+              rows={2}
+              style={{ width: 360 }}
+              value={rollbackReason}
+              onChange={(e) => setRollbackReason(e.target.value)}
+              placeholder="Rollback reason"
+            />
+            <Button
+              danger
+              onClick={rollback}
+              loading={rollingBack}
+              disabled={selectedVersion == null}
+            >
+              Rollback To Selected Version
+            </Button>
+            <Button onClick={loadVersions} loading={loadingVersions}>
+              Refresh Versions
+            </Button>
+          </Space>
+        ) : (
+          <Space style={{ marginTop: 16 }}>
+            <Button onClick={loadVersions} loading={loadingVersions}>
+              Refresh Versions
+            </Button>
+          </Space>
+        )}
       </Card>
     </Space>
   );

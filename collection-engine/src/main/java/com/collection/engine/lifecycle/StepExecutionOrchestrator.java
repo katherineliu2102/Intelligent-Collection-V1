@@ -147,6 +147,10 @@ public class StepExecutionOrchestrator {
             ContactPlan plan, ContactPlanStep step, ExecutionState state) {
         // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
         PreFlightResult preFlight = preFlightChecker.inspect(plan.getCaseId());
+        if (preFlight.isGated()) {
+            log.info("[execStep] preflight gated plan {}, skip without cancel", plan.getId());
+            return;
+        }
         if (!preFlight.isPassed()) {
             // prepareStepDue 已将步骤前置为 EXECUTING；业务性阻断必须收敛为计划终态，
             // 否则消息渠道没有 callback timeout 会永久滞留。案件不存在不写 timeline。

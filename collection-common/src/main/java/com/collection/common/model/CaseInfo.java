@@ -28,4 +28,6 @@ public class CaseInfo {
     private boolean repaid;
     /** 是否冻结（投诉冻结等）。 */
     private boolean frozen;
+    /** PHT 归属日；空表示尚未收到带 owner 的 caseEvent。 */
+    private LocalDate ownerDate;
 }

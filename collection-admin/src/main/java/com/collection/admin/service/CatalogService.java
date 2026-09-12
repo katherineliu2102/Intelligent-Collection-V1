@@ -155,7 +155,7 @@ public class CatalogService {
         connectivity.put("sendGrid", channelProperties.isSendGridConfigured());
         connectivity.put("notification", channelProperties.isNotificationConfigured());
         connectivity.put("notificationTest", channelProperties.isNotificationTestConfigured());
-        connectivity.put("lthVoice", !isEmpty(channelProperties.getLth().getVoice().getUrl()));
+        connectivity.put("facade", channelProperties.isFacadeConfigured());
         connectivity.put("callbackBaseUrl", !isEmpty(channelProperties.getCallback().getBaseUrl()));
         r.put("connectivity", connectivity);
 
@@ -191,30 +191,9 @@ public class CatalogService {
         if (channels == null) {
             return new ArrayList<>();
         }
-        List<Map<String, Object>> enriched = new ArrayList<>();
-        for (Map<String, Object> ch : channels) {
-            Map<String, Object> row = new LinkedHashMap<>(ch);
-            String type = String.valueOf(ch.get("type"));
-            row.put("configured", isChannelConfigured(type));
-            enriched.add(row);
-        }
-        return enriched;
-    }
-
-    private boolean isChannelConfigured(String type) {
-        switch (type) {
-            case "SMS":
-            case "PUSH":
-                return channelProperties.isNotificationConfigured()
-                        || channelProperties.isNotificationTestConfigured();
-            case "EMAIL":
-                return channelProperties.isSendGridConfigured();
-            case "AI_CALL":
-            case "TTS":
-                return !isEmpty(channelProperties.getLth().getVoice().getUrl());
-            default:
-                return false;
-        }
+        // 渠道表只呈现静态目录（type/provider/adapter/phase1）；
+        // 「是否配置凭证」不再单独出列：Phase 1 目录里 LIVE 即代表已配置且在产调用。
+        return new ArrayList<>(channels);
     }
 
     @SuppressWarnings("unchecked")

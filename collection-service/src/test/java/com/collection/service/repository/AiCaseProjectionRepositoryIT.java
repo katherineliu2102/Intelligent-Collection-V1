@@ -175,29 +175,32 @@ class AiCaseProjectionRepositoryIT {
         assertEquals(firstSyncedAt, readSyncedAt(CASE), "重投不得刷新 synced_at");
     }
 
-    /** L3-8：不同 eventId 但内容指纹相同 → 陈旧，收件箱落 SKIPPED 供审计。 */
+    /** L3-8：不同 eventId 但内容指纹相同 → 仍刷新归属日，收件箱 SKIPPED。 */
     @Test
-    void sameFingerprint_fromDifferentEvent_isStaleAndRecordsSkippedInbox() throws Exception {
+    void sameFingerprint_fromDifferentEvent_refreshesOwnerDateWithoutEvent() throws Exception {
         String first = EVENT_PREFIX + "fp1:" + System.nanoTime();
         String second = EVENT_PREFIX + "fp2:" + System.nanoTime();
+        LocalDateTime firstOccurred = LocalDateTime.now().withNano(0);
         try (SqlSession session = factory.openSession(false)) {
             CaseProjectionRepository repository = repository(session);
-            repository.apply(command(first, FINGERPRINT_A, LocalDateTime.now()));
+            repository.apply(command(first, FINGERPRINT_A, firstOccurred));
             session.commit();
         }
-        LocalDateTime firstSyncedAt = readSyncedAt(CASE);
 
+        LocalDateTime nextDay = firstOccurred.plusDays(1);
         try (SqlSession session = factory.openSession(false)) {
             CaseProjectionRepository repository = repository(session);
+            CaseProjectionCommand replay = command(second, FINGERPRINT_A, nextDay);
+            replay.setPublishRequired(false);
             assertEquals(
-                    CaseProjectionRepository.Outcome.STALE_VERSION,
-                    repository.apply(command(second, FINGERPRINT_A, LocalDateTime.now())),
-                    "内容指纹未变的重复快照应判陈旧");
+                    CaseProjectionRepository.Outcome.APPLIED_WITHOUT_EVENT,
+                    repository.apply(replay),
+                    "内容指纹未变仍须刷新归属日且不排队领域事件");
             session.commit();
         }
 
-        assertEquals("SKIPPED", readInboxStatus(second), "陈旧事件应留 SKIPPED 收件箱记录，不触发领域事件");
-        assertEquals(firstSyncedAt, readSyncedAt(CASE), "陈旧事件不得刷新投影");
+        assertEquals("SKIPPED", readInboxStatus(second), "不需发布的事件收件箱状态应为 SKIPPED");
+        assertEquals(FINGERPRINT_A, readProjectionVersion(CASE), "内容指纹不得因归属日刷新而改变");
     }
 
     /** L3-8：新指纹覆盖投影；publishRequired=false（每日校准）只刷投影不排队事件。 */
@@ -473,6 +476,10 @@ class AiCaseProjectionRepositoryIT {
         projection.setBorrowerEmail("l3-8-it@mocasa.test");
         projection.setBorrowerLanguage("en");
         projection.setUpdatedAt(occurredAt == null ? null : occurredAt.withNano(0));
+        projection.setOwner("NEW");
+        if (occurredAt != null) {
+            projection.setOwnerDate(occurredAt.toLocalDate());
+        }
         return projection;
     }
 

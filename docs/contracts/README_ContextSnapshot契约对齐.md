@@ -1,7 +1,22 @@
 # ContextSnapshot 契约
 
-> 适用：`collection-common`、`collection-ingestion`、`collection-engine`、`collection-channel`
-> 权威字段定义：[领域模型](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md)；冻结样例：[可触达](./ContextSnapshot.sample.json) / [空地址](./ContextSnapshot.empty-address.sample.json)。
+> **状态**: ✅ 已确定（快照用法 / 寻址 / 金额）  
+> **日期**: 2026-09-01  
+> **适用范围**: `collection-common`、`collection-ingestion`、`collection-engine`、`collection-channel`  
+> **上游**: 类型与字段定义 [领域模型 §4](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型)；入站消息 [数仓契约 §2.2](../数仓_PubSub交付契约.md#22-消息字段)  
+> **冻结样例**: [可触达](./ContextSnapshot.sample.json) / [空地址](./ContextSnapshot.empty-address.sample.json)
+
+---
+
+## 目录
+
+- [职责边界](#职责边界)
+- [消息渠道最小字段](#消息渠道最小字段)
+- [寻址与发送边界](#寻址与发送边界)
+- [文案字段](#文案字段)
+- [约定](#约定)
+
+---
 
 ## 职责边界
 
@@ -41,7 +56,7 @@
 | `overdue_days` | `caseContext.dpd` | 发送前由实时 `CaseInfo` 覆盖内存快照 |
 | 罚息展示 | `caseContext.penaltyAmount` | Phase 1 模板不渲染；后续使用须接入同一刷新链路 |
 
-`stage` 决定模板与话术，发送前不覆盖。`work.*`、`contacts.*`、`behavior.*`、`risk.*`、Offer、投诉冻结和 Override 不是 Phase 1 `StepResolver` 输入。
+`stage` 决定模板与话术；发送前用当天投影覆盖内存副本（不回写计划 `stage` 列）。详见 [领域模型 §4 日变字段例外](../MOCASA催收系统升级_Phase1_领域模型与数据定义.md#4-决策上下文模型) 与 [引擎 §5②½](../MOCASA催收系统升级_Phase1_核心引擎规格.md#51-execute_step-执行骨架)。`work.*`、`contacts.*`、`behavior.*`、`risk.*`、Offer、投诉冻结和 Override 不是 Phase 1 `StepResolver` 输入。
 
 ## 约定
 

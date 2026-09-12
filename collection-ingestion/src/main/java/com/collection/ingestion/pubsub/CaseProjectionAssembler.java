@@ -8,6 +8,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CaseProjectionAssembler {
+
+    private static final Logger log = LoggerFactory.getLogger(CaseProjectionAssembler.class);
 
     public CaseProjection assemble(JSONObject json, CasePayloadMapper.AiSnapshot snapshot) {
         Map<String, Object> fields = snapshot.snapshotFields;
@@ -43,6 +47,30 @@ public class CaseProjectionAssembler {
         projection.setBorrowerLanguage(language(fields.get(CollectionEvent.LANGUAGE)));
         projection.setPushToken((String) fields.get(CollectionEvent.JPUSH_TOKEN));
         projection.setUpdatedAt(occurredAt(json, snapshot.caseId));
+        String owner = json.getString("owner");
+        if (owner != null && !"NEW".equalsIgnoreCase(owner.trim())) {
+            throw new PoisonMessageException(
+                    "caseEvent.owner 发给本系统时必须为 NEW，收到=" + owner + " caseId=" + snapshot.caseId);
+        }
+        if (owner == null) {
+            // 契约必填但缺失：保持宽容（按 NEW 处理），打 WARN 留痕供日志巡检发现数仓 Publisher 漏配。
+            log.warn(
+                    "[Assembler] caseEvent 缺 owner 字段，按 NEW 容忍处理 caseId={}（契约必填，请检查数仓 Publisher）",
+                    snapshot.caseId);
+        }
+        projection.setOwner("NEW");
+        if (projection.getUpdatedAt() != null) {
+            projection.setOwnerDate(projection.getUpdatedAt().toLocalDate());
+        }
+        projection.setDpd(
+                coerceOverdueDpd(
+                        projection.getDpd(),
+                        projection.getOverdueAmount(),
+                        projection.getDueDate(),
+                        projection.getUpdatedAt() == null
+                                ? null
+                                : projection.getUpdatedAt().toLocalDate(),
+                        snapshot.caseId));
         return projection;
     }
 
@@ -64,8 +92,36 @@ public class CaseProjectionAssembler {
         projection.setNextDueDatePresent(fields.nextDueDatePresent);
         projection.setCollectionStatus(
                 delta.fullCleared ? "SETTLED" : fields.dpd >= 91 ? "CEASED" : "IN_COLLECTION");
+        projection.setLastPaidAmount(fields.paidAmount);
+        projection.setSettledAt(fields.repayTime);
         projection.setUpdatedAt(fields.occurredAt);
         return projection;
+    }
+
+    /** 仍有逾期时 dpd 必须是已到期期的 max DPD，不能写成下一期未到期的负数。 dueDate 已过则可按 occurredAt 纠正；否则只打日志。 */
+    static Integer coerceOverdueDpd(
+            Integer dpd, BigDecimal overdue, LocalDate dueDate, LocalDate asOf, Long caseId) {
+        if (dpd == null || overdue == null || overdue.signum() <= 0 || dpd >= 0) {
+            return dpd;
+        }
+        if (dueDate != null && asOf != null && !dueDate.isAfter(asOf)) {
+            int corrected = (int) java.time.temporal.ChronoUnit.DAYS.between(dueDate, asOf);
+            log.warn(
+                    "[Assembler] caseId={} overdue={} 却报 dpd={}，按 dueDate={} 纠正为 {}",
+                    caseId,
+                    overdue,
+                    dpd,
+                    dueDate,
+                    corrected);
+            return corrected;
+        }
+        log.warn(
+                "[Assembler] caseId={} overdue={} 却报 dpd={}，dueDate={} 无法纠正，原样落入",
+                caseId,
+                overdue,
+                dpd,
+                dueDate);
+        return dpd;
     }
 
     private String deriveStatus(JSONObject json, Object dpdRaw) {

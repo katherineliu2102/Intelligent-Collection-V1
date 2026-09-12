@@ -111,4 +111,18 @@ class PreFlightCheckerTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("MySQL down");
     }
+
+    @Test
+    @DisplayName("owner 水位未到当日 → gated，不取消计划")
+    void ownerGate_skipsWithoutCancel() {
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(alive());
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        when(caseService.isOwnerReconciledToday()).thenReturn(false);
+
+        PreFlightResult result = preFlightChecker.inspect(CASE_ID);
+
+        assertThat(result.isPassed()).isFalse();
+        assertThat(result.isGated()).isTrue();
+        assertThat(result.getBlockingReason()).isNull();
+    }
 }

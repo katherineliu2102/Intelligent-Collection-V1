@@ -74,6 +74,43 @@ public class RedisDailyRollDeduplicator {
         return snapshot;
     }
 
+    public Long ownerLeaveCursor() {
+        return readLong(ownerKey("leave-cursor"));
+    }
+
+    public void advanceOwnerLeaveCursor(Long loanId) {
+        redisTemplate
+                .opsForValue()
+                .set(ownerKey("leave-cursor"), String.valueOf(loanId), Duration.ofDays(2));
+    }
+
+    public Long ownerEnterCursor() {
+        return readLong(ownerKey("enter-cursor"));
+    }
+
+    public void advanceOwnerEnterCursor(Long loanId) {
+        redisTemplate
+                .opsForValue()
+                .set(ownerKey("enter-cursor"), String.valueOf(loanId), Duration.ofDays(2));
+    }
+
+    public boolean ownerReconCompletedToday() {
+        return Boolean.TRUE.equals(redisTemplate.hasKey(ownerKey("completed")));
+    }
+
+    public void markOwnerReconCompletedToday() {
+        redisTemplate.opsForValue().set(ownerKey("completed"), "1", Duration.ofDays(2));
+    }
+
+    private Long readLong(String key) {
+        String value = redisTemplate.opsForValue().get(key);
+        return value == null ? null : Long.valueOf(value);
+    }
+
+    private String ownerKey(String suffix) {
+        return "collection:ingestion:owner-recon:" + businessDate() + ":" + suffix;
+    }
+
     private String cursorKey() {
         return ROLL_KEY_PREFIX + businessDate() + ":cursor";
     }

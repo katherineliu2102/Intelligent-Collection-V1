@@ -63,6 +63,7 @@ collection:
     stale-threshold-seconds: 60
     daily-roll-stale-threshold-seconds: 300
     max-concurrency: 1
+  # 钉钉 webhook 真值只放 Nacos / 环境变量，此处不下发空默认值，避免把 Nacos 冲成空串。
   redis:
     stream: ${COLLECTION_REDIS_STREAM:collection:events}
     consumer-group: ${COLLECTION_REDIS_CONSUMER_GROUP:collection-engine-pilot}
@@ -70,15 +71,22 @@ collection:
   webhook:
     signature-required: true
     hmac-secret: ${CHANNEL_CALLBACK_HMAC_SECRET}
-  # 管理面账号只经环境变量注入，哈希不入仓。无默认值：缺失时启动闸门直接拒绝，
-  # 而不是退化成一个人人可登录（此前的行为）或无人可登录的实例。
+  # 管理面账号只经环境变量注入，哈希不入仓。首批支持三个独立账号，均为 SYSTEM_ADMIN；
+  # 0 号账号兼容旧的 COLLECTION_ADMIN_USER / COLLECTION_ADMIN_PASSWORD_HASH。
+  # 所有账号均为空时启动闸门会拒绝无人可登录的实例；空的 1/2 号条目不会被认证器接受。
   # 写进 pilot.env 时哈希必须单引号包裹，否则 $2y$10$ 会被 shell 展开成空串。
   admin:
     auth:
       accounts:
-        - username: ${COLLECTION_ADMIN_USER}
-          password-hash: ${COLLECTION_ADMIN_PASSWORD_HASH}
-          role: SYSTEM_ADMIN
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_USERNAME:${COLLECTION_ADMIN_USER:}}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_PASSWORD_HASH:${COLLECTION_ADMIN_PASSWORD_HASH:}}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_0_ROLE:SYSTEM_ADMIN}
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_USERNAME:}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_PASSWORD_HASH:}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_1_ROLE:SYSTEM_ADMIN}
+        - username: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_USERNAME:}
+          password-hash: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_PASSWORD_HASH:}
+          role: ${COLLECTION_ADMIN_AUTH_ACCOUNTS_2_ROLE:SYSTEM_ADMIN}
   ingestion:
     enabled: true
     # 案件接入订阅，与上面的调度订阅各走各的；缺值时 PubSubCaseConsumer 启动即失败。
@@ -93,17 +101,25 @@ collection:
 
 channel:
   fallback-to-mock: false
+  notification:
+    # 与 GitHub 入库缺省、Pilot env 必须同为生产口径。sms-test-mode=true 会走免签 /testSend，
+    # 通知中心测试账号含 QHSms，正式 mocasa 账号没有这条线（2026-09-09 157 条失败）。
+    # 改这些值：先改本文件（或 CHANNEL_NOTIFICATION_*），再发版；禁止只改 Pilot 机 env。
+    sms-test-mode: ${CHANNEL_NOTIFICATION_SMS_TEST_MODE:false}
+    sms-test-recipient: ${CHANNEL_NOTIFICATION_SMS_TEST_RECIPIENT:}
+    push-sync-mode: ${CHANNEL_NOTIFICATION_PUSH_SYNC_MODE:false}
+    push-test-token: ${CHANNEL_NOTIFICATION_PUSH_TEST_TOKEN:}
   # facade.api-key 与 facade.callback-secret 均由 Nacos / 部署 Secret 下发，此处**不写占位符**：
   # 写成 ${CHANNEL_FACADE_CALLBACK_SECRET:} 会在环境变量为空时把 Nacos 的值冲成空串，
   # 表现为每条真实回调都验签失败回 401。紧急覆盖直接设同名环境变量（松散绑定优先级更高）。
   # 调度开启时 PilotReadinessValidator 要求 callback-secret 非空。
   compliance:
-    # 里程碑日的槽位是 08:00 SMS / 09:15 AI / 12:00 Push / 14:00 Email / 14:30 AI 共 5 次，
-    # 沿用默认的合计 3 次会让当天后两个槽位被 ExecutionGuard 拦掉。
-    # 外呼 2 次/案/日对齐编排规格 §7.11（S4 D+61~90 降为 1 次由 dayBlocks 少铺一个槽实现，不靠日限）。
-    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:5}
+    # 五波后里程碑日约 SMS+Push+Email+5×AI = 8 次；合计必须高于该数，否则多出来的波次会被 Guard 静默跳过。
+    # 10 / 15 是上限不是每天打满。S4 D+61~90 一天一通靠 dayBlocks 只铺 09:15，不靠日限=1。
+    # 口径：docs/channel/MOCASA催收系统升级_Phase1_迭代_AI_Call五波与日限_20260911.md
+    daily-total-limit: ${CHANNEL_DAILY_TOTAL_LIMIT:15}
     daily-limit:
       SMS: ${CHANNEL_DAILY_LIMIT_SMS:1}
       PUSH: ${CHANNEL_DAILY_LIMIT_PUSH:1}
       EMAIL: ${CHANNEL_DAILY_LIMIT_EMAIL:1}
-      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:2}
+      AI_CALL: ${CHANNEL_DAILY_LIMIT_AI_CALL:10}

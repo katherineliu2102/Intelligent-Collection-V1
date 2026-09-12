@@ -27,13 +27,15 @@ import javax.crypto.spec.SecretKeySpec;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 §11.3； 事件 {@code disposition}
- * 留空以免引擎把原生词当成 ANSWERED。
+ * Facade {@code POST /webhook/facade-callback}。验签与映射按入站交接 + 手册 2026-09-09； 事件 {@code disposition}
+ * 留空以免引擎把原生词（含 PTP）当成 ANSWERED。
  */
 @Service
 public class FacadeWebhookService {
@@ -45,6 +47,7 @@ public class FacadeWebhookService {
     @Resource private ContactPlanRepository planRepository;
     @Resource private ChannelProperties channelProperties;
     @Resource private WebhookSecurityProperties webhookSecurityProperties;
+    @Resource private JdbcTemplate jdbcTemplate;
 
     public Map<String, Object> handle(JsonNode root, String signature) {
         if (root == null || root.isMissingNode() || root.isNull()) {
@@ -147,6 +150,8 @@ public class FacadeWebhookService {
                 canonical,
                 signature,
                 true);
+
+        writeAiCallSession(root, identity, planId, stepId);
 
         if (mapped == ContactResult.FAILED) {
             log.warn(
@@ -264,5 +269,158 @@ public class FacadeWebhookService {
                     stepId,
                     e);
         }
+    }
+
+    /** AI Call 会话底座写入：结构化提取 session.completed 回调原生词，落 t_ai_call_session（§5.1.4 看板聚合用）。 */
+    private void writeAiCallSession(
+            JsonNode root, FacadeCallbackMapper.Identity identity, Long planId, Long stepId) {
+        if (identity.sessionId == null) {
+            return;
+        }
+        JsonNode line = root.path("line_outcome");
+        JsonNode aiResult = root.path("ai_result");
+        JsonNode parties = root.path("parties");
+        JsonNode dial = root.path("dial_timeline");
+        JsonNode promises = aiResult.path("promises");
+        Long resolvedPlanId = planId != null ? planId : identity.planId;
+        Long resolvedStepId = stepId != null ? stepId : identity.stepId;
+        Long caseId = identity.caseId;
+        String stageSnapshot = null;
+        Integer dpdSnapshot = null;
+        if (resolvedPlanId != null) {
+            try {
+                ContactPlan plan = planRepository.findById(resolvedPlanId);
+                if (plan != null) {
+                    if (plan.getStage() != null) {
+                        stageSnapshot = plan.getStage().name();
+                    }
+                    if (caseId == null) {
+                        caseId = plan.getCaseId();
+                    }
+                }
+            } catch (RuntimeException e) {
+                log.warn(
+                        "[facade-callback] stage snapshot lookup failed plan={}",
+                        resolvedPlanId,
+                        e);
+            }
+        }
+        if (caseId != null) {
+            try {
+                Map<String, Object> projection =
+                        jdbcTemplate.queryForMap(
+                                "SELECT stage, dpd FROM t_ai_collection WHERE case_id = ?", caseId);
+                if (stageSnapshot == null && projection.get("stage") != null) {
+                    stageSnapshot = String.valueOf(projection.get("stage"));
+                }
+                if (projection.get("dpd") instanceof Number) {
+                    dpdSnapshot = ((Number) projection.get("dpd")).intValue();
+                }
+            } catch (EmptyResultDataAccessException ignored) {
+                // 投影尚未落库时快照留空，禁止用别的时点回填
+            } catch (RuntimeException e) {
+                log.warn("[facade-callback] stage/dpd snapshot lookup failed caseId={}", caseId, e);
+            }
+        }
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO t_ai_call_session "
+                            + "(session_id, batch_id, case_id, plan_id, step_id, event, "
+                            + "was_ringing, was_answered, was_ai_connected, party, failure_class, "
+                            + "line_reason, sip_code, final_failure_reason, result_label, "
+                            + "effective_conversation, right_party, disposition, summary, promises_json, caller_cli, "
+                            + "dialed_at, answered_at, ended_at, stage_snapshot, dpd_snapshot, received_at) "
+                            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, NOW()) "
+                            + "ON DUPLICATE KEY UPDATE "
+                            + "was_ringing=VALUES(was_ringing), was_answered=VALUES(was_answered), "
+                            + "was_ai_connected=VALUES(was_ai_connected), party=VALUES(party), "
+                            + "failure_class=VALUES(failure_class), line_reason=VALUES(line_reason), "
+                            + "sip_code=VALUES(sip_code), final_failure_reason=VALUES(final_failure_reason), "
+                            + "result_label=VALUES(result_label), effective_conversation=VALUES(effective_conversation), "
+                            + "right_party=VALUES(right_party), disposition=VALUES(disposition), "
+                            + "summary=VALUES(summary), "
+                            + "promises_json=VALUES(promises_json), caller_cli=VALUES(caller_cli), "
+                            + "dialed_at=VALUES(dialed_at), answered_at=VALUES(answered_at), ended_at=VALUES(ended_at), "
+                            + "stage_snapshot=COALESCE(stage_snapshot, VALUES(stage_snapshot)), "
+                            + "dpd_snapshot=COALESCE(dpd_snapshot, VALUES(dpd_snapshot))",
+                    identity.sessionId,
+                    identity.batchId,
+                    caseId,
+                    resolvedPlanId,
+                    resolvedStepId,
+                    textOf(root, "event"),
+                    boolOf(line, "was_ringing"),
+                    boolOf(line, "was_answered"),
+                    boolOf(line, "was_ai_connected"),
+                    lower(textOf(line, "party")),
+                    textOf(root, "failure_class"),
+                    textOf(line, "reason"),
+                    textOf(line, "sip_code"),
+                    textOf(root, "final_failure_reason"),
+                    firstNonBlank(textOf(aiResult, "result_label")),
+                    boolOf(aiResult, "effective_conversation"),
+                    lower(textOf(aiResult, "right_party")),
+                    textOf(aiResult, "disposition"),
+                    firstNonBlank(textOf(aiResult, "summary"), textOf(root, "summary")),
+                    promises.isArray() ? promises.toString() : null,
+                    textOf(parties, "caller_cli"),
+                    tsOf(textOf(dial, "dialed_at")),
+                    tsOf(textOf(dial, "answered_at")),
+                    tsOf(textOf(dial, "ended_at")),
+                    stageSnapshot,
+                    dpdSnapshot);
+        } catch (RuntimeException e) {
+            log.warn(
+                    "[facade-callback] ai_call_session upsert failed session={}",
+                    identity.sessionId,
+                    e);
+        }
+    }
+
+    private static String lower(String raw) {
+        return raw == null ? null : raw.trim().toLowerCase();
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (int i = 0; i < values.length; i++) {
+            if (StringUtils.isNotBlank(values[i])) {
+                return values[i].trim();
+            }
+        }
+        return null;
+    }
+
+    private static String textOf(JsonNode node, String field) {
+        if (node == null || node.isMissingNode()) {
+            return null;
+        }
+        JsonNode v = node.get(field);
+        return (v == null || v.isNull() || v.isMissingNode()) ? null : v.asText();
+    }
+
+    private static Boolean boolOf(JsonNode node, String field) {
+        if (node == null || node.isMissingNode()) {
+            return null;
+        }
+        JsonNode v = node.get(field);
+        return (v != null && v.isBoolean()) ? v.booleanValue() : null;
+    }
+
+    private static java.sql.Timestamp tsOf(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            if (raw.length() >= 19) {
+                String head = raw.substring(0, 19).replace('T', ' ');
+                return java.sql.Timestamp.valueOf(head);
+            }
+        } catch (IllegalArgumentException e) {
+            // 非法时间格式按未回传处理
+        }
+        return null;
     }
 }

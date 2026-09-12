@@ -1,4 +1,4 @@
-# Start MOCASA Admin (backend :8888 + frontend :5173)
+﻿# Start MOCASA Admin (backend :8888 + frontend :5173)
 # Usage from repo root:
 #   powershell -ExecutionPolicy Bypass -File scripts\dev\start-admin.ps1
 
@@ -32,7 +32,11 @@ function Wait-HttpOk([string]$Url, [int]$Seconds = 60) {
     for ($i = 0; $i -lt $Seconds; $i += 2) {
         try {
             $r = Invoke-WebRequest -Uri $Url -TimeoutSec 3 -UseBasicParsing
-            if ($r.StatusCode -eq 200) { return $true }
+            # 本机无 Redis 时 /actuator/health 返回 503(DOWN)，但应用已可用，视为就绪
+            if ($r.StatusCode -eq 200 -or $r.StatusCode -eq 503) { return $true }
+        } catch [System.Net.WebException] {
+            # 503/5xx 会抛 WebException，但 Response.StatusCode 仍可读
+            if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 503) { return $true }
         } catch {}
         Start-Sleep -Seconds 2
     }
@@ -77,7 +81,7 @@ if (Test-PortUp 5173) {
 $url = "http://127.0.0.1:5173/"
 Write-Host ""
 Write-Host "Admin UI: $url"
-Write-Host "Login: admin / SYSTEM_ADMIN"
+Write-Host "Login: admin / local-dev"
 Write-Host "Do NOT open :8888 in browser (API only)"
 
 if ($OpenBrowser) {

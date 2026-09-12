@@ -1,4 +1,24 @@
-# 项目本地启动说明
+# 操作说明：Nacos 与本地启动
+
+> **日期**: 2026-09-01  
+> **状态**: ✅ 本地 / 测试环境操作说明  
+> **范围**: Nacos 连接、`.env`、进程与 Docker 启动。不含后台 UI 页面操作（见 [管理后台操作手册](./MOCASA催收系统升级_Phase1_管理后台操作手册.md)）。  
+> **关联文档**: 根 [`../README.md`](../README.md) · [管理后台操作手册](./MOCASA催收系统升级_Phase1_管理后台操作手册.md)
+
+---
+
+## 目录
+
+- [1. 本地配置](#1-本地配置)
+- [2. Nacos 配置](#2-nacos-配置)
+- [3. 环境变量](#3-环境变量)
+- [4. 环境确认（开发前必跑）](#4-环境确认开发前必跑)
+- [5. Java 命令启动（Git Bash / Linux）](#5-java-命令启动git-bash--linux)
+- [6. Docker 启动](#6-docker-启动)
+- [7. 查看日志](#7-查看日志)
+- [8. 渠道模块开发与测试](#8-渠道模块开发与测试)
+
+---
 
 ## 1. 本地配置
 
@@ -12,7 +32,7 @@ collection-admin/src/main/resources/application-local.yml
 
 ## 2. Nacos 配置
 
-项目启动时会从 Nacos 读取配置。测试环境已提供**公共账号**，向项目负责人获取地址与命名空间后，在 `.env` 中填写 `NACOS_*` 即可；**Email / SMS 密钥**在 Nacos `intelligent-collection-local.yml` 的 `channel.sendgrid.*` / `channel.notification.app-key`（`.env` 不再存放）。
+项目启动时会从 Nacos 读取配置。测试环境已提供公共账号，**向项目负责人索取地址、命名空间与口令，不入库**；在 `.env` 中填写 `NACOS_*` 即可。**Email / SMS 密钥**在 Nacos `intelligent-collection-local.yml` 的 `channel.sendgrid.*` / `channel.notification.app-key`（`.env` 不再存放）。
 
 需要准备以下信息：
 
@@ -20,8 +40,8 @@ collection-admin/src/main/resources/application-local.yml
 NACOS_SERVER_ADDR=<Nacos 地址>
 NACOS_NAMESPACE=<Nacos 命名空间>
 NACOS_GROUP=<Nacos 分组>
-NACOS_USERNAME=<测试环境公共账号>
-NACOS_PASSWORD=<测试环境公共密码>
+NACOS_USERNAME=<向负责人索取，不入库>
+NACOS_PASSWORD=<向负责人索取，不入库>
 ```
 
 启动后自动加载的 Data ID（见 `collection-admin/.../application.yml`）：
@@ -33,7 +53,7 @@ NACOS_PASSWORD=<测试环境公共密码>
 | `intelligent-collection-local.yml`  | `local` profile 下的测试环境覆盖              |
 
 
-渠道开发时 Nacos 中典型配置项：`channel.notification.*`（SMS/Push）、`channel.sendgrid.*`、`channel.lth.voice.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。模板与配置映射见 [渠道模板清单](channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)。
+渠道开发时 Nacos 中典型配置项：`channel.notification.*`（SMS/Push）、`channel.sendgrid.*`、`channel.lth.voice.*`、`channel.compliance.*`、`channel.debug.single-step`（单渠道冒烟）。模板与配置映射见 [渠道模板清单](./channel/MOCASA催收系统升级_Phase1_渠道模板清单与配置.md)。
 
 注意：不要将真实账号、密码提交到 Git 仓库。
 

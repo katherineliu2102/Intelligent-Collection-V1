@@ -8,6 +8,8 @@
     "product": "3",
     "dpd": 70,
     "occurredAt": "2026-08-17 10:40:12",
+    "owner": "NEW",
+    "isFullCleared": false,
     "stage": "S4",
     "collectionStatus": "IN_COLLECTION",
     "overduePenaltyAmount": 390.5,

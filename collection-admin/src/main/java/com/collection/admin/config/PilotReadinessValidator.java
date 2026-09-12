@@ -198,14 +198,12 @@ public class PilotReadinessValidator {
         require(
                 StringUtils.isNotBlank(channelProperties.getFacade().getCallbackSecret()),
                 "Pilot requires channel.facade.callback-secret to verify Facade webhooks");
-        // AI_CALL 是异步渠道：没有回调地址，外呼结果回不来，步骤只能挂到 callbackTimeout 才收敛。
-        // 公网入口尚未开通，故这里只告警不拒启——外呼照打，结果按超时收敛。
-        if (StringUtils.isBlank(channelProperties.callbackUrl())) {
-            log.warn(
-                    "[PilotReadiness] channel.callback.base-url 未配置：AI_CALL 结果无法回传，"
-                            + "外呼步骤会停在 STEP_EXECUTING 直到 callbackTimeout 收敛为失败。"
-                            + "公网回调入口开通后必须补上，否则外呼成效数据不可用");
-        }
+        // Facade 是账户级回调：URL 固定登记为 /webhook/facade-callback，不随单次 StepCommand
+        // 下发。channel.callback.base-url 仅供旧的 /channel-callback 契约，不可拿它判断 Facade
+        // 回调是否可达；为空时此前告警会错误地把已登记的账户级回调判为不可用。
+        log.info(
+                "[PilotReadiness] Facade 账户级回调使用 /webhook/facade-callback；"
+                        + "请以签名探针或真实回调审计验证供应商侧登记与公网可达性");
     }
 
     /**

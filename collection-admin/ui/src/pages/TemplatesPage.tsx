@@ -14,6 +14,7 @@ import {
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { READ_ONLY_HINT, canWrite, useAdminRole } from "../auth";
 import {
   ALLOWED_VARS,
   LIMITS,
@@ -109,6 +110,7 @@ function lengthHint(current: number, max: number): string {
 }
 
 export function TemplatesPage() {
+  const writable = canWrite(useAdminRole());
   const [loading, setLoading] = useState(false);
   const [sms, setSms] = useState<MergedRow[]>([]);
   const [push, setPush] = useState<MergedRow[]>([]);
@@ -280,11 +282,17 @@ export function TemplatesPage() {
       width: 180,
       render: (_: any, r: MergedRow) => (
         <Space>
-          <Button size="small" onClick={() => openEdit(r)}>
+          <Button size="small" disabled={!writable} onClick={() => openEdit(r)}>
             Edit
           </Button>
           {r.inDb && (
-            <Button size="small" danger onClick={() => resetToYaml(r)}>
+            <Button
+              size="small"
+              danger
+              disabled={!writable}
+              title={writable ? undefined : READ_ONLY_HINT}
+              onClick={() => resetToYaml(r)}
+            >
               恢复默认
             </Button>
           )}

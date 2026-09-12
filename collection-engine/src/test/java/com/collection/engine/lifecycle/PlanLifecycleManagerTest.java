@@ -175,6 +175,40 @@ class PlanLifecycleManagerTest {
                 .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.STEP_SCHEDULED), any());
     }
 
+    @Test
+    @DisplayName("末步策略 PLAN_COMPLETED 且仍在催 → 改写 PLAN_EXHAUSTED，不直接终态")
+    void onStepCompleted_planCompletedWhileCollecting_exhausts() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        step.setResult(ContactResult.ANSWERED);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.PLAN_COMPLETED);
+
+        List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getEventType()).isEqualTo(EventType.PLAN_EXHAUSTED);
+        verify(planRepository, never())
+                .updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.PLAN_COMPLETED), any());
+    }
+
+    @Test
+    @DisplayName("末步策略 PLAN_COMPLETED 且快照 CEASED → 采纳终态")
+    void onStepCompleted_planCompletedWhenCeased_completes() {
+        ContextSnapshot snap = new ContextSnapshot();
+        CaseContext ctx = new CaseContext();
+        ctx.setCollectionStatus("CEASED");
+        snap.setCaseContext(ctx);
+        plan.setContextSnapshot(JsonUtil.toJson(snap));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planRepository.findStepById(STEP_ID)).thenReturn(step);
+        when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.PLAN_COMPLETED);
+
+        List<CollectionEvent> out = manager.onStepCompleted(stepEvent(EventType.STEP_COMPLETED));
+
+        assertThat(out).isEmpty();
+        verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+    }
+
     // ───────────────────────── prepareStepDue（#17、#18、#19） ─────────────────────────
 
     @Test
@@ -279,6 +313,26 @@ class PlanLifecycleManagerTest {
         verify(planRepository).savePlan(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(PlanStatus.PENDING);
         assertThat(captor.getValue().getStage()).isEqualTo(Stage.S1);
+    }
+
+    @Test
+    @DisplayName("owner_date 不是当日 → 跳过建计划")
+    void onCaseIngested_ownerDateNotToday_skips() {
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        CaseInfo info = new CaseInfo();
+        info.setCaseId(CASE_ID);
+        info.setOwnerDate(LocalDate.now(java.time.ZoneId.of("Asia/Manila")).minusDays(1));
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(info);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_INGESTED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.STAGE, "S1");
+
+        manager.onCaseIngested(event);
+
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
     }
 
     @Test
@@ -446,6 +500,54 @@ class PlanLifecycleManagerTest {
         inOrder.verify(planRepository).markRenewalPending(PLAN_ID);
         inOrder.verify(planRepository).savePlan(any());
         inOrder.verify(planRepository).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+    }
+
+    @Test
+    @DisplayName("REBUILD 首步 trigger_time 不得早于次日 08:00 PHT")
+    void onPlanExhausted_rebuild_clampsFirstStepToNextPhtMorning() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
+        ContactPlan created = newPlan(0L, null, Stage.S2);
+        ContactPlanStep first = newStep(0L, 1, ChannelType.SMS, null);
+        first.setTriggerTime(LocalDateTime.now(java.time.ZoneId.of("Asia/Manila")));
+        created.getSteps().add(first);
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(created);
+
+        manager.onPlanExhausted(planExhaustedEvent());
+
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        LocalDateTime floor =
+                LocalDate.now(java.time.ZoneId.of("Asia/Manila")).plusDays(1).atTime(8, 0);
+        assertThat(captor.getValue().getSteps().get(0).getTriggerTime()).isEqualTo(floor);
+    }
+
+    @Test
+    @DisplayName("REBUILD 首步已晚于次日 08:00 → 保留 Factory 排期")
+    void onPlanExhausted_rebuild_keepsLaterFactoryTrigger() {
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.getCaseInfo(CASE_ID)).thenReturn(caseInfoWithUser());
+        when(caseService.getContextSnapshot(CASE_ID)).thenReturn(new ContextSnapshot());
+        when(exhaustionPolicy.handle(any(), any(), any()))
+                .thenReturn(ExhaustionResult.rebuild("T_REBUILD", "retry"));
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(null);
+        ContactPlan created = newPlan(0L, null, Stage.S2);
+        ContactPlanStep first = newStep(0L, 1, ChannelType.SMS, null);
+        LocalDateTime later =
+                LocalDate.now(java.time.ZoneId.of("Asia/Manila")).plusDays(3).atTime(10, 0);
+        first.setTriggerTime(later);
+        created.getSteps().add(first);
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(created);
+
+        manager.onPlanExhausted(planExhaustedEvent());
+
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        assertThat(captor.getValue().getSteps().get(0).getTriggerTime()).isEqualTo(later);
     }
 
     @Test
@@ -1195,6 +1297,25 @@ class PlanLifecycleManagerTest {
         verify(planRepository, never()).savePlan(any());
     }
 
+    @Test
+    @DisplayName("CASE_OWNER_RECONCILED LEAVE → 取消活跃计划 ROUTED_TO_LEGACY")
+    void onCaseOwnerReconciled_cancelsRoutedToLegacy() {
+        when(planRepository.findActivePlansByCase(CASE_ID))
+                .thenReturn(new ArrayList<>(Arrays.asList(plan)));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        CollectionEvent event =
+                CollectionEvent.of(EventType.CASE_OWNER_RECONCILED)
+                        .with(CollectionEvent.CASE_ID, CASE_ID)
+                        .with(CollectionEvent.OWNER_ACTION, "LEAVE");
+        manager.onCaseOwnerReconciled(event);
+
+        verify(planRepository)
+                .updatePlanStatus(
+                        PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.ROUTED_TO_LEGACY);
+        verify(planFactory, never()).create(any(), any(), any());
+    }
+
     // ───────────────────────── 决策 B：payload 自带快照（不读旧库） ─────────────────────────
 
     @Test
@@ -1274,5 +1395,100 @@ class PlanLifecycleManagerTest {
         return CollectionEvent.of(EventType.PLAN_EXHAUSTED)
                 .with(CollectionEvent.CASE_ID, CASE_ID)
                 .with(CollectionEvent.PLAN_ID, PLAN_ID);
+    }
+
+    // ───────────────────────── 策略刷新重建 ─────────────────────────
+
+    @Test
+    @DisplayName("策略刷新：S2 活跃计划 MANUAL 取消后按当前模板重建，不走 owner_date，不钳 08:00")
+    void rebuildStrategyPlan_cancelsManualAndCreatesWithoutOwnerGate() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S2);
+        plan.getSteps().add(newStep(STEP_ID, 1, ChannelType.SMS, StepStatus.PENDING));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        ContactPlan created = newPlan(0L, null, Stage.S2);
+        created.getSteps().add(newStep(0L, 1, ChannelType.SMS, null));
+        created.getSteps().get(0).setTriggerTime(LocalDateTime.of(2026, 9, 12, 11, 30));
+        when(planFactory.create(any(), eq(Stage.S2), any())).thenReturn(created);
+        when(planRepository.findActivePlanByCaseAndStage(CASE_ID, Stage.S2)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getOutcome()).isEqualTo("REBUILT");
+        verify(planRepository)
+                .updatePlanStatus(PLAN_ID, PlanStatus.PLAN_CANCELLED, CancelReason.MANUAL);
+        ArgumentCaptor<ContactPlan> captor = ArgumentCaptor.forClass(ContactPlan.class);
+        verify(planRepository).savePlan(captor.capture());
+        assertThat(captor.getValue().getSteps().get(0).getTriggerTime())
+                .isEqualTo(LocalDateTime.of(2026, 9, 12, 11, 30));
+        verify(caseService, never()).isOwnerReconciledToday();
+    }
+
+    @Test
+    @DisplayName("策略刷新：AI_CALL EXECUTING 跳过且不取消")
+    void rebuildStrategyPlan_skipsExecutingAi() {
+        plan.setStatus(PlanStatus.STEP_EXECUTING);
+        plan.setStage(Stage.S2);
+        plan.getSteps().add(newStep(STEP_ID, 1, ChannelType.AI_CALL, StepStatus.EXECUTING));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getOutcome()).isEqualTo("SKIPPED");
+        assertThat(result.getReason()).isEqualTo("SKIPPED_EXECUTING_AI");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planFactory, never()).create(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：S0 跳过")
+    void rebuildStrategyPlan_skipsS0() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S0);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getReason()).isEqualTo("SKIPPED_STAGE");
+        verify(planFactory, never()).create(any(), any(), any());
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：Factory 无未来槽则不取消")
+    void rebuildStrategyPlan_factoryNullDoesNotCancel() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S4);
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planFactory.create(any(), eq(Stage.S4), any())).thenReturn(null);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, false);
+
+        assertThat(result.getReason()).isEqualTo("SKIPPED_NO_FUTURE_SLOTS");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
+    }
+
+    @Test
+    @DisplayName("策略刷新：dryRun 不写库")
+    void rebuildStrategyPlan_dryRunDoesNotWrite() {
+        plan.setStatus(PlanStatus.PENDING);
+        plan.setStage(Stage.S1);
+        ContactPlan created = newPlan(0L, null, Stage.S1);
+        created.getSteps().add(newStep(0L, 1, ChannelType.AI_CALL, null));
+        when(planRepository.findPlanWithLock(PLAN_ID)).thenReturn(plan);
+        when(planFactory.create(any(), eq(Stage.S1), any())).thenReturn(created);
+
+        PlanLifecycleManager.StrategyRebuildResult result =
+                manager.rebuildStrategyPlan(PLAN_ID, true);
+
+        assertThat(result.getOutcome()).isEqualTo("WOULD_REBUILD");
+        verify(planRepository, never()).updatePlanStatus(any(), any(), any());
+        verify(planRepository, never()).savePlan(any());
     }
 }

@@ -1,4 +1,4 @@
-# 将渠道密钥发布到 Nacos intelligent-collection-local.yml（需 Nacos 写权限）
+﻿# 将渠道密钥发布到 Nacos intelligent-collection-local.yml（需 Nacos 写权限）
 # 用法：
 #   1. 在 deploy/nacos/nacos-publish.local.yml 填写 channel.sendgrid / channel.notification 密钥
 #   2. .\scripts\dev\publish-channel-secrets-to-nacos.ps1
@@ -8,7 +8,8 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
-Get-Content ".env" | ForEach-Object {
+# ⚠ 必须显式 -Encoding UTF8：PS 5.1 默认按 ANSI/GBK 解码，UTF-8 中文注释会把其后的配置行「吞掉」（见 start-local.ps1 注释）。
+Get-Content -LiteralPath ".env" -Encoding UTF8 | ForEach-Object {
     if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
     $p = $_ -split '=', 2
     if ($p.Count -eq 2) { Set-Item -Path "Env:$($p[0].Trim())" -Value $p[1].Trim() }

@@ -21,7 +21,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class PlanLifecycleManager {
 
     private static final Logger log = LoggerFactory.getLogger(PlanLifecycleManager.class);
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
+    private static final int COLLECTION_WINDOW_START_HOUR = 8;
 
     @Resource private ContactPlanRepository planRepository;
     @Resource private TimelineRepository timelineRepository;
@@ -81,6 +85,10 @@ public class PlanLifecycleManager {
             CaseInfo info = caseInfo != null ? caseInfo : caseService.getCaseInfo(caseId);
             stage = info != null ? info.getStage() : null;
         }
+        if (ownerDateBlocksCreate(caseId, caseInfo)) {
+            log.info("[ingest] caseId={} owner_date 不是当日，跳过建计划", caseId);
+            return noEvents();
+        }
         createPlanForStage(caseId, stage, caseInfo, snapshot, null);
         return noEvents();
     }
@@ -88,6 +96,10 @@ public class PlanLifecycleManager {
     @Transactional
     public List<CollectionEvent> onStageChanged(CollectionEvent event) {
         Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        if (ownerGateBlocksMutation(caseId)) {
+            log.info("[stageChanged] caseId={} owner 门控未过，跳过", caseId);
+            return noEvents();
+        }
         Stage newStage = parseStage(event.getString(CollectionEvent.STAGE));
 
         List<ContactPlan> oldPlans = planRepository.findActivePlansByCase(caseId);
@@ -143,6 +155,22 @@ public class PlanLifecycleManager {
             }
             cancelPlan(locked, CancelReason.CEASED);
             log.info("[caseCeased] cancelled plan {} (CEASED)", locked.getId());
+        }
+        return noEvents();
+    }
+
+    @Transactional
+    public List<CollectionEvent> onCaseOwnerReconciled(CollectionEvent event) {
+        Long caseId = event.getLong(CollectionEvent.CASE_ID);
+        List<ContactPlan> plans = planRepository.findActivePlansByCase(caseId);
+        plans.sort((a, b) -> Long.compare(a.getId(), b.getId()));
+        for (ContactPlan p : plans) {
+            ContactPlan locked = planRepository.findPlanWithLock(p.getId());
+            if (locked == null || locked.isTerminal()) {
+                continue;
+            }
+            cancelPlan(locked, CancelReason.ROUTED_TO_LEGACY);
+            log.info("[ownerReconciled] cancelled plan {} (ROUTED_TO_LEGACY)", locked.getId());
         }
         return noEvents();
     }
@@ -248,6 +276,12 @@ public class PlanLifecycleManager {
                     step.getStatus());
             return StepDuePreparation.noop();
         }
+        if (ownerGateBlocksMutation(plan.getCaseId())
+                && (plan.getStatus() == PlanStatus.PENDING
+                        || plan.getStatus() == PlanStatus.STEP_SCHEDULED)) {
+            log.info("[stepDue] plan {} owner 门控未过，跳过到期执行", planId);
+            return StepDuePreparation.noop();
+        }
 
         if (plan.getStatus() == PlanStatus.PENDING
                 || plan.getStatus() == PlanStatus.STEP_SCHEDULED
@@ -337,8 +371,14 @@ public class PlanLifecycleManager {
                 return noEvents();
 
             case PLAN_COMPLETED:
+                if (stillInCollection(plan)) {
+                    log.info(
+                            "[advance] plan {} last-step PLAN_COMPLETED while still collecting → PLAN_EXHAUSTED",
+                            planId);
+                    return single(enqueued(EngineEvents.planExhausted(plan)));
+                }
                 planRepository.updatePlanStatus(planId, PlanStatus.PLAN_COMPLETED, null);
-                log.info("[advance] plan {} → PLAN_COMPLETED", planId);
+                log.info("[advance] plan {} → PLAN_COMPLETED (no longer collecting)", planId);
                 return noEvents();
 
             case PLAN_EXHAUSTED:
@@ -402,6 +442,10 @@ public class PlanLifecycleManager {
         if (plan == null || step == null) {
             return noEvents();
         }
+        if (ownerGateBlocksMutation(plan.getCaseId())) {
+            log.info("[callbackTimeout] plan {} owner 门控未过，跳过超时收敛", planId);
+            return noEvents();
+        }
         if (!stepOutcomeRecorder.recordTerminal(
                 plan,
                 step,
@@ -434,6 +478,10 @@ public class PlanLifecycleManager {
         if (plan == null || plan.isTerminal()) {
             return noEvents();
         }
+        if (ownerGateBlocksMutation(plan.getCaseId())) {
+            log.info("[exhausted] plan {} owner 门控未过，跳过续建", planId);
+            return noEvents();
+        }
         // 续建沿用旧计划已冻结快照（非外部案件事件，无新 payload）；
         // 缺失时降级 CaseService（兜底）。
         ContextSnapshot carried = snapshotFromPlan(plan);
@@ -452,7 +500,7 @@ public class PlanLifecycleManager {
                 // 将旧计划排除出活跃唯一键后再插入新计划；三步同一事务，失败整体回滚。
                 planRepository.markRenewalPending(planId);
                 if (createPlanForStage(
-                        plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null)) {
+                        plan.getCaseId(), plan.getStage(), caseInfo, snapshot, null, true)) {
                     planRepository.updatePlanStatus(
                             planId, PlanStatus.PLAN_COMPLETED, null); // 新计划落库后再完成旧计划
                     log.info("[exhausted] plan {} REBUILD same stage {}", planId, plan.getStage());
@@ -537,10 +585,185 @@ public class PlanLifecycleManager {
                         SpiType.EXHAUSTION_POLICY,
                         () -> exhaustionPolicy.handle(last, caseInfo, snapshot));
         if (result.getAction() == ExhaustionAction.REBUILD) {
-            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot, null);
+            createPlanForStage(caseId, last.getStage(), caseInfo, snapshot, null, true);
             log.info("[ptpExpired] case {} broken → rebuild stage {}", caseId, last.getStage());
         }
         return noEvents();
+    }
+
+    // ───────────────────────── 运维：策略刷新重建（五波迭代） ─────────────────────────
+
+    /** 当前 S1–S4 活跃计划 MAX(id)；没有则 null。 */
+    public Long maxActiveS1ToS4PlanId() {
+        return planRepository.findMaxActiveS1ToS4PlanId();
+    }
+
+    /** S1–S4 活跃计划 id 升序分页；不含 S0。仅返回 {@code id <= maxId}，避免新计划被二次重建。 */
+    public List<Long> listActiveS1ToS4PlanIds(long afterId, long maxId, int limit) {
+        return planRepository.findActiveS1ToS4PlanIds(afterId, maxId, limit);
+    }
+
+    /**
+     * 按当前模板取消并重建一份 S1–S4 活跃计划。
+     *
+     * <p>不走 owner_date 门控（非当日 NEW 的在催案也要换模板）。不把首步钳到次日 08:00——须在 19:00 PHT 之后调用，让 {@code
+     * futureSlots} 自然从次日 08:00 起。取消原因 {@code MANUAL}；Factory 先预演，失败则不取消。当前有 {@code AI_CALL
+     * EXECUTING} 则跳过。
+     */
+    @Transactional
+    public StrategyRebuildResult rebuildStrategyPlan(Long planId, boolean dryRun) {
+        if (planId == null) {
+            return StrategyRebuildResult.failed("MISSING_PLAN_ID", null, null, null);
+        }
+        ContactPlan locked = planRepository.findPlanWithLock(planId);
+        if (locked == null) {
+            return StrategyRebuildResult.failed("PLAN_NOT_FOUND", planId, null, null);
+        }
+        if (locked.isTerminal()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_TERMINAL", planId, locked.getCaseId(), locked.getStage());
+        }
+        Stage stage = locked.getStage();
+        if (stage == null
+                || stage == Stage.S0
+                || (stage != Stage.S1
+                        && stage != Stage.S2
+                        && stage != Stage.S3
+                        && stage != Stage.S4)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_STAGE", planId, locked.getCaseId(), stage);
+        }
+        if (hasExecutingAiCall(locked)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_EXECUTING_AI", planId, locked.getCaseId(), stage);
+        }
+        if (!stillInCollection(locked)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_LEFT_COLLECTION", planId, locked.getCaseId(), stage);
+        }
+        ContextSnapshot carried = snapshotFromPlan(locked);
+        CaseInfo fromSnap = caseInfoFromSnapshot(carried);
+        final ContextSnapshot snapshot = carried;
+        final CaseInfo caseInfo =
+                fromSnap != null ? fromSnap : caseService.getCaseInfo(locked.getCaseId());
+        if (caseInfo != null && isCeased(caseInfo)) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_CEASED", planId, locked.getCaseId(), stage);
+        }
+        if (caseInfo != null && caseInfo.isRepaid()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_REPAID", planId, locked.getCaseId(), stage);
+        }
+        ContactPlan draft =
+                spiInvoker.call(
+                        SpiType.PLAN_FACTORY, () -> planFactory.create(caseInfo, stage, snapshot));
+        if (draft == null || draft.getSteps() == null || draft.getSteps().isEmpty()) {
+            return StrategyRebuildResult.skipped(
+                    "SKIPPED_NO_FUTURE_SLOTS", planId, locked.getCaseId(), stage);
+        }
+        if (dryRun) {
+            return StrategyRebuildResult.wouldRebuild(planId, locked.getCaseId(), stage);
+        }
+        cancelPlan(locked, CancelReason.MANUAL);
+        boolean created =
+                createPlanForStage(
+                        locked.getCaseId(), stage, caseInfo, snapshot, locked.getId(), false);
+        if (!created) {
+            throw new IllegalStateException(
+                    "strategy rebuild cancelled plan "
+                            + planId
+                            + " but factory did not persist successor");
+        }
+        log.info(
+                "[rebuild-strategy] case {} oldPlan {} stage {} MANUAL cancel + rebuild",
+                locked.getCaseId(),
+                planId,
+                stage);
+        return StrategyRebuildResult.rebuilt(planId, locked.getCaseId(), stage);
+    }
+
+    private boolean hasExecutingAiCall(ContactPlan plan) {
+        if (plan.getSteps() == null) {
+            return false;
+        }
+        for (ContactPlanStep step : plan.getSteps()) {
+            if (step != null
+                    && step.getChannelType() == ChannelType.AI_CALL
+                    && step.getStatus() == StepStatus.EXECUTING) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 策略刷新单案结果。 */
+    public static final class StrategyRebuildResult {
+        private final String outcome;
+        private final String reason;
+        private final Long planId;
+        private final Long caseId;
+        private final String stage;
+
+        private StrategyRebuildResult(
+                String outcome, String reason, Long planId, Long caseId, String stage) {
+            this.outcome = outcome;
+            this.reason = reason;
+            this.planId = planId;
+            this.caseId = caseId;
+            this.stage = stage;
+        }
+
+        public static StrategyRebuildResult rebuilt(Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "REBUILT", null, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult wouldRebuild(Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "WOULD_REBUILD", null, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult skipped(
+                String reason, Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "SKIPPED", reason, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public static StrategyRebuildResult failed(
+                String reason, Long planId, Long caseId, Stage stage) {
+            return new StrategyRebuildResult(
+                    "FAILED", reason, planId, caseId, stage == null ? null : stage.name());
+        }
+
+        public String getOutcome() {
+            return outcome;
+        }
+
+        public String getReason() {
+            return reason;
+        }
+
+        public Long getPlanId() {
+            return planId;
+        }
+
+        public Long getCaseId() {
+            return caseId;
+        }
+
+        public String getStage() {
+            return stage;
+        }
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("outcome", outcome);
+            row.put("reason", reason);
+            row.put("planId", planId);
+            row.put("caseId", caseId);
+            row.put("stage", stage);
+            return row;
+        }
     }
 
     // ───────────────────────── 私有：计划创建复用（§2.2） ─────────────────────────
@@ -551,6 +774,17 @@ public class PlanLifecycleManager {
             CaseInfo providedCaseInfo,
             ContextSnapshot providedSnapshot,
             Long excludedActivePlanId) {
+        return createPlanForStage(
+                caseId, stage, providedCaseInfo, providedSnapshot, excludedActivePlanId, false);
+    }
+
+    private boolean createPlanForStage(
+            Long caseId,
+            Stage stage,
+            CaseInfo providedCaseInfo,
+            ContextSnapshot providedSnapshot,
+            Long excludedActivePlanId,
+            boolean rebuildSameStage) {
         if (stage == null) {
             log.warn("[create] caseId={} stage is null, skip", caseId);
             metrics.planCreation(null, "NO_STAGE");
@@ -618,8 +852,10 @@ public class PlanLifecycleManager {
             first.setStepOrder(1);
             if (first.getTriggerTime() == null) {
                 first.setTriggerTime(
-                        LocalDateTime.now(java.time.ZoneId.of("Asia/Manila"))
-                                .plusMinutes(Math.max(0, first.getDelayMinutes())));
+                        LocalDateTime.now(PHT).plusMinutes(Math.max(0, first.getDelayMinutes())));
+            }
+            if (rebuildSameStage) {
+                clampFirstStepToNextPhtMorning(first);
             }
             first.setStatus(StepStatus.PENDING);
         }
@@ -632,6 +868,34 @@ public class PlanLifecycleManager {
                 plan.getTotalSteps());
         metrics.planCreation(stage.name(), "CREATED");
         return true;
+    }
+
+    private boolean ownerDateBlocksCreate(Long caseId, CaseInfo payloadInfo) {
+        if (!caseService.requiresOwnerDate()) {
+            return false;
+        }
+        CaseInfo info = payloadInfo;
+        if (info == null || info.getOwnerDate() == null) {
+            info = caseService.getCaseInfo(caseId);
+        }
+        return !ownerDateIsToday(info);
+    }
+
+    private boolean ownerGateBlocksMutation(Long caseId) {
+        if (!caseService.requiresOwnerDate()) {
+            return false;
+        }
+        if (!caseService.isOwnerReconciledToday()) {
+            return true;
+        }
+        return !ownerDateIsToday(caseService.getCaseInfo(caseId));
+    }
+
+    private boolean ownerDateIsToday(CaseInfo info) {
+        if (info == null || info.getOwnerDate() == null) {
+            return false;
+        }
+        return LocalDate.now(PHT).equals(info.getOwnerDate());
     }
 
     private void cancelPlan(ContactPlan locked, CancelReason reason) {
@@ -758,6 +1022,36 @@ public class PlanLifecycleManager {
 
     private boolean isCeased(CaseInfo caseInfo) {
         return "CEASED".equalsIgnoreCase(caseInfo.getCaseStatus());
+    }
+
+    /** 仍在催收窗口：缺快照时偏向穷尽（避免安静停催）。仅 CEASED / SETTLED / 结清视为已离开催收。 */
+    private boolean stillInCollection(ContactPlan plan) {
+        ContextSnapshot snap = snapshotFromPlan(plan);
+        if (snap != null && snap.getCaseContext() != null) {
+            String status = snap.getCaseContext().getCollectionStatus();
+            if (status != null
+                    && ("CEASED".equalsIgnoreCase(status) || "SETTLED".equalsIgnoreCase(status))) {
+                return false;
+            }
+        }
+        CaseInfo info = caseInfoFromSnapshot(snap);
+        return info == null || (!isCeased(info) && !info.isRepaid());
+    }
+
+    /** REBUILD 首步不得早于次日 08:00 PHT；Factory 已排更晚则保留。 */
+    private void clampFirstStepToNextPhtMorning(ContactPlanStep first) {
+        LocalDateTime floor =
+                LocalDate.now(PHT).plusDays(1).atTime(COLLECTION_WINDOW_START_HOUR, 0);
+        if (first.getTriggerTime() == null || first.getTriggerTime().isBefore(floor)) {
+            first.setTriggerTime(floor);
+        }
+        if (first.getOriginalTriggerTime() == null
+                || first.getOriginalTriggerTime().isBefore(first.getTriggerTime())) {
+            first.setOriginalTriggerTime(first.getTriggerTime());
+        }
+        log.info(
+                "[create] REBUILD first step trigger_time clamped to {} PHT",
+                first.getTriggerTime());
     }
 
     // ───────────── 决策 B：快照来源 = 事件 payload / carry-forward（不读旧库） ─────────────
