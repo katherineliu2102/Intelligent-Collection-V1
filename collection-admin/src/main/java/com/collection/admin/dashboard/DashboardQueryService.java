@@ -400,6 +400,7 @@ public class DashboardQueryService {
                 jdbc.query(
                         "SELECT t.channel AS channel, "
                                 + "CASE "
+                                + "WHEN s.result='MISSED_SLOT' OR t.result='MISSED_SLOT' THEN 'MISSED_SLOT' "
                                 + "WHEN s.result='COMPLIANCE_BLOCKED' THEN 'GUARD' "
                                 + "WHEN s.result='SKIPPED' AND EXISTS ("
                                 + "  SELECT 1 FROM t_ai_call_session a "
@@ -412,7 +413,7 @@ public class DashboardQueryService {
                                 + "COUNT(*) AS count "
                                 + "FROM t_contact_timeline t "
                                 + "LEFT JOIN t_contact_plan_step s ON s.id = t.step_id "
-                                + "WHERE t.direction='OUT' AND t.result='SKIPPED' AND t.created_at >= ? "
+                                + "WHERE t.direction='OUT' AND t.result IN ('SKIPPED','MISSED_SLOT') AND t.created_at >= ? "
                                 + "AND t.channel IN ('SMS','PUSH','EMAIL','AI_CALL') "
                                 + "GROUP BY t.channel, reason ORDER BY t.channel, count DESC",
                         new Object[] {from, from},

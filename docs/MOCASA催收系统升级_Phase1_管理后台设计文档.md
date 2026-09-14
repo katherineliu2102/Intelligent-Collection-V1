@@ -801,14 +801,14 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 > 批量操作是防雪崩的关键——网关恢复后，主管对整簇「SMS / TIMEOUT」一键批量重试，而非逐条点击。
 
-#### 5.5.4 告警联动（v1.6：落地 A1–A3 + 渠道 FAILED A7–A9；规格仍含 A4/A6）
+#### 5.5.4 告警联动（v1.8：A1–A3 + A7–A9 + R1；规格仍含 A4/A6）
 
 | 渠道 | 场景 |
 |------|------|
 | 后台站内通知 | 新异常簇出现或某簇升级（增速翻倍） |
 | 钉钉 CRITICAL | webhook 来自 Nacos/环境变量 `collection.alert.dingtalk.webhook`（不入库、不进前端），未配置只打日志不抛 |
 
-**本批必做（A1–A3 + A7–A9）**——阈值入 `t_evaluation_setting`，`config_type=alert`；未实现前不得把本文成功标准「5 分钟入队」标成已交付：
+**本批必做（A1–A3 + A7–A9 + R1）**——阈值入 `t_evaluation_setting`，`config_type=alert`；未实现前不得把本文成功标准「5 分钟入队」标成已交付：
 
 | ID | 条件 | 意图 |
 |---|---|---|
@@ -818,6 +818,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | A7 | SMS FAILED 率 >15% 且 attempted ≥20 | 短信通道故障；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计分母）；全日一槽 0800 |
 | A8 | PUSH FAILED 率 >15% 且 attempted ≥20 | 推送通道故障；同上口径；分槽 0800（HOUR&lt;12）与 1200（HOUR≥12），禁止与 SMS/Email 合并 |
 | A9 | EMAIL FAILED 率 >15% 且 attempted ≥20 | 邮件通道故障；同上口径；全日一槽 1400。无里程碑日发送=0 属正常，n&lt;20 不告 |
+| R1 | 08:00 PHT 起当日 `t_ai_owner_reconcile` 无行 | 对账未写成，到期扫描门控；催今天 NEW/积压/DLQ，**禁止补打昨日槽** |
 
 **后做（不挡「停写自动跑」）**：
 
@@ -1204,7 +1205,7 @@ gantt
 | 看板刷新（v1.6） | **打开即查 + 手动刷新；不做 WebSocket / 定时自动刷** | 触达是离散五槽；叫醒靠钉钉。关闭 Q1 |
 | 日常观测 SSOT（v1.6） | **管理后台今日执行替代按日自动跑 Markdown** | 停写前提见 §5.1.7；历史 records 保留；事故/T4 仍写 testing 文档 |
 | PTP | **schema 冻结、功能缓做** | `promises` 现恒空；结构先行防返工 |
-| AI Call 告警 | **钉钉 A1–A3（含 A3 入异常队列）+ 渠道 FAILED A7–A9；A4/A6 后做；n≥20；3 日抑制** | A1>35%；A7/A8/A9>15%；阈值尚未入 `t_evaluation_setting` |
+| AI Call 告警 | **钉钉 A1–A3 + A7–A9 + R1；A4/A6 后做；n≥20；3 日抑制** | A1>35%；A7/A8/A9>15%；R1=08:00 无对账水位；过日不补打 |
 | 本批验收 | **供应商修复验证闭环**（修复前后 FAILED/BUSY 分布与告警可对照） | 不等 PTP/回款；建议出口判据 406 <5%、BUSY <25%、真实接通 ≥15%（可调） |
 | 看板信息架构 | **两视图正交：今日执行=当班五槽 / 复盘=存量+趋势；口径字典仍按模块分（原经营/催收/策略内容不丢）** | v1.6 修正 v1.5 三人格 UI；P1 不聚合异质渠道仍是第一约束 |
 | 触达聚合同径 | **不聚合异质渠道（P1 第一约束）** | v1.5；SMS/PUSH/EMAIL/AI_CALL 触达语义不同，禁止合并按 Stage 统计，须分渠道或渠道×Stage 矩阵 |
@@ -1308,7 +1309,7 @@ gantt
 ---
 
 > **修订历史**  
-> - v1.7 · 2026-09-10 · 看板 AI Call 对齐手册六层：时间线/波次展示线路接通/真人/有效沟通；FAILED 与 A1 改为 `network`+`our_system`；callee 其他单独计；接通明细补 party/有效沟通/right_party；disposition 分布仅 `right_party=yes`
+> - v1.8 · 2026-09-14 · 过日槽不作废补打；钉钉 R1（08:00 无 owner 水位）；`TIME_WINDOW` 禁止跨日 defer 到 08:00。见 [修订说明](./channel/MOCASA催收系统升级_Phase1_过日槽不作废补打_20260914.md)
 > - v1.6 · 2026-09-09 · 钉钉加 A7/A8/A9：SMS / PUSH / EMAIL FAILED 率 >15% 且 attempted ≥20；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计）；分渠道、禁止合并；PUSH 分 0800/1200 两槽  
 > - v1.6 · 2026-09-07 · 拍板：看板改为「今日执行 / 复盘」两任务视图（取消三套人格 UI）；内部角色后置到 `t_system_role`，服务商预留走 `tenant_id` 而非角色 Tab；钉钉本批只做 A1–A3（纠正 v1.3 把 Q3 标成已交付）；看板不自动刷（关闭 Q1）；日常观测改走后台，停写按日自动跑 Markdown 的前提见 §5.1.7  
 > - v1.5.1 · 2026-09-04 · §5.1 指标口径细化到「开发无需脑补」颗粒度：新增原则 P5（指标口径先文档后代码，前端每个数字必须对应本节某行口径）与口径表通用约定（PHT/实锚/分母 0 显示 `—`）；经营/催收/策略三视图全部改为逐指标口径表（分子分母 + 表.字段过滤条件 + 时窗 + 9/4 实测锚点）；§5.1.6 扩写为 AI Call 指标字典 A–J（数据底座/波次单位/5 层电信漏斗含实锚/未接通结构 D 表/业务结果层 E 表/接通明细列字典/SKIPPED 分类/健康基线与验收出口/禁止事项清单），全部口径锚定 8/25–9/4 真实分流数据  

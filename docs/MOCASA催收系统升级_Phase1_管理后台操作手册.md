@@ -25,7 +25,7 @@
 - [6. 数据链路自查（REST / SQL）](#6-数据链路自查rest--sql)
 - [7. 故障排查](#7-故障排查)
 - [8. 附录：默认账号与测试地址](#8-附录默认账号与测试地址)
-- [9. 钉钉告警（A1–A3 / A7–A9）](#9-钉钉告警a1a3--a7a9)
+- [9. 钉钉告警（A1–A3 / A7–A9 / R1）](#9-钉钉告警a1a3--a7a9)
 
 ---
 
@@ -89,7 +89,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
 | `.env` 的 `COLLECTION_SCAN_CASE_IDS` | 一键启动后会发生什么 |
 |---|---|
 | `999999999`（只看后台） | 引擎在跑，但扫描名单是假 id → **零触达**。看板仍显示测试库里已有的历史/Pilot 数据 |
-| 本轮批准的真实 case_id | 到期步骤会按 **PHT 槽点**（08:00 / 09:15 / 11:30 / 12:00 / 14:00 / 14:30 / 16:15 / 18:40）触发，不是启动后 30 分钟。已经过点的到期步骤会在扫描周期内很快补打 |
+| 本轮批准的真实 case_id | 到期步骤按 **PHT 槽点**触发（SMS/Push **08:00**；AI **09:15 / 11:30 / 14:30 / 16:15 / 18:40**；另有 Push 12:00、Email 14:00）。**过日槽与已过下一产品槽不作废补打**（`MISSED_SLOT`）。未到本槽钟点不提前打。AI 没有 08:00 槽，静默窗不得把步 defer 到次日 08:00 |
 
 local 与共享测试库上的 Pilot **不要同时用真实白名单扫库**，会互抢步骤。只看新看板时用占位白名单。
 
@@ -194,7 +194,7 @@ Windows 可用 `Invoke-WebRequest` 替代。第三条若返回 JSON，说明 Vit
 
 **入口**：登录后左侧 **Data Analysis**，或 `/dashboard`。默认打开 **今日执行**（PHT 当日）；可切到 **复盘**（昨日作业集 T+1 + 近 7 日质量）。点右上角 **刷新** 会重拉当前页全部接口，**没有**定时自动刷或 WebSocket。
 
-日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1–A3 / A7–A9 是叫醒通道，不替代看板。
+日常观测以本页「今日执行」为准，不再按日新写自动跑 Markdown（历史 `docs/testing/records/` 保留）。钉钉 A1–A3 / A7–A9 / R1 是叫醒通道，不替代看板。
 
 **今日执行**
 
@@ -428,13 +428,15 @@ SHOW TABLES LIKE 't_alert_dedup';
 
 ---
 
-## 9. 钉钉告警（A1–A3 / A7–A9）
+## 9. 钉钉告警（A1–A3 / A7–A9 / R1）
 
-本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）。A1 的 FAILED = `failure_class` 为 `network` 或 `our_system`（DECLINE/空号等 callee **不告**），与看板同一口径。A3 还会写入后台 **Ops Queue**。**A3 不在 dispatch 后 15 分钟就告**：波次聚合下排队超过 15 分钟仍可能正常。有 `timeout_time` 时与超时哨兵对齐（到期仍 EXECUTING 且无 `session.completed`）；没有 `timeout_time` 才用 dispatch+15 分钟兜底。异常队列**不自动结单**，session 回来后仍须人工关闭。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
+本批钉钉 CRITICAL：AI Call 三类（FAILED 率过高 A1，>35% 且 n≥20；到期步骤漏打 A2；EXECUTING 悬挂 A3）+ 消息渠道 FAILED 率（A7 SMS / A8 PUSH / A9 EMAIL，各自 **>15%** 且 attempted ≥20）+ **R1 当日 08:00 仍无 owner 对账水位**。A1 的 FAILED = `failure_class` 为 `network` 或 `our_system`（DECLINE/空号等 callee **不告**），与看板同一口径。A3 还会写入后台 **Ops Queue**。**A3 不在 dispatch 后 15 分钟就告**：波次聚合下排队超过 15 分钟仍可能正常。有 `timeout_time` 时与超时哨兵对齐（到期仍 EXECUTING 且无 `session.completed`）；没有 `timeout_time` 才用 dispatch+15 分钟兜底。异常队列**不自动结单**，session 回来后仍须人工关闭。群消息带前缀 `【催收告警】`，不含明文手机号。n&lt;20 不告；同日同槽只发一次。正好等于阈值不告（`>`）。
+
+**R1**：08:00 PHT 起扫描 `t_ai_owner_reconcile` 无当日行则告。到期扫描仍门控，今日 SMS/AI 不会打出。值班应查 Pub/Sub 积压与 DLQ，或催数仓重发**今天** NEW；**禁止**把昨日未打的步补外呼。水位写成后告警恢复。口径见 [过日槽修订](./channel/MOCASA催收系统升级_Phase1_过日槽不作废补打_20260914.md)。
 
 渠道 FAILED 口径与看板「今日执行」一致：分子 = `FAILED`/`REJECTED`/`BOUNCED`，分母 = ATTEMPTED（`DELIVERED`/`SENT`/`ACCEPTED` + 失败三种），**SKIPPED 不计分母**。SMS / PUSH / EMAIL **分渠道、禁止合并**。SMS 全日一槽 `0800`；PUSH 分 `0800`（12 点前）与 `1200`（12 点后）；EMAIL 全日 `1400`（无里程碑日发送=0 属正常，n&lt;20 不告）。
 
-**2026-09-09 现状**：测试库已有 `t_alert_dedup`；Pilot 库也有该表。本机 Nacos `intelligent-collection-local.yml` 已有 webhook，机器人通道已用关键词消息验过。**local 默认不发告警**（扫描器未装配）。Pilot `/opt/app/pilot.env` 已写入 webhook，jar 含扫描器（A1>**35%**；A7/A8/A9>**15%**）。公网 nginx 未改，`/` 仍 403。真告警时群里应出现 `【催收告警】 A1/A2/A3/A7/A8/A9`。
+**2026-09-14 现状**：测试库已有 `t_alert_dedup`；Pilot 库也有该表。本机 Nacos `intelligent-collection-local.yml` 已有 webhook，机器人通道已用关键词消息验过。**local 默认不发告警**（扫描器未装配）。Pilot `/opt/app/pilot.env` 已写入 webhook，jar 含扫描器（A1>**35%**；A7/A8/A9>**15%**；**R1 08:00 无对账水位**）。公网 nginx 未改，`/` 仍 403。真告警时群里应出现 `【催收告警】 A1/A2/A3/A7/A8/A9/R1`。
 
 ### 9.1 小白版：以后要怎么配
 

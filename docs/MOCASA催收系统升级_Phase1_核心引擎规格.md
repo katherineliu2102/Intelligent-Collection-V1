@@ -1,8 +1,9 @@
 # MOCASA 催收系统升级 — Phase 1 核心引擎规格
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场  
-> **日期**: 2026-09-03  
+> **日期**: 2026-09-14  
 > **状态**: ✅ 已确定（事件路由、状态机、七步管线、SPI SSOT）  
+> **2026-09-14**：过日槽 / 已过下一产品槽不作废补打（`MISSED_SLOT`）；`TIME_WINDOW` 不得跨日 defer 到 08:00。见 [修订说明](./channel/MOCASA催收系统升级_Phase1_过日槽不作废补打_20260914.md)。  
 > **关联文档**: [产品需求文档 (PRD)](./MOCASA催收系统升级_Phase1_产品需求文档_PRD.md)、[架构设计文档](./MOCASA催收系统升级_Phase1_架构设计文档.md)、[基础设施交互规范](./MOCASA催收系统升级_Phase1_基础设施交互规范.md)、[领域模型 §2.6 / §6](./MOCASA催收系统升级_Phase1_领域模型与数据定义.md#6-eventpayload-字段定义)、[渠道总规格 §3.3](./channel/MOCASA催收系统升级_Phase1_collection-channel总规格.md#33-channel_callback-事件-payload)
 
 ---
@@ -389,8 +390,10 @@ def on_plan_step_due(event):
 
     # ── 非事务上下文：渠道 I/O（允许耗时数百毫秒~数秒） ──
     execute_step(plan, step)                       # 展开见 §5
-    # Guard defer（§5 ③）：step.trigger_time ← deferUntil，plan ← STEP_SCHEDULED，直接 return
-    # 不经 STEP_COMPLETED；Cron 到期后再投递 PLAN_STEP_DUE → 重入本函数场景 A
+    # 槽位闸（§5 ②½）：过日 / 已过下一产品槽 → MISSED_SLOT；未到本槽 → 重排 PENDING
+    # Guard defer（§5 ③）：仅允许同日 deferUntil；跨日（含次日 08:00）→ MISSED_SLOT，不经 STEP_COMPLETED 的推进除外（SKIP 仍发 STEP_COMPLETED）
+    # 同日 defer：step.trigger_time ← deferUntil，plan ← STEP_SCHEDULED，直接 return
+    # Cron 到期后再投递 PLAN_STEP_DUE → 重入本函数场景 A
 ```
 
 
@@ -702,10 +705,14 @@ flowchart TD
     s1 --> s2["② PreFlight"]
     s2 -->|owner 门控| silent
     s2 -->|案件不在 / 已还 / 无可催余额| cancel["取消计划后退出"]
-    s2 --> s25["②½ 刷新日变字段"]
+    s2 --> slot["②⅓ 槽位闸"]
+    slot -->|过日 / 过下一槽| done["发 STEP_COMPLETED → §4.3.2"]
+    slot -->|未到本槽| cron["回 Cron"]
+    slot --> s25["②½ 刷新日变字段"]
     s25 --> s3["③ Guard"]
-    s3 -->|defer| cron["回 Cron"]
-    s3 -->|拦截| done["发 STEP_COMPLETED → §4.3.2"]
+    s3 -->|defer 同日| cron
+    s3 -->|defer 跨日| done
+    s3 -->|拦截| done
     s3 --> s4["④ Resolver"]
     s4 -->|跳过 / 失败| done
     s4 --> s5["⑤ dispatch"]
@@ -721,7 +728,7 @@ flowchart TD
 
 
 
-> **读图**：四类出口——静默退出、取消计划后退出、回 Cron（不经 `STEP_COMPLETED`）、发 `STEP_COMPLETED` 或保持 `STEP_EXECUTING` 等回调。PreFlight 通过后须 `markStepExecuting`；抢不到则静默退出。Phase 2 观察期（`STEP_WAITING`）见伪代码 ⑦。
+> **读图**：四类出口——静默退出、取消计划后退出、回 Cron（未到本槽 / 同日 defer，不经 `STEP_COMPLETED`）、发 `STEP_COMPLETED`（含 `MISSED_SLOT`）或保持 `STEP_EXECUTING` 等回调。槽位闸在 `markStepExecuting` 之前。Phase 2 观察期见伪代码 ⑦。
 
 **失败处理**（业务旁路已在图与伪代码中；本表只列基础设施 / SPI 非法 / 锁 / 渠道后写失败）：
 
@@ -775,6 +782,9 @@ def execute_step(plan, step):
             return
         if not verdict.allowed:
             if verdict.defer_until:
+                if date(defer_until) > today(PHT):
+                    skip_and_complete(MISSED_SLOT)  # 禁止跨日补打（含次日 08:00）
+                    return
                 step.trigger_time = verdict.defer_until
                 step.status = PENDING
                 plan.status = STEP_SCHEDULED

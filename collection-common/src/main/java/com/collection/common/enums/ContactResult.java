@@ -20,6 +20,8 @@ public enum ContactResult {
     COMPLIANCE_BLOCKED(0),
     /** StepResolver 主动跳过该步（如 EMAIL 非里程碑 DPD / 无邮箱）；非失败，引擎照常推进。 */
     SKIPPED(0),
+    /** 过日槽或已过下一产品槽，不作废补打。 */
+    MISSED_SLOT(0),
     CHANNEL_DOWN(0);
 
     private final int priority;

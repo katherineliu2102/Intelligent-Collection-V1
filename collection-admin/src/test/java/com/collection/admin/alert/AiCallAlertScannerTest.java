@@ -65,6 +65,34 @@ class AiCallAlertScannerTest {
     }
 
     @Test
+    void r1DoesNotFireBefore8am() {
+        scanner.scanR1(LocalDateTime.of(2026, 9, 14, 7, 59), LocalDate.of(2026, 9, 14));
+
+        verify(dingtalk, never()).sendText(anyString());
+        verify(jdbc, never()).queryForObject(anyString(), eq(Long.class), any());
+    }
+
+    @Test
+    void r1FiresWhenReconcileMissingAfter8am() {
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any())).thenReturn(0L);
+
+        scanner.scanR1(LocalDateTime.of(2026, 9, 14, 8, 0), LocalDate.of(2026, 9, 14));
+
+        verify(dingtalk).sendText(contains("R1 owner reconcile missing"));
+        verify(dingtalk).sendText(contains("do not catch up prior-day slots"));
+    }
+
+    @Test
+    void r1RecoversWhenWatermarkPresent() {
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any())).thenReturn(1L);
+
+        scanner.scanR1(LocalDateTime.of(2026, 9, 14, 8, 1), LocalDate.of(2026, 9, 14));
+
+        verify(dingtalk, never()).sendText(anyString());
+        verify(dedup).markRecovered(eq("R1"), eq("owner"), eq(LocalDate.of(2026, 9, 14)));
+    }
+
+    @Test
     void a1FiresWhenFailedRateExceeds35Percent() {
         when(jdbc.query(anyString(), any(RowMapper.class), any())).thenReturn(sessionsMixed(20, 8));
 

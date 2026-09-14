@@ -1,7 +1,7 @@
 # MOCASA 催收系统升级 — Phase 1 数据接入规格
 
 > **版本**: Phase 1 · 仅覆盖菲律宾市场
-> **日期**: 2026-09-03
+> **日期**: 2026-09-14
 > **外部消息 SSOT**: [数仓 Pub/Sub 交付契约](./数仓_PubSub交付契约.md)
 > **本文范围**: `collection-ingestion` 的消费、校验、投影、owner 对账、日切和内部事件实现。
 
@@ -141,7 +141,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 | 项 | 行为 |
 | --- | --- |
 | 时间 | 03:35 PHT 起，与 `dailyRoll` 同窗口 |
-| 空收 | 生产全量扫描：`t_ai_collection` 中无 `owner_date = 当日` 的案件（即当日无任何案件被 caseEvent 刷新归属日，走 `idx_ai_collection_owner_date`）→ **不对账、不写水位**、告警。不以 inbox `created_at` 为准，也不对 inbox payload 做字符串日期解析（UTC 时间戳与 PHT 日历日会分叉）。联调白名单模式跳过空收门控 |
+| 空收 | 生产全量扫描：`t_ai_collection` 中无 `owner_date = 当日` 的案件（即当日无任何案件被 caseEvent 刷新归属日，走 `idx_ai_collection_owner_date`）→ **不对账、不写水位**。**08:00 PHT 仍无水位 → 钉钉 R1**。不以 inbox `created_at` 为准，也不对 inbox payload 做字符串日期解析。联调白名单模式跳过空收门控。过日未打的步由引擎 `MISSED_SLOT`，不补打 |
 | 迁出 | 活跃计划且 `owner_date ≠ 当日`（含空）→ 发布 `CASE_OWNER_RECONCILED`（`ownerAction=LEAVE`） |
 | 进入 / 再入 | `owner_date = 当日`、在催、非 `SETTLED`/`CEASED`、无活跃计划 → 发布 `CASE_INGESTED`（既有快照 payload） |
 | 连续 NEW | `owner_date = 当日` 且已有非终态计划 → 不发事件 |
@@ -158,7 +158,7 @@ ACK、DLQ、重放与 poison 的外部行为见[数仓交付契约 §3](./数仓
 
 | 项 | 行为 |
 | --- | --- |
-| 时间 | 03:35–05:55 PHT，每 5 分钟处理一个 keyset 分页；06:00 PHT 前完成，否则告警 |
+| 时间 | 03:35–05:55 PHT，每 5 分钟处理一个 keyset 分页；06:00 PHT 前完成否则运维排查；**08:00 仍无水位则 R1 CRITICAL**（今日触达门控） |
 | 前置 | `owner_reconciled_date = 当日`；空收未对账时本阶段不跑 |
 | 扫描 | 联调使用 `loan-id-whitelist`；生产按 `case_id` keyset 分页，Redis 保存游标与完成标记。单轮上限为 `collection.ingestion.daily-roll-batch-size`（Pilot `1000`） |
 | 阶段变化 | 投影 stage 的**严重度高于**活跃计划 stage 时发布 `STAGE_CHANGED`；低于时**不发**，只记指标（见下方「阶段单调前进」）。**无活跃计划**时：最近一份 `PLAN_COMPLETED` 且投影档更高 → 同样发布（档末日走完后次日建 S0→S1 … S3→S4）；`PLAN_CANCELLED` + `NO_DUE_BALANCE` 且投影已有应还余额 → 按当天档发布。`MANUAL_CLEANUP` / `REPAID` / `CEASED` / `ROUTED_TO_LEGACY` 不续建 |
@@ -194,7 +194,7 @@ Phase 1 当前由数仓直发 Pub/Sub 驱动入案；无论触达 owner 如何�
 | --- | --- | --- |
 | 消费健康 | Pub/Sub lag、ack / nack / poison / DLQ | Publisher 重试、Subscription 堆积、Consumer 日志 |
 | 投影与事件交接 | `t_ai_collection_inbox` 的 `PENDING`、投影 `synced_at` | 投影事务、内部 EventBus 发布、补发任务 |
-| 日切完成 | Redis 对账/日切游标、`owner_reconciled_date`、当日完成标记、`CASE_INGESTED` / `CASE_OWNER_RECONCILED` / `STAGE_CHANGED` / `CASE_CEASED` 数量 | 空收告警、扫描配置、调度 tick、活跃计划 |
+| 日切完成 | Redis 对账/日切游标、`owner_reconciled_date`、当日完成标记、`CASE_INGESTED` / `CASE_OWNER_RECONCILED` / `STAGE_CHANGED` / `CASE_CEASED` 数量 | 空收 **R1（08:00 无水位）**、扫描配置、调度 tick、活跃计划；过日步不补打 |
 | 每日对账 | 数仓按 `dataType` 的发布量与接入 ack / nack / poison / dedup 对比 | 水位表 `owner_case_count`、DLQ、投影写入失败 |
 
 运行阈值、告警级别、Dashboard 和 Runbook 由运维在上线单维护，不在本文重复定义。

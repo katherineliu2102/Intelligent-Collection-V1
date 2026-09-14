@@ -5,6 +5,7 @@ import com.collection.admin.dashboard.DashboardClock;
 import com.collection.admin.dashboard.WaveKey;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,10 +18,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 钉钉 CRITICAL：AI Call A1–A3 + 消息渠道 FAILED 率 A7–A9。仅 {@code collection.scheduler.enabled=true}
- * 时扫描（§5.5.4）。
+ * 钉钉 CRITICAL：AI Call A1–A3 + 消息渠道 FAILED 率 A7–A9 + owner 水位 R1。仅 {@code
+ * collection.scheduler.enabled=true} 时扫描（§5.5.4）。
  *
- * <p>文案含波次/渠道、分子分母、SIP Top、悬挂 id；不含明文手机号。n&lt;20 不告。
+ * <p>文案含波次/渠道、分子分母、SIP Top、悬挂 id；不含明文手机号。n&lt;20 不告。R1：08:00 后当日 owner 水位仍未写。
  */
 @Component
 @ConditionalOnProperty(prefix = "collection.scheduler", name = "enabled", havingValue = "true")
@@ -61,6 +62,7 @@ public class AiCallAlertScanner {
             scanA1(todayStart, day);
             scanA2(now, todayStart, day);
             scanA3(now, day);
+            scanR1(now, day);
             scanChannelFailed(todayStart, day);
         } catch (RuntimeException e) {
             log.error("[alert] scan failed", e);
@@ -253,6 +255,33 @@ public class AiCallAlertScanner {
                         + hanging.size()
                         + " stepIds="
                         + shown);
+    }
+
+    /**
+     * R1：08:00 PHT 起当日 {@code t_ai_owner_reconcile} 仍无水位。到期扫描门控，今日槽不会外呼；禁止把昨日步补打。水位写成后
+     * {@code markRecovered}。
+     */
+    void scanR1(LocalDateTime now, LocalDate day) {
+        if (now.toLocalTime().isBefore(LocalTime.of(8, 0))) {
+            return;
+        }
+        Long n =
+                nvlLong(
+                        jdbc.queryForObject(
+                                "SELECT COUNT(*) FROM t_ai_owner_reconcile WHERE reconcile_date = ?",
+                                Long.class,
+                                day));
+        if (n > 0) {
+            dedup.markRecovered("R1", "owner", day);
+            return;
+        }
+        dispatch(
+                "R1",
+                "owner",
+                day,
+                "R1 owner reconcile missing after 08:00 PHT; due scan gated; today's SMS/AI"
+                        + " blocked until watermark; do not catch up prior-day slots. Check Pub/Sub"
+                        + " backlog and DLQ.");
     }
 
     /**

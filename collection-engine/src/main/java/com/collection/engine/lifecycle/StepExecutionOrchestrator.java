@@ -19,12 +19,15 @@ import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
 import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.service.IdempotencyService;
+import com.collection.common.schedule.OutreachSlotPolicy;
 import com.collection.common.spi.ExecutionGuard;
 import com.collection.common.spi.StepResolver;
 import com.collection.common.util.JsonUtil;
 import com.collection.engine.outbox.OutboxEventSink;
 import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
@@ -48,6 +51,8 @@ public class StepExecutionOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(StepExecutionOrchestrator.class);
     private static final String STEP_LOCK_PREFIX = "lock:plan:";
     private static final ZoneId PHT = ZoneId.of("Asia/Manila");
+
+    Clock clock = Clock.system(PHT);
 
     @Resource private IdempotencyService idempotencyService;
     @Resource private PreFlightChecker preFlightChecker;
@@ -165,6 +170,27 @@ public class StepExecutionOrchestrator {
             return;
         }
 
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime anchor = OutreachSlotPolicy.anchorTime(step);
+        OutreachSlotPolicy.Decision slotDecision = OutreachSlotPolicy.decide(anchor, now);
+        if (slotDecision == OutreachSlotPolicy.Decision.SKIP_MISSED_DAY
+                || slotDecision == OutreachSlotPolicy.Decision.SKIP_PAST_NEXT_SLOT) {
+            log.info(
+                    "[execStep] skip missed slot step {} decision={} anchor={}",
+                    step.getId(),
+                    slotDecision,
+                    anchor);
+            skipMissedSlot(plan, step, state, slotDecision.name());
+            return;
+        }
+        if (slotDecision == OutreachSlotPolicy.Decision.WAIT_OWN_SLOT) {
+            planRepository.updateStepTriggerTime(step.getId(), anchor, StepStatus.PENDING);
+            planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_SCHEDULED, null);
+            log.info("[execStep] wait own slot step {} until {}", step.getId(), anchor);
+            releaseExecutionLock(state.executionLockKey, buildIdempotencyKey(plan, step));
+            return;
+        }
+
         // 调用渠道前的最后一道闸：prepareStepDue 提交后到此处之间，回调或超时路径可能已把
         // 步骤收敛为终态，此时继续执行就是一次重复触达。
         if (!planRepository.markStepExecuting(step.getId())) {
@@ -200,6 +226,15 @@ public class StepExecutionOrchestrator {
                     verdict.getBlockedRuleType(),
                     verdict.getBlockedReason());
             if (verdict.getDeferUntil() != null) {
+                LocalDate today = LocalDate.now(clock);
+                if (verdict.getDeferUntil().toLocalDate().isAfter(today)) {
+                    log.info(
+                            "[execStep] TIME_WINDOW would cross day until {}, skip step {}",
+                            verdict.getDeferUntil(),
+                            step.getId());
+                    skipMissedSlot(plan, step, state, "TIME_WINDOW_CROSS_DAY");
+                    return;
+                }
                 planRepository.updateStepTriggerTime(
                         step.getId(), verdict.getDeferUntil(), StepStatus.PENDING);
                 planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_SCHEDULED, null);
@@ -410,6 +445,12 @@ public class StepExecutionOrchestrator {
         private ExecutionState(String executionLockKey) {
             this.executionLockKey = executionLockKey;
         }
+    }
+
+    private void skipMissedSlot(
+            ContactPlan plan, ContactPlanStep step, ExecutionState state, String rule) {
+        markSkipped(plan, step, ContactResult.MISSED_SLOT, rule);
+        releaseExecutionLock(state.executionLockKey, buildIdempotencyKey(plan, step));
     }
 
     private void markSkipped(

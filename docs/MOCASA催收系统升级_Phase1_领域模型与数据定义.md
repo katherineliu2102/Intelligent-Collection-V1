@@ -406,6 +406,7 @@ loan_id（上游）
 | ------------------ | ----- | ---------- | ------------------------- |
 | COMPLIANCE_BLOCKED | 合规拦截  | 是          | 含频控、空地址等                  |
 | SKIPPED            | 策略性主动跳过  | **否**      | 仅 `StepResolver` 正常返回 `null`（如非里程碑槽位） |
+| MISSED_SLOT        | 过日或已过下一产品槽 | 是     | 不作废补打；写 timeline 后推进 |
 | CHANNEL_DOWN       | 渠道不可用 | **否**      | 健康检查失败                    |
 | REPLIED            | 用户回复  | 是          | Phase 2（VIBER / WHATSAPP） |
 
@@ -998,7 +999,7 @@ loan_id（上游）
 | blockedRuleType | String  | 否   | 拦截规则类型：FREQUENCY_LIMIT / TIME_WINDOW / NO_EMAIL / NO_PHONE / NO_TOKEN；CONNECT_AND_STOP、ABANDONMENT_RATE 为 Phase 2 预留 |
 | deferUntil      | LocalDateTime | 否 | 仅 `TIME_WINDOW` 且 `allowed=false` 时必填；引擎重设当前步骤触发时刻，不写拦截 timeline |
 
-> **空地址与延期语义**：EMAIL 无邮箱、SMS 无手机号、PUSH 同时无 jpushToken 和手机号时，Guard 返回对应 `NO_*`，引擎记 `COMPLIANCE_BLOCKED`、写 timeline 后推进。PUSH 有手机号但无 token 由 Gateway 在同一次 dispatch 内 fallback SMS。只有合规时段不满足时使用 `deferUntil` 延期；投诉/争议冻结与呼损率自动降级均为 Phase 2，不得在 Phase 1 Guard 中拦截。
+> **空地址与延期语义**：EMAIL 无邮箱、SMS 无手机号、PUSH 同时无 jpushToken 和手机号时，Guard 返回对应 `NO_*`，引擎记 `COMPLIANCE_BLOCKED`、写 timeline 后推进。PUSH 有手机号但无 token 由 Gateway 在同一次 dispatch 内 fallback SMS。`TIME_WINDOW` 仅允许**同日** `deferUntil`；跨日（含次日 08:00）由引擎记 `MISSED_SLOT`，不得补打。过日槽与已过下一产品槽同样 `MISSED_SLOT`。投诉/争议冻结与呼损率自动降级均为 Phase 2，不得在 Phase 1 Guard 中拦截。
 
 
 ### 5.4 StepCommand（步骤命令）
@@ -1191,7 +1192,7 @@ loan_id（上游）
 | 2026-09-01 | 附录 A 不再复制 `CREATE TABLE`，权威 DDL 仅 `db/schema.sql`；附录 B.1 纠正「后台只读」与现行热更新口径 | 附录 A / 附录 B.1 |
 | 2026-09-03 | 按日 owner 路由：新增 `CASE_OWNER_RECONCILED`、`CancelReason.ROUTED_TO_LEGACY`；`CASE_INGESTED` 改为对账后发布；投影增加 `owner` / `owner_date`，水位表 `t_ai_owner_reconcile` | §2.6 / §2.7 / §6.2 / DDL |
 | 2026-09-03 | 零收检测口径：由 inbox payload 字符串日期扫描改为投影 `owner_date = 当日` 计数（走 `idx_ai_collection_owner_date`，时区口径与投影写入一致）；水位表计数列 `inbox_case_event_count` 更名 `owner_case_count`，含既有环境迁移 | DDL（schema.sql）/ 接入规格 §4.1 |
-| 2026-09-04 | 概念层收口 §1.3 术语 / §1.5 聚合与不变式；§1.1 改为数据生命周期；§1.2 按 `schema.sql` 12 表索引并上收附录空指针；新增 §3.5 投影字段；附录 B 压为渠道索引指针 | §1 / §3.5 / 附录 A / 附录 B |
+| 2026-09-14 | 过日槽 / 已过下一产品槽不作废补打：新增 `ContactResult.MISSED_SLOT`；`TIME_WINDOW` 禁止跨日 defer | §2.2 / Guard DTO |
 
 
 ---

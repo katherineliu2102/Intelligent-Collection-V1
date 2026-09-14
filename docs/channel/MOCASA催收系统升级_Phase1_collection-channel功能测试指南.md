@@ -408,7 +408,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 前置 | 当前 PHT 在 `quiet-hours`（21:00–08:00）内 |
-| 预期 | Guard BLOCK |
+| 预期 | Guard 返回 `TIME_WINDOW` + 同日 `deferUntil` 时引擎重排；**跨日 defer（含次日 08:00）引擎 `MISSED_SLOT`，不外呼**。过日槽在 Guard 前即作废 |
 
 ### TC-GUARD-03：投诉冻结
 
@@ -423,7 +423,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 前置 | PHT 在 08:00 前或 21:00 后（`touch-window` 外） |
-| 预期 | Guard BLOCK（与 quiet-hours 规则一致） |
+| 预期 | 过日或已过下一产品槽：引擎 `MISSED_SLOT`。未到本槽：重排回本槽。窗内且未过下一槽才外呼。与 quiet-hours 跨日 defer 禁止补打一致 |
 
 ---
 
