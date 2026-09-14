@@ -258,8 +258,8 @@ public class AiCallAlertScanner {
     }
 
     /**
-     * R1：08:00 PHT 起当日 {@code t_ai_owner_reconcile} 仍无水位。到期扫描门控，今日槽不会外呼；禁止把昨日步补打。水位写成后
-     * {@code markRecovered}。
+     * R1：08:00 PHT 起当日 {@code t_ai_owner_reconcile} 仍无水位。到期扫描门控，今日槽不会外呼；禁止把昨日步补打。水位写成后 {@code
+     * markRecovered}。
      */
     void scanR1(LocalDateTime now, LocalDate day) {
         if (now.toLocalTime().isBefore(LocalTime.of(8, 0))) {

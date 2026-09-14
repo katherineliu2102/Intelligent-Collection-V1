@@ -5,9 +5,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
-/**
- * 过日槽不作废补打；当天只宽限到下一产品槽之前。产品槽 PHT：08:00、09:15、11:30、12:00、14:00、14:30、16:15、18:40；末日截止 21:00。
- */
+/** 过日槽不作废补打；当天只宽限到下一产品槽之前。产品槽 PHT：08:00、09:15、11:30、12:00、14:00、14:30、16:15、18:40；末日截止 21:00。 */
 public final class OutreachSlotPolicy {
 
     private static final LocalTime[] PRODUCT_SLOTS = {
