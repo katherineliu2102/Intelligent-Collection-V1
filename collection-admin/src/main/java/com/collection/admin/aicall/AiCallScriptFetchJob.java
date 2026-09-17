@@ -35,7 +35,9 @@ public class AiCallScriptFetchJob {
     private final ChannelProperties channelProperties;
 
     public AiCallScriptFetchJob(
-            JdbcTemplate jdbc, FacadeBatchClient facadeClient, ChannelProperties channelProperties) {
+            JdbcTemplate jdbc,
+            FacadeBatchClient facadeClient,
+            ChannelProperties channelProperties) {
         this.jdbc = jdbc;
         this.facadeClient = facadeClient;
         this.channelProperties = channelProperties;
