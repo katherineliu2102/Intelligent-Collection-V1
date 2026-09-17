@@ -28,6 +28,22 @@ public interface ContactPlanRepository {
     /** 案件指定阶段的活跃计划（单活跃计划约束）。 */
     ContactPlan findActivePlanByCaseAndStage(Long caseId, com.collection.common.enums.Stage stage);
 
+    /**
+     * S1–S4 非终态计划 id（不含 S0），按 id 升序分页。供策略刷新全量重建。
+     *
+     * <p>{@code maxId} 为任务开始时冻结的最大 id，避免取消后新插入的计划（id 更大）被同一轮再次重建。
+     *
+     * <p>默认空列表：内存仓储 / 单测 mock 不必实现。
+     */
+    default List<Long> findActiveS1ToS4PlanIds(long afterId, long maxId, int limit) {
+        return java.util.Collections.emptyList();
+    }
+
+    /** 当前 S1–S4 活跃计划的 MAX(id)；没有则 null。 */
+    default Long findMaxActiveS1ToS4PlanId() {
+        return null;
+    }
+
     /** 最近完成/穷尽的计划。 */
     ContactPlan getLastCompletedPlan(Long caseId);
 

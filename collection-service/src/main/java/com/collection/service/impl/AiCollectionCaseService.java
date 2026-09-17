@@ -6,13 +6,16 @@ import com.collection.common.model.CaseInfo;
 import com.collection.common.model.ContactHistory;
 import com.collection.common.model.ContextSnapshot;
 import com.collection.common.model.UserProfile;
+import com.collection.common.repository.OwnerReconcileRepository;
 import com.collection.common.service.CaseService;
 import com.collection.service.mapper.AiCollectionCaseMapper;
 import com.collection.service.mapper.AiCollectionCaseRow;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import javax.annotation.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
@@ -25,6 +28,11 @@ import org.springframework.stereotype.Service;
 public class AiCollectionCaseService implements CaseService {
 
     @Resource private AiCollectionCaseMapper mapper;
+
+    @Autowired(required = false)
+    private OwnerReconcileRepository ownerReconcileRepository;
+
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
 
     // 默认值不能落在 .test 域：pilot/生产漏配时它会被渲染进真实短信正文。
     @Value("${collection.repayment-url-template:https://app.mocasa.com/repay/{caseId}}")
@@ -47,6 +55,7 @@ public class AiCollectionCaseService implements CaseService {
         info.setDueDate(row.getDueDate());
         info.setNextDueDate(row.getNextDueDate());
         info.setRepaid(isSettled(row));
+        info.setOwnerDate(row.getOwnerDate());
         return info;
     }
 
@@ -113,6 +122,19 @@ public class AiCollectionCaseService implements CaseService {
     @Override
     public List<Long> findActiveCaseIdsAfter(Long lastCaseId, int limit) {
         return mapper.selectCaseIdsAfter(lastCaseId == null ? 0L : lastCaseId, limit);
+    }
+
+    @Override
+    public boolean isOwnerReconciledToday() {
+        if (ownerReconcileRepository == null) {
+            return false;
+        }
+        return ownerReconcileRepository.completedOn(LocalDate.now(PHT));
+    }
+
+    @Override
+    public boolean requiresOwnerDate() {
+        return true;
     }
 
     private AiCollectionCaseRow require(Long caseId) {

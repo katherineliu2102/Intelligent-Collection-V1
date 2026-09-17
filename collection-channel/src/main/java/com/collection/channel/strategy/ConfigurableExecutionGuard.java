@@ -24,9 +24,8 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 /**
- * Phase 1 简化版 ExecutionGuard —— 时段 + 空地址 + 内存频率计数器（单渠道日上限及跨渠道日总上限，无 Redis）。
- *
- * <p>主架构临时代写，推进 L4a-全测试。编排同事回来后替换为 Redis Lua 原子计数的生产实现。
+ * Phase 1 ExecutionGuard：时段、空地址、日频。跨日 {@code TIME_WINDOW} defer 由引擎改成 {@code
+ * MISSED_SLOT}，本类仍只返回同日或跨日 {@code deferUntil}。
  */
 @Primary
 @Component

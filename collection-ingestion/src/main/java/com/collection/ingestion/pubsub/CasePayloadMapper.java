@@ -85,6 +85,10 @@ public class CasePayloadMapper {
         public LocalDate nextDueDate;
         public boolean nextDueDatePresent;
         public java.time.LocalDateTime occurredAt;
+        /** 本次还款金额（repaymentEvent.paidAmount）；未提供时可为空。 */
+        public BigDecimal paidAmount;
+        /** 还款发生时间（repaymentEvent.repayTime，PHT）；缺省回退 occurredAt。 */
+        public java.time.LocalDateTime repayTime;
     }
 
     /** v2 稳定业务事件键，由数仓 publish 时生成；重试、重投与重放均复用同一值。 */
@@ -188,6 +192,8 @@ public class CasePayloadMapper {
                         ? parseDate(json.get("nextDueDate"), "nextDueDate")
                         : null;
         fields.occurredAt = occurredAt(json, caseId, "repaymentEvent");
+        fields.paidAmount = getDecimal(json, "paidAmount");
+        fields.repayTime = repayTimeOrFallback(json, fields.occurredAt);
         if (fields.dpd == null
                 || fields.overdueAmount == null
                 || fields.penaltyAmount == null
@@ -388,6 +394,23 @@ public class CasePayloadMapper {
                 return LocalDateTime.parse(raw, LOCAL_OCCURRED_AT);
             } catch (DateTimeParseException e) {
                 throw new PoisonMessageException("非法 occurredAt=" + raw + " caseId=" + caseId);
+            }
+        }
+    }
+
+    /** 还款时间：优先取 {@code repayTime}（专门字段），缺省回退 {@code occurredAt}。 「当日回收金额」按还款发生日切桶，依赖此值。 */
+    static LocalDateTime repayTimeOrFallback(JSONObject json, LocalDateTime fallback) {
+        String raw = trimToNull(json.getString("repayTime"));
+        if (raw == null) {
+            return fallback;
+        }
+        try {
+            return OffsetDateTime.parse(raw).atZoneSameInstant(PHT).toLocalDateTime();
+        } catch (DateTimeParseException ignored) {
+            try {
+                return LocalDateTime.parse(raw, LOCAL_OCCURRED_AT);
+            } catch (DateTimeParseException e) {
+                return fallback;
             }
         }
     }

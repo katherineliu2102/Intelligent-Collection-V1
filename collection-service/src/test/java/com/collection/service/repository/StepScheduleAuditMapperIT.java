@@ -332,7 +332,8 @@ class StepScheduleAuditMapperIT {
                 LocalDateTime now = seconds(LocalDateTime.now().plusSeconds(1));
                 List<Long> onlyMine = Collections.singletonList(FILTER_CASE);
 
-                List<ContactPlanStep> due = stepMapper.selectDueSteps(now, SCAN_LIMIT, onlyMine);
+                List<ContactPlanStep> due =
+                        stepMapper.selectDueSteps(now, SCAN_LIMIT, onlyMine, null);
                 assertTrue(containsStep(due, myStep.getId()), "名单内案件的到期步骤必须被扫到");
                 assertFalse(containsStep(due, foreignStep.getId()), "名单外案件的步骤绝不能出现在扫描结果里");
 
@@ -350,18 +351,19 @@ class StepScheduleAuditMapperIT {
                                 ServiceClock.now()));
 
                 List<ContactPlanStep> timeout =
-                        stepMapper.selectTimeoutSteps(now, SCAN_LIMIT, onlyMine);
+                        stepMapper.selectTimeoutSteps(now, SCAN_LIMIT, onlyMine, null);
                 assertTrue(containsStep(timeout, myTimeoutStep.getId()), "名单内案件的超时步骤必须被扫到");
                 assertFalse(containsStep(timeout, foreignStep.getId()), "名单外案件的超时步骤绝不能出现在扫描结果里");
 
                 // null 名单 = 不过滤，两者都应出现（生产单实例语义，不可因加了过滤而丢步骤）
                 assertTrue(
                         containsStep(
-                                stepMapper.selectDueSteps(now, SCAN_LIMIT, null), myStep.getId()),
+                                stepMapper.selectDueSteps(now, SCAN_LIMIT, null, null),
+                                myStep.getId()),
                         "null 名单必须退化为不过滤");
                 assertTrue(
                         containsStep(
-                                stepMapper.selectTimeoutSteps(now, SCAN_LIMIT, null),
+                                stepMapper.selectTimeoutSteps(now, SCAN_LIMIT, null, null),
                                 foreignStep.getId()),
                         "null 名单下名单外案件也应被扫到");
             } finally {
@@ -443,9 +445,9 @@ class StepScheduleAuditMapperIT {
 
                 // 反向确认互补：被判停摆的计划，其步骤在两条扫描里都取不到
                 List<ContactPlanStep> due =
-                        stepMapper.selectDueSteps(now.plusYears(1), SCAN_LIMIT, null);
+                        stepMapper.selectDueSteps(now.plusYears(1), SCAN_LIMIT, null, null);
                 List<ContactPlanStep> timeout =
-                        stepMapper.selectTimeoutSteps(now.plusYears(1), SCAN_LIMIT, null);
+                        stepMapper.selectTimeoutSteps(now.plusYears(1), SCAN_LIMIT, null, null);
                 assertFalse(containsStep(due, orphanedStep.getId()), "停摆计划的步骤不应出现在 due 扫描");
                 assertFalse(containsStep(timeout, orphanedStep.getId()), "停摆计划的步骤不应出现在 timeout 扫描");
                 assertFalse(containsStep(due, doneStep.getId()));

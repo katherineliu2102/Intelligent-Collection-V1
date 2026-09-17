@@ -16,6 +16,9 @@ logs/
 # 各环境的填充版（.env.pilot 等）含真实地址与口令，只保留 .env.example 模板
 .env.*
 !.env.example
+# Vite 只含非敏感 API 路径前缀，需要随代码提交，确保开发/生产路径一致
+!collection-admin/ui/.env.development
+!collection-admin/ui/.env.production
 notification配置
 nacos-publish.local.yml
 
@@ -43,8 +46,13 @@ deploy/nacos/merged-*.yml
 docs/ops/*.local.md
 node_modules/
 collection-admin/ui/dist/
+# Vite dev server 运行时临时文件（vite.config.local.ts.timestamp-*.mjs）
+*.timestamp-*.mjs
 __pycache__/
 *.pyc
 
 # scripts/dev 下划线前缀 = 本地临时草稿（跑批取证、一次性修复），不入仓
 scripts/dev/_*
+
+# Cursor 本地治理（hooks / skills / rules），不入远程
+.cursor/

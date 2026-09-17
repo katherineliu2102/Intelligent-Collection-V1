@@ -47,6 +47,9 @@ public class CollectionEvent {
     public static final String REPAY_STATUS = "repayStatus";
     public static final String CANCEL_REASON = "cancelReason";
     public static final String CANCEL_SCOPE = "cancelScope";
+    /** CASE_OWNER_RECONCILED：LEAVE 表示缺席迁出。 */
+    public static final String OWNER_ACTION = "ownerAction";
+
     public static final String NAME = "name";
     public static final String PHONE = "phone";
     public static final String EMAIL = "email";

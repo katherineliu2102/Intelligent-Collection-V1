@@ -1,4 +1,4 @@
-import { Button, Card, Select, Space, Table, message } from "antd";
+import { Button, Card, Select, Space, Table, Tooltip, message } from "antd";
 import { useState } from "react";
 import { api } from "../api";
 
@@ -17,18 +17,6 @@ export function OpsPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const ack = async (id: number) => {
-    await api.ackOp(id);
-    message.success(`ACK #${id}`);
-    await load();
-  };
-
-  const resolve = async (id: number) => {
-    await api.resolveOp(id, "MANUAL_FIXED", "resolved from UI shell");
-    message.success(`RESOLVED #${id}`);
-    await load();
   };
 
   return (
@@ -63,16 +51,21 @@ export function OpsPage() {
             { title: "Status", dataIndex: "status" },
             {
               title: "Action",
-              render: (_, row) => (
-                <Space>
-                  <Button size="small" onClick={() => ack(Number(row.id))}>
-                    ACK
-                  </Button>
-                  <Button size="small" type="primary" onClick={() => resolve(Number(row.id))}>
-                    Resolve
-                  </Button>
-                </Space>
-              )
+              render: (_, row) =>
+                row.status === "OPEN" ? (
+                  <Tooltip title="尚未接入引擎，暂不可处置">
+                    <Space>
+                      <Button size="small" disabled>
+                        ACK
+                      </Button>
+                      <Button size="small" type="primary" disabled>
+                        Resolve
+                      </Button>
+                    </Space>
+                  </Tooltip>
+                ) : (
+                  "—"
+                )
             }
           ]}
         />

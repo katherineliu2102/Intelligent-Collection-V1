@@ -17,6 +17,7 @@ import com.collection.common.model.DecisionLog;
 import com.collection.common.repository.ContactPlanRepository;
 import com.collection.common.repository.DecisionLogRepository;
 import com.collection.common.repository.TimelineRepository;
+import com.collection.common.schedule.OutreachSlotPolicy;
 import com.collection.common.service.ComplianceCounterService;
 import com.collection.common.service.IdempotencyService;
 import com.collection.common.spi.ExecutionGuard;
@@ -25,6 +26,8 @@ import com.collection.common.util.JsonUtil;
 import com.collection.engine.outbox.OutboxEventSink;
 import com.collection.engine.spi.SpiInvoker;
 import com.collection.engine.spi.SpiType;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
@@ -48,6 +51,8 @@ public class StepExecutionOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(StepExecutionOrchestrator.class);
     private static final String STEP_LOCK_PREFIX = "lock:plan:";
     private static final ZoneId PHT = ZoneId.of("Asia/Manila");
+
+    Clock clock = Clock.system(PHT);
 
     @Resource private IdempotencyService idempotencyService;
     @Resource private PreFlightChecker preFlightChecker;
@@ -147,6 +152,10 @@ public class StepExecutionOrchestrator {
             ContactPlan plan, ContactPlanStep step, ExecutionState state) {
         // ── ② 系统级守卫（实时查 DB：案件存在 / 已还款） ──
         PreFlightResult preFlight = preFlightChecker.inspect(plan.getCaseId());
+        if (preFlight.isGated()) {
+            log.info("[execStep] preflight gated plan {}, skip without cancel", plan.getId());
+            return;
+        }
         if (!preFlight.isPassed()) {
             // prepareStepDue 已将步骤前置为 EXECUTING；业务性阻断必须收敛为计划终态，
             // 否则消息渠道没有 callback timeout 会永久滞留。案件不存在不写 timeline。
@@ -158,6 +167,27 @@ public class StepExecutionOrchestrator {
                     plan.getId(),
                     preFlight.getBlockingReason(),
                     closed);
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime anchor = OutreachSlotPolicy.anchorTime(step);
+        OutreachSlotPolicy.Decision slotDecision = OutreachSlotPolicy.decide(anchor, now);
+        if (slotDecision == OutreachSlotPolicy.Decision.SKIP_MISSED_DAY
+                || slotDecision == OutreachSlotPolicy.Decision.SKIP_PAST_NEXT_SLOT) {
+            log.info(
+                    "[execStep] skip missed slot step {} decision={} anchor={}",
+                    step.getId(),
+                    slotDecision,
+                    anchor);
+            skipMissedSlot(plan, step, state, slotDecision.name());
+            return;
+        }
+        if (slotDecision == OutreachSlotPolicy.Decision.WAIT_OWN_SLOT) {
+            planRepository.updateStepTriggerTime(step.getId(), anchor, StepStatus.PENDING);
+            planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_SCHEDULED, null);
+            log.info("[execStep] wait own slot step {} until {}", step.getId(), anchor);
+            releaseExecutionLock(state.executionLockKey, buildIdempotencyKey(plan, step));
             return;
         }
 
@@ -196,6 +226,15 @@ public class StepExecutionOrchestrator {
                     verdict.getBlockedRuleType(),
                     verdict.getBlockedReason());
             if (verdict.getDeferUntil() != null) {
+                LocalDate today = LocalDate.now(clock);
+                if (verdict.getDeferUntil().toLocalDate().isAfter(today)) {
+                    log.info(
+                            "[execStep] TIME_WINDOW would cross day until {}, skip step {}",
+                            verdict.getDeferUntil(),
+                            step.getId());
+                    skipMissedSlot(plan, step, state, "TIME_WINDOW_CROSS_DAY");
+                    return;
+                }
                 planRepository.updateStepTriggerTime(
                         step.getId(), verdict.getDeferUntil(), StepStatus.PENDING);
                 planRepository.updatePlanStatus(plan.getId(), PlanStatus.STEP_SCHEDULED, null);
@@ -406,6 +445,12 @@ public class StepExecutionOrchestrator {
         private ExecutionState(String executionLockKey) {
             this.executionLockKey = executionLockKey;
         }
+    }
+
+    private void skipMissedSlot(
+            ContactPlan plan, ContactPlanStep step, ExecutionState state, String rule) {
+        markSkipped(plan, step, ContactResult.MISSED_SLOT, rule);
+        releaseExecutionLock(state.executionLockKey, buildIdempotencyKey(plan, step));
     }
 
     private void markSkipped(

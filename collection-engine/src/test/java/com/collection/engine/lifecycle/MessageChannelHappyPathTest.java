@@ -47,12 +47,12 @@ import org.mockito.quality.Strictness;
 /**
  * 消息渠道（SMS/PUSH）happy-path 纯逻辑单测——不连库，全 mock SPI / Repository / EventBus。
  *
- * <p>验证阶段 1 最小可验收切片：一条消息渠道从七步管线执行到状态机推进至 PLAN_COMPLETED。 覆盖三段：
+ * <p>验证阶段 1 最小可验收切片：一条消息渠道从七步管线执行到步骤完成。 覆盖三段：
  *
  * <ol>
  *   <li>{@link StepExecutionOrchestrator} 七步管线（无观察期 → STEP_COMPLETED）
  *   <li>消息渠道带观察期 → STEP_WAITING 分支
- *   <li>{@link PlanLifecycleManager#onStepCompleted} 推进至 PLAN_COMPLETED
+ *   <li>{@link PlanLifecycleManager#onStepCompleted} 仍在催时改写穷尽，不直接 PLAN_COMPLETED
  * </ol>
  */
 @ExtendWith(MockitoExtension.class)
@@ -242,7 +242,7 @@ class MessageChannelHappyPathTest {
     // ───────── 状态机推进：消息渠道完成后走到 PLAN_COMPLETED ─────────
 
     @Test
-    @DisplayName("步骤完成推进：AdvancementPolicy=PLAN_COMPLETED → 计划进入终态 PLAN_COMPLETED")
+    @DisplayName("步骤完成推进：AdvancementPolicy=PLAN_COMPLETED 且仍在催 → PLAN_EXHAUSTED")
     void onStepCompleted_planCompleted() {
         ContactPlanRepository repo = org.mockito.Mockito.mock(ContactPlanRepository.class);
         com.collection.common.service.CaseService caseService =
@@ -275,9 +275,12 @@ class MessageChannelHappyPathTest {
                         .with(CollectionEvent.PLAN_ID, PLAN_ID)
                         .with(CollectionEvent.STEP_ID, STEP_ID);
 
-        manager.onStepCompleted(event);
+        java.util.List<CollectionEvent> out = manager.onStepCompleted(event);
 
-        verify(repo).updatePlanStatus(PLAN_ID, PlanStatus.PLAN_COMPLETED, null);
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getEventType())
+                .isEqualTo(com.collection.common.enums.EventType.PLAN_EXHAUSTED);
+        verify(repo, never()).updatePlanStatus(eq(PLAN_ID), eq(PlanStatus.PLAN_COMPLETED), any());
     }
 
     private static void inject(Object target, String field, Object value) {

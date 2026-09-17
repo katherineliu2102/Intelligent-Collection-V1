@@ -1,6 +1,7 @@
 package com.collection.admin.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -8,11 +9,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 案件检索的数据源与过滤条件绑定。
@@ -108,5 +112,39 @@ class CaseQueryControllerTest {
 
         // pageSize 上限 100，offset = (3-1) * 100
         assertThat(captureDataArgs()).containsExactly(100, 200);
+    }
+
+    @Test
+    void includesOwnerDateAndLastCancelReason() {
+        controller.search(null, null, null, null, null, null, 1, 20);
+
+        String sql = captureDataSql();
+        assertThat(sql).contains("c.owner_date AS ownerDate");
+        assertThat(sql).contains("p.cancel_reason AS lastCancelReason");
+    }
+
+    @Test
+    void get_missingCase_notFound() {
+        assertThatThrownBy(() -> controller.get(92002L))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(ex -> ((ResponseStatusException) ex).getStatus())
+                .isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void get_readsProjectionSummaryWithoutBorrowerName() {
+        when(jdbcTemplate.query(any(String.class), any(Object[].class), any(RowMapper.class)))
+                .thenReturn(Collections.singletonList(new LinkedHashMap<>()));
+
+        controller.get(92002L);
+
+        String sql = captureDataSql();
+        assertThat(sql).contains("FROM t_ai_collection c");
+        assertThat(sql).contains("WHERE c.case_id = ?");
+        assertThat(sql).contains("c.owner_date AS ownerDate");
+        assertThat(sql).contains("c.due_date AS dueDate");
+        assertThat(sql).contains("p.cancel_reason AS lastCancelReason");
+        assertThat(sql).doesNotContain("borrower_name");
+        assertThat(captureDataArgs()).containsExactly(92002L);
     }
 }

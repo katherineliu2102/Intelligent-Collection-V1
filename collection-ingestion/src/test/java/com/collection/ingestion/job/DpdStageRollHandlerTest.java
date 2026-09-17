@@ -1,5 +1,6 @@
 package com.collection.ingestion.job;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -267,6 +268,32 @@ class DpdStageRollHandlerTest {
         info.setDpd(4);
         info.setStage(Stage.S2);
         when(caseService.getCaseInfo(LOAN)).thenReturn(info);
+
+        handler.dailyRoll();
+
+        verify(planRepository, never()).findActivePlansByCase(any());
+        verifyNoStageOrCease();
+    }
+
+    @Test
+    @DisplayName("owner 对账未完成 → 先推进对账，不跑 DPD")
+    void ownerReconIncomplete_runsReconInsteadOfDpd() {
+        OwnerReconcileHandler recon = org.mockito.Mockito.mock(OwnerReconcileHandler.class);
+        when(recon.completedToday()).thenReturn(false);
+        when(recon.advance()).thenReturn(3);
+        ReflectionTestUtils.setField(handler, "ownerReconcileHandler", recon);
+
+        assertThat(handler.dailyRoll()).isEqualTo(3);
+        verify(recon).advance();
+        verify(caseService, never()).getCaseInfo(any());
+    }
+
+    @Test
+    @DisplayName("requiresOwnerDate 且归属日不是当日 → 跳过 DPD")
+    void ownerDateNotToday_skipsDpd() {
+        when(caseService.requiresOwnerDate()).thenReturn(true);
+        CaseInfo info = stubCase(4, Stage.S2);
+        info.setOwnerDate(java.time.LocalDate.now(java.time.ZoneId.of("Asia/Manila")).minusDays(1));
 
         handler.dailyRoll();
 

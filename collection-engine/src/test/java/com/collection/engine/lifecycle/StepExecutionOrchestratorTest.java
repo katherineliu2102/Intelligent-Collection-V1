@@ -36,8 +36,11 @@ import com.collection.common.spi.StepResolver;
 import com.collection.engine.config.EngineProperties;
 import com.collection.engine.spi.SpiInvoker;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -259,9 +262,12 @@ class StepExecutionOrchestratorTest {
     }
 
     @Test
-    @DisplayName("#6a 静默时段 → 延后执行，不跳过也不推进")
+    @DisplayName("#6a 静默时段且 defer 仍在当日 → 延后执行，不跳过也不推进")
     void quietHours_deferred() {
-        LocalDateTime resumeAt = LocalDateTime.of(2026, 7, 17, 8, 0);
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 7, 40);
+        LocalDateTime resumeAt = LocalDateTime.of(2026, 9, 14, 8, 0);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 9, 14, 7, 30));
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
         when(executionGuard.evaluate(any()))
                 .thenReturn(GuardVerdict.defer("quiet", "TIME_WINDOW", resumeAt));
 
@@ -274,6 +280,90 @@ class StepExecutionOrchestratorTest {
         verify(eventBus, never()).publish(any());
         verify(channelGateway, never()).dispatch(any());
         verify(idempotencyService).release(eq("lock:plan:" + PLAN_ID + ":1:0"));
+    }
+
+    @Test
+    @DisplayName("过日槽 → MISSED_SLOT，不外呼、不 defer 到 08:00")
+    void missedCalendarDay_skipped() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 8, 0);
+        step.setChannelType(ChannelType.AI_CALL);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 9, 13, 9, 15));
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
+
+        orchestrator.executeStep(plan, step);
+
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.MISSED_SLOT);
+        verify(executionGuard, never()).evaluate(any());
+        verify(channelGateway, never()).dispatch(any());
+        verify(planRepository, never()).updateStepTriggerTime(eq(STEP_ID), any(), any());
+    }
+
+    @Test
+    @DisplayName("当天已过下一产品槽 → MISSED_SLOT")
+    void pastNextSlot_skipped() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 11, 30);
+        step.setChannelType(ChannelType.AI_CALL);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 9, 14, 9, 15));
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
+
+        orchestrator.executeStep(plan, step);
+
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.MISSED_SLOT);
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
+    @DisplayName("未到本槽钟点 → 重排到本槽，不提前打")
+    void beforeOwnSlot_rescheduled() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 8, 0);
+        LocalDateTime own = LocalDateTime.of(2026, 9, 14, 9, 15);
+        step.setChannelType(ChannelType.AI_CALL);
+        step.setOriginalTriggerTime(own);
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).updateStepTriggerTime(STEP_ID, own, StepStatus.PENDING);
+        verify(channelGateway, never()).dispatch(any());
+        verify(eventBus, never()).publish(any());
+    }
+
+    @Test
+    @DisplayName("原始排期在未来日 → 重排回该绝对时刻，不钳到今天")
+    void futureDay_rescheduledToOriginal() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 8, 0);
+        LocalDateTime own = LocalDateTime.of(2026, 9, 15, 9, 15);
+        step.setChannelType(ChannelType.AI_CALL);
+        step.setOriginalTriggerTime(own);
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
+
+        orchestrator.executeStep(plan, step);
+
+        verify(planRepository).updateStepTriggerTime(STEP_ID, own, StepStatus.PENDING);
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    @Test
+    @DisplayName("TIME_WINDOW defer 跨日 → MISSED_SLOT，不落到次日 08:00")
+    void quietHours_crossDaySkipped() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 14, 7, 40);
+        step.setOriginalTriggerTime(LocalDateTime.of(2026, 9, 14, 7, 30));
+        orchestrator.clock = Clock.fixed(now.toInstant(phtOffset()), ZoneId.of("Asia/Manila"));
+        when(executionGuard.evaluate(any()))
+                .thenReturn(
+                        GuardVerdict.defer(
+                                "quiet", "TIME_WINDOW", LocalDateTime.of(2026, 9, 15, 8, 0)));
+
+        orchestrator.executeStep(plan, step);
+
+        verifyTerminalRecorded(StepStatus.SKIPPED, ContactResult.MISSED_SLOT);
+        verify(planRepository, never())
+                .updateStepTriggerTime(eq(STEP_ID), eq(LocalDateTime.of(2026, 9, 15, 8, 0)), any());
+        verify(channelGateway, never()).dispatch(any());
+    }
+
+    private static ZoneOffset phtOffset() {
+        return ZoneOffset.ofHours(8);
     }
 
     @Test

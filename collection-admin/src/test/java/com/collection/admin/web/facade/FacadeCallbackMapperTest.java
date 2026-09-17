@@ -16,25 +16,46 @@ class FacadeCallbackMapperTest {
 
     @Test
     void voicemailIsSentNoResponseNotAnswered() throws Exception {
+        JsonNode byParty =
+                mapper.readTree(
+                        "{\"event\":\"session.completed\","
+                                + "\"line_outcome\":{\"reason\":\"VOICEMAIL\",\"was_answered\":true,"
+                                + "\"party\":\"voicemail\"}}");
+        assertEquals(ContactResult.SENT_NO_RESPONSE, FacadeCallbackMapper.mapResult(byParty));
+        JsonNode byReason =
+                mapper.readTree(
+                        "{\"line_outcome\":{\"reason\":\"VOICEMAIL\",\"was_answered\":true}}");
+        assertEquals(ContactResult.SENT_NO_RESPONSE, FacadeCallbackMapper.mapResult(byReason));
+    }
+
+    @Test
+    void callScreeningIsSentNoResponse() throws Exception {
         JsonNode root =
                 mapper.readTree(
-                        "{\"event\":\"session.completed\",\"was_ai_connected\":true,"
-                                + "\"line_outcome\":{\"reason\":\"VOICEMAIL\",\"was_answered\":true,"
-                                + "\"was_ai_connected\":true}}");
+                        "{\"line_outcome\":{\"party\":\"call_screening\",\"was_answered\":true,"
+                                + "\"reason\":\"CALL_SCREENING\"}}");
         assertEquals(ContactResult.SENT_NO_RESPONSE, FacadeCallbackMapper.mapResult(root));
     }
 
     @Test
-    void humanRequiresAiConnectedAndNormal() throws Exception {
-        JsonNode human =
+    void humanRequiresEffectiveConversation() throws Exception {
+        JsonNode talked =
                 mapper.readTree(
-                        "{\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,"
-                                + "\"was_ai_connected\":true}}");
-        assertEquals(ContactResult.ANSWERED, FacadeCallbackMapper.mapResult(human));
+                        "{\"line_outcome\":{\"party\":\"human\",\"reason\":\"NORMAL\","
+                                + "\"was_answered\":true},"
+                                + "\"ai_result\":{\"effective_conversation\":true,"
+                                + "\"disposition\":\"promise_to_pay\"}}");
+        assertEquals(ContactResult.ANSWERED, FacadeCallbackMapper.mapResult(talked));
+        JsonNode silent =
+                mapper.readTree(
+                        "{\"line_outcome\":{\"party\":\"human\",\"reason\":\"NORMAL\","
+                                + "\"was_answered\":true},"
+                                + "\"ai_result\":{\"effective_conversation\":false}}");
+        assertEquals(ContactResult.SENT_NO_RESPONSE, FacadeCallbackMapper.mapResult(silent));
         JsonNode normalOnly =
                 mapper.readTree(
                         "{\"line_outcome\":{\"reason\":\"NORMAL\",\"was_answered\":true,"
-                                + "\"was_ai_connected\":false}}");
+                                + "\"was_ai_connected\":true}}");
         assertEquals(ContactResult.FAILED, FacadeCallbackMapper.mapResult(normalOnly));
     }
 

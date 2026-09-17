@@ -17,7 +17,7 @@
 | 新入口 | `POST /webhook/facade-callback` | **照做**。不改 `/webhook/channel-callback` |
 | 账户级 URL | 控制台登记一次 | **照做**。不是下单字段；不要走网关现有 API Key 验签 |
 | 身份 | `client_metadata` 优先；否则 `external_case_id`（案件）+ 批次号找唯一 `EXECUTING`；多条拒绝 | **照做** |
-| 结果映射 | 见交接 §3（信箱 → `SENT_NO_RESPONSE`；真人 → `was_ai_connected && reason=NORMAL`） | **照做** |
+| 结果映射 | 见手册 2026-09-09：`party` + `effective_conversation`（勿再用 `was_ai_connected`/`NORMAL`） | **照做** |
 | 事件 `disposition` | 留空或与 `result` 同值；**禁止**塞 Facade 原生词 | **照做**（原生词只进审计 JSON） |
 | 事件 `providerMsgId` | Facade `batchId` | **照做**。`session_id` 只作投递幂等与审计 |
 | 幂等 | 同一 `session_id` 只发一次 `CHANNEL_CALLBACK` | **照做** |
@@ -97,26 +97,37 @@ POST
 
 ---
 
-## 5. 结果映射（交接 §3，入站完成）
+## 5. 结果映射（Valubo 2026-09-09 契约，硬切）
 
 引擎先读 `disposition`、没有才读 `result`；无法 `valueOf` 现码兜底 **`FAILED`**（§7）。因此：
 
 - 事件 `result` **只能**是 `ContactResult` 枚举名。
-- 事件 `disposition` **留空**（与 `result` 同值也可以）。`VOICEMAIL`、`NORMAL`、`MEDIA_NEGOTIATION_FAILED`、`promise_to_pay` 等 **只进审计 JSON**。
-
-判定只看当次 `session.completed`：
+- 事件 `disposition` **留空**。Facade 原生 `ai_result.disposition`（含 PTP）**只进** `t_ai_call_session`，**禁止**写入 `CHANNEL_CALLBACK.disposition`。
+- `batch.completed.summary` **不解析**。
+- 判定只看当次 `session.completed`；**不双读**旧字段 `was_ai_connected` / `result_label`；历史会话不回填。
 
 | 条件（按行先匹配先赢） | `ContactResult` |
 |---|---|
-| `reason=VOICEMAIL` 且 `was_answered=true` | `SENT_NO_RESPONSE` |
-| `reason=CALL_SCREENING` 且 `was_answered=true` | `SENT_NO_RESPONSE` |
-| `was_ai_connected=true` **且** `reason=NORMAL` | `ANSWERED` |
+| `party=voicemail` 或（接通且 `reason=VOICEMAIL`） | `SENT_NO_RESPONSE` |
+| `party=call_screening` 或（接通且 `reason=CALL_SCREENING`） | `SENT_NO_RESPONSE` |
+| `party=human` **且** `ai_result.effective_conversation=true` | `ANSWERED` |
+| `party=human` 且未开口（`effective_conversation` 非 true） | `SENT_NO_RESPONSE` |
 | `reason=NO_ANSWER` 或 `final_failure_reason=NO_ANSWER` | `NO_ANSWER` |
 | `BUSY` | `BUSY` |
 | `DECLINE`（拒接） | `REJECTED` |
-| `MEDIA_NEGOTIATION_FAILED` 等失败码 / 未知 | `FAILED` + 告警 |
+| 其余失败码 / 未知（含仅有 `reason=NORMAL` 而无 `party`） | `FAILED` + 告警 |
 
-信箱不计真人接通（交接口径）。`ContactResult.VOICEMAIL` 本迭代 **不用**（交接明确 `SENT_NO_RESPONSE`）。
+`reason=NORMAL` **不再**作为接通依据。`ContactResult.VOICEMAIL` 本迭代 **不用**。
+
+看板漏斗（`t_ai_call_session`）：
+
+| 指标 | 分子 | 分母 |
+|---|---|---|
+| 线路接通率 | `was_answered=1` | 拨出会话 |
+| 真人接通率 | `party='human'` | 拨出会话 |
+| 有效沟通率 | `effective_conversation=1` | `party='human'` |
+| RPC 率 | `right_party='yes'` | 有效沟通 |
+| PTP 率 | `disposition='promise_to_pay'` | RPC |
 
 `CHANNEL_CALLBACK` 字段：
 
@@ -172,8 +183,8 @@ collection:
 
 ## 9. 验收（交接 §7）
 
-1. 合法签名 + 真人（`was_ai_connected` + `NORMAL`）→ `ANSWERED`，步骤完成。  
-2. 合法签名 + 信箱 → `SENT_NO_RESPONSE`，不得 `ANSWERED`。  
+1. 合法签名 + 真人开口（`party=human` 且 `effective_conversation=true`）→ `ANSWERED`，步骤完成。  
+2. 合法签名 + 信箱 / 筛选 / 真人未开口 → `SENT_NO_RESPONSE`，不得 `ANSWERED`。  
 3. 未知 reason → `FAILED` + 告警，不落 `ANSWERED`。  
 4. 坏签名 → 401，无事件，审计 `signature_valid=false`。  
 5. 同一 `session_id` 重复 → 只有一次 `CHANNEL_CALLBACK`。  

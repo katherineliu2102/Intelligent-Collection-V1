@@ -1,6 +1,7 @@
 import { Button, Input, InputNumber, Modal, Select, Space, Table, Tag, Typography, message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { READ_ONLY_HINT, canWrite, useAdminRole } from "../auth";
 
 type Step = { channel: string; delayMin: number; observeMin: number; templateId: number };
 
@@ -35,6 +36,7 @@ function stepsSummary(planJson?: string): string {
 }
 
 export function PlanTemplatesTab() {
+  const writable = canWrite(useAdminRole());
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<PlanTemplate[]>([]);
   const [editing, setEditing] = useState<PlanTemplate | null>(null);
@@ -141,10 +143,16 @@ export function PlanTemplatesTab() {
             width: 170,
             render: (_: any, r: PlanTemplate) => (
               <Space>
-                <Button size="small" onClick={() => openEdit(r)}>
+                <Button size="small" disabled={!writable} onClick={() => openEdit(r)}>
                   Edit
                 </Button>
-                <Button size="small" danger onClick={() => deactivate(r)}>
+                <Button
+                  size="small"
+                  danger
+                  disabled={!writable}
+                  title={writable ? undefined : READ_ONLY_HINT}
+                  onClick={() => deactivate(r)}
+                >
                   Deactivate
                 </Button>
               </Space>

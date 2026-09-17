@@ -46,6 +46,8 @@ public class EventConsumerDispatcher {
         eventBus.subscribe(
                 EventType.CASE_BALANCE_UPDATED, e -> publishAll(manager.onCaseBalanceUpdated(e)));
         eventBus.subscribe(EventType.CASE_CEASED, e -> publishAll(manager.onCaseCeased(e)));
+        eventBus.subscribe(
+                EventType.CASE_OWNER_RECONCILED, e -> publishAll(manager.onCaseOwnerReconciled(e)));
         eventBus.subscribe(EventType.STEP_COMPLETED, e -> publishAll(manager.onStepCompleted(e)));
         eventBus.subscribe(
                 EventType.CHANNEL_CALLBACK, e -> publishAll(manager.onChannelCallback(e)));
