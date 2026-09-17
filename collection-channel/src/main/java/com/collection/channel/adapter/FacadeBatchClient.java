@@ -82,6 +82,17 @@ public class FacadeBatchClient {
         return isSuccess(parseBody(response.getBody()));
     }
 
+    /** 拉取绝对 URL（录音/script）。鉴权与批次接口相同 Bearer。 */
+    public String getAbsoluteUrl(String url) {
+        if (StringUtils.isBlank(url)) {
+            return null;
+        }
+        ChannelProperties.Facade cfg = properties.getFacade();
+        ResponseEntity<String> response =
+                facadeRestTemplate.exchange(url, HttpMethod.GET, entity(cfg, null), String.class);
+        return response.getBody();
+    }
+
     public JSONObject getBatch(String batchId) {
         ChannelProperties.Facade cfg = properties.getFacade();
         ResponseEntity<String> response =

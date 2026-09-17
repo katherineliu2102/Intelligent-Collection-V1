@@ -337,14 +337,14 @@ CREATE TABLE IF NOT EXISTS t_ai_call_session (
     effective_conversation TINYINT(1)    NULL COMMENT 'ai_result.effective_conversation：真人开口',
     right_party          VARCHAR(16)     NULL COMMENT 'ai_result.right_party：yes/no',
     disposition          VARCHAR(64)     NULL COMMENT 'ai_result.disposition 七值，仅落会话表，不进引擎 CHANNEL_CALLBACK',
-    summary              TEXT            NULL COMMENT 'ai_result.summary；非空可作 needs_review 辅助清除信号',
+    summary              TEXT            NULL COMMENT 'ai_result.summary',
     promises_json        JSON            NULL COMMENT 'ai_result.promises[] 原始数组（amount/currency/promised_date）；现恒空',
     -- 观测辅助
     caller_cli           VARCHAR(32)     NULL COMMENT 'parties.caller_cli 实际外显主叫（当前 6310001）',
     dialed_at            DATETIME        NULL COMMENT 'dial_timeline.dialed_at',
     answered_at          DATETIME        NULL COMMENT 'dial_timeline.answered_at；未回传为 NULL，禁止记 0',
     ended_at             DATETIME        NULL COMMENT 'dial_timeline.ended_at；时长由 ended_at-answered_at 派生',
-    needs_review         TINYINT(1)      NULL COMMENT 'was_answered=1 且无借款人发言（转写判定，未定前退化人工）',
+    needs_review         TINYINT(1)      NULL COMMENT '预留；分析用 t_ai_call_media.has_borrower_turn，本列不写',
     is_synthetic         TINYINT(1)      NOT NULL DEFAULT 0 COMMENT 'mock/测试会话；看板默认过滤',
     stage_snapshot       VARCHAR(16)     NULL COMMENT '会话发生时 stage 快照（S0-S4），写路径从 plan/step 补',
     dpd_snapshot         INT             NULL COMMENT '会话发生时 dpd 快照，写路径从 plan/step 补',
@@ -425,6 +425,29 @@ END //
 DELIMITER ;
 CALL sp_schema_add_ai_call_session_result_contract();
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
+
+-- AI Call 媒体：对话 script 持久化（录音 GCS 后做，本表预留 recording_object_uri）。
+-- 回调只写 URL + PENDING；分钟任务拉 script_url。不进 t_ai_call_session，避免看板扫会话表带大 JSON。
+CREATE TABLE IF NOT EXISTS t_ai_call_media (
+    id                      BIGINT          AUTO_INCREMENT PRIMARY KEY,
+    session_id              VARCHAR(128)    NOT NULL COMMENT '对齐 t_ai_call_session.session_id',
+    script_url              VARCHAR(1024)   NULL,
+    recording_url           VARCHAR(1024)   NULL COMMENT '供应商地址；本期不下载',
+    recording_status        VARCHAR(32)     NULL,
+    recording_object_uri    VARCHAR(512)    NULL COMMENT 'GCS 对象路径预留',
+    script_json             MEDIUMTEXT      NULL COMMENT 'script_url 响应原文',
+    transcript_text         MEDIUMTEXT      NULL COMMENT '扁平对话文本',
+    turn_count              INT             NULL,
+    has_borrower_turn       TINYINT(1)      NULL COMMENT '拉到 script 后：role/speaker/from 非 assistant/agent/bot/system/ai/tool/operator 且有文本则为 1；EMPTY/仅助手为 0；未拉取为 NULL',
+    fetch_status            VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/OK/EMPTY/NO_MEDIA/FAILED',
+    fetch_attempts          INT             NOT NULL DEFAULT 0,
+    fetch_error             VARCHAR(256)    NULL,
+    fetched_at              DATETIME        NULL,
+    created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_ai_call_media_session (session_id),
+    INDEX idx_ai_call_media_fetch (fetch_status, fetch_attempts, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Call 对话 script 与录音指针';
 
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (

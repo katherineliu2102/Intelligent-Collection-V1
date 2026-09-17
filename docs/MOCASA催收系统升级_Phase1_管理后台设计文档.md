@@ -510,7 +510,7 @@ AI Call 是双向对话渠道，指标分**电信层**（线路质量）与**业
 | 有效沟通 | `effective_conversation=1` | 分母为真人接通 |
 | RPC | `right_party='yes'` | 分母为有效沟通 |
 | `promises_json` | `ai_result.promises[]` 原始数组 | 非 PTP/分期应为 `[]` |
-| `needs_review` | 终态：真人未开口等 | 新契约以 `party` + `effective_conversation` 判定 |
+| `has_borrower_turn` | `t_ai_call_media`：script 拉到后，对话里是否出现借款人轮次（`role`/`speaker`/`from` 不在 assistant/agent/bot/system/ai/tool/operator）。`fetch_status=OK/EMPTY` 才有值；未拉取为 NULL。空接通/仅助手核名 = 0 |
 
 **F. 接通明细列字典**（下钻表，每列来源与空值处理）
 
@@ -704,14 +704,14 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 | 案件摘要 | Stage、DPD、产品、`collectionStatus`、`ownerDate`、最近 `cancel_reason`、`dueDate`、逾期/upcoming 金额、冻结 | `GET /cases/{caseId}`（读 `t_ai_collection`；迁出为 `ROUTED_TO_LEGACY`） |
 | 计划（含终态） | plan 状态、步骤序列、各 step 状态 | `/plans/by-case/{caseId}/history`、`/plans/{planId}/steps` |
 | 触达时间线 | 全渠道：channel、result、`providerMsgId`、scriptSlot、时间 | `/plans/timeline/{userId}` |
-| AI Call 会话明细 | 三层布尔、SIP、`line_reason`、`result`、`wave_key`、`caller_cli`、stage/dpd 快照、`needs_review`、synthetic、时长占位 | `t_ai_call_session`（v1.3，按 `case_id` 读） |
+| AI Call 会话明细 | 三层布尔、SIP、`line_reason`、`result`、`wave_key`、`caller_cli`、stage/dpd 快照、synthetic、时长占位；借款人是否开口见 `t_ai_call_media.has_borrower_turn` | `t_ai_call_session` + `t_ai_call_media` |
 | 决策快照 | `decision_type` / `output_decision` / `reasoning` | `t_decision_log`（表已存在；v1.3 只读展示，核对话术档是否跟当天档） |
 | 还款事件 | 该案 inbox `repaymentEvent` 或投影结清时间，列在通话卡片旁 | query-time join；只读、不告警、不落派生列 |
 | 录音 / 转写 | 接通会话复听与转写阅读 | `GET /ops/ai-calls/{sessionId}/transcript`、`/recording`（服务端代理，见下） |
 
 **AI Call 展示边界**：后台展示是否受理、是否接通、映射结果（如 `SENT_NO_RESPONSE`）、失败码、`batchId`/`session_id`，以及录音/转写复听。**不提供坐席重拨**。
 
-**录音/转写代理（v1.3，修订 v1.2「不内嵌录音播放」）**：接通样本必须能在后台复听/看转写，否则质检无从做起。采用**服务端代理**——服务端持 `channel.facade.api-key` 拉 `recording_url`/`script_url`（TLS 行为跟随现 Adapter），转写脱敏后落 `transcript_text`；API key 不出服务端，签名 URL 不交给浏览器长期持有。媒体访问属于敏感能力，角色边界在代理落地前单独确认；无论最终角色如何，后端必须授权且**每次访问写 `t_media_access_log`**。无 media 返回 404（文案注明未接通或未回传）。`EvidenceController` 仍不外发 `canonical_payload`——新媒体接口是显式授权的只读代理，与证据面 PII 边界分开。
+**录音/转写（v1.3 设计，2026-09-14 第一期只入库）**：接通会话的 `script_url` 异步拉入 `t_ai_call_media`（原文 JSON + 扁平 `transcript_text` + `has_borrower_turn`），**不**提供后台阅读/播放接口，**不写** `t_ai_call_session.needs_review`。`recording_url` 只记账，wav 进 GCS 后做。服务端代理 `GET /ops/ai-calls/{sessionId}/transcript|recording` 与 `t_media_access_log` 仍属后做。`EvidenceController` 仍不外发 `canonical_payload`。
 
 **交互**：步骤状态色标；异常队列 / 看板一键跳转本案。
 
@@ -950,7 +950,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 - 三层布尔 `was_ringing` / `was_answered` / `was_ai_connected` 落原子列，禁止合成单一枚举；`wave_key` 自 `external_batch_id` 解析（`mocasa-YYYYMMDD-HHMM-n` → `YYYYMMDD-HHMM`）。
 - `stage` / `dpd` 入库快照**两列都落**（口径冻结，不做单一分箱二选一）；**回填行留空**——`t_ai_collection` 是当前态，历史行无法还原拨打时点值。
 - `promises_json` 结构冻结为 `[{promise_amount, promise_date, promise_type, kept_status, updated_at}]`；PTP 功能缓做，现恒 `[]`。
-- `is_synthetic`（session_id 非 36 位 UUID / 测试白名单）、`is_holdout`（按现有 holdout hash，本批无对比 UI）、`needs_review`、时长三列预留（供应商未回传，当前恒 NULL）。
+- `is_synthetic`（session_id 非 36 位 UUID / 测试白名单）、`is_holdout`（按现有 holdout hash，本批无对比 UI）、时长三列预留（供应商未回传，当前恒 NULL）。`needs_review` 列保留但不写；开口判定用 `t_ai_call_media.has_borrower_turn`。
 
 ### 6.3 热更新流程
 
@@ -1241,7 +1241,7 @@ gantt
 | 日切续档只手动补跑验过；穷尽升档与「走完等次日」可能双计划 | ✅ 检测 + 下钻 | 单案 360 已展示 plan history；**「同案双活跃计划」检测入异常队列**（PLAN_STUCK 变体，建议随 v1.3 批实现） |
 | 圈选 Isolation 不干净（空名单 = 有什么打什么）；MANUAL_CLEANUP 管不住已 COMPLETED 旧圈（已误打 2 案） | ✅ 圈选状态视图 | 异常队列加「已终态计划收到新事件」告警；圈选管理只读视图列出各圈状态与订阅范围 |
 | 对客内容没抽到（正文、金额、DPD 占位符未在真信/真短信核对） | ✅ 抽检入口 | §6.5 `rendered_ref` 快照 + 案件 360 内容预览；P1 加「话术金额 vs 投影金额」自动 diff |
-| 接通质量（三天 2 通 ANSWERED、summary 空、借款人无发言） | ✅ 已并入 v1.3 | AI Call 分区（§5.1.1a）+ 360 转写代理 + `needs_review` |
+| 接通质量（三天 2 通 ANSWERED、summary 空、借款人无发言） | ✅ 已并入 v1.3 | AI Call 分区（§5.1.1a）+ `t_ai_call_media.has_borrower_turn`（转写代理后做） |
 | inbox 补发 Job 缺失（坏消息靠 Pub/Sub 重投） | ⚠️ 只做积压视图 | inbox 积压/死信计数入看板；补发 Job 属 ingestion 侧 |
 | 03:00 投影死锁出现过一次（重投后齐，代码未改） | ⚠️ 告警 | 入案中断告警（A2 同族：窗口内零入案即告）；恢复靠上游重投 |
 

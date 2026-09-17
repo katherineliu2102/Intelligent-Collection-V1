@@ -214,6 +214,72 @@ class FacadeWebhookServiceTest {
         verify(jdbcTemplate).queryForMap(contains("t_ai_collection"), eq(9L));
     }
 
+    @Test
+    void enqueuesPendingMediaWhenScriptUrlPresent() throws Exception {
+        String json =
+                answeredJson("sess-1", "batch-9")
+                        .replace(
+                                "\"ai_result\"",
+                                "\"media\":{\"script_url\":\"https://facade.example/s.json\","
+                                        + "\"recording_url\":\"https://facade.example/s.wav\","
+                                        + "\"recording_status\":\"ready\"},\"ai_result\"");
+        when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(false);
+
+        service.handle(objectMapper.readTree(json), sign(json, "test-secret"));
+
+        verify(jdbcTemplate)
+                .update(
+                        contains("t_ai_call_media"),
+                        eq("sess-1"),
+                        eq("https://facade.example/s.json"),
+                        eq("https://facade.example/s.wav"),
+                        eq("ready"),
+                        eq("PENDING"));
+    }
+
+    @Test
+    void enqueuesMediaFromIntegrationResult() throws Exception {
+        String json =
+                answeredJson("sess-1", "batch-9")
+                        .replace(
+                                "\"ai_result\"",
+                                "\"integration_result\":{\"media\":{\"script_url\":\"https://facade.example/nested.json\"}},\"ai_result\"");
+        when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(false);
+
+        service.handle(objectMapper.readTree(json), sign(json, "test-secret"));
+
+        verify(jdbcTemplate)
+                .update(
+                        contains("t_ai_call_media"),
+                        eq("sess-1"),
+                        eq("https://facade.example/nested.json"),
+                        eq(null),
+                        eq(null),
+                        eq("PENDING"));
+    }
+
+    @Test
+    void duplicateSessionStillEnqueuesMedia() throws Exception {
+        String json =
+                answeredJson("sess-1", "batch-9")
+                        .replace(
+                                "\"ai_result\"",
+                                "\"media\":{\"script_url\":\"https://facade.example/late.json\"},\"ai_result\"");
+        when(auditRepository.existsValidByProviderMsgId("sess-1")).thenReturn(true);
+
+        service.handle(objectMapper.readTree(json), sign(json, "test-secret"));
+
+        verify(eventBus, never()).publish(any(CollectionEvent.class));
+        verify(jdbcTemplate)
+                .update(
+                        contains("t_ai_call_media"),
+                        eq("sess-1"),
+                        eq("https://facade.example/late.json"),
+                        eq(null),
+                        eq(null),
+                        eq("PENDING"));
+    }
+
     private static String answeredJson(String sessionId, String batchId) {
         return "{\"event\":\"session.completed\",\"session_id\":\""
                 + sessionId

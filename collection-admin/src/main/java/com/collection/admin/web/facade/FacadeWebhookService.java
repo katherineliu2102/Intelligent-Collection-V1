@@ -112,6 +112,7 @@ public class FacadeWebhookService {
             log.info(
                     "[facade-callback] duplicate session_id={}, skip CHANNEL_CALLBACK",
                     identity.sessionId);
+            enqueueAiCallMedia(root, identity.sessionId);
             return ok;
         }
 
@@ -374,6 +375,45 @@ public class FacadeWebhookService {
                     "[facade-callback] ai_call_session upsert failed session={}",
                     identity.sessionId,
                     e);
+        }
+        enqueueAiCallMedia(root, identity.sessionId);
+    }
+
+    private void enqueueAiCallMedia(JsonNode root, String sessionId) {
+        if (StringUtils.isBlank(sessionId)) {
+            return;
+        }
+        JsonNode media = root.path("media");
+        if (media == null || media.isMissingNode() || media.isNull() || media.size() == 0) {
+            media = root.path("integration_result").path("media");
+        }
+        String scriptUrl = firstNonBlank(textOf(media, "script_url"));
+        String recordingUrl = firstNonBlank(textOf(media, "recording_url"));
+        String recordingStatus = firstNonBlank(textOf(media, "recording_status"));
+        String fetchStatus = StringUtils.isBlank(scriptUrl) ? "NO_MEDIA" : "PENDING";
+        try {
+            jdbcTemplate.update(
+                    "INSERT INTO t_ai_call_media "
+                            + "(session_id, script_url, recording_url, recording_status, fetch_status, "
+                            + "fetch_attempts, created_at, updated_at) "
+                            + "VALUES (?,?,?,?,?,0,NOW(),NOW()) "
+                            + "ON DUPLICATE KEY UPDATE "
+                            + "script_url=IF(fetch_status IN ('OK','EMPTY'), script_url, "
+                            + "COALESCE(VALUES(script_url), script_url)), "
+                            + "recording_url=COALESCE(VALUES(recording_url), recording_url), "
+                            + "recording_status=COALESCE(VALUES(recording_status), recording_status), "
+                            + "fetch_status=IF(fetch_status IN ('OK','EMPTY'), fetch_status, "
+                            + "IF(VALUES(script_url) IS NOT NULL AND VALUES(script_url) <> '', "
+                            + "IF(fetch_status='FAILED' AND script_url <=> VALUES(script_url), "
+                            + "'FAILED', 'PENDING'), fetch_status)), "
+                            + "updated_at=NOW()",
+                    sessionId,
+                    scriptUrl,
+                    recordingUrl,
+                    recordingStatus,
+                    fetchStatus);
+        } catch (RuntimeException e) {
+            log.warn("[facade-callback] ai_call_media enqueue failed session={}", sessionId, e);
         }
     }
 
