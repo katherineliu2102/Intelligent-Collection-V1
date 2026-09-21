@@ -391,12 +391,13 @@ public class FacadeWebhookService {
         String recordingUrl = firstNonBlank(textOf(media, "recording_url"));
         String recordingStatus = firstNonBlank(textOf(media, "recording_status"));
         String fetchStatus = StringUtils.isBlank(scriptUrl) ? "NO_MEDIA" : "PENDING";
+        String recordingIngest = StringUtils.isBlank(recordingUrl) ? "NO_MEDIA" : "PENDING";
         try {
             jdbcTemplate.update(
                     "INSERT INTO t_ai_call_media "
                             + "(session_id, script_url, recording_url, recording_status, fetch_status, "
-                            + "fetch_attempts, created_at, updated_at) "
-                            + "VALUES (?,?,?,?,?,0,NOW(),NOW()) "
+                            + "recording_ingest, fetch_attempts, created_at, updated_at) "
+                            + "VALUES (?,?,?,?,?,?,0,NOW(),NOW()) "
                             + "ON DUPLICATE KEY UPDATE "
                             + "script_url=IF(fetch_status IN ('OK','EMPTY'), script_url, "
                             + "COALESCE(VALUES(script_url), script_url)), "
@@ -406,12 +407,18 @@ public class FacadeWebhookService {
                             + "IF(VALUES(script_url) IS NOT NULL AND VALUES(script_url) <> '', "
                             + "IF(fetch_status='FAILED' AND script_url <=> VALUES(script_url), "
                             + "'FAILED', 'PENDING'), fetch_status)), "
+                            + "recording_ingest=IF(recording_object_uri IS NOT NULL "
+                            + "AND recording_object_uri <> '', recording_ingest, "
+                            + "IF(VALUES(recording_url) IS NOT NULL AND VALUES(recording_url) <> '', "
+                            + "IF(recording_ingest='FAILED' AND recording_url <=> VALUES(recording_url), "
+                            + "'FAILED', 'PENDING'), recording_ingest)), "
                             + "updated_at=NOW()",
                     sessionId,
                     scriptUrl,
                     recordingUrl,
                     recordingStatus,
-                    fetchStatus);
+                    fetchStatus,
+                    recordingIngest);
         } catch (RuntimeException e) {
             log.warn("[facade-callback] ai_call_media enqueue failed session={}", sessionId, e);
         }

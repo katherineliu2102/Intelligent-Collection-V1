@@ -234,6 +234,7 @@ class FacadeWebhookServiceTest {
                         eq("https://facade.example/s.json"),
                         eq("https://facade.example/s.wav"),
                         eq("ready"),
+                        eq("PENDING"),
                         eq("PENDING"));
     }
 
@@ -255,7 +256,8 @@ class FacadeWebhookServiceTest {
                         eq("https://facade.example/nested.json"),
                         eq(null),
                         eq(null),
-                        eq("PENDING"));
+                        eq("PENDING"),
+                        eq("NO_MEDIA"));
     }
 
     @Test
@@ -277,7 +279,8 @@ class FacadeWebhookServiceTest {
                         eq("https://facade.example/late.json"),
                         eq(null),
                         eq(null),
-                        eq("PENDING"));
+                        eq("PENDING"),
+                        eq("NO_MEDIA"));
     }
 
     private static String answeredJson(String sessionId, String batchId) {

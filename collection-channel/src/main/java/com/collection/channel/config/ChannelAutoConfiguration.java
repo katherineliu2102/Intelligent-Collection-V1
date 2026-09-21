@@ -1,6 +1,7 @@
 package com.collection.channel.config;
 
 import com.collection.channel.client.InsecureSimpleClientHttpRequestFactory;
+import com.collection.channel.client.NoRedirectSimpleClientHttpRequestFactory;
 import java.time.Duration;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
@@ -36,6 +37,18 @@ public class ChannelAutoConfiguration {
         }
         factory.setConnectTimeout(connectMs);
         factory.setReadTimeout(readMs);
+        return new RestTemplate(factory);
+    }
+
+    /** 录音下载：120s 读超时、不跟随 302。script JSON 仍走 facadeRestTemplate。 */
+    @Bean(name = "facadeMediaRestTemplate")
+    public RestTemplate facadeMediaRestTemplate(ChannelProperties properties) {
+        ChannelProperties.Facade facade = properties.getFacade();
+        int connectMs = Math.max(1, facade.getConnectTimeoutSeconds()) * 1000;
+        NoRedirectSimpleClientHttpRequestFactory factory =
+                new NoRedirectSimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectMs);
+        factory.setReadTimeout(120000);
         return new RestTemplate(factory);
     }
 }

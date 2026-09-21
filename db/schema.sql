@@ -426,15 +426,19 @@ DELIMITER ;
 CALL sp_schema_add_ai_call_session_result_contract();
 DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_session_result_contract;
 
--- AI Call 媒体：对话 script 持久化（录音 GCS 后做，本表预留 recording_object_uri）。
+-- AI Call 媒体：对话 script 持久化；录音 URL 夜间进 GCS（recording_object_uri）。
 -- 回调只写 URL + PENDING；分钟任务拉 script_url。不进 t_ai_call_session，避免看板扫会话表带大 JSON。
 CREATE TABLE IF NOT EXISTS t_ai_call_media (
     id                      BIGINT          AUTO_INCREMENT PRIMARY KEY,
     session_id              VARCHAR(128)    NOT NULL COMMENT '对齐 t_ai_call_session.session_id',
     script_url              VARCHAR(1024)   NULL,
-    recording_url           VARCHAR(1024)   NULL COMMENT '供应商地址；本期不下载',
+    recording_url           VARCHAR(1024)   NULL COMMENT '供应商地址；夜间任务下载进 GCS',
     recording_status        VARCHAR(32)     NULL,
-    recording_object_uri    VARCHAR(512)    NULL COMMENT 'GCS 对象路径预留',
+    recording_object_uri    VARCHAR(512)    NULL COMMENT 'gs://bucket/ai-call/{date}/{session_id}.wav',
+    recording_ingest        VARCHAR(16)     NULL COMMENT 'PENDING/OK/NO_MEDIA/FAILED；与 fetch_status 独立',
+    recording_ingest_attempts INT           NOT NULL DEFAULT 0,
+    recording_ingest_error  VARCHAR(256)    NULL,
+    recording_ingested_at   DATETIME        NULL,
     script_json             MEDIUMTEXT      NULL COMMENT 'script_url 响应原文',
     transcript_text         MEDIUMTEXT      NULL COMMENT '扁平对话文本',
     turn_count              INT             NULL,
@@ -446,8 +450,52 @@ CREATE TABLE IF NOT EXISTS t_ai_call_media (
     created_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_ai_call_media_session (session_id),
-    INDEX idx_ai_call_media_fetch (fetch_status, fetch_attempts, id)
+    INDEX idx_ai_call_media_fetch (fetch_status, fetch_attempts, id),
+    INDEX idx_ai_call_media_recording (recording_ingest, recording_ingest_attempts, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Call 对话 script 与录音指针';
+
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_recording_ingest;
+DELIMITER //
+CREATE PROCEDURE sp_schema_add_ai_call_recording_ingest()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_media'
+          AND COLUMN_NAME = 'recording_ingest'
+    ) THEN
+        ALTER TABLE t_ai_call_media
+            ADD COLUMN recording_ingest VARCHAR(16) NULL
+                COMMENT 'PENDING/OK/NO_MEDIA/FAILED；与 fetch_status 独立'
+                AFTER recording_object_uri,
+            ADD COLUMN recording_ingest_attempts INT NOT NULL DEFAULT 0
+                AFTER recording_ingest,
+            ADD COLUMN recording_ingest_error VARCHAR(256) NULL
+                AFTER recording_ingest_attempts,
+            ADD COLUMN recording_ingested_at DATETIME NULL
+                AFTER recording_ingest_error;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_ai_call_media'
+          AND INDEX_NAME = 'idx_ai_call_media_recording'
+    ) THEN
+        ALTER TABLE t_ai_call_media
+            ADD INDEX idx_ai_call_media_recording
+                (recording_ingest, recording_ingest_attempts, id);
+    END IF;
+    UPDATE t_ai_call_media
+        SET recording_ingest = 'PENDING'
+        WHERE recording_url IS NOT NULL AND recording_url <> ''
+          AND (recording_object_uri IS NULL OR recording_object_uri = '')
+          AND (recording_ingest IS NULL OR recording_ingest = '');
+    UPDATE t_ai_call_media
+        SET recording_ingest = 'NO_MEDIA'
+        WHERE (recording_url IS NULL OR recording_url = '')
+          AND recording_ingest IS NULL;
+END //
+DELIMITER ;
+CALL sp_schema_add_ai_call_recording_ingest();
+DROP PROCEDURE IF EXISTS sp_schema_add_ai_call_recording_ingest;
 
 -- 7.2.3 事件死信长期审计（Redis :dlq 为即时缓冲，MySQL 为处置 SSOT）。
 CREATE TABLE IF NOT EXISTS t_event_dlq (

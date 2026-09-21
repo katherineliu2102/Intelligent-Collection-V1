@@ -97,23 +97,23 @@ class AiCallScriptFetchJobTest {
     @Test
     void hostAllowedRequiresSameHostAndScheme() {
         assertThat(
-                        AiCallScriptFetchJob.hostAllowed(
+                        FacadeMediaUrlGuard.hostAllowed(
                                 "https://facade.example/s.json", "https://facade.example"))
                 .isTrue();
         assertThat(
-                        AiCallScriptFetchJob.hostAllowed(
+                        FacadeMediaUrlGuard.hostAllowed(
                                 "http://facade.example/s.json", "https://facade.example"))
                 .isFalse();
         assertThat(
-                        AiCallScriptFetchJob.hostAllowed(
+                        FacadeMediaUrlGuard.hostAllowed(
                                 "https://other.example/s.json", "https://facade.example"))
                 .isFalse();
         assertThat(
-                        AiCallScriptFetchJob.hostAllowed(
+                        FacadeMediaUrlGuard.hostAllowed(
                                 "https://facade.example:8443/s.json", "https://facade.example"))
                 .isFalse();
         assertThat(
-                        AiCallScriptFetchJob.hostAllowed(
+                        FacadeMediaUrlGuard.hostAllowed(
                                 "https://facade.example:443/s.json", "https://facade.example"))
                 .isTrue();
     }

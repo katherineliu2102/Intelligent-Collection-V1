@@ -3,7 +3,6 @@ package com.collection.admin.aicall;
 import com.collection.admin.aicall.AiCallScriptParser.Parsed;
 import com.collection.channel.adapter.FacadeBatchClient;
 import com.collection.channel.config.ChannelProperties;
-import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
@@ -82,7 +81,7 @@ public class AiCallScriptFetchJob {
                 channelProperties == null || channelProperties.getFacade() == null
                         ? null
                         : channelProperties.getFacade().getBaseUrl();
-        if (!hostAllowed(scriptUrl, baseUrl)) {
+        if (!FacadeMediaUrlGuard.hostAllowed(scriptUrl, baseUrl)) {
             markFailed(sessionId, "script_url host not facade");
             return false;
         }
@@ -116,47 +115,6 @@ public class AiCallScriptFetchJob {
             log.warn("[ai-call-media] fetch failed session={}", sessionId, e);
             return false;
         }
-    }
-
-    static boolean hostAllowed(String scriptUrl, String facadeBaseUrl) {
-        if (StringUtils.isBlank(scriptUrl) || StringUtils.isBlank(facadeBaseUrl)) {
-            return false;
-        }
-        try {
-            URI script = URI.create(scriptUrl.trim());
-            URI base = URI.create(facadeBaseUrl.trim());
-            String scriptHost = script.getHost();
-            String baseHost = base.getHost();
-            if (scriptHost == null || baseHost == null) {
-                return false;
-            }
-            if (script.getScheme() == null || base.getScheme() == null) {
-                return false;
-            }
-            if (!script.getScheme().equalsIgnoreCase(base.getScheme())) {
-                return false;
-            }
-            if (!scriptHost.equalsIgnoreCase(baseHost)) {
-                return false;
-            }
-            return effectivePort(script) == effectivePort(base);
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
-    }
-
-    static int effectivePort(URI uri) {
-        int port = uri.getPort();
-        if (port > 0) {
-            return port;
-        }
-        if ("https".equalsIgnoreCase(uri.getScheme())) {
-            return 443;
-        }
-        if ("http".equalsIgnoreCase(uri.getScheme())) {
-            return 80;
-        }
-        return -1;
     }
 
     private void markFailed(String sessionId, String error) {

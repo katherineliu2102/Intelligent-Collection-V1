@@ -711,7 +711,7 @@ Phase 1 使用 `RuleBasedDecisionEngine`；Phase 2 可替换为 LLM（SPI 预留
 
 **AI Call 展示边界**：后台展示是否受理、是否接通、映射结果（如 `SENT_NO_RESPONSE`）、失败码、`batchId`/`session_id`，以及录音/转写复听。**不提供坐席重拨**。
 
-**录音/转写（v1.3 设计，2026-09-14 第一期只入库）**：接通会话的 `script_url` 异步拉入 `t_ai_call_media`（原文 JSON + 扁平 `transcript_text` + `has_borrower_turn`），**不**提供后台阅读/播放接口，**不写** `t_ai_call_session.needs_review`。`recording_url` 只记账，wav 进 GCS 后做。服务端代理 `GET /ops/ai-calls/{sessionId}/transcript|recording` 与 `t_media_access_log` 仍属后做。`EvidenceController` 仍不外发 `canonical_payload`。
+**录音/转写（v1.3 设计，2026-09-21 录音进 GCS）**：接通会话的 `script_url` 异步拉入 `t_ai_call_media`。`recording_url` 由 **PHT 02:30** 夜间任务下载进 GCS（`gs://fintech_bdp/intelligent-collection/ai-call/{date}/{session_id}.wav`），回写 `recording_object_uri`；状态列 `recording_ingest`，与 script 的 `fetch_status` 独立。写入用独立 SA（`CHANNEL_AI_CALL_RECORDING_CREDENTIALS`），不复用 Pub/Sub ADC。不新增 Cloud Scheduler Job。**不**提供后台阅读/播放接口，**不写** `t_ai_call_session.needs_review`。服务端代理与 `t_media_access_log` 仍属后做。
 
 **交互**：步骤状态色标；异常队列 / 看板一键跳转本案。
 
@@ -1309,6 +1309,7 @@ gantt
 ---
 
 > **修订历史**  
+> - v1.8.1 · 2026-09-21 · AI Call 录音夜间批量进 GCS（`recording_ingest` / `recording_object_uri`）；script 口径不变
 > - v1.8 · 2026-09-14 · 过日槽不作废补打；钉钉 R1（08:00 无 owner 水位）；`TIME_WINDOW` 禁止跨日 defer 到 08:00。见 [修订说明](./channel/MOCASA催收系统升级_Phase1_过日槽不作废补打_20260914.md)
 > - v1.6 · 2026-09-09 · 钉钉加 A7/A8/A9：SMS / PUSH / EMAIL FAILED 率 >15% 且 attempted ≥20；口径对齐看板（FAILED/REJECTED/BOUNCED ÷ ATTEMPTED，SKIPPED 不计）；分渠道、禁止合并；PUSH 分 0800/1200 两槽  
 > - v1.6 · 2026-09-07 · 拍板：看板改为「今日执行 / 复盘」两任务视图（取消三套人格 UI）；内部角色后置到 `t_system_role`，服务商预留走 `tenant_id` 而非角色 Tab；钉钉本批只做 A1–A3（纠正 v1.3 把 Q3 标成已交付）；看板不自动刷（关闭 Q1）；日常观测改走后台，停写按日自动跑 Markdown 的前提见 §5.1.7  
