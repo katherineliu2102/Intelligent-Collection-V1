@@ -54,5 +54,14 @@ __pycache__/
 # scripts/dev 下划线前缀 = 本地临时草稿（跑批取证、一次性修复），不入仓
 scripts/dev/_*
 
+# 本地生成的测试结果与明细目录；精选 Markdown / CSV 仍可按需入仓
+docs/testing/records/*.json
+docs/testing/records/*/
+
+# 一次性本地测试、取证和数仓脚本统一放入 local/，避免误提交
+scripts/dev/local/
+scripts/test/local/
+scripts/warehouse/local/
+
 # Cursor 本地治理（hooks / skills / rules），不入远程
 .cursor/
