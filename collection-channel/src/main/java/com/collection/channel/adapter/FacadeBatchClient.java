@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import javax.annotation.Resource;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -28,6 +29,10 @@ public class FacadeBatchClient {
 
     @Resource private ChannelProperties properties;
     @Resource private RestTemplate facadeRestTemplate;
+
+    @Resource
+    @Qualifier("facadeMediaRestTemplate")
+    private RestTemplate facadeMediaRestTemplate;
 
     /** @return Facade 侧 batchId；建批被业务拒绝时抛 {@link IllegalStateException} */
     public String createBatch(String externalBatchId) {
@@ -80,6 +85,32 @@ public class FacadeBatchClient {
                         entity(cfg, new LinkedHashMap<String, Object>()),
                         String.class);
         return isSuccess(parseBody(response.getBody()));
+    }
+
+    /** 拉取绝对 URL（录音/script）。鉴权与批次接口相同 Bearer。 */
+    public String getAbsoluteUrl(String url) {
+        if (StringUtils.isBlank(url)) {
+            return null;
+        }
+        ChannelProperties.Facade cfg = properties.getFacade();
+        ResponseEntity<String> response =
+                facadeRestTemplate.exchange(url, HttpMethod.GET, entity(cfg, null), String.class);
+        return response.getBody();
+    }
+
+    /** 拉录音等二进制。走不跟随跳转、更长读超时的媒体客户端。 */
+    public byte[] getAbsoluteBytes(String url) {
+        if (StringUtils.isBlank(url)) {
+            return null;
+        }
+        ChannelProperties.Facade cfg = properties.getFacade();
+        ResponseEntity<byte[]> response =
+                facadeMediaRestTemplate.exchange(
+                        url, HttpMethod.GET, entity(cfg, null), byte[].class);
+        if (response.getStatusCode().is3xxRedirection()) {
+            throw new IllegalArgumentException("recording url redirected");
+        }
+        return response.getBody();
     }
 
     public JSONObject getBatch(String batchId) {

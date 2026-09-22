@@ -8,39 +8,24 @@
 - `src/api.ts`：后端 API 封装（`/auth`、`/cases`、`/ops`、`/compliance`、`/admin`）
 - `src/pages/`：页面组件（按业务模块分类）
 
-## 本地运行（推荐一键脚本）
+## 本地运行
+
+启动、登录、排障的完整说明以 **[管理后台操作手册 §2](../../docs/MOCASA催收系统升级_Phase1_管理后台操作手册.md#2-启动与登录)** 为准。本文件只给最短命令。
+
+Windows（一键）：
 
 ```powershell
-# 项目根目录 — 自动起后端+前端并打开浏览器
 powershell -ExecutionPolicy Bypass -File scripts/dev/start-admin.ps1
 ```
 
-详细说明与排错见：**[`docs/MOCASA催收系统升级_Phase1_管理后台操作手册.md`](../../docs/MOCASA催收系统升级_Phase1_管理后台操作手册.md)** §2
-
-## 本地运行（手动两步）
-
-**不要直接双击或用浏览器打开 `index.html`**。这是 Vite + React 工程，`<script type="module" src="/src/main.tsx">` 必须通过开发服务器加载，直接打开会空白或报错。
-
-1. 先启动后端（项目根目录）：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/dev/start-local.ps1
-```
-
-2. 再启动前端：
+macOS / Linux：
 
 ```bash
-cd collection-admin/ui
-npm install
-npm run dev
+./scripts/dev/start-local.sh
+# 另开终端
+cd collection-admin/ui && npm install && npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-3. 浏览器访问：**http://localhost:5173**
+浏览器：**http://127.0.0.1:5173**。不要用 `file://` 打开 `index.html`。
 
-Strategy 配置页：**http://localhost:5173/strategy**（holdout 参数、版本列表、回滚）
-
-默认账号：`admin` / 角色 `SYSTEM_ADMIN`（见登录页）。
-
-> 修改 `vite.config.ts` 后需重启 `npm run dev` 才会生效（例如 `/config` 代理）。
-
-> 若当前环境没有 `npm`，请先安装 Node.js（包含 npm）。
+Nacos / `.env` / 进程见 [操作说明_Nacos本地启动](../../docs/操作说明_Nacos本地启动.md)。

@@ -99,7 +99,11 @@ if [ -n "$db_url" ]; then
   )
 fi
 
-PORT="${APP_PORT:-8888}"
+# ⚠ 必须显式下发端口：Nacos intelligent-collection-common.yml 下发了 server.port=56384，
+#   且 Nacos ConfigData 优先级高于 application-local.yml（后者写的 8888 会被覆盖）。
+#   56384 与 IDE 服务代理端口冲突，本机必然 bind 失败（2026-09-02 实测 PortInUseException）。
+#   命令行参数优先级最高，故硬性覆盖。换端口用 LOCAL_ADMIN_PORT（不复用 APP_PORT，那是容器端口口径）。
+PORT="${LOCAL_ADMIN_PORT:-8888}"
 RUN_LOG_DIR="$ROOT/logs/run"
 mkdir -p "$RUN_LOG_DIR"
 LOG="$RUN_LOG_DIR/admin.log"
@@ -115,6 +119,7 @@ CMD=(java -jar "$RUN_JAR")
 if [ "${#DB_ARGS[@]}" -gt 0 ]; then
   CMD+=("${DB_ARGS[@]}")
 fi
+CMD+=("--server.port=$PORT")
 
 echo "[start-local] http://localhost:${PORT}  profile=${SPRING_PROFILES_ACTIVE}"
 

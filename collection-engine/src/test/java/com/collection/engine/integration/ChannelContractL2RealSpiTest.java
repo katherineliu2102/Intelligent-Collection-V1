@@ -55,7 +55,10 @@ import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -85,12 +88,14 @@ class ChannelContractL2RealSpiTest {
     private static final String SMS_PATH = "/v1/sms/send";
     private static final String PUSH_PATH = "/v1/app_notification/sync/send";
     private static final String SENDGRID_PATH = "/v3/mail/send";
+    private static final ZoneId PHT = ZoneId.of("Asia/Manila");
 
     private ChannelProperties channelProperties;
     private ChannelContractL2Test.SyncEventBus bus;
     private ChannelContractL2Test.InMemoryPlanRepository planRepo;
     private ChannelContractL2Test.InMemoryTimelineRepository timelineRepo;
     private MutableCaseService caseService;
+    private StepExecutionOrchestrator orchestrator;
 
     @BeforeEach
     void wire(WireMockRuntimeInfo wm) {
@@ -160,7 +165,7 @@ class ChannelContractL2RealSpiTest {
         inject(outcomeRecorder, "timelineRepository", timelineRepo);
         inject(outcomeRecorder, "deliveryAuditMetadata", auditMetadata);
 
-        StepExecutionOrchestrator orchestrator = new StepExecutionOrchestrator();
+        orchestrator = new StepExecutionOrchestrator();
         inject(orchestrator, "idempotencyService", new InMemoryIdempotencyService());
         inject(orchestrator, "preFlightChecker", preFlight);
         inject(orchestrator, "executionGuard", guard);
@@ -389,14 +394,24 @@ class ChannelContractL2RealSpiTest {
 
     // ───────────────────────── 驱动 & 装配 ─────────────────────────
 
-    /** 发布入案事件并反复扫描到期步骤；{@code lookaheadMinutes} 用于跨过 plan 内的 delayMinutes。 */
+    /**
+     * 发布入案事件并反复扫描到期步骤；{@code lookaheadMinutes} 用于跨过 plan 内的 delayMinutes。
+     *
+     * <p>due 扫描与 {@link StepExecutionOrchestrator} 槽位闸都按 PHT 墙钟；lookahead 同时拨快 orchestrator 时钟，否则 1
+     * 分钟 delay 会被 {@code WAIT_OWN_SLOT} 卡住（测试不会真睡）。
+     */
     private void drive(long lookaheadMinutes) {
         bus.publish(caseIngested());
         bus.drainAll();
+        if (lookaheadMinutes > 0) {
+            inject(
+                    orchestrator,
+                    "clock",
+                    Clock.offset(Clock.system(PHT), Duration.ofMinutes(lookaheadMinutes)));
+        }
+        LocalDateTime asOf = LocalDateTime.now(PHT).plusMinutes(lookaheadMinutes);
         for (int round = 0; round < 10; round++) {
-            List<ContactPlanStep> due =
-                    planRepo.findDueSteps(
-                            LocalDateTime.now().plusMinutes(lookaheadMinutes), 100, null);
+            List<ContactPlanStep> due = planRepo.findDueSteps(asOf, 100, null);
             if (due.isEmpty()) {
                 return;
             }

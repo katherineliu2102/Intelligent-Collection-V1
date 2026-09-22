@@ -408,7 +408,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 前置 | 当前 PHT 在 `quiet-hours`（21:00–08:00）内 |
-| 预期 | Guard BLOCK |
+| 预期 | Guard 返回 `TIME_WINDOW` + 同日 `deferUntil` 时引擎重排；**跨日 defer（含次日 08:00）引擎 `MISSED_SLOT`，不外呼**。过日槽在 Guard 前即作废 |
 
 ### TC-GUARD-03：投诉冻结
 
@@ -423,7 +423,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 前置 | PHT 在 08:00 前或 21:00 后（`touch-window` 外） |
-| 预期 | Guard BLOCK（与 quiet-hours 规则一致） |
+| 预期 | 过日或已过下一产品槽：引擎 `MISSED_SLOT`。未到本槽：重排回本槽。窗内且未过下一槽才外呼。与 quiet-hours 跨日 defer 禁止补打一致 |
 
 ---
 
@@ -437,7 +437,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 操作 | `POST /mock/ingest?caseId=90001&stage=S1` |
-| 预期（结构） | 含 08 SMS、12 PUSH、09:15+ AI、14:00 里程碑 Email 等槽位；**无** `*_EMAIL_CONDITIONAL`；**无** `HUMAN_CALL` |
+| 预期（结构） | 含 08 SMS、12 PUSH、AI 五波（09:15 / 11:30 / 14:30 / 16:15 / 18:40）、14:00 里程碑 Email 等槽位；**无** `*_EMAIL_CONDITIONAL`；**无** `HUMAN_CALL` |
 | 禁止 | scriptSlot 含 `S1_EMAIL_CONDITIONAL` 的 step |
 
 ### TC-PLAN-S0：S0 到期前
@@ -466,7 +466,7 @@ curl -X POST "http://localhost:8080/mock/repayment?userId=90001&caseId=90001"
 | 项 | 内容 |
 |----|------|
 | 操作 | ingest case，`stage=S4`，snapshot `dpd=65`（可在 Mock 扩展或手工改 snapshot 后重建 plan） |
-| 预期 | 当日仅 **1** 个 AI_CALL step；**无** Wave-2 / `*_VOICE_RETRY` step |
+| 预期 | 当日仅 **1** 个 AI_CALL step（09:15）；**无** 11:30 / 14:30 / 16:15 / 18:40 |
 
 ### TC-PLAN-STRUCT-COMMON：全局禁止项
 

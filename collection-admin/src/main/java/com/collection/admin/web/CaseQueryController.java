@@ -6,12 +6,15 @@ import java.util.List;
 import java.util.Map;
 import javax.validation.constraints.Min;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 案件检索（Phase 1 P0）。
@@ -90,7 +93,8 @@ public class CaseQueryController {
         String dataSql =
                 "SELECT c.case_id AS caseId, c.user_id AS userId, c.dpd AS dpd, c.stage AS stage, "
                         + "c.collection_status AS collectionStatus, c.product AS product, "
-                        + "p.status AS planStatus, "
+                        + "c.owner_date AS ownerDate, p.status AS planStatus, "
+                        + "p.cancel_reason AS lastCancelReason, "
                         + frozenExists
                         + " AS frozen, "
                         + "c.borrower_phone AS phone, c.borrower_email AS email "
@@ -113,7 +117,9 @@ public class CaseQueryController {
                             row.put("stage", rs.getString("stage"));
                             row.put("collectionStatus", rs.getString("collectionStatus"));
                             row.put("product", rs.getString("product"));
+                            row.put("ownerDate", rs.getObject("ownerDate"));
                             row.put("planStatus", rs.getString("planStatus"));
+                            row.put("lastCancelReason", rs.getString("lastCancelReason"));
                             row.put("frozen", rs.getInt("frozen") == 1);
                             row.put("phone", PiiMask.phone(rs.getString("phone")));
                             row.put("email", PiiMask.email(rs.getString("email")));
@@ -126,5 +132,55 @@ public class CaseQueryController {
         pageData.put("pageSize", size);
         pageData.put("total", total == null ? 0 : total);
         return ApiResponse.success(pageData);
+    }
+
+    /** 单案摘要（设计文档 §5.3.2）。读投影 + 最新计划取消原因；电话/邮箱脱敏，不返回姓名。 */
+    @GetMapping("/{caseId}")
+    public Map<String, Object> get(@PathVariable long caseId) {
+        String frozenExists =
+                "EXISTS (SELECT 1 FROM t_admin_case_freeze f "
+                        + "WHERE f.case_id = c.case_id AND f.status = 'FROZEN')";
+        String sql =
+                "SELECT c.case_id AS caseId, c.user_id AS userId, c.dpd AS dpd, c.stage AS stage, "
+                        + "c.collection_status AS collectionStatus, c.product AS product, "
+                        + "c.owner_date AS ownerDate, c.due_date AS dueDate, "
+                        + "c.overdue_amount AS overdueAmount, c.upcoming_amount AS upcomingAmount, "
+                        + "c.total_outstanding AS totalOutstanding, "
+                        + "p.status AS planStatus, p.cancel_reason AS lastCancelReason, "
+                        + frozenExists
+                        + " AS frozen, "
+                        + "c.borrower_phone AS phone, c.borrower_email AS email "
+                        + "FROM t_ai_collection c "
+                        + "LEFT JOIN t_contact_plan p ON p.id = "
+                        + "(SELECT MAX(p2.id) FROM t_contact_plan p2 WHERE p2.case_id = c.case_id) "
+                        + "WHERE c.case_id = ?";
+        List<Map<String, Object>> rows =
+                jdbcTemplate.query(
+                        sql,
+                        new Object[] {caseId},
+                        (rs, rowNum) -> {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("caseId", rs.getLong("caseId"));
+                            row.put("userId", rs.getLong("userId"));
+                            row.put("dpd", rs.getInt("dpd"));
+                            row.put("stage", rs.getString("stage"));
+                            row.put("collectionStatus", rs.getString("collectionStatus"));
+                            row.put("product", rs.getString("product"));
+                            row.put("ownerDate", rs.getObject("ownerDate"));
+                            row.put("dueDate", rs.getObject("dueDate"));
+                            row.put("overdueAmount", rs.getBigDecimal("overdueAmount"));
+                            row.put("upcomingAmount", rs.getBigDecimal("upcomingAmount"));
+                            row.put("totalOutstanding", rs.getBigDecimal("totalOutstanding"));
+                            row.put("planStatus", rs.getString("planStatus"));
+                            row.put("lastCancelReason", rs.getString("lastCancelReason"));
+                            row.put("frozen", rs.getInt("frozen") == 1);
+                            row.put("phone", PiiMask.phone(rs.getString("phone")));
+                            row.put("email", PiiMask.email(rs.getString("email")));
+                            return row;
+                        });
+        if (rows.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "case not found");
+        }
+        return ApiResponse.success(rows.get(0));
     }
 }

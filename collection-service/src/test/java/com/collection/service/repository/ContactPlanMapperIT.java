@@ -450,11 +450,11 @@ class ContactPlanMapperIT {
                 pendingDue.setStatus(StepStatus.EXECUTING);
                 stepMapper.insert(pendingDue);
 
-                List<ContactPlanStep> dueSteps = stepMapper.selectDueSteps(now, 1, null);
+                List<ContactPlanStep> dueSteps = stepMapper.selectDueSteps(now, 1, null, null);
                 assertEquals(1, dueSteps.size(), "limit 应限制 due 查询结果数");
                 assertEquals(
                         earlierDue.getId(), dueSteps.get(0).getId(), "due 步骤应按 trigger_time 升序");
-                List<ContactPlanStep> allDueSteps = stepMapper.selectDueSteps(now, 10, null);
+                List<ContactPlanStep> allDueSteps = stepMapper.selectDueSteps(now, 10, null, null);
                 assertFalse(
                         allDueSteps.stream()
                                 .anyMatch(step -> terminalDue.getId().equals(step.getId())),
@@ -464,7 +464,8 @@ class ContactPlanMapperIT {
                                 .anyMatch(step -> pendingDue.getId().equals(step.getId())),
                         "renewal_pending 计划的步骤不得被 due 查询返回");
 
-                List<ContactPlanStep> timeoutSteps = stepMapper.selectTimeoutSteps(now, 10, null);
+                List<ContactPlanStep> timeoutSteps =
+                        stepMapper.selectTimeoutSteps(now, 10, null, null);
                 assertTrue(
                         timeoutSteps.stream()
                                 .anyMatch(step -> timeout.getId().equals(step.getId())),

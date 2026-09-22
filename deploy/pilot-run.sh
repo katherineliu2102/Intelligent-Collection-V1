@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 Pilot 机（bdp01；地址见 docs/ops/生产访问凭据.local.md，不入库）上拉起应用，消费 Pub/Sub 积压。
+# 在 Pilot 机 bdp01（SSH：ubuntu@34.87.136.20）上拉起应用，消费 Pub/Sub 积压。
 #
 # 前置：本机需有 deploy/pilot.env（由 .env.pilot 传上来，不入仓）与 GCP 服务账号 json。
 # 用法：deploy/pilot-run.sh [镜像 tar 路径]
@@ -44,10 +44,31 @@ REQUIRED_KEYS=(
   COLLECTION_REDIS_HOST COLLECTION_REPAYMENT_URL_TEMPLATE
   # COLLECTION_PILOT_LOAN_IDS / COLLECTION_SCAN_CASE_IDS 允许空：空=消费订阅有什么进什么、扫库内到期步骤。
   CHANNEL_CALLBACK_HMAC_SECRET
-  # PilotReadinessValidator 要求管理面至少一个可用账号；缺这两项只会得到一句
-  # 「管理面无可用账号」的 IllegalStateException，看不出是 env 没配。
-  COLLECTION_ADMIN_USER COLLECTION_ADMIN_PASSWORD_HASH
 )
+# 管理面支持旧单账号变量，也支持 Spring indexed 形式的多个独立账号。
+# 每个条目必须同时有 username/hash；BCrypt 哈希仍由上面的 source 正确去引号后写入临时 env。
+admin_account_configured=false
+legacy_user="${COLLECTION_ADMIN_USER:-}"
+legacy_hash="${COLLECTION_ADMIN_PASSWORD_HASH:-}"
+if [[ -n "$legacy_user" || -n "$legacy_hash" ]]; then
+  [[ -n "$legacy_user" && -n "$legacy_hash" ]] \
+    || die "旧管理账号变量必须成对配置：COLLECTION_ADMIN_USER / COLLECTION_ADMIN_PASSWORD_HASH"
+  admin_account_configured=true
+fi
+for i in 0 1 2; do
+  user_key="COLLECTION_ADMIN_AUTH_ACCOUNTS_${i}_USERNAME"
+  hash_key="COLLECTION_ADMIN_AUTH_ACCOUNTS_${i}_PASSWORD_HASH"
+  user_value="${!user_key-}"
+  hash_value="${!hash_key-}"
+  if [[ -n "$user_value" || -n "$hash_value" ]]; then
+    [[ -n "$user_value" && -n "$hash_value" ]] \
+      || die "管理账号索引 $i 必须同时配置 $user_key / $hash_key"
+    admin_account_configured=true
+  fi
+done
+[[ "$admin_account_configured" == "true" ]] \
+  || die "$ENV_FILE 至少配置一个完整管理账号（旧变量或 COLLECTION_ADMIN_AUTH_ACCOUNTS_0_*）"
+
 # 只接入不触达时（调度关闭）没有任何步骤会执行，Facade 配不配都到不了客户，故不做必填。
 if [[ "${COLLECTION_SCHEDULER_ENABLED:-true}" == "true" ]]; then
   # callback-secret 缺失时外呼照打、回调全被判验签失败回 401，结果只能挂到 callbackTimeout。

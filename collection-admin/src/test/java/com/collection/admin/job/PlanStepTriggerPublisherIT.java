@@ -79,7 +79,7 @@ class PlanStepTriggerPublisherIT {
     void publishDueSteps_dispatchesCommittedStepAndMarksItExecuting() {
         ContactPlanStep step = seedDueStep(DUE_CASE_ID);
         assertTrue(
-                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null).stream()
+                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null, null).stream()
                         .anyMatch(candidate -> step.getId().equals(candidate.getId())),
                 "已提交 due 步骤必须可被真实 MyBatis 查询到");
         AtomicReference<CollectionEvent> received = new AtomicReference<>();
@@ -107,7 +107,7 @@ class PlanStepTriggerPublisherIT {
         verify(orchestrator, timeout(5000))
                 .executeStep(any(ContactPlan.class), any(ContactPlanStep.class));
         assertTrue(
-                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null).stream()
+                stepMapper.selectDueSteps(LocalDateTime.now(), 10, null, null).stream()
                         .noneMatch(candidate -> step.getId().equals(candidate.getId())),
                 "清空 trigger_time 后，重复扫描不得再次发布同一步骤");
     }
@@ -117,7 +117,7 @@ class PlanStepTriggerPublisherIT {
         when(advancementPolicy.decide(any(), any())).thenReturn(AdvancementDecision.PLAN_COMPLETED);
         ContactPlanStep step = seedTimeoutStep(TIMEOUT_CASE_ID);
         assertTrue(
-                stepMapper.selectTimeoutSteps(LocalDateTime.now(), 10, null).stream()
+                stepMapper.selectTimeoutSteps(LocalDateTime.now(), 10, null, null).stream()
                         .anyMatch(candidate -> step.getId().equals(candidate.getId())),
                 "已提交 timeout 步骤必须可被真实 MyBatis 查询到");
         AtomicReference<CollectionEvent> received = new AtomicReference<>();

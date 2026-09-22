@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.Valid;
+import javax.validation.constraints.AssertTrue;
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotEmpty;
 import lombok.Data;
@@ -161,6 +162,12 @@ public class DlqController {
     public static class RedriveRequest {
         @NotEmpty private List<String> eventIds;
         @NotBlank private String reason;
+        private boolean confirm;
+
+        @AssertTrue(message = "confirm must be true")
+        public boolean isConfirmed() {
+            return confirm;
+        }
     }
 
     @Data
